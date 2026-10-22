@@ -103,6 +103,9 @@ ALLCHAT_MENTIONS = 3  # agents that may answer one message of yours
 # ("off" in ALLCHAT_AUTO keeps un-mentioned messages unanswered).
 ALLCHAT_AUTO = os.environ.get("ALLCHAT_AUTO", "on").lower() != "off"
 ALLCHAT_AUTO_MAX = int(os.environ.get("ALLCHAT_AUTO_MAX", "2"))
+# Who answers an un-mentioned message: a quick pick, so it runs on Groq's
+# miner by default and leaves Gemini's free daily quota for real replies.
+ROUTER_TIER = os.environ.get("ROUTER_TIER", "miner")
 # Rounds: Supabase Cron calls /api/round (Bearer CRON_SECRET) a few times a
 # day; an agent's job is skipped if it ran less than ROUND_MIN_GAP_MINUTES ago.
 CRON_SECRET = os.environ.get("CRON_SECRET", "")
@@ -1098,6 +1101,43 @@ def list_models(provider):
     return {"models": sorted(i.removeprefix("models/") for i in ids if i)}
 
 
+# A provider that says its quota is used up (429) is left alone until it
+# resets: the per-minute kind for the delay it gives, the per-day kind
+# until midnight Pacific (when Google resets free-tier daily quotas).
+# Meanwhile calls go straight to the fallback instead of retrying.
+def _quota_wait(raw):
+    """Seconds to leave a model alone after a 429, from its error body."""
+    if re.search(r"PerDay|per day|daily", raw, re.I):
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("America/Los_Angeles"))
+        midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time(), now.tzinfo)
+        return max(60, (midnight - now).total_seconds() + 60)
+    m = re.search(r'retryDelay"?\s*:\s*"?(\d+(?:\.\d+)?)s|(?:retry|try again) in (?:(\d+)m)?(\d+(?:\.\d+)?)\s*s', raw, re.I)
+    if not m:
+        return 30
+    secs = float(m.group(1)) if m.group(1) else 60 * int(m.group(2) or 0) + float(m.group(3))
+    return min(3600, max(5, secs + 1))
+
+
+def cool_down(provider, model, raw):
+    until = time.time() + _quota_wait(raw)
+    try:
+        cool = {k: v for k, v in _meta_json("llm:cooldown", {}).items() if v["until"] > time.time()}
+        cool[f"{provider}:{model}"] = {"until": until, "daily": bool(re.search(r"PerDay|per day|daily", raw, re.I))}
+        store().set_meta("llm:cooldown", json.dumps(cool))
+    except Exception:
+        pass  # never let bookkeeping cost a reply
+
+
+def cooling(provider, model):
+    """{until, daily} while this model is out of quota, else None."""
+    try:
+        c = _meta_json("llm:cooldown", {}).get(f"{provider}:{model}")
+    except Exception:
+        return None
+    return c if c and c["until"] > time.time() else None
+
+
 def _llm_error_text(provider, code, raw):
     """A readable error: the provider's own message instead of its JSON."""
     try:
@@ -1238,6 +1278,10 @@ def claude_chat(messages, max_tokens):
 
 
 def _llm_call(provider, model, messages, max_tokens):
+    c = cooling(provider, model)
+    if c:
+        until = datetime.fromtimestamp(c["until"], hub_tz())
+        raise LLMError(f"{provider} {model} is out of free quota until {_clock(until)}", retryable=True, timed_out=True)
     url, key_var = PROVIDERS[provider]
     key = os.environ.get(key_var, "")
     if not key:
@@ -1254,8 +1298,11 @@ def _llm_call(provider, model, messages, max_tokens):
             out = json.loads(resp.read())
         text = out["choices"][0]["message"].get("content") or ""
     except urllib.error.HTTPError as e:
-        raise LLMError(_llm_error_text(provider, e.code, e.read()[:2000].decode("utf-8", "replace")),
-                       retryable=e.code in _RETRYABLE)
+        raw = e.read()[:4000].decode("utf-8", "replace")
+        if e.code == 429:
+            cool_down(provider, model, raw)
+        raise LLMError(_llm_error_text(provider, e.code, raw), retryable=e.code in _RETRYABLE,
+                       timed_out=e.code == 429)  # no same-model retry into a quota wall
     except (urllib.error.URLError, TimeoutError) as e:
         timed_out = isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError)
         raise LLMError(f"{provider} call failed: {e!r}", retryable=True, timed_out=timed_out)
@@ -1428,7 +1475,7 @@ def pick_responders(thread, candidates=None):
     roster = "\n".join(f"- {a}: {AGENTS[a]['name']} ({TIER_LABELS[AGENTS[a]['tier']]}). "
                        f"{AGENTS[a]['role']}" for a in candidates)
     transcript = "\n".join(chat_line(m) for m in thread[-10:])
-    reply = llm_chat("low_brain", [
+    reply = llm_chat(ROUTER_TIER, [
         {"role": "system", "content": system_prompt("mistral")},
         {"role": "user", "content": "You route messages in the All Agents chat. Agents:\n"
          f"{roster}\n\nThe chat so far:\n{transcript}\n\nWhich agents should answer the "
@@ -5142,6 +5189,9 @@ def gemini_search(prompt, timeout=30):
     key = os.environ.get("GEMINI_API_KEY", "")
     if not key:
         raise LLMError("Web search needs GEMINI_API_KEY.")
+    c = cooling("gemini", GEMINI_SEARCH_MODEL)
+    if c:
+        raise LLMError(f"Gemini search is out of free quota until {_clock(datetime.fromtimestamp(c['until'], hub_tz()))}")
     body = {"model": GEMINI_SEARCH_MODEL, "tools": [{"type": "google_search"}],
             "input": [{"type": "user_input", "content": [{"type": "text", "text": prompt}]}]}
     req = urllib.request.Request(GEMINI_NATIVE + "/interactions", data=json.dumps(body).encode(), headers={
@@ -5150,7 +5200,10 @@ def gemini_search(prompt, timeout=30):
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        raise LLMError(f"Gemini search returned {e.code}: {e.read()[:200].decode('utf-8', 'replace')}")
+        raw = e.read()[:4000].decode("utf-8", "replace")
+        if e.code == 429:
+            cool_down("gemini", GEMINI_SEARCH_MODEL, raw)
+        raise LLMError(f"Gemini search returned {e.code}: {_llm_error_text('gemini', e.code, raw).split(': ', 1)[-1]}")
     except (urllib.error.URLError, TimeoutError, ValueError) as e:
         raise LLMError(f"Gemini search unreachable: {e!r}")
     text, cites, queries = "", [], 0
@@ -5646,6 +5699,12 @@ def wiring():
                                f"the low brain answered. {used}")
                 else:
                     row.update(state="ok", note=f"{MASTER_MODEL} connected, effort {MASTER_EFFORT}; {used}")
+            c = cooling(provider, model) if not (a["tier"] == "master" and master_ready()) else None
+            if c:
+                fb_p, fb_m = FALLBACK_LLM.get("low_brain" if a["tier"] == "master" else a["tier"], (None, "off"))
+                row.update(state="bad", note=f"{model}'s free {'daily' if c['daily'] else 'per-minute'} quota is used up until "
+                           f"{_clock(datetime.fromtimestamp(c['until'], hub_tz()))}"
+                           + (f"; {fb_m} answers meanwhile" if fb_m != "off" else ""))
             fb = recent_fallback(a["tier"])
             if fb and row["state"] == "ok":
                 row["note"] += (f". Busy {fb['ago']} ago, so {fb['model']} answered instead "
@@ -6177,9 +6236,6 @@ body.typing .chat{height:100dvh}
 .md pre code{background:none;padding:0}.md .md-img{max-width:100%;border-radius:10px;margin:6px 0;display:block}
 .caret{display:inline-block;width:7px;height:1.05em;vertical-align:-2px;margin-left:2px;border-radius:2px;background:var(--accent);animation:blink 1s steps(1) infinite}
 @keyframes blink{50%{opacity:0}}
-.say{border:0;background:transparent;color:var(--muted);padding:2px;margin-left:2px;cursor:pointer;opacity:.7;line-height:0}
-.say svg{width:15px;height:15px}
-.say:hover{opacity:1;color:var(--accent)}
 .text .at{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);border-radius:5px;padding:0 3px;font-weight:620}
 .att{display:block;max-width:min(100%,440px);border-radius:12px;margin-top:6px;border:1px solid var(--border);background:#fff}
 .evt{display:flex;gap:8px;align-items:flex-start;padding:4px 16px 4px 28px;color:var(--muted);font-size:13px}
@@ -6496,196 +6552,6 @@ _UI_JS_SRC = r'''
     }
   });
 
-  // Agent voices: the phone's own text-to-speech, a different voice, pitch
-  // and pace per agent (free, offline). Voices differ by device, so each
-  // agent lists voices it likes and falls back to the language.
-  const VOICE = {
-    theta: {pitch: .72, rate: .9, like: ["Daniel", "Arthur", "Google UK English Male", "Aaron", "Fred"], lang: "en-GB"},
-    mistral: {pitch: 1.05, rate: 1.04, like: ["Serena", "Kate", "Google UK English Female", "Martha", "Moira"], lang: "en-GB"},
-    glass: {pitch: .9, rate: .98, like: ["Tom", "Evan", "Alex", "Google US English", "Nathan"], lang: "en-US"},
-    remi: {pitch: 1.12, rate: .94, like: ["Samantha", "Karen", "Tessa", "Victoria", "Allison"], lang: "en-US"},
-    lenz: {pitch: 1.08, rate: 1.12, like: ["Rishi", "Reed", "Oliver", "Gordon", "Lee"], lang: "en"},
-    red: {pitch: .88, rate: 1.06, like: ["Fred", "Ralph", "Evan", "Tom"], lang: "en-US"},
-    blue: {pitch: 1.0, rate: 1.06, like: ["Ava", "Allison", "Susan", "Zoe"], lang: "en-US"},
-    gray: {pitch: .95, rate: 1.0, like: ["Moira", "Fiona", "Karen", "Daniel"], lang: "en"},
-    charter: {pitch: 1.0, rate: 1.1, like: ["Nicky", "Ava", "Google US English"], lang: "en-US"},
-    james: {pitch: .95, rate: 1.12, like: ["Aaron", "Gordon", "Lee", "Reed"], lang: "en"},
-    qwerty: {pitch: .55, rate: 1.18, like: ["Fred", "Zarvox", "Trinoids", "Ralph"], lang: "en-US"},
-  };
-  const synth = window.speechSynthesis;
-  let voices = synth ? synth.getVoices() : [];
-  if (synth) synth.onvoiceschanged = () => { voices = synth.getVoices(); };
-  function pickVoice(p) {
-    for (const name of p.like) { const v = voices.find(x => x.name.includes(name)); if (v) return v; }
-    return voices.find(x => x.lang && x.lang.startsWith(p.lang)) || voices.find(x => x.lang && x.lang.startsWith("en")) || null;
-  }
-  // Babble: a game-style voice made of little pitched sounds, one per few
-  // letters as the text types out (each agent has their own pitch and
-  // timbre). No speech, no network.
-  const BABBLE = {
-    theta: [110, "sawtooth", .5], mistral: [330, "triangle", .9], glass: [220, "square", .35],
-    remi: [300, "sine", .7], lenz: [420, "triangle", 1.2], red: [160, "sawtooth", .8], blue: [250, "triangle", .8],
-    gray: [180, "sine", .45], charter: [360, "square", .6], james: [200, "sawtooth", 1], qwerty: [90, "square", .15],
-  };
-  // iPhone rules: Web Audio is muted by the silent switch unless the page
-  // asks for "playback", and sound (and speech) only starts from a tap. So
-  // the first tap anywhere unlocks both, and AI voices play through the
-  // unlocked audio context instead of a new <audio> element.
-  try { if ("audioSession" in navigator) navigator.audioSession.type = "playback"; } catch (_) {}
-  let ac = null, lastBlip = 0, unlocked = false;
-  function audio() {
-    if (!ac) { const C = window.AudioContext || window.webkitAudioContext; if (!C) return null; ac = new C(); }
-    if (ac.state !== "running") ac.resume().catch(() => {});
-    return ac;
-  }
-  function unlock() {
-    const a = audio();
-    if (a && !unlocked) {
-      const src = a.createBufferSource();
-      src.buffer = a.createBuffer(1, 1, 22050); src.connect(a.destination); src.start(0);
-    }
-    if (synth && !unlocked) { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; synth.speak(u); }
-    unlocked = true;
-  }
-  addEventListener("pointerdown", unlock, {capture: true});
-  addEventListener("keydown", unlock, {capture: true});
-  window.thetaVoiceError = msg => { try { localStorage.setItem("theta_voice_error", new Date().toLocaleTimeString() + ": " + msg); } catch (_) {} };
-  window.thetaBlip = (agent, ch) => {
-    if (voiceStyle !== "babble" || !/[a-z0-9]/i.test(ch)) return;
-    const a = audio(); if (!a) return;
-    const now = a.currentTime;
-    if (now - lastBlip < .055) return;
-    lastBlip = now;
-    const [base, wave, spread] = BABBLE[agent] || [220, "sine", .6];
-    const code = ch.toLowerCase().charCodeAt(0), vowel = "aeiou".includes(ch.toLowerCase());
-    const o = a.createOscillator(), g = a.createGain(), f = a.createBiquadFilter();
-    o.type = wave;
-    o.frequency.value = base * Math.pow(2, (((code * 7) % 9) - 4) * spread / 12) * (vowel ? 1.12 : 1);
-    f.type = "bandpass"; f.frequency.value = vowel ? 1400 : 900; f.Q.value = 1.2;
-    g.gain.setValueAtTime(0, now);
-    g.gain.linearRampToValueAtTime(.16, now + .008);
-    g.gain.exponentialRampToValueAtTime(.001, now + .07);
-    o.connect(f); f.connect(g); g.connect(a.destination);
-    o.start(now); o.stop(now + .08);
-  };
-  function babble(agent, text) {
-    const t = String(text).replace(/https?:\/\/\S+/g, "").slice(0, 400);
-    let i = 0;
-    const timer = setInterval(() => { if (i >= t.length) return clearInterval(timer); window.thetaBlip(agent, t[i]); i += 2; }, 45);
-    return new Promise(r => setTimeout(r, t.length / 2 * 45 + 100));
-  }
-  // AI voices: Gemini speaks as each agent (needs GEMINI_API_KEY on the
-  // server); falls back to the phone's voices if that fails.
-  let playing = null;
-  async function aiVoice(agent, text) {
-    const r = await fetch("/api/voice", {method: "POST", headers: window.THETA_H, body: JSON.stringify({agent, text})});
-    if (!r.ok) throw new Error("AI voice: " + ((await r.json().catch(() => ({}))).error || r.status));
-    const bytes = await r.arrayBuffer(), a = audio();
-    if (!a) throw new Error("this browser has no Web Audio");
-    const buf = await new Promise((ok, bad) => { const p = a.decodeAudioData(bytes, ok, bad); if (p && p.then) p.then(ok, bad); });
-    const src = a.createBufferSource();
-    src.buffer = buf; src.connect(a.destination); src.start();
-    playing = {pause: () => { try { src.stop(); } catch (_) {} }};
-    return new Promise(res => { src.onended = res; setTimeout(res, buf.duration * 1000 + 500); });
-  }
-  let voiceStyle = "babble";
-  try { voiceStyle = localStorage.getItem("theta_voice_style") || "babble"; } catch (_) {}
-  const queue = [];
-  let busy = false;
-  async function drain() {
-    if (busy) return; busy = true;
-    while (queue.length) {
-      const [agent, text] = queue.shift();
-      try {
-        if (voiceStyle === "babble") await babble(agent, text);
-        else if (voiceStyle === "ai") await aiVoice(agent, text);
-        else await phone(agent, text);
-      } catch (e) {
-        console.warn("voice:", e.message);
-        window.thetaVoiceError(e.message);
-        await phone(agent, text);
-      }
-    }
-    busy = false;
-  }
-  window.thetaSpeak = (agent, text) => { queue.push([agent, text]); drain(); return true; };
-  function phone(agent, text) {
-    // some phones never report the end of speech: don't let the queue wait forever
-    return new Promise(res => { setTimeout(res, 1500 + String(text).length * 110); if (!phoneSpeak(agent, text, res)) res(); });
-  }
-  function phoneSpeak(agent, text, done) {
-    if (!synth) return false;
-    const p = VOICE[agent] || {pitch: 1, rate: 1, like: [], lang: "en"};
-    const clean = String(text).replace(/https?:\/\/\S+/g, "").replace(/[#*_`>\[\]]/g, "").slice(0, 1200);
-    const u = new SpeechSynthesisUtterance(clean);
-    u.pitch = p.pitch; u.rate = p.rate;
-    const v = pickVoice(p);
-    if (v) { u.voice = v; u.lang = v.lang; }
-    u.onend = u.onerror = () => done && done();
-    synth.speak(u);
-    return true;
-  }
-  window.thetaStopSpeaking = () => { queue.length = 0; synth && synth.cancel(); if (playing) playing.pause(); };
-  function markStyle() {
-    document.querySelectorAll("[data-voicestyle]").forEach(b => b.classList.toggle("on", b.dataset.voicestyle === voiceStyle));
-  }
-  markStyle();
-  document.addEventListener("click", e => {
-    const b = e.target.closest("[data-voicestyle]");
-    if (!b) return;
-    voiceStyle = b.dataset.voicestyle;
-    try { localStorage.setItem("theta_voice_style", voiceStyle); } catch (_) {}
-    markStyle();
-    if (voiceStyle === "babble") audio();
-  });
-  window.thetaVoiceStyle = () => voiceStyle;
-  // Settings → Sound check: plays one line in the chosen style and says
-  // what this phone reports, so a silent voice can be told apart from a
-  // muted phone or a failed AI voice.
-  document.addEventListener("click", e => {
-    const b = e.target.closest("[data-soundcheck]");
-    if (!b) return;
-    unlock();
-    const out = document.getElementById("sound-status");
-    try { localStorage.removeItem("theta_voice_error"); } catch (_) {}
-    window.thetaStopSpeaking();
-    window.thetaSpeak("remi", "Hello sweetheart, can you hear me?");
-    setTimeout(() => {
-      let err = "";
-      try { err = localStorage.getItem("theta_voice_error") || ""; } catch (_) {}
-      const a = ac;
-      out.textContent = [
-        "Style: " + ({babble: "Babble", ai: "AI voices", phone: "Phone voices"}[voiceStyle] || voiceStyle),
-        "New replies read aloud: " + (autoVoice ? "on" : "off (speaker button only)"),
-        "Sound engine: " + (a ? a.state : "none"),
-        "Phone voices available: " + (synth ? synth.getVoices().length : "none"),
-        "Silent-switch override: " + ("audioSession" in navigator ? navigator.audioSession.type : "not supported (turn the ring switch on)"),
-        err ? "Last problem: " + err : "No errors",
-      ].join(" · ");
-    }, voiceStyle === "ai" ? 6000 : 1800);
-  });
-  let autoVoice = false;
-  try { autoVoice = localStorage.getItem("theta_voice_auto") === "on"; } catch (_) {}
-  window.thetaVoiceAuto = () => autoVoice;
-  function markVoice() {
-    document.querySelectorAll("[data-voiceauto]").forEach(b => b.classList.toggle("on", (b.dataset.voiceauto === "on") === autoVoice));
-  }
-  markVoice();
-  document.addEventListener("click", e => {
-    const v = e.target.closest("[data-voiceauto]");
-    if (v) {
-      autoVoice = v.dataset.voiceauto === "on";
-      try { localStorage.setItem("theta_voice_auto", autoVoice ? "on" : "off"); } catch (_) {}
-      markVoice();
-    }
-    const hear = e.target.closest("[data-hear]");
-    if (hear) {
-      window.thetaStopSpeaking();
-      const lines = JSON.parse(hear.dataset.hear);
-      lines.forEach(([a, t]) => window.thetaSpeak(a, t));
-    }
-  });
-
   // Unread dots on Chat and its channels. What you've read is kept on this
   // device; the newest message per channel comes with each page.
   const LATEST = window.THETA_LATEST || {};
@@ -6845,20 +6711,13 @@ _CHAT_JS = r'''
       const from = n;
       n += per;
       if (n >= m.text.length) return done();
-      if (window.thetaBlip && window.thetaVoiceAuto()) window.thetaBlip(m.from, m.text[from]);
       shown.textContent = m.text.slice(0, n);
       if (stick) box.scrollTop = box.scrollHeight;
     }, 16);
     wrap.onclick = done;
     return wrap;
   }
-  function sayButton(m) {
-    const b = document.createElement("button");
-    b.type = "button"; b.className = "say"; b.setAttribute("aria-label", "Read aloud");
-    b.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10v4h3l5 4V6L7 10z"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/></svg>';
-    b.onclick = () => { thetaStopSpeaking(); thetaSpeak(m.from, m.text); };
-    return b;
-  }
+
   function render() {
     const near = first || box.scrollHeight - box.scrollTop - box.clientHeight < 140;
     const out = [];
@@ -6902,9 +6761,7 @@ _CHAT_JS = r'''
       }
       meta.append(time);
       const agentMsg = a && m.from !== "you" && m.from !== "hub";
-      if (agentMsg && window.speechSynthesis) meta.append(sayButton(m));
       body.append(meta, fresh && agentMsg ? typed(m) : richText(m.text));
-      if (fresh && agentMsg && thetaVoiceAuto() && thetaVoiceStyle() !== "babble") thetaSpeak(m.from, m.text);
       if (m.image) {
         const img = document.createElement("img");
         img.src = m.image; img.alt = m.text.split("\n")[0]; img.className = "att"; img.loading = "lazy";
@@ -8247,85 +8104,7 @@ def gmail_card(headers):
     return f'<section class="card stack" id="gmail"><h2>Gmail</h2>{state}</section>'
 
 
-
-# ---- AI voices: Gemini's text-to-speech, a voice and a way of speaking per
-# agent. Used when you pick "AI voices" in Settings; the phone's own voices
-# are the fallback. Audio is made on request and kept briefly in memory.
-GEMINI_NATIVE = "https://generativelanguage.googleapis.com/v1beta"
-GEMINI_TTS_MODEL = os.environ.get("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts")
-AGENT_VOICES = {
-    "theta": ("Orus", "calm, low and deliberate; an assured leader who weighs every word"),
-    "mistral": ("Aoede", "brisk and friendly, like a capable dispatcher keeping things moving"),
-    "glass": ("Iapetus", "precise, dry and matter-of-fact, like an accountant reading figures"),
-    "remi": ("Sulafat", "warm, motherly and caring, gentle but firm"),
-    "lenz": ("Puck", "bubbly and quick, an excited pop-culture fan sharing a find"),
-    "red": ("Alnilam", "confident and punchy, like a conservative talk-radio host"),
-    "blue": ("Achird", "earnest and articulate, like a progressive commentator"),
-    "gray": ("Gacrux", "dry, wry and skeptical, unimpressed by either side"),
-    "charter": ("Schedar", "neat and upbeat, a data nerd pleased with a good chart"),
-    "james": ("Fenrir", "energetic and motivating, a gym coach mid-session"),
-    "qwerty": ("Algenib", "flat, clipped and mechanical, a security system reporting status"),
-}
-_VOICE_CACHE = {}  # sha -> wav bytes, newest last
-_VOICE_KEEP = 24
-
-
-def _wav(pcm, rate=24000):
-    """A WAV header around raw 16-bit mono PCM."""
-    import struct
-    return (b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
-            + b"data" + struct.pack("<I", len(pcm)) + pcm)
-
-
-def agent_voice(agent, text):
-    """WAV audio of this agent saying `text` (Gemini TTS)."""
-    key = os.environ.get("GEMINI_API_KEY", "")
-    if not key:
-        raise LLMError("AI voices need GEMINI_API_KEY.")
-    voice, style = AGENT_VOICES.get(agent, ("Kore", "natural and friendly"))
-    clean = re.sub(r"https?://\S+", "", str(text))
-    clean = re.sub(r"[#*_`>\[\]]", "", clean).strip()[:600]
-    if not clean:
-        raise ValueError("Nothing to say.")
-    sha = hashlib.sha256(f"{GEMINI_TTS_MODEL}|{voice}|{style}|{clean}".encode()).hexdigest()
-    if sha in _VOICE_CACHE:
-        return _VOICE_CACHE[sha]
-    body = {"model": GEMINI_TTS_MODEL,
-            "input": [{"type": "user_input", "content": [{"type": "text", "text": clean, "annotations": [
-                {"type": "speech_metadata", "style": style}]}]}],
-            "response_format": {"type": "audio", "mime_type": "audio/wav"},
-            "generation_config": {"speech_config": [{"voice": voice}]}}
-    req = urllib.request.Request(GEMINI_NATIVE + "/interactions", data=json.dumps(body).encode(), headers={
-        "x-goog-api-key": key, "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=25) as resp:
-            data = json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        raise LLMError(f"Gemini voices returned {e.code}: {e.read()[:200].decode('utf-8', 'replace')}")
-    except (urllib.error.URLError, TimeoutError, ValueError) as e:
-        raise LLMError(f"Gemini voices unreachable: {e!r}")
-    audio = [c for st in data.get("steps", []) if st.get("type") == "model_output"
-             for c in st.get("content", []) if c.get("type") == "audio" and c.get("data")]
-    if not audio:  # the older generateContent shape, just in case
-        audio = [{"data": p["inlineData"]["data"], "mime_type": p["inlineData"].get("mimeType", "")}
-                 for c in data.get("candidates", []) for p in c.get("content", {}).get("parts", []) if p.get("inlineData")]
-    if not audio:
-        raise LLMError("Gemini sent no audio back.")
-    raw = base64.b64decode(audio[-1]["data"])
-    wav = raw if raw[:4] == b"RIFF" else _wav(raw)
-    _VOICE_CACHE[sha] = wav
-    while len(_VOICE_CACHE) > _VOICE_KEEP:
-        _VOICE_CACHE.pop(next(iter(_VOICE_CACHE)))
-    return wav
-
-
-_VOICE_SAMPLES = [
-    ["theta", "Theta. I have the final say."], ["mistral", "Mistral. I'll sort out who answers."],
-    ["glass", "Glass. Your budget, to the cent."], ["remi", "Remi here, sweetheart. Did you take your meds?"],
-    ["lenz", "Lenz! I've got something you'll love."], ["red", "Red, with the conservative take."],
-    ["blue", "Blue, with the progressive take."], ["gray", "Gray. Skeptical of both."],
-    ["charter", "Charter. Want that as a chart?"], ["qwerty", "QWERTY. All systems nominal."],
-    ["james", "James. Time to train."]]
+GEMINI_NATIVE = "https://generativelanguage.googleapis.com/v1beta"  # Gemini's own API (web search)
 
 
 def settings_page(headers):
@@ -8359,19 +8138,6 @@ def settings_page(headers):
         'version. Saved on this device.</p></div>'
         f'<div class="swatches">{swatches}</div>'
         f'<div><h3>Light or dark</h3><p class="muted small">Match device follows your phone\'s setting.</p><div class="seg" role="group" aria-label="Light or dark">{modes}</div></div>'
-        '<div><h3>Voices</h3><p class="muted small"><b>Babble</b>: game-style character sounds as replies type out, '
-        'each agent with their own pitch (free, offline). <b>AI voices</b>: Gemini speaks as each agent, with a voice '
-        'and manner that fits them (uses your Gemini key). <b>Phone voices</b>: your phone\'s built-in speech.</p>'
-        '<div class="seg" role="group" aria-label="Voice style" style="margin-bottom:8px">'
-        '<button type="button" data-voicestyle="babble">Babble</button><button type="button" data-voicestyle="ai">AI voices</button>'
-        '<button type="button" data-voicestyle="phone">Phone voices</button></div>'
-        '<div class="seg" role="group" aria-label="Read new replies aloud">'
-        '<button type="button" data-voiceauto="off">Speaker button only</button>'
-        '<button type="button" data-voiceauto="on">Read new replies aloud</button></div>'
-        f'<p style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost small" type="button" data-hear="{html.escape(json.dumps(_VOICE_SAMPLES))}">'
-        'Hear the crew</button><button class="btn ghost small" type="button" data-soundcheck>Sound check</button></p>'
-        '<p class="note small" id="sound-status"></p><p class="muted small">Babble plays while replies type out, so it '
-        'needs <b>Read new replies aloud</b> on.</p></div>'
         '<div><h3>Haptics</h3><p class="muted small">A light tap when you press things. iPhone needs iOS 18 or later.</p>'
         '<div class="seg" role="group" aria-label="Haptics"><button type="button" data-haptics="on">On</button>'
         '<button type="button" data-haptics="off">Off</button></div></div>'
@@ -9089,16 +8855,6 @@ def handle(method, path, query, headers, body):
             if before != activity.strip()[:80]:
                 post_event(bot_id, f"{display_name(bot_id)} is now {activity.strip()[:80]}")
             return _json(200, {"ok": True})
-
-        if path == "/api/voice":
-            if not _auth_dashboard(query, headers):
-                return _json(401, {"ok": False, "error": "dashboard key required"})
-            try:
-                return 200, "audio/wav", agent_voice(str(data.get("agent") or ""), str(data.get("text") or ""))
-            except ValueError as e:
-                return _json(400, {"ok": False, "error": str(e)})
-            except LLMError as e:
-                return _json(502, {"ok": False, "error": str(e)})
 
         if path.startswith(("/api/mail/", "/api/gmail/")):
             if not _auth_dashboard(query, headers):

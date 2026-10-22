@@ -338,12 +338,6 @@ each. The Money tab charts holdings against the S&P 500, both indexed to
 the first day she has prices for. She reports and explains; she never
 trades or advises buying or selling.
 
-**Voices.** Settings → Voices: **Babble** (game-style sounds as replies type
-out, a pitch and timbre per agent; offline), **AI voices** (Gemini speaks
-as each agent with a voice and manner chosen for them, via `POST
-/api/voice`; `GEMINI_TTS_MODEL` picks the model; falls back to phone
-voices on any error), or **Phone voices**.
-
 **Projects** (`/commandeer find me a job here`, or `/project ...`). An
 order that starts like a task (find, search, look for, research, compare,
 get me, list...) becomes a project: Theta splits it into up to 4 parts
@@ -382,6 +376,15 @@ stand-in. A refusal first falls back server-side to another Claude model
 Wiring shows the month's spend. Also set a spend limit in the Anthropic
 Console as a backstop: the hub's count is an estimate.
 
+**Free-quota limits (429s).** When a model says its quota is used up, the
+hub leaves it alone until it resets instead of retrying: for the delay it
+names (Gemini's `retryDelay`, Groq's "try again in 7.66s"), or for a daily
+quota until just after midnight Pacific, when Google resets free-tier
+daily quotas. Meanwhile the tier's fallback answers straight away, Gemini
+search says when it'll be back, and Settings → Wiring shows
+which quota ran out. Picking who answers an un-mentioned message runs on
+Groq's miner (`ROUTER_TIER`), so it doesn't spend Gemini's daily quota.
+
 **Chat formatting.** Messages render a safe subset of markdown: tables,
 bullet, numbered and checklist items, code blocks, headings, **bold**,
 *italic*, `code` and https images. Everything is built as page elements,
@@ -394,11 +397,6 @@ search's own sources can appear as links; anything else the model writes
 as a link is removed, and an agent can't open pages it chooses, so a web
 page can't steer it into leaking what it knows. When you @mention several
 agents in one message, each answers only its own part.
-
-**Sound check** (Settings → Voices) plays one line in the chosen style and
-shows what the phone reports: the style, whether replies are read aloud,
-the sound engine's state, phone voices, the silent-switch override, and
-the last voice error.
 
 **Morning digest time.** The tick sends Mistral's digest at `DIGEST_TIME`
 (default `07:00`, hub time), so it no longer waits for a round. Without
