@@ -2613,32 +2613,49 @@ _ICONS = {}
 
 
 def _icon_png(size):
-    """The app icon: Theta's glyph (an oval crossed by a bar, like the
-    letter) in white on his gradient, anti-aliased from distance fields
-    (PNG, no deps)."""
+    """The app icon: Theta's avatar emblem (the theta: an oval ring crossed
+    by a bar) on his lit gradient tile, matching /avatar/theta.svg. Drawn
+    here from distance fields, anti-aliased, as a PNG with no deps. Full
+    bleed: iOS and Android round the corners themselves."""
     if size in _ICONS:
         return _ICONS[size]
     import struct
     import zlib
     (r1, g1, b1), (r2, g2, b2) = (tuple(int(c[i:i + 2], 16) for i in (1, 3, 5)) for c in AGENT_LOOKS["theta"][:2])
-    c = size / 2
-    ea, eb, half_w = size * 0.19, size * 0.27, size * 0.042  # oval half-width, half-height, stroke
+    u = size / 40  # the avatar is drawn in a 40-unit box; the mark sits at translate(5.8) scale(1.18)
+    cx = cy = (5.8 + 12 * 1.18) * u
+    ora, orb, ira, irb = 7.6 * 1.18 * u, 10 * 1.18 * u, 4.5 * 1.18 * u, 7 * 1.18 * u
+    bhw, bhh = 4.8 * 1.18 * u, 1.4 * 1.18 * u  # bar half-width / half-height (fully rounded ends)
+    drop = 1.1 * u
+
+    def ell(px, py, a, b):  # first-order signed distance to an ellipse
+        k = ((px / a) ** 2 + (py / b) ** 2) ** 0.5
+        grad = ((px / a ** 2) ** 2 + (py / b ** 2) ** 2) ** 0.5 / k if k else 1 / b
+        return (k - 1) / grad
+
+    def mark(px, py):  # signed distance to the theta (negative inside)
+        ring = max(ell(px, py, ora, orb), -ell(px, py, ira, irb))
+        qx, qy = max(abs(px) - (bhw - bhh), 0.0), abs(py)
+        bar = (qx * qx + qy * qy) ** 0.5 - bhh
+        return min(ring, bar)
+
     rows = []
     for y in range(size):
         row = bytearray(b"\x00")
-        py = y + 0.5 - c
+        fy = (y + 0.5) / size
         for x in range(size):
-            px = x + 0.5 - c
-            t = (x + y) / (2 * size)
-            k = ((px / ea) ** 2 + (py / eb) ** 2) ** 0.5
-            grad = ((px / ea ** 2) ** 2 + (py / eb ** 2) ** 2) ** 0.5 / k if k else 1 / eb
-            d_ring = abs((k - 1) / grad) - half_w  # first-order distance to the oval
-            bx = max(abs(px) - ea, 0.0)  # the bar spans the oval
-            d_bar = (bx * bx + py * py) ** 0.5 - half_w
-            a = min(1.0, max(0.0, 0.5 - min(d_ring, d_bar)))
-            row += bytes((round(r1 + (r2 - r1) * t + (255 - r1 - (r2 - r1) * t) * a),
-                          round(g1 + (g2 - g1) * t + (255 - g1 - (g2 - g1) * t) * a),
-                          round(b1 + (b2 - b1) * t + (255 - b1 - (b2 - b1) * t) * a)))
+            fx = (x + 0.5) / size
+            t = (fx + fy) / 2  # diagonal gradient, top-left to bottom-right
+            r, g, b = r1 + (r2 - r1) * t, g1 + (g2 - g1) * t, b1 + (b2 - b1) * t
+            light = max(0.0, 1 - ((fx - 0.22) ** 2 + (fy - 0.12) ** 2) ** 0.5 / (0.95 * 0.55)) * 0.38
+            r, g, b = r + (255 - r) * light, g + (255 - g) * light, b + (255 - b) * light
+            shade = max(0.0, (fy - 0.45) / 0.55) * 0.22
+            r, g, b = r * (1 - shade), g * (1 - shade), b * (1 - shade)
+            px, py = x + 0.5 - cx, y + 0.5 - cy
+            sh = min(1.0, max(0.0, 0.5 - mark(px, py - drop))) * 0.2  # the shadow under the mark
+            r, g, b = r * (1 - sh), g * (1 - sh), b * (1 - sh)
+            a = min(1.0, max(0.0, 0.5 - mark(px, py)))
+            row += bytes((round(r + (255 - r) * a), round(g + (255 - g) * a), round(b + (255 - b) * a)))
         rows.append(bytes(row))
 
     def chunk(kind, data):
@@ -2653,7 +2670,7 @@ self.addEventListener("push", e => {
   let d = {};
   try { d = e.data.json(); } catch (_) { d = {title: "Theta", body: e.data ? e.data.text() : ""}; }
   e.waitUntil(self.registration.showNotification(d.title || "Theta",
-    {body: d.body || "", data: {url: d.url || "/"}, icon: "/icon-192.png", badge: "/icon-192.png"}));
+    {body: d.body || "", data: {url: d.url || "/"}, icon: "/icon-192.png?v=2", badge: "/icon-192.png?v=2"}));
 });
 self.addEventListener("notificationclick", e => {
   e.notification.close();
@@ -7146,7 +7163,7 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
         '<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
         f'<title>{html.escape(title)} · {APP_NAME}</title>'
         '<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">'
-        '<link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="icon" href="/avatar/theta.svg" type="image/svg+xml">'
+        '<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2"><link rel="icon" href="/avatar/theta.svg" type="image/svg+xml">'
         f'<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="{APP_NAME}">'
         '<meta name="apple-mobile-web-app-status-bar-style" content="default">'
         f'{metas}<link rel="stylesheet" href="/ui.css?v={_ASSET_V}">'
@@ -7795,7 +7812,7 @@ def signin_page(headers):
             '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
             f'<title>Sign in · {APP_NAME}</title><link rel="stylesheet" href="/ui.css?v={_ASSET_V}">'
             '<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">'
-            '<link rel="apple-touch-icon" href="/apple-touch-icon.png"></head>'
+            '<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2"></head>'
             f'<body><main class="main">{body}</main></body></html>')
 
 
@@ -9453,8 +9470,8 @@ def handle(method, path, query, headers, body):
         manifest = {"name": APP_NAME, "short_name": APP_NAME, "start_url": start, "scope": "/",
                     "display": "standalone", "background_color": THEMES["theta"]["dark"]["bg"],
                     "theme_color": AGENT_LOOKS["theta"][0],
-                    "icons": [{"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
-                              {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png"}]}
+                    "icons": [{"src": "/icon-192.png?v=2", "sizes": "192x192", "type": "image/png"},
+                              {"src": "/icon-512.png?v=2", "sizes": "512x512", "type": "image/png"}]}
         return (200, "application/manifest+json", json.dumps(manifest).encode(),
                 [("Cache-Control", "no-store")])
     if path == "/api/push/key":
