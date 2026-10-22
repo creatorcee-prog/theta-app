@@ -1,0 +1,10 @@
+.text .md-table{border-collapse:collapse;width:100%;margin:8px 0;font-size:13px}
+.text .md-table th,.text .md-table td{border:1px solid var(--border, #444);padding:6px 10px;text-align:left}
+.text .md-table th{background:var(--card, #1a1a1a);font-weight:600}
+.text ul.task-list{list-style:none;padding-left:0}
+.text li.task-item{display:flex;align-items:flex-start;gap:8px;margin:4px 0}
+.text li.task-item input[type=checkbox]{margin-top:4px;flex-shrink:0}
+.text pre{background:var(--card, #1a1a1a);padding:10px 12px;border-radius:8px;overflow-x:auto;font-size:13px;margin:8px 0}
+.text code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.9em}
+.text pre code{font-size:13px}
+.text img{max-width:100%;border-radius:8px;margin:6px 0}
