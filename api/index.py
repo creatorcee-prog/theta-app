@@ -1903,13 +1903,16 @@ _PUSH_JS = """
   const limit = (p, what) => Promise.race([p, new Promise((_, no) =>
     setTimeout(() => no(new Error(what + " took too long")), 10000))]);
   const why = e => (e && e.message) || String(e);
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  // iPhone only gives Notification and PushManager to Home Screen web apps.
+  const noPush = !("PushManager" in window) || !("Notification" in window);
+  const noPushWhy = standalone ? "Notifications need iOS 16.4 or later."
+    : "This is open in Safari, not as the Home Screen app. Open Bot Hub from its Home Screen icon. "
+      + "If the icon opens Safari, delete it, then in Safari tap Share, Add to Home Screen, and keep Open as Web App on.";
   say("Checking notifications...");
   const setup = (async () => {
     if (!("serviceWorker" in navigator)) throw new Error("This browser can't show notifications.");
-    const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
-    if (!("PushManager" in window) || !("Notification" in window))
-      throw new Error(standalone ? "Notifications need iOS 16.4 or later."
-        : "On iPhone: Share, then Add to Home Screen. Open Bot Hub from the Home Screen and tap Turn on here.");
+    if (noPush) throw new Error(noPushWhy);
     await limit(navigator.serviceWorker.register("/sw.js"), "Starting the notification helper");
     const reg = await limit(navigator.serviceWorker.ready, "Starting the notification helper");
     const r = await limit(fetch("/api/push/key", {headers: PH}), "Reaching the hub");
@@ -1924,6 +1927,7 @@ _PUSH_JS = """
       : "Tap Turn on to get notifications on this device."));
   }, e => say(why(e)));
   document.getElementById("push-on").onclick = async () => {
+    if (noPush) { say(noPushWhy); return; }
     say("Turning on...");
     try {
       const perm = await Notification.requestPermission();  // before any other await: iOS needs the tap's user gesture
