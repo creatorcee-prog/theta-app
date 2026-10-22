@@ -9,8 +9,8 @@ Vercel's serverless model: `api/index.py` is one Python function,
 
 - **No always-on server.** Vercel runs functions per request.
 - **No local SQLite.** Serverless filesystems don't persist, so
-  storage is **Vercel KV** over its REST API (stdlib `urllib`, no
-  SDK). Without KV vars the app still runs, but on an in-memory
+  storage is **Upstash Redis** (what Vercel KV became) over its REST
+  API (stdlib `urllib`, no SDK). Without KV vars the app still runs, but on an in-memory
   store that resets between requests — the dashboard says so in a
   footer banner. Don't rely on memory mode for real bot traffic.
 
@@ -18,9 +18,13 @@ Vercel's serverless model: `api/index.py` is one Python function,
 
 1. Push this folder to a GitHub repo (or run `vercel` from it).
 2. Vercel dashboard → Add New Project → import the repo.
-3. Storage → Create Database → **KV** → connect it to the project.
-   This adds `KV_REST_API_URL` and `KV_REST_API_TOKEN` to the
-   project's env vars automatically.
+3. Storage → Create Database → **Upstash for Redis** (Marketplace)
+   → connect it to this project. That adds the REST URL and token to
+   the project's env vars; either `KV_REST_API_URL` /
+   `KV_REST_API_TOKEN` or `UPSTASH_REDIS_REST_URL` /
+   `UPSTASH_REDIS_REST_TOKEN` works. **Redeploy afterwards** — env
+   vars only reach new deployments. The dashboard footer says
+   `Storage: upstash-redis` once it's live.
 4. Settings → Environment Variables — set:
    - `BOT_KEYS` — `bot-id:key,...` (one key per bot; bots never hold
      the paid-model key)
@@ -44,12 +48,13 @@ PORT=8770 python3 api/index.py
 ```
 
 Then open http://localhost:8770. Set `KV_REST_API_URL` /
-`KV_REST_API_TOKEN` as well to test against a real KV store.
+`KV_REST_API_TOKEN` (or the `UPSTASH_REDIS_REST_*` pair) as well to
+test against a real Redis store.
 
 ## Endpoints
 
 Same as the Railway build: `POST /api/report`, `POST /api/escalate`,
 `POST /api/commandeer`, `POST /api/orders/<id>/ack`,
-`POST /api/fitness`, `GET /` (dashboard), `GET /api/feed`,
+`POST /api/fitness`, `POST /api/summary` (dashboard key), `GET /` (dashboard), `GET /api/feed`,
 `GET /api/orders`, `GET /api/escalations`, `GET /api/widgets`,
 `GET /api/fitness`, `GET /api/bots`, `GET /api/tiers`.
