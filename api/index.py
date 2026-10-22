@@ -1,4 +1,4 @@
-"""Bot hub, Vercel edition (interim while Railway is down).
+"""Theta (the bot hub), Vercel edition (interim while Railway is down).
 
 Same hub as ../bot-hub/hub.py — same tiers, same three functions
 (report / escalate / commandeer), same dashboard widgets — reworked
@@ -39,6 +39,7 @@ import io
 import json
 import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -48,7 +49,7 @@ from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from http.cookies import SimpleCookie
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 # ---- Bot config (same env vars as the Railway build) ----
 TIERS = ["miner", "manager", "low_brain", "master"]
@@ -238,10 +239,9 @@ NEWS_BREAKING_MINUTES = int(os.environ.get("NEWS_BREAKING_MINUTES", "90"))
 ENTERTAINMENT_FEEDS = [u.strip() for u in os.environ.get(
     "ENTERTAINMENT_FEEDS",
     "https://rss.marketingtools.apple.com/api/v2/us/music/most-played/10/songs.json,"
-    "http://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml").split(",") if u.strip()]
+    "https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml").split(",") if u.strip()]
 FITNESS_APP_URL = os.environ.get(
     "FITNESS_APP_URL", "https://fitness-tracker-snowy-seven-83.vercel.app/")
-FITNESS_REPO_URL = "https://github.com/creatorcee-prog/fitness-tracker"
 TMDB_BASE = "https://api.themoviedb.org/3"
 # Garage Gym's /api/hub (James): GARAGE_GYM_SECRET must equal its HUB_SECRET.
 GARAGE_GYM_URL = (os.environ.get("GARAGE_GYM_URL") or FITNESS_APP_URL).rstrip("/")
@@ -395,10 +395,12 @@ class MemoryStore:
         if activity is not None:
             self.activity[bot_id] = activity
 
-    def add_chat(self, sender, text, kind="message", image=None):
+    def add_chat(self, sender, text, kind="message", image=None, channel=None):
         item = {"id": self._next_id(), "from": sender, "text": text, "kind": kind, "at": _now()}
         if image:
             item["image"] = image
+        if channel:
+            item["ch"] = channel
         self.allchat.insert(0, item)
         del self.allchat[ALLCHAT_KEEP:]
         return item
@@ -539,10 +541,12 @@ class KVStore:
         if activity is not None:
             self._cmd("HSET", "hub:activity", bot_id, activity)
 
-    def add_chat(self, sender, text, kind="message", image=None):
+    def add_chat(self, sender, text, kind="message", image=None, channel=None):
         item = {"id": self._next_id(), "from": sender, "text": text, "kind": kind, "at": _now()}
         if image:
             item["image"] = image
+        if channel:
+            item["ch"] = channel
         self._cmd("LPUSH", "hub:allchat", json.dumps(item))
         self._cmd("LTRIM", "hub:allchat", "0", str(ALLCHAT_KEEP - 1))
         return item
@@ -622,6 +626,43 @@ def _parse_date(text):
     return dt.timestamp()
 
 
+_MRSS = "{http://search.yahoo.com/mrss/}"
+_IMG_SRC = re.compile(r"""<img[^>]+src=["']([^"']+)["']""", re.I)
+
+
+def _item_image(el):
+    """The picture an RSS item carries: the widest media:content image, else
+    media:thumbnail, an image enclosure, or the first <img> in its text."""
+    best, best_w = None, -1
+    for m in el.iter(f"{_MRSS}content"):
+        url, kind = m.get("url", ""), (m.get("type") or m.get("medium") or "image")
+        if url.startswith("http") and ("image" in kind or kind == "image"):
+            try:
+                w = int(m.get("width") or 0)
+            except ValueError:
+                w = 0
+            if w > best_w:
+                best, best_w = url, w
+    if best:
+        return best
+    for tag in (f"{_MRSS}thumbnail", "enclosure"):
+        for m in el.iter(tag):
+            if m.get("url", "").startswith("http") and (tag != "enclosure" or "image" in (m.get("type") or "")):
+                return m.get("url")
+    for tag in ("description", "{http://purl.org/rss/1.0/modules/content/}encoded"):
+        hit = _IMG_SRC.search(el.findtext(tag) or "")
+        if hit and hit.group(1).startswith("http"):
+            return html.unescape(hit.group(1))
+    return None
+
+
+def _bigger(url):
+    """Ask image services that size by URL for a card-sized copy."""
+    if url and "ichef.bbci.co.uk" in url:
+        return re.sub(r"/(standard|news)/\d+/", r"/\1/976/", url)
+    return url
+
+
 def _parse_rss(data):
     root = ET.fromstring(data)
     source = (root.findtext("channel/title") or "").strip()[:40]
@@ -631,7 +672,7 @@ def _parse_rss(data):
         link = (el.findtext("link") or "").strip()
         if link:
             items.append({"title": title or link, "url": link, "source": source,
-                          "published": _parse_date(el.findtext("pubDate"))})
+                          "published": _parse_date(el.findtext("pubDate")), "image": _bigger(_item_image(el))})
     if not items:  # Atom fallback
         ns = {"a": "http://www.w3.org/2005/Atom"}
         source = (root.findtext("a:title", "", ns) or "").strip()[:40]
@@ -642,7 +683,8 @@ def _parse_rss(data):
             if link:
                 items.append({"title": title or link, "url": link, "source": source,
                               "published": _parse_date(el.findtext("a:updated", "", ns)
-                                                       or el.findtext("a:published", "", ns))})
+                                                       or el.findtext("a:published", "", ns)),
+                              "image": _item_image(el)})
     return items[:10]
 
 
@@ -651,8 +693,10 @@ def _parse_apple_json(data):
     out = []
     for r in feed.get("results", [])[:10]:
         name, artist, url = r.get("name", ""), r.get("artistName", ""), r.get("url", "")
+        art = (r.get("artworkUrl100") or "").replace("100x100bb", "600x600bb") or None
         if url:
-            out.append({"title": f"{name} — {artist}" if artist else name, "url": url})
+            out.append({"title": f"{name} — {artist}" if artist else name, "url": url,
+                        "image": art, "artist": artist, "kind": "song"})
     return out
 
 
@@ -674,7 +718,7 @@ def _fetch_feeds_with(fn, urls):
     """fn(url) for each url, in parallel (one slow source doesn't hold up the rest)."""
     if not urls:
         return []
-    with ThreadPoolExecutor(max_workers=min(10, len(urls))) as ex:
+    with ThreadPoolExecutor(max_workers=min(32, len(urls))) as ex:
         return list(ex.map(fn, urls))
 
 
@@ -687,7 +731,8 @@ def widget_items(feeds):
     for url, items in zip(feeds, _fetch_feeds(feeds)):
         for it in items:
             out.append({"source": it.get("source") or urlparse(url).netloc,
-                        "title": it["title"], "url": it["url"]})
+                        "title": it["title"], "url": it["url"], "image": it.get("image"),
+                        "kind": it.get("kind")})
     return out[:20]
 
 
@@ -743,7 +788,9 @@ def tmdb_trending():
             "title": r.get("title") or r.get("name") or "?", "kind": "movie" if kind == "movie" else "TV show",
             "overview": (r.get("overview") or "")[:400], "date": r.get("release_date") or r.get("first_air_date") or "",
             "rating": round(float(r.get("vote_average") or 0), 1),
-            "url": f"https://www.themoviedb.org/{kind}/{r['id']}"})
+            "url": f"https://www.themoviedb.org/{kind}/{r['id']}",
+            "image": (f"https://image.tmdb.org/t/p/w780{r['backdrop_path']}" if r.get("backdrop_path") else
+                      f"https://image.tmdb.org/t/p/w500{r['poster_path']}" if r.get("poster_path") else None)})
     _TMDB_CACHE.update(at=time.time(), items=items)
     return items
 
@@ -1081,7 +1128,7 @@ def chat_line(m):
 
 def post_event(sender, text):
     """A templated All Agents line for something an agent did. No tokens."""
-    store().add_chat(sender, text[:500], kind="event")
+    store().add_chat(sender, text[:1500], kind="event")
 
 
 def _gist(payload):
@@ -1125,11 +1172,12 @@ def allchat_reply(agent, thread):
          f"message as {name}. Write only your message, without your name in front."}])
 
 
-def pick_responders(thread):
+def pick_responders(thread, candidates=None):
     """Mistral triages a message nobody was @mentioned in: which agents
     should answer it. Always at least one (Mistral herself when nothing
-    fits), at most ALLCHAT_AUTO_MAX."""
-    candidates = list(AGENTS)
+    fits, or the first candidate in a channel), at most ALLCHAT_AUTO_MAX."""
+    fallback = candidates[0] if candidates else "mistral"
+    candidates = list(candidates or AGENTS)
     roster = "\n".join(f"- {a}: {AGENTS[a]['name']} ({TIER_LABELS[AGENTS[a]['tier']]}). "
                        f"{AGENTS[a]['role']}" for a in candidates)
     transcript = "\n".join(chat_line(m) for m in thread[-10:])
@@ -1138,18 +1186,54 @@ def pick_responders(thread):
         {"role": "user", "content": "You route messages in the All Agents chat. Agents:\n"
          f"{roster}\n\nThe chat so far:\n{transcript}\n\nWhich agents should answer the "
          f"latest message? Pick 1 to {ALLCHAT_AUTO_MAX} whose job fits it best; for small "
-         "talk pick just yourself (mistral). Answer with agent ids separated by commas, "
+         f"talk pick just {fallback}. Answer with agent ids separated by commas, "
          "nothing else."}], max_tokens=300)
     words = "".join(c if c.isalpha() else " " for c in reply.lower()).split()
     picks = []
     for w in words:
         if w in candidates and w not in picks:
             picks.append(w)
-    return picks[:ALLCHAT_AUTO_MAX] or ["mistral"]
+    return picks[:ALLCHAT_AUTO_MAX] or [fallback]
 
 
-def allchat_view(limit=50):
-    return [dict(m, name=chat_name(m["from"])) for m in store().list_chat(limit)]
+# Discord-style channels over the one All Agents thread. #all-agents shows
+# everything; the others show what was said in them, plus their members'
+# own posts (round jobs post to their home channel).
+CHANNELS = [
+    {"id": "all", "name": "all-agents", "members": [],
+     "about": "Everyone. Messages without an @mention go to whoever Mistral picks."},
+    {"id": "news", "name": "news", "members": ["red", "blue", "gray"],
+     "about": "Red, Blue and Gray take on the day's stories. All three answer here."},
+    {"id": "money", "name": "money", "members": ["glass", "charter"],
+     "about": "Glass's budgets and Charter's charts."},
+    {"id": "family", "name": "family", "members": ["remi"],
+     "about": "Remi's calendar, birthdays and reminders."},
+    {"id": "screen", "name": "watch-and-listen", "members": ["lenz"],
+     "about": "Lenz's movie, show and music picks."},
+    {"id": "gym", "name": "gym", "members": ["james"], "about": "James, from Garage Gym."},
+    {"id": "command", "name": "command", "members": ["theta", "mistral"],
+     "about": "Theta and Mistral: orders, reviews, digests and rounds."},
+]
+CHANNEL_IDS = {c["id"]: c for c in CHANNELS}
+
+
+def home_channel(sender):
+    """Where a post with no channel belongs: its sender's channel."""
+    if sender == "hub":
+        return "command"
+    return next((c["id"] for c in CHANNELS if sender in c["members"]), "all")
+
+
+def message_channel(m):
+    return m.get("ch") or home_channel(m["from"])
+
+
+def allchat_view(limit=50, channel="all"):
+    if channel not in CHANNEL_IDS or channel == "all":
+        rows = store().list_chat(limit)
+    else:
+        rows = [m for m in store().list_chat(ALLCHAT_KEEP) if message_channel(m) == channel][-limit:]
+    return [dict(m, name=chat_name(m["from"]), ch=message_channel(m)) for m in rows]
 
 
 # ---- Remi's calendar: Google Calendar "secret address in iCal format"
@@ -1854,22 +1938,76 @@ def new_vapid_keys():
             "VAPID_PRIVATE_KEY": b64(key.private_numbers().private_value.to_bytes(32, "big"))}
 
 
+APP_NAME = "Theta"
+# Each agent's avatar: a gradient tile with a white line glyph (24-unit grid).
+# Theta's doubles as the app icon. "hub" is the system, "you" the user.
+AGENT_LOOKS = {
+    "theta": ("#6d5efc", "#22b8f0", '<ellipse cx="12" cy="12" rx="6.5" ry="9"/><path d="M5.5 12h13"/>'),
+    "mistral": ("#14b8a6", "#0ea5e9", '<path d="M3 8.5h11a2.5 2.5 0 1 0-2.5-2.5"/>'
+                '<path d="M3 12.5h15a2.5 2.5 0 1 1-2.5 2.5"/><path d="M3 16.5h6"/>'),
+    "glass": ("#10b981", "#0f766e", '<path d="M6.5 4h11L21 9l-9 11L3 9z"/><path d="M3 9h18"/>'
+              '<path d="M10 4L8.5 9 12 20l3.5-11L14 4"/>'),
+    "remi": ("#f472b6", "#e11d48", '<path d="M12 20s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.4 '
+             '4.3 4.3 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z"/>'),
+    "lenz": ("#f59e0b", "#ea580c", '<circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l5.5-3.5z"/>'),
+    "red": ("#f05252", "#b91c1c", '<path d="M4 10v4h3l7 4V6l-7 4z"/><path d="M17.5 9a4 4 0 0 1 0 6"/>'),
+    "blue": ("#3b82f6", "#1d4ed8", '<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/>'),
+    "gray": ("#94a3b8", "#475569", '<path d="M12 4v16M8 20h8M5 7h14"/><path d="M5 7l-2.5 6a2.5 2.5 0 0 0 5 0z"/>'
+             '<path d="M19 7l-2.5 6a2.5 2.5 0 0 0 5 0z"/>'),
+    "charter": ("#8b5cf6", "#4f46e5", '<path d="M4 20h16"/><path d="M7 16v-5M12 16V6M17 16v-8"/>'),
+    "james": ("#fb923c", "#dc2626", '<path d="M6.5 7v10M17.5 7v10M3.5 9.5v5M20.5 9.5v5M6.5 12h11"/>'),
+    "hub": ("#64748b", "#334155", '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><circle cx="12" cy="12" r="2.5"/>'),
+    "you": ("#a1a1aa", "#52525b", '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>'),
+}
+
+
+def agent_look(agent_id):
+    return AGENT_LOOKS.get(agent_id) or AGENT_LOOKS["hub"]
+
+
+def avatar_svg(agent_id, size=40):
+    """An agent's avatar as standalone SVG (also served at /avatar/<id>.svg)."""
+    c1, c2, glyph = agent_look(agent_id)
+    gid = f"av-{agent_id if agent_id in AGENT_LOOKS else 'hub'}"
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="{size}" height="{size}" '
+            f'role="img" aria-label="{html.escape(display_name(agent_id) if agent_id in AGENTS else agent_id)}">'
+            f'<defs><linearGradient id="{gid}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="{c1}"/>'
+            f'<stop offset="1" stop-color="{c2}"/></linearGradient></defs>'
+            f'<rect width="40" height="40" rx="12" fill="url(#{gid})"/>'
+            f'<g transform="translate(8 8)" fill="none" stroke="#fff" stroke-width="2" '
+            f'stroke-linecap="round" stroke-linejoin="round">{glyph}</g></svg>')
+
+
 _ICONS = {}
 
 
 def _icon_png(size):
-    """The Home Screen icon: a white ring and dot on the hub blue (PNG, no deps)."""
+    """The app icon: Theta's glyph (an oval crossed by a bar, like the
+    letter) in white on his gradient, anti-aliased from distance fields
+    (PNG, no deps)."""
     if size in _ICONS:
         return _ICONS[size]
     import struct
     import zlib
-    c, r_out, r_in, dot = size / 2, size * 0.30, size * 0.20, size * 0.08
+    (r1, g1, b1), (r2, g2, b2) = (tuple(int(c[i:i + 2], 16) for i in (1, 3, 5)) for c in AGENT_LOOKS["theta"][:2])
+    c = size / 2
+    ea, eb, half_w = size * 0.19, size * 0.27, size * 0.042  # oval half-width, half-height, stroke
     rows = []
     for y in range(size):
         row = bytearray(b"\x00")
+        py = y + 0.5 - c
         for x in range(size):
-            d = ((x + 0.5 - c) ** 2 + (y + 0.5 - c) ** 2) ** 0.5
-            row += b"\xff\xff\xff" if (r_in <= d <= r_out or d <= dot) else b"\x2f\x5b\xd3"
+            px = x + 0.5 - c
+            t = (x + y) / (2 * size)
+            k = ((px / ea) ** 2 + (py / eb) ** 2) ** 0.5
+            grad = ((px / ea ** 2) ** 2 + (py / eb ** 2) ** 2) ** 0.5 / k if k else 1 / eb
+            d_ring = abs((k - 1) / grad) - half_w  # first-order distance to the oval
+            bx = max(abs(px) - ea, 0.0)  # the bar spans the oval
+            d_bar = (bx * bx + py * py) ** 0.5 - half_w
+            a = min(1.0, max(0.0, 0.5 - min(d_ring, d_bar)))
+            row += bytes((round(r1 + (r2 - r1) * t + (255 - r1 - (r2 - r1) * t) * a),
+                          round(g1 + (g2 - g1) * t + (255 - g1 - (g2 - g1) * t) * a),
+                          round(b1 + (b2 - b1) * t + (255 - b1 - (b2 - b1) * t) * a)))
         rows.append(bytes(row))
 
     def chunk(kind, data):
@@ -1882,8 +2020,8 @@ def _icon_png(size):
 _SW_JS = """
 self.addEventListener("push", e => {
   let d = {};
-  try { d = e.data.json(); } catch (_) { d = {title: "Bot Hub", body: e.data ? e.data.text() : ""}; }
-  e.waitUntil(self.registration.showNotification(d.title || "Bot Hub",
+  try { d = e.data.json(); } catch (_) { d = {title: "Theta", body: e.data ? e.data.text() : ""}; }
+  e.waitUntil(self.registration.showNotification(d.title || "Theta",
     {body: d.body || "", data: {url: d.url || "/"}, icon: "/icon-192.png", badge: "/icon-192.png"}));
 });
 self.addEventListener("notificationclick", e => {
@@ -1907,7 +2045,7 @@ _PUSH_JS = """
   // iPhone only gives Notification and PushManager to Home Screen web apps.
   const noPush = !("PushManager" in window) || !("Notification" in window);
   const noPushWhy = standalone ? "Notifications need iOS 16.4 or later."
-    : "This is open in Safari, not as the Home Screen app. Open Bot Hub from its Home Screen icon. "
+    : "This is open in Safari, not as the Home Screen app. Open Theta from its Home Screen icon. "
       + "If the icon opens Safari, delete it, then in Safari tap Share, Add to Home Screen, and keep Open as Web App on.";
   say("Checking notifications...");
   const setup = (async () => {
@@ -2105,6 +2243,7 @@ def _round_theta(ctx):
             raise LLMError(r["error"])
         n = r["unprocessed_count"]
         did.append(f"summarized {n} report{'s' if n != 1 else ''}")
+        save_card("theta", f"Summarized {n} new report{'s' if n != 1 else ''}", r["summary"])
     _theta_decisions(did)
     today = datetime.now(hub_tz()).date()
     if today.weekday() == 6 and st.get_meta("round:theta:week") != today.isoformat():
@@ -2115,6 +2254,7 @@ def _round_theta(ctx):
              "'Priorities for next week:' with 2-3 bullets. Use only these facts; don't invent "
              "numbers or events:\n" + "\n".join(f"- {f}" for f in facts)}], max_tokens=900)
         st.add_chat("theta", f"Weekly review ({today:%b %d}):\n{review.strip()}")
+        save_card("theta", f"Weekly review, {today:%b} {today.day}", review.strip())
         st.set_meta("round:theta:week", today.isoformat())
         notify("Mistral", "Theta's weekly review is in.")
         did.append("posted the weekly review")
@@ -2138,6 +2278,11 @@ def _round_mistral(ctx):
         except LLMError:
             pass
         item = st.add_chat("mistral", post)
+        try:
+            lead = next(iter(news_items()[1]), None)
+        except Exception:
+            lead = None
+        save_card("mistral", "Morning digest", post, (lead or {}).get("image"))
         st.set_meta("round:mistral:digest_day", today)
         st.set_meta("round:mistral:digest_id", str(item["id"]))
         notify("Mistral", brief)
@@ -2149,6 +2294,7 @@ def _round_mistral(ctx):
     pushed = _seen("push:breaking")
     for b in [b for b in breaking if b["url"] not in pushed][:2]:
         st.add_chat("mistral", f"Breaking ({b['source']}): {b['title']}\n{b['url']}")
+        save_card("mistral", b["title"], f"Breaking, from {b['source']}", b.get("image"), b["url"], b["source"])
         notify("Mistral", f"Breaking ({b['source']}): {b['title']}", b["url"])
         _mark_seen("push:breaking", b["url"])
         did.append("flagged breaking news")
@@ -2190,6 +2336,8 @@ def _round_news(agent):
              "say so instead of guessing details."}])
         links = [story["url"]] + [it["url"] for it in seen if it["url"] != story["url"]][:1]
         store().add_chat(agent, take.strip() + "\n" + "\n".join(links))
+        pic = story.get("image") or next((it.get("image") for it in seen if it.get("image")), None)
+        save_card(agent, story["title"], take.strip(), pic, story["url"], story["source"])
         return (f"posted a take on \"{story['title'][:60]}\""
                 + (f" ({len(seen)} of their outlets covered it)" if seen else " (their outlets haven't covered it)"))
     return job
@@ -2216,6 +2364,7 @@ def _round_lenz(ctx):
          "Agents group chat."},
         {"role": "user", "content": facts}])
     store().add_chat("lenz", f"{pitch.strip()}\n{item['url']}")
+    save_card("lenz", item["title"], pitch.strip(), item.get("image"), item["url"])
     _mark_seen("round:lenz:seen", item["url"])
     return f"pitched \"{item['title'][:60]}\""
 
@@ -2344,7 +2493,8 @@ _NEWS_AGENTS = {"red", "blue", "gray"}
 def run_round(force=False, now=None, only=None):
     """Run every agent's job that is due (or all, with force; or just `only`),
     in parallel, and post one Hub line saying what each did."""
-    now = now or time.time()
+    started = time.time()
+    now = now or started
     st = store()
     last = json.loads(st.get_meta("round:last") or "{}")
     due = [a for a in ROUND_JOBS if (only is None or a in only)
@@ -2377,9 +2527,378 @@ def run_round(force=False, now=None, only=None):
     if idle:
         parts.append(f"{', '.join(idle)}: no job yet")
     if results:
+        try:
+            note = refresh_windows(deadline=started + 55)  # vercel.json allows 60 s
+        except Exception as e:  # windows are cosmetic: never fail a round over them
+            note = f"couldn't refresh ({str(e)[:80]})"
+        if note:
+            parts.append(f"Windows: {note}")
+    if results:
         post_event("hub", "Round: " + "; ".join(parts) + ".")
     return {"ok": True, "ran": results,
             "skipped": [a for a in ROUND_JOBS if a not in due], "no_job": idle}
+
+
+# ---- Agent windows: each agent's latest output as a small card with a
+# short title and a picture. Round jobs save cards; after each round the
+# titles are condensed (one cheap model call) and missing pictures are
+# looked up on Wikipedia. The dashboard only reads what's stored.
+WINDOW_TITLE_MAX = 48
+SHORT_KEEP = 400  # condensed titles remembered
+IMAGE_TTL = 7 * 86400  # how long a Wikipedia lookup is trusted
+WIKI_UA = "Theta-dashboard/1.0 (https://github.com/creatorcee-prog/dashboard-app)"
+_CARD_LOCK = threading.Lock()
+
+
+def _meta_json(key, default):
+    try:
+        return json.loads(store().get_meta(key) or "null") or default
+    except ValueError:
+        return default
+
+
+def save_card(agent, title, text="", image=None, url=None, source=None):
+    """What an agent just put out, for its window on the dashboard."""
+    with _CARD_LOCK:  # round jobs run in parallel threads
+        cards = _meta_json("cards", {})
+        cards[agent] = {"title": title[:300], "text": text[:600], "image": image, "url": url,
+                        "source": source, "at": time.time()}
+        store().set_meta("cards", json.dumps(cards))
+
+
+def _title_key(title):
+    return hashlib.sha1(" ".join(title.lower().split()).encode()).hexdigest()[:16]
+
+
+def trim_title(title, source=None, limit=WINDOW_TITLE_MAX):
+    """A token-free short title: drop the outlet's name and "BREAKING:"
+    style prefixes, then cut at a word boundary."""
+    t = " ".join(title.split())
+    if source:
+        t = re.sub(r"\s+[-–—|:]\s+" + re.escape(source) + r"\s*$", "", t, flags=re.I)
+    t = re.sub(r"^(breaking( news)?|live( updates)?|watch|exclusive|update|just in|developing)"
+               r"\s*[:|–—-]\s*", "", t, flags=re.I)
+    if len(t) <= limit:
+        return t
+    cut = t[:limit + 1].rsplit(" ", 1)[0].rstrip(",;:–—-| ")
+    return (cut or t[:limit]) + "…"
+
+
+def condense_titles(titles):
+    """One miner-model call: a widget title (6 words at most) and the main
+    subject for each title not condensed yet. Returns how many it added."""
+    cache = _meta_json("cards:short", {})
+    todo = list(dict.fromkeys(t for t in titles if t and _title_key(t) not in cache))[:30]
+    if not todo:
+        return 0
+    listing = "\n".join(f"{i}. {t}" for i, t in enumerate(todo, 1))
+    reply = llm_chat("miner", [
+        {"role": "system", "content": "You write titles for small dashboard widgets."},
+        {"role": "user", "content": "For each numbered headline, write a widget title of at most 6 "
+         "words that keeps the names and the key fact: no clickbait, no ending period, nothing "
+         "invented. Then ' | ' and the one person, place, film, show, song or thing it is mainly "
+         "about, written as its Wikipedia article title, or 'none'. One line per headline, like "
+         "'1. title | subject'.\n\n" + listing}], max_tokens=1600)
+    added = 0
+    for line in reply.splitlines():
+        m = re.match(r"\s*(\d+)[.)]\s*(.+?)\s*\|\s*(.*?)\s*$", line)
+        if not m or not 0 < int(m[1]) <= len(todo):
+            continue
+        short, subject = m[2].strip(" *\"'"), m[3].strip(" *\"'")
+        if not short or len(short) > 70:
+            continue
+        cache[_title_key(todo[int(m[1]) - 1])] = [
+            short, "" if subject.lower() in ("", "none", "n/a") else subject[:80]]
+        added += 1
+    if added:
+        store().set_meta("cards:short", json.dumps(dict(list(cache.items())[-SHORT_KEEP:])))
+    return added
+
+
+def wiki_image(subject):
+    """(answered, url): a free-licensed picture of `subject` from Wikipedia.
+    answered is False when Wikipedia couldn't be asked (so don't remember it)."""
+    base = {"action": "query", "format": "json", "formatversion": "2", "prop": "pageimages",
+            "piprop": "thumbnail", "pithumbsize": "800"}
+    for extra in ({"redirects": "1", "titles": subject},
+                  {"generator": "search", "gsrsearch": subject, "gsrlimit": "1"}):
+        req = urllib.request.Request("https://en.wikipedia.org/w/api.php?" + urlencode({**base, **extra}),
+                                     headers={"User-Agent": WIKI_UA})
+        try:
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                pages = json.loads(resp.read()).get("query", {}).get("pages", [])
+        except (urllib.error.URLError, TimeoutError, ValueError):
+            return False, None
+        for pg in pages:
+            src = (pg.get("thumbnail") or {}).get("source")
+            if src:
+                return True, src
+    return True, None
+
+
+def find_images(subjects, limit=8):
+    """Look up pictures for subjects not looked up lately (a few per round)."""
+    cache, now = _meta_json("cards:img", {}), time.time()
+    todo = [x for x in dict.fromkeys(subjects)
+            if x and now - cache.get(x.lower(), ["", 0])[1] > IMAGE_TTL][:limit]
+    if not todo:
+        return 0
+    found = 0
+    with ThreadPoolExecutor(max_workers=len(todo)) as ex:
+        for subject, (answered, url) in zip(todo, ex.map(wiki_image, todo)):
+            if answered:
+                cache[subject.lower()] = [url or "", now]
+                found += bool(url)
+    keep = sorted(cache.items(), key=lambda kv: kv[1][1])[-300:]
+    store().set_meta("cards:img", json.dumps(dict(keep)))
+    return found
+
+
+def _first_line(text, limit=160):
+    line = next((ln.strip() for ln in (text or "").splitlines() if ln.strip() and not ln.startswith("http")), "")
+    return line if len(line) <= limit else line[:limit - 1].rsplit(" ", 1)[0] + "…"
+
+
+def _tile_svg(c1, c2, big, small, top=""):
+    """A generated picture: a gradient tile with big text (dates, totals)."""
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200"><defs><linearGradient id="t" '
+           f'x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="{c1}"/><stop offset="1" stop-color="{c2}"/>'
+           f'</linearGradient></defs><rect width="320" height="200" fill="url(#t)"/>'
+           f'<circle cx="290" cy="20" r="90" fill="#fff" opacity=".08"/><circle cx="20" cy="210" r="70" fill="#fff" opacity=".07"/>'
+           f'<g fill="#fff" font-family="-apple-system,Segoe UI,Roboto,sans-serif" text-anchor="middle">'
+           f'<text x="160" y="58" font-size="20" font-weight="600" opacity=".85">{_x(top)}</text>'
+           f'<text x="160" y="128" font-size="64" font-weight="800">{_x(big)}</text>'
+           f'<text x="160" y="164" font-size="18" font-weight="600" opacity=".9">{_x(small)}</text></g></svg>')
+    return "data:image/svg+xml;charset=utf-8," + quote(svg)
+
+
+def _bars_svg(c1, c2, rows):
+    """A generated picture: budget bars (spent share per category)."""
+    bars = []
+    for i, (label, frac) in enumerate(rows[:4]):
+        y = 34 + i * 40
+        w = max(4, min(frac, 1) * 200)
+        bars.append(f'<text x="24" y="{y + 15}" font-size="14" font-weight="600">{_x(label[:12])}</text>'
+                    f'<rect x="110" y="{y + 2}" width="200" height="16" rx="8" fill="#fff" opacity=".22"/>'
+                    f'<rect x="110" y="{y + 2}" width="{w:.0f}" height="16" rx="8" fill="#fff" '
+                    f'opacity="{1 if frac < 1 else .95}"/>')
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200"><defs><linearGradient id="t" '
+           f'x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="{c1}"/><stop offset="1" stop-color="{c2}"/>'
+           f'</linearGradient></defs><rect width="320" height="200" fill="url(#t)"/>'
+           f'<g fill="#fff" font-family="-apple-system,Segoe UI,Roboto,sans-serif">{"".join(bars)}</g></svg>')
+    return "data:image/svg+xml;charset=utf-8," + quote(svg)
+
+
+def _win(agent, raw, sub="", image=None, href=None, at=None, tag=None, source=None, external=False, title=None,
+         fit=False):
+    """One window. raw: the full title (condensed later); title: already short;
+    fit: show the whole picture (charts) instead of filling the frame."""
+    return {"agent": agent, "raw": raw, "title": title, "sub": sub, "image": image,
+            "href": href or f"/agent/{agent}", "at": at, "tag": tag, "source": source,
+            "external": external, "fit": fit}
+
+
+def _latest_post(chat, agent, with_image=False):
+    for m in reversed(chat):
+        if m["from"] == agent and m.get("kind") != "event" and (m.get("image") or not with_image):
+            return m
+    return None
+
+
+def _at(stamp):
+    """Epoch seconds from a stored "YYYY-MM-DD HH:MM:SS" UTC stamp."""
+    try:
+        return datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def agent_windows(chat=None, cards=None):
+    """A window for every agent, from saved cards, then live data, then
+    their latest post. No model calls."""
+    chat = store().list_chat(ALLCHAT_KEEP) if chat is None else chat
+    cards = _meta_json("cards", {}) if cards is None else cards
+    out = {}
+    for a in ("red", "blue", "gray"):
+        c = cards.get(a)
+        if c:
+            out[a] = _win(a, c["title"], _first_line(c["text"]), c.get("image"), c.get("url"), c["at"],
+                          source=c.get("source"), external=bool(c.get("url")))
+        else:
+            heads = side_headlines(a, 1)
+            if heads:
+                h = heads[0]
+                out[a] = _win(a, h["title"], f"Top story at {h['source']}", h.get("image"), h["url"],
+                              h.get("published"), source=h["source"], external=True)
+            else:
+                out[a] = _win(a, "", "Their outlets have nothing new", title="No headlines yet")
+    c = cards.get("lenz")
+    if c:
+        out["lenz"] = _win("lenz", c["title"], _first_line(c["text"]), c.get("image"), c.get("url"), c["at"],
+                           external=bool(c.get("url")))
+    else:
+        try:
+            pick = (tmdb_trending() or [None])[0]
+        except LLMError:
+            pick = None
+        if pick:
+            out["lenz"] = _win("lenz", pick["title"], f"Trending {pick['kind'].lower()}"
+                               + (f" · {pick['rating']}/10" if pick["rating"] else ""), pick.get("image"),
+                               pick["url"], external=True)
+        else:
+            feed = widget_items(ENTERTAINMENT_FEEDS)
+            pick = next((w for w in feed if w.get("kind") == "song"), None) or next(iter(feed), None)
+            out["lenz"] = (_win("lenz", pick["title"], "Most played right now" if pick.get("kind") == "song"
+                                else f"New at {pick['source']}", pick.get("image"), pick["url"], external=True)
+                           if pick else _win("lenz", "", "Nothing trending yet", title="Nothing to pitch yet"))
+    look = AGENT_LOOKS
+    month = datetime.now(hub_tz()).strftime("%Y-%m")
+    status = month_status(month)
+    spent = sum(v["spent"] for v in status.values())
+    budget = sum(v["budget"] or 0 for v in status.values())
+    hot = sorted(((v["spent"] / v["budget"], k) for k, v in status.items() if v["budget"]), reverse=True)
+    if hot and hot[0][0] >= 0.9:
+        g_title = f"{hot[0][1]} {'over budget' if hot[0][0] >= 1 else f'at {hot[0][0]:.0%}'}"
+    elif spent:
+        g_title = f"${spent:,.0f} spent in {datetime.now(hub_tz()):%B}"
+    else:
+        g_title = "No spending logged yet"
+    g_sub = (f"{spent / budget:.0%} of ${budget:,.0f} budgeted" if budget else
+             "Set GLASS_BUDGETS or import a Rocket Money export")
+    g_img = (_bars_svg(look["glass"][0], look["glass"][1], [(k, f) for f, k in hot]) if hot else
+             _tile_svg(look["glass"][0], look["glass"][1], f"${spent:,.0f}", "this month", f"{datetime.now(hub_tz()):%B}"))
+    out["glass"] = _win("glass", "", g_sub, g_img, "/money", title=g_title)
+    today = datetime.now(hub_tz()).date()
+    if calendar_linked():
+        try:
+            soon = calendar_events(today, today + timedelta(days=14))
+        except Exception:
+            soon = []
+        now_dt = datetime.now(hub_tz())
+        upcoming = [o for o in soon if (o["start"] if o["all_day"] else o["start"]) >=
+                    (today if o["all_day"] else now_dt)] if soon else []
+        todays = [o for o in soon if (o["start"] if o["all_day"] else o["start"].date()) == today]
+        if upcoming:
+            o = upcoming[0]
+            d = o["start"] if o["all_day"] else o["start"].date()
+            when = "Today" if d == today else "Tomorrow" if d == today + timedelta(days=1) else f"{d:%a %b} {d.day}"
+            out["remi"] = _win("remi", o["title"], f"{when}{'' if o['all_day'] else ' · ' + _clock(o['start'])}"
+                               f" · {len(todays)} on today", _tile_svg(look["remi"][0], look["remi"][1],
+                               str(d.day), when if when in ("Today", "Tomorrow") else f"{d:%A}", f"{d:%B}"),
+                               "/calendar")
+        else:
+            out["remi"] = _win("remi", "", "Nothing in the next two weeks", _tile_svg(
+                look["remi"][0], look["remi"][1], str(today.day), f"{today:%A}", f"{today:%B}"),
+                "/calendar", title="A clear calendar")
+    else:
+        out["remi"] = _win("remi", "", "Link your Google Calendar to see what's next", _tile_svg(
+            look["remi"][0], look["remi"][1], str(today.day), f"{today:%A}", f"{today:%B}"),
+            "/calendar", title="No calendar linked")
+    chart = _latest_post(chat, "charter", with_image=True)
+    if chart:
+        out["charter"] = _win("charter", chart["text"], "Latest chart", chart["image"], at=_at(chart["at"]), fit=True)
+    elif spent:
+        caption, svg = _chart_spending(month)
+        out["charter"] = _win("charter", caption, "Ask me for any chart",
+                              "data:image/svg+xml;charset=utf-8," + quote(svg), fit=True)
+    else:
+        out["charter"] = _win("charter", "", "Ask in #money: \"@charter chart my spending\"",
+                              title="No charts yet")
+    for a, idle in (("mistral", "Digest and alerts land here"), ("theta", "Reviews and decisions land here")):
+        c = cards.get(a)
+        post = _latest_post(chat, a)
+        if c:
+            out[a] = _win(a, c["title"], _first_line(c["text"]), c.get("image"), c.get("url"), c["at"],
+                          external=bool(c.get("url")))
+        elif post:
+            out[a] = _win(a, _first_line(post["text"], 300), "", at=_at(post["at"]))
+        else:
+            out[a] = _win(a, "", idle, title="Nothing yet")
+    j = james_summary()
+    james_img = f"{GARAGE_GYM_URL}/james.png" if GARAGE_GYM_URL else None
+    fit = None if j else next(iter(store().list_fitness(1)), None)
+    if fit and isinstance(fit.get("summary"), dict) and fit["summary"]:
+        k, v = next(iter(fit["summary"].items()))
+        out["james"] = _win("james", "", f"From {display_name(fit['bot_id'])}", james_img,
+                            at=_at(fit["created_at"]), title=f"{k}: {v}"[:60])
+    elif j and j.get("summary"):
+        lines = [ln.strip("-• ") for ln in j["summary"].splitlines() if ln.strip()]
+        out["james"] = _win("james", next((ln for ln in lines if any(ch.isdigit() for ch in ln)), lines[0]),
+                            "From Garage Gym", james_img)
+    else:
+        out["james"] = _win("james", "", "Link Garage Gym to see your training" if not GARAGE_GYM_SECRET
+                            else "Garage Gym hasn't answered yet", james_img, title="Training")
+    return [out[a] for a in AGENTS if a in out]
+
+
+def _pushed_windows(event_type):
+    """Items bots sent with /api/report, as windows from that bot."""
+    out = []
+    for r in store().list_reports(50, event_type=event_type):
+        p = r["payload"]
+        if isinstance(p, dict) and p.get("title"):
+            bot = r["bot_id"] if r["bot_id"] in AGENTS else ""
+            out.append(_win(bot, p["title"], f"From {display_name(r['bot_id'])}", p.get("image"),
+                            p.get("url") or (f"/agent/{bot}" if bot else "/settings"), _at(r["created_at"]),
+                            source=p.get("source") if bot else display_name(r["bot_id"]), external=bool(p.get("url"))))
+        if len(out) >= 6:
+            break
+    return out
+
+
+def news_windows():
+    breaking, top = news_items()
+    return [_win("", it["title"], it["source"], it.get("image"), it["url"], it.get("published"),
+                 tag="Breaking" if it in breaking else None, source=it["source"], external=True)
+            for it in breaking + top] + _pushed_windows("news")
+
+
+def trending_windows():
+    out = _pushed_windows("entertainment")
+    try:
+        for it in tmdb_trending()[:6]:
+            out.append(_win("lenz", it["title"], it["kind"] + (f" · {it['rating']}/10" if it["rating"] else ""),
+                            it.get("image"), it["url"], external=True))
+    except LLMError:
+        pass
+    for it in widget_items(ENTERTAINMENT_FEEDS):
+        if len(out) >= 12:
+            break
+        out.append(_win("lenz", it["title"], "Most played song" if it.get("kind") == "song" else it["source"],
+                        it.get("image"), it["url"], external=True))
+    return out
+
+
+def finish_windows(wins, shorts=None, images=None):
+    """Short titles and looked-up pictures for windows, from the caches."""
+    shorts = _meta_json("cards:short", {}) if shorts is None else shorts
+    images = _meta_json("cards:img", {}) if images is None else images
+    for w in wins:
+        hit = shorts.get(_title_key(w["raw"])) if w["raw"] else None
+        if not w["title"]:
+            w["title"] = hit[0] if hit and hit[0] else trim_title(w["raw"], w.get("source"))
+        if not w["image"] and hit and hit[1]:
+            w["image"] = (images.get(hit[1].lower()) or [None])[0] or None
+    return wins
+
+
+def refresh_windows(deadline=None):
+    """After a round: condense new titles and find pictures for windows
+    that have none, skipping a step that might not finish by `deadline`
+    (the round must end inside Vercel's time limit; the next round
+    catches up). Returns a short note, or "" when nothing changed."""
+    deadline = deadline or time.time() + 60
+    wins = agent_windows() + news_windows() + trending_windows()
+    added = found = 0
+    if time.time() < deadline - LLM_TIMEOUT - 2:
+        added = condense_titles([w["raw"] for w in wins if w["raw"] and not w["title"]])
+    if time.time() < deadline - 14:  # one batch of lookups: 2 tries x 6 s
+        shorts = _meta_json("cards:short", {})
+        subjects = [shorts.get(_title_key(w["raw"]), ["", ""])[1] for w in wins if w["raw"] and not w["image"]]
+        found = find_images([x for x in subjects if x], limit=6)
+    bits = ([f"{added} new window title{'s' if added != 1 else ''}"] if added else []) + (
+        [f"{found} picture{'s' if found != 1 else ''}"] if found else [])
+    return ", ".join(bits)
 
 
 # ---- Slash commands: typed in either chat box ("/" opens the list, like
@@ -2711,313 +3230,1205 @@ def _login_cookie(query):
     return []
 
 
-# Dashboard chat box. One-on-one history lives in the page only (one per
-# agent) and posts to /api/chat; "All Agents" is the shared thread at
-# /api/allchat, refreshed every 8 s while open. The Wiring panel below it
-# reads /api/wiring and can send each agent a tiny test message.
-_CHAT_JS = """
-const key = new URLSearchParams(location.search).get("key") || "";
-const H = {"Content-Type": "application/json", "x-dashboard-key": key};
-const ALL = "__all";
-const hist = {};
-let thread = [], poll = null;
-const agentSel = document.getElementById("chat-agent"), log = document.getElementById("chat-log");
-const msg = document.getElementById("chat-msg"), btn = document.getElementById("chat-send");
-const status = document.getElementById("chat-status");
-function line(who, text, image) {
-  const p = document.createElement("p"), b = document.createElement("b");
-  b.textContent = who + ": ";
-  p.style.whiteSpace = "pre-wrap";
-  p.append(b, text);
-  if (image) {
-    const img = document.createElement("img");
-    img.src = image; img.alt = text; img.style.cssText = "display:block;max-width:100%;margin-top:6px;border:1px solid #ddd";
-    p.append(img);
-  }
-  return p;
-}
-function eventLine(text) {
-  const p = document.createElement("p");
-  p.style.cssText = "white-space:pre-wrap;color:#666;font-style:italic;font-size:0.9em";
-  p.textContent = "\u2022 " + text;
-  return p;
-}
-function show() {
-  if (agentSel.value === ALL) {
-    log.replaceChildren(...thread.map(m => m.kind === "event" ? eventLine(m.text) : line(m.name, m.text, m.image)));
-    return;
-  }
-  const name = agentSel.selectedOptions[0].dataset.name;
-  log.replaceChildren(...(hist[agentSel.value] || []).map(m => line(m.role === "user" ? "You" : name, m.content, m.image)));
-}
-async function loadThread() {
-  try {
-    const d = await (await fetch("/api/allchat", {headers: H})).json();
-    if (d.ok) { thread = d.messages; if (agentSel.value === ALL) show(); }
-  } catch (err) {}
-}
-function onAgent() {
-  status.textContent = "";
-  clearInterval(poll); poll = null;
-  if (agentSel.value === ALL) {
-    msg.placeholder = "Message everyone. @mention agents (like @remi or @james) for a reply.";
-    loadThread();
-    poll = setInterval(() => { if (!document.hidden) loadThread(); }, 8000);
-  } else {
-    msg.placeholder = "";
-  }
-  show();
-}
-agentSel.onchange = onAgent;
-async function runCommand(text) {
-  status.textContent = "Running " + text.split(" ")[0] + "...";
-  try {
-    const d = await (await fetch("/api/allchat", {method: "POST", headers: H, body: JSON.stringify({text})})).json();
-    if (!d.ok) throw new Error(d.error);
-    thread = d.messages;
-    status.textContent = d.result + (agentSel.value === ALL ? "" : " (in All Agents)");
-  } catch (err) {
-    msg.value = text;
-    status.textContent = err.message;
-  }
-  btn.disabled = false;
-  show();
+# ---- The app's look: color schemes, layouts and pages. Pages render in
+# the theme, mode and layout saved in the theta_ui cookie (Settings).
+# Color schemes. Each has a light and a dark palette; the page follows the
+# device unless a mode is picked. glow: how strongly the accents tint the
+# page background (0-1). glass: frosted, see-through cards.
+def _pal(bg, surface, surface2, border, text, muted, accent, accent2, on):
+    return {"bg": bg, "surface": surface, "surface2": surface2, "border": border, "text": text,
+            "muted": muted, "accent": accent, "accent2": accent2, "on": on}
+
+
+THEMES = {
+    "theta": {"label": "Theta", "about": "Indigo and cyan, the house colors", "glow": 0.5,
+              "light": _pal("#f4f5fb", "#ffffff", "#eceefa", "#dfe2f0", "#151833", "#555b7e", "#5543e8", "#0b7f9c", "#ffffff"),
+              "dark": _pal("#0c0e1a", "#151829", "#1d2136", "#2a2f4a", "#e9ebf8", "#a3a8c8", "#958dff", "#3dd6f0", "#0c0e1a")},
+    "midnight": {"label": "Midnight", "about": "Deep royal blue, like a bank app at night", "glow": 0.8,
+                 "light": _pal("#eef3ff", "#ffffff", "#e3ebff", "#d0dcf8", "#0b1b4d", "#46578a", "#1d4ed8", "#6d28d9", "#ffffff"),
+                 "dark": _pal("#071334", "#0e2156", "#142a68", "#233c84", "#eaf0ff", "#a8b9e6", "#7cb4ff", "#c4a1ff", "#071334")},
+    "nebula": {"label": "Nebula", "about": "Purple and pink on charcoal", "glow": 0.9,
+               "light": _pal("#faf6ff", "#ffffff", "#f2eafe", "#e5d8fa", "#1f1430", "#66557f", "#7e22ce", "#be185d", "#ffffff"),
+               "dark": _pal("#12101b", "#1c1928", "#262236", "#352e4b", "#f1ecfb", "#afa2c9", "#b98bff", "#f58cc4", "#12101b")},
+    "aurora": {"label": "Aurora Glass", "about": "Frosted glass over neon light", "glow": 1.6, "glass": True,
+               "light": _pal("#eef0ff", "rgba(255,255,255,.62)", "rgba(255,255,255,.78)", "rgba(255,255,255,.95)",
+                             "#121530", "#474d70", "#6425d0", "#0b7590", "#ffffff"),
+               "dark": _pal("#070818", "rgba(255,255,255,.07)", "rgba(255,255,255,.12)", "rgba(255,255,255,.16)",
+                            "#f3f4ff", "#b9bddc", "#38dcf5", "#ee8cfb", "#070818")},
+    "graphite": {"label": "Graphite", "about": "Charcoal with coral and amber", "glow": 0.35,
+                 "light": _pal("#e8eaee", "#f6f7f9", "#e0e3e8", "#d1d5dc", "#1d2026", "#555b67", "#c52a5f", "#b8470a", "#ffffff"),
+                 "dark": _pal("#23262c", "#2c3037", "#353a42", "#41464f", "#eef0f3", "#aab0ba", "#ff7aa4", "#ffb366", "#23262c")},
+    "lobby": {"label": "Lobby", "about": "Blurple chat-app gray", "glow": 0,
+              "light": _pal("#f2f3f5", "#ffffff", "#ebedef", "#dfe1e5", "#1e1f22", "#565961", "#4752c4", "#1d7f45", "#ffffff"),
+              "dark": _pal("#1e1f22", "#2b2d31", "#313338", "#3c3f45", "#f2f3f5", "#b5bac1", "#9ba3ff", "#57d68d", "#1e1f22")},
+    "forest": {"label": "Forest", "about": "Pine green and goldenrod", "glow": 0.4,
+               "light": _pal("#f2f7f3", "#ffffff", "#e6f0e9", "#d3e3d8", "#10241a", "#47604f", "#15703a", "#8a5a00", "#ffffff"),
+               "dark": _pal("#0b1510", "#122019", "#182a21", "#24392d", "#e6f4ea", "#9dbaa8", "#5ee391", "#f2cc3d", "#0b1510")},
+    "ember": {"label": "Ember", "about": "Campfire orange and rose", "glow": 0.5,
+              "light": _pal("#fff7f1", "#ffffff", "#ffeee2", "#f3d9c6", "#2a1408", "#73513b", "#b53a09", "#b0103a", "#ffffff"),
+              "dark": _pal("#170e0a", "#221510", "#2d1c15", "#3f291f", "#fbeee6", "#c9ab9a", "#ff9d4d", "#ff8199", "#170e0a")},
+    "ocean": {"label": "Ocean", "about": "Teal and sky blue", "glow": 0.5,
+              "light": _pal("#effafb", "#ffffff", "#e0f4f6", "#cbe6ea", "#08262c", "#41626a", "#0b6680", "#1d4ed8", "#ffffff"),
+              "dark": _pal("#061a1f", "#0b252c", "#10313a", "#1a4450", "#e3f7f9", "#94bcc3", "#3ee0c8", "#60c4ff", "#061a1f")},
+    "paper": {"label": "Paper", "about": "Ink on paper, almost no color", "glow": 0,
+              "light": _pal("#f7f6f1", "#fffefa", "#efede5", "#e0ddd1", "#1a1a17", "#5a584f", "#1a1a17", "#9a4405", "#fffefa"),
+              "dark": _pal("#121211", "#1b1b19", "#242421", "#33332f", "#eeede8", "#a9a79e", "#eeede8", "#f5a524", "#121211")},
+    "sakura": {"label": "Sakura", "about": "Cherry blossom pink and violet", "glow": 0.6,
+               "light": _pal("#fff5f8", "#ffffff", "#ffe8ef", "#f8d3df", "#2b1220", "#754e61", "#b0165a", "#6d28d9", "#ffffff"),
+               "dark": _pal("#1a0f15", "#25161e", "#301d28", "#45293a", "#fbeaf1", "#cfa9bb", "#ffa6d3", "#c8b8ff", "#1a0f15")},
+    "terminal": {"label": "Terminal", "about": "Phosphor green, monospace", "glow": 0.25, "mono": True,
+                 "light": _pal("#f4f7f2", "#ffffff", "#e8efe5", "#d2ddcd", "#0f1a0c", "#4a5b44", "#146c34", "#0b5d8f", "#ffffff"),
+                 "dark": _pal("#050805", "#0b100b", "#111a11", "#1f301f", "#c8f7c5", "#86b382", "#3dff8b", "#3fd8f0", "#050805")},
 }
 
-// "@" and "/" menus, like Discord: type to filter, arrows + Enter/Tab, Esc, or tap.
-const menu = document.getElementById("chat-menu");
-let menuItems = [], menuActive = 0, menuRange = null;
-function menuQuery() {
-  const before = msg.value.slice(0, msg.selectionStart);
-  let m = before.match(/(^|\\s)@([\\w-]*)$/);
-  if (m && agentSel.value === ALL) return {kind: "@", q: m[2].toLowerCase(), start: before.length - m[2].length - 1};
-  m = before.match(/^\\/(\\w*)$/);
-  if (m) return {kind: "/", q: m[1].toLowerCase(), start: 0};
-  return null;
+
+MODES = {"auto": "Match device", "light": "Light", "dark": "Dark"}
+LAYOUTS = {
+    "grid": ("Grid", "Tiles side by side, like a dashboard"),
+    "feed": ("Feed", "One big card at a time, like a social feed"),
+    "magazine": ("Magazine", "A headline window, then rows you swipe"),
+    "compact": ("Compact", "A dense list with thumbnails, like a bank app"),
 }
-function closeMenu() { menu.hidden = true; menuItems = []; menuRange = null; msg.removeAttribute("aria-activedescendant"); }
-function renderMenu() {
-  const q = menuQuery();
-  if (!q) return closeMenu();
-  const src = q.kind === "@" ? HUB_MENU.agents : HUB_MENU.commands;
-  const key = x => (q.kind === "@" ? x.name : x.name).toLowerCase();
-  menuItems = src.filter(x => key(x).startsWith(q.q) || (q.kind === "@" && x.id.startsWith(q.q)))
-    .concat(src.filter(x => !key(x).startsWith(q.q) && key(x).includes(q.q) && q.q)).slice(0, 12);
-  if (!menuItems.length) return closeMenu();
-  menuRange = q; menuActive = Math.min(menuActive, menuItems.length - 1);
-  menu.replaceChildren(...menuItems.map((x, i) => {
-    const li = document.createElement("li");
-    li.id = "chat-menu-" + i; li.setAttribute("role", "option");
-    li.setAttribute("aria-selected", String(i === menuActive));
-    li.style.cssText = "padding:6px 10px;cursor:pointer;" + (i === menuActive ? "background:#e8eefc" : "");
-    const b = document.createElement("b"), small = document.createElement("span");
-    small.style.color = "#666";
-    if (q.kind === "@") {
-      const dot = document.createElement("span");
-      dot.textContent = "\u25CF "; dot.style.color = x.online ? "#1a7f37" : "#aaa";
-      b.textContent = x.name; small.textContent = " " + x.tier;
-      li.append(dot, b, small);
+_STATE_COLORS = {"light": {"good": "#15803d", "warn": "#b45309", "bad": "#c81e1e"},
+                 "dark": {"good": "#4ade80", "warn": "#fbbf24", "bad": "#f87171"}}
+
+
+def _theme_vars(t, mode):
+    p, glow = t[mode], t.get("glow", 0)
+    v = {f"--{k}": val for k, val in p.items()}
+    v.update({f"--{k}": val for k, val in _STATE_COLORS[mode].items()})
+    v["--shadow"] = ("0 1px 2px rgba(16,24,40,.05),0 6px 18px rgba(16,24,40,.06)" if mode == "light"
+                     else "0 1px 2px rgba(0,0,0,.35),0 8px 24px rgba(0,0,0,.25)")
+    if glow:
+        a1, a2 = round(16 * glow), round(13 * glow)
+        layers = [f"radial-gradient(1000px 560px at -5% -10%,color-mix(in srgb,var(--accent) {a1}%,transparent),transparent 70%)",
+                  f"radial-gradient(900px 560px at 105% 0%,color-mix(in srgb,var(--accent2) {a2}%,transparent),transparent 70%)"]
+        if t.get("glass"):
+            layers += [f"radial-gradient(800px 600px at 70% 105%,color-mix(in srgb,#ff7a3d {round(14 * glow)}%,transparent),transparent 70%)",
+                       f"radial-gradient(700px 500px at 10% 90%,color-mix(in srgb,#22c55e {round(8 * glow)}%,transparent),transparent 70%)"]
+        v["--glowbg"] = ",".join(layers)
+    else:
+        v["--glowbg"] = "none"
+    return ";".join(f"{k}:{val}" for k, val in v.items()) + f";color-scheme:{mode}"
+
+
+def theme_css():
+    out = []
+    for name, t in THEMES.items():
+        sel = f':root[data-theme="{name}"]'
+        out.append(f"{sel}{{{_theme_vars(t, 'light')}}}")
+        out.append(f'{sel}[data-mode="dark"]{{{_theme_vars(t, "dark")}}}')
+        out.append(f'@media (prefers-color-scheme:dark){{{sel}:not([data-mode="light"]){{{_theme_vars(t, "dark")}}}}}')
+    return "\n".join(out)
+
+
+_BASE_CSS = r'''
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;--r:18px;--tabh:calc(60px + env(safe-area-inset-bottom))}
+body{margin:0;background:var(--bg);color:var(--text);min-height:100dvh;
+ font:15px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Inter,Roboto,system-ui,sans-serif;
+ -webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
+body::before{content:"";position:fixed;inset:0;z-index:-1;background:var(--glowbg);pointer-events:none}
+:root[data-font="mono"] body{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:14px}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+h1,h2,h3{margin:0;letter-spacing:-.018em;line-height:1.2}
+h1{font-size:28px;font-weight:780}
+h2{font-size:19px;font-weight:720}
+h3{font-size:15px;font-weight:680}
+p{margin:.4em 0}
+code{font:12.5px ui-monospace,Menlo,monospace;background:var(--surface2);padding:1px 5px;border-radius:6px}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.muted{color:var(--muted)}
+.small{font-size:12.5px}
+.eyebrow{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+/* Shell: tab bar on phones, sidebar from 900px */
+.rail{display:none}
+.main{padding:calc(env(safe-area-inset-top) + 16px) 16px calc(var(--tabh) + 28px);max-width:1180px;margin:0 auto;min-width:0}
+.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:40;display:flex;justify-content:space-around;
+ padding:6px 4px calc(env(safe-area-inset-bottom) + 6px);height:var(--tabh);
+ background:color-mix(in srgb,var(--bg) 78%,transparent);-webkit-backdrop-filter:blur(22px) saturate(170%);
+ backdrop-filter:blur(22px) saturate(170%);border-top:1px solid var(--border)}
+.tabbar a{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:10.5px;
+ font-weight:650;color:var(--muted);text-decoration:none;border-radius:12px}
+.tabbar a svg{width:24px;height:24px}
+.tabbar a.on{color:var(--accent)}
+body.typing .tabbar{display:none}
+@media (min-width:900px){
+ .app{display:grid;grid-template-columns:248px minmax(0,1fr)}
+ .rail{display:flex;flex-direction:column;gap:2px;position:sticky;top:0;height:100dvh;overflow-y:auto;padding:20px 12px;
+  border-right:1px solid var(--border);background:color-mix(in srgb,var(--surface) 72%,transparent);
+  -webkit-backdrop-filter:blur(22px);backdrop-filter:blur(22px)}
+ .tabbar{display:none}
+ .main{padding:30px 34px 56px;width:100%}
+}
+.brand{display:flex;align-items:center;gap:10px;font-weight:820;font-size:21px;letter-spacing:-.03em;padding:2px 10px 16px;color:var(--text)}
+.brand:hover{text-decoration:none}
+.rail nav{display:flex;flex-direction:column;gap:2px}
+.rail nav a{display:flex;align-items:center;gap:12px;padding:9px 12px;border-radius:12px;color:var(--muted);font-weight:650;text-decoration:none}
+.rail nav a svg{width:20px;height:20px}
+.rail nav a:hover{background:var(--surface2);color:var(--text)}
+.rail nav a.on{background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent)}
+.rail .label{font-size:11px;font-weight:750;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);padding:18px 12px 6px}
+.crewlink{display:flex;align-items:center;gap:10px;padding:5px 10px;border-radius:10px;color:var(--text);font-size:14px;font-weight:560}
+.crewlink:hover{background:var(--surface2);text-decoration:none}
+.crewlink .act{margin-left:auto;font-size:11px;color:var(--muted);max-width:84px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Avatars */
+.av{display:block;flex:none;border-radius:30%}
+.avw{position:relative;display:inline-flex;flex:none}
+.dot{position:absolute;right:-2px;bottom:-2px;width:11px;height:11px;border-radius:50%;background:var(--muted);border:2px solid var(--surface)}
+.dot.on{background:var(--good)}
+
+/* Building blocks */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px;box-shadow:var(--shadow)}
+:root[data-glass] .card,:root[data-glass] .win,:root[data-glass] .kpi,:root[data-glass] .sw{-webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%)}
+.stack{display:flex;flex-direction:column;gap:14px}
+.top{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin:2px 0 20px;flex-wrap:wrap}
+.top.tight{flex-wrap:nowrap;align-items:center}
+.top.tight .btn{flex:none}
+.note:empty{display:none}
+@media (max-width:520px){.top h1{font-size:26px}.top .btn.rr span{display:none}.top .btn.rr{padding:11px}}
+.top h1{font-size:30px}
+.sect{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:30px 0 12px}
+.sect a{font-weight:650;font-size:14px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:12px;padding:10px 15px;font-weight:680;
+ background:var(--accent);color:var(--on);cursor:pointer;text-decoration:none;transition:transform .12s,filter .12s;white-space:nowrap}
+.btn:hover{filter:brightness(1.07);text-decoration:none}
+.btn:active{transform:scale(.97)}
+.btn.ghost{background:var(--surface2);color:var(--text);border:1px solid var(--border)}
+.btn.small{padding:6px 11px;font-size:13px;border-radius:10px}
+.btn:disabled{opacity:.55;cursor:default}
+.btn svg{width:18px;height:18px}
+.chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 11px;font-size:12.5px;font-weight:650;
+ background:var(--surface2);color:var(--muted);border:1px solid var(--border);text-decoration:none;white-space:nowrap}
+.chip.on{background:var(--accent);color:var(--on);border-color:transparent}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.note{font-size:13px;color:var(--muted);min-height:18px}
+.list{list-style:none;margin:0;padding:0}
+.list li{padding:10px 0;border-bottom:1px solid var(--border)}
+.list li:last-child{border-bottom:0}
+.foot{margin-top:36px;font-size:12px;color:var(--muted)}
+.empty{color:var(--muted);font-size:14px;padding:6px 0}
+
+/* KPI tiles with rings */
+.kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (min-width:760px){.kpis{grid-template-columns:repeat(4,minmax(0,1fr))}}
+.kpi{display:flex;align-items:center;gap:12px;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);
+ box-shadow:var(--shadow);color:var(--text);min-width:0}
+a.kpi:hover{text-decoration:none;border-color:color-mix(in srgb,var(--accent) 50%,var(--border))}
+.kpi .v{font-size:21px;font-weight:780;letter-spacing:-.02em;line-height:1.1}
+.kpi .l{font-size:12px;color:var(--muted);font-weight:600}
+.kpi .s{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi > div{min-width:0}
+.ring{flex:none;display:block}
+.ico{flex:none;width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent)}
+.ico svg{width:22px;height:22px}
+
+/* Windows (agent and story cards) */
+.wins{display:grid;gap:12px;grid-template-columns:repeat(2,minmax(0,1fr))}
+@media (min-width:760px){.wins{grid-template-columns:repeat(auto-fill,minmax(212px,1fr));gap:14px}}
+.win{position:relative;display:flex;flex-direction:column;min-width:0;background:var(--surface);border:1px solid var(--border);
+ border-radius:var(--r);overflow:hidden;color:var(--text);box-shadow:var(--shadow);transition:transform .16s,border-color .16s}
+.win:hover{text-decoration:none;transform:translateY(-2px);border-color:color-mix(in srgb,var(--accent) 45%,var(--border))}
+.win:active{transform:scale(.985)}
+.pic{position:relative;aspect-ratio:16/10;overflow:hidden;background:var(--surface2);flex:none}
+.pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
+.ph{position:absolute;inset:0;display:grid;place-items:center;background:linear-gradient(135deg,var(--c1),var(--c2))}
+.ph svg{width:34%;max-width:72px;height:auto;opacity:.92}
+.ph::after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 85% 10%,rgba(255,255,255,.22),transparent 45%)}
+.tag{position:absolute;left:8px;top:8px;z-index:2;background:var(--bad);color:#fff;font-size:10.5px;font-weight:800;letter-spacing:.06em;
+ text-transform:uppercase;padding:3px 8px;border-radius:999px}
+.win .body{display:flex;flex-direction:column;gap:5px;padding:10px 12px 13px;flex:1;min-width:0}
+.who{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:680;color:var(--muted);min-width:0}
+.who span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.who .nm{flex:none}
+.who .src{min-width:0;font-weight:560}
+@media (max-width:520px){.wins:not(.swipe) .who .src{display:none}}
+.pic img.fit{object-fit:contain;background:#fff;padding:6px}
+.who .t{margin-left:auto;font-weight:520;flex:none}
+.who img{width:18px;height:18px;border-radius:6px}
+.win .title{font-weight:720;font-size:15px;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.win .sub{font-size:12.5px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.swipe .win .sub{-webkit-line-clamp:1}
+
+/* Feed: one column of big cards */
+:root[data-layout="feed"] .wins{grid-template-columns:minmax(0,1fr);max-width:640px}
+:root[data-layout="feed"] .pic{aspect-ratio:16/9}
+:root[data-layout="feed"] .win .title{font-size:19px}
+:root[data-layout="feed"] .win .sub{font-size:14px;-webkit-line-clamp:3}
+:root[data-layout="feed"] .win .body{padding:12px 16px 16px;gap:7px}
+
+/* Magazine: a hero window, then swipeable rows */
+:root[data-layout="magazine"] .wins:not(.swipe) > .win:first-child{grid-column:1/-1}
+:root[data-layout="magazine"] .wins:not(.swipe) > .win:first-child .pic{aspect-ratio:4/3}
+@media (min-width:760px){:root[data-layout="magazine"] .wins:not(.swipe) > .win:first-child .pic{aspect-ratio:auto;height:clamp(260px,30vw,400px)}}
+:root[data-layout="magazine"] .wins:not(.swipe) > .win:first-child .body{position:absolute;left:0;right:0;bottom:0;z-index:2;
+ padding:60px 18px 18px;background:linear-gradient(transparent,rgba(0,0,0,.82));color:#fff}
+:root[data-layout="magazine"] .wins:not(.swipe) > .win:first-child .who,
+:root[data-layout="magazine"] .wins:not(.swipe) > .win:first-child .sub{color:rgba(255,255,255,.86)}
+:root[data-layout="magazine"] .wins:not(.swipe) > .win:first-child .title{font-size:24px;-webkit-line-clamp:3}
+:root[data-layout="magazine"] .wins.swipe{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:6px;
+ margin:0 -16px;padding-left:16px;padding-right:16px;scroll-padding:16px;scrollbar-width:none}
+:root[data-layout="magazine"] .wins.swipe::-webkit-scrollbar{display:none}
+:root[data-layout="magazine"] .wins.swipe > .win{flex:0 0 min(74%,270px);scroll-snap-align:start}
+@media (min-width:900px){:root[data-layout="magazine"] .wins.swipe{margin:0;padding-left:0;padding-right:0}}
+
+/* Compact: a list with thumbnails */
+:root[data-layout="compact"] .wins{grid-template-columns:minmax(0,1fr);gap:0;background:var(--surface);border:1px solid var(--border);
+ border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow)}
+@media (min-width:1000px){:root[data-layout="compact"] .wins{grid-template-columns:repeat(2,minmax(0,1fr))}}
+:root[data-layout="compact"] .win{flex-direction:row;align-items:center;border:0;border-bottom:1px solid var(--border);border-radius:0;
+ box-shadow:none;background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none}
+:root[data-layout="compact"] .win:hover{transform:none;background:var(--surface2)}
+:root[data-layout="compact"] .pic{width:60px;height:60px;aspect-ratio:auto;margin:10px 0 10px 12px;border-radius:14px}
+:root[data-layout="compact"] .tag{left:3px;top:3px;font-size:8px;padding:2px 5px}
+:root[data-layout="compact"] .ph svg{width:46%}
+:root[data-layout="compact"] .win .body{padding:10px 14px;gap:3px}
+:root[data-layout="compact"] .win .title{font-size:14.5px;-webkit-line-clamp:1}
+:root[data-layout="compact"] .win .sub{-webkit-line-clamp:1}
+
+/* Chat (Discord-style): icon strip | channels | messages | members */
+body.chatpage .main{padding:0;max-width:none}
+@media (min-width:900px){
+ body.chatpage .app{grid-template-columns:76px minmax(0,1fr)}
+ body.chatpage .rail{padding:14px 10px;align-items:center}
+ body.chatpage .rail .brand{padding:2px 0 12px;font-size:0;gap:0}
+ body.chatpage .rail nav a{padding:10px;justify-content:center}
+ body.chatpage .rail nav a span,body.chatpage .rail .label,body.chatpage .crewlink .act{display:none}
+ body.chatpage .crewlink{font-size:0;gap:0;padding:5px}
+ body.chatpage .rail .crewlink:first-of-type{margin-top:14px;border-top:1px solid var(--border);padding-top:14px;border-radius:0}
+}
+@media (max-width:620px){.meta .tier{display:none}}
+.chat{display:grid;grid-template-columns:minmax(0,1fr);height:calc(100dvh - var(--tabh))}
+body.typing .chat{height:100dvh}
+@media (min-width:900px){.chat{height:100dvh;grid-template-columns:230px minmax(0,1fr)}}
+@media (min-width:1200px){.chat{grid-template-columns:230px minmax(0,1fr) 250px}}
+.chans,.members{display:none}
+@media (min-width:900px){.chans{display:flex;flex-direction:column;gap:2px;padding:20px 10px;border-right:1px solid var(--border);overflow-y:auto}}
+@media (min-width:1200px){.members{display:block;padding:20px 12px;border-left:1px solid var(--border);overflow-y:auto}}
+.chans .label,.members .label{font-size:11px;font-weight:750;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);padding:6px 10px}
+.chans a{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:10px;color:var(--muted);font-weight:620}
+.chans a:hover{background:var(--surface2);color:var(--text);text-decoration:none}
+.chans a.on{background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--text)}
+.hash{font-weight:500;opacity:.65;font-size:18px;line-height:1}
+.thread{display:flex;flex-direction:column;min-height:0;min-width:0}
+.chathead{display:flex;align-items:center;gap:10px;padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;border-bottom:1px solid var(--border);
+ background:color-mix(in srgb,var(--bg) 80%,transparent);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);min-width:0}
+.chathead b{font-size:16px;white-space:nowrap}
+.chathead .about{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+.chathead .btn{flex:none}
+@media (min-width:1200px){#members-btn{display:none}}
+.chiprow{display:flex;gap:6px;overflow-x:auto;padding:8px 12px;border-bottom:1px solid var(--border);scrollbar-width:none;flex:none}
+.chiprow::-webkit-scrollbar{display:none}
+@media (min-width:900px){.chiprow{display:none}}
+.msgs{flex:1;overflow-y:auto;padding:10px 0 6px;overscroll-behavior:contain;min-height:0}
+.msg{display:grid;grid-template-columns:40px minmax(0,1fr);column-gap:12px;padding:5px 16px 3px}
+.msg:hover{background:color-mix(in srgb,var(--surface2) 55%,transparent)}
+.msg.cont{padding-top:1px}
+.msg.cont .avcol{height:0;overflow:hidden}
+.msg.cont .meta{display:none}
+.new{animation:pop .25s ease-out}
+@keyframes pop{from{opacity:0;transform:translateY(4px)}}
+.meta{display:flex;align-items:baseline;gap:8px;min-width:0}
+.meta .name{font-weight:720;color:color-mix(in srgb,var(--n) 62%,var(--text))}
+.meta .tier{font-size:10px;font-weight:750;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);border:1px solid var(--border);border-radius:5px;padding:0 4px}
+.meta time{font-size:11.5px;color:var(--muted)}
+.text{white-space:pre-wrap;overflow-wrap:anywhere}
+.text .at{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);border-radius:5px;padding:0 3px;font-weight:620}
+.att{display:block;max-width:min(100%,440px);border-radius:12px;margin-top:6px;border:1px solid var(--border);background:#fff}
+.evt{display:flex;gap:8px;align-items:flex-start;padding:4px 16px 4px 28px;color:var(--muted);font-size:13px}
+.evt img{width:16px;height:16px;border-radius:5px;margin-top:2px;flex:none}
+.evt span{overflow-wrap:anywhere}
+.daysep{display:flex;align-items:center;gap:10px;margin:14px 16px 6px;font-size:11.5px;font-weight:700;color:var(--muted)}
+.daysep::before,.daysep::after{content:"";flex:1;height:1px;background:var(--border)}
+.composer{position:relative;padding:8px 12px calc(10px + env(safe-area-inset-bottom) * 0);flex:none}
+.box{display:flex;align-items:flex-end;gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:18px;padding:5px 5px 5px 14px}
+.box:focus-within{border-color:color-mix(in srgb,var(--accent) 60%,var(--border))}
+.box textarea{flex:1;border:0;background:transparent;resize:none;outline:none;max-height:168px;padding:8px 0;line-height:1.4;min-width:0}
+.send{width:40px;height:40px;padding:0;border-radius:14px;flex:none}
+#chat-menu{position:absolute;bottom:100%;left:12px;right:12px;max-height:280px;overflow-y:auto;margin:0 0 6px;padding:6px;list-style:none;
+ background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 12px 32px rgba(0,0,0,.22);z-index:20}
+:root[data-glass] #chat-menu{-webkit-backdrop-filter:blur(24px);backdrop-filter:blur(24px)}
+#chat-menu li{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:10px;cursor:pointer}
+#chat-menu li[aria-selected="true"]{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+#chat-menu img{width:26px;height:26px;border-radius:8px}
+#chat-menu .muted{font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mrow{display:flex;align-items:center;gap:10px;padding:6px 10px;border-radius:10px;color:var(--text);min-width:0}
+.mrow:hover{background:var(--surface2);text-decoration:none}
+.mrow b{font-weight:640;display:block}
+.mrow .muted{font-size:11.5px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mrow > span:last-child{min-width:0}
+.members.open{display:block;position:fixed;top:0;right:0;bottom:0;width:min(86vw,300px);z-index:60;background:var(--surface);
+ padding:calc(env(safe-area-inset-top) + 16px) 12px 20px;box-shadow:-12px 0 40px rgba(0,0,0,.3);overflow-y:auto}
+.scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:55}
+.scrim.open{display:block}
+
+/* Settings */
+.swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:10px}
+.sw{display:flex;flex-direction:column;justify-content:flex-start;width:100%;border:2px solid var(--border);border-radius:16px;padding:0;overflow:hidden;background:var(--surface);cursor:pointer;text-align:left;color:var(--text)}
+.sw.on{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 28%,transparent)}
+.sw .pv{display:grid;grid-template-columns:1fr 1fr;height:62px}
+.sw .pv span{display:flex;flex-direction:column;justify-content:flex-end;gap:4px;padding:9px}
+.sw .pv i{display:block;height:7px;border-radius:4px}
+.sw .nm{display:block;padding:8px 10px 9px;font-weight:700;font-size:13.5px}
+.sw .nm small{display:block;color:var(--muted);font-weight:500;font-size:11.5px;line-height:1.3;margin-top:1px}
+.seg{display:inline-flex;background:var(--surface2);border:1px solid var(--border);border-radius:13px;padding:3px;gap:2px;flex-wrap:wrap}
+.seg button{border:0;background:transparent;padding:7px 14px;border-radius:10px;font-weight:650;color:var(--muted);cursor:pointer}
+.seg button.on{background:var(--surface);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.16)}
+.layouts{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
+.lo{display:flex;flex-direction:column;justify-content:flex-start;border:2px solid var(--border);border-radius:16px;background:var(--surface);padding:10px;cursor:pointer;text-align:left;color:var(--text)}
+.lo.on{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 28%,transparent)}
+.lo svg{display:block;width:100%;height:auto;margin-bottom:8px;color:var(--muted)}
+.lo b{display:block;font-size:13.5px}
+.lo small{display:block;color:var(--muted);font-size:11.5px;line-height:1.3}
+.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
+.tbl th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:750;padding:6px 8px;border-bottom:1px solid var(--border)}
+.tbl td{padding:8px;border-bottom:1px solid var(--border);vertical-align:top}
+.tbl tr:last-child td{border-bottom:0}
+.scrollx{overflow-x:auto}
+.grid2{display:grid;gap:14px}
+@media (min-width:1000px){.grid2{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* Budget bars */
+.bar{height:8px;border-radius:999px;background:var(--surface2);overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;border-radius:999px;background:var(--accent)}
+.bar i.warn{background:var(--warn)}
+.bar i.bad{background:var(--bad)}
+.brow{display:flex;justify-content:space-between;gap:10px;font-weight:620}
+
+/* Agent profile */
+.hero{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.hero .av{width:76px;height:76px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:14px}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0}
+.post{padding:12px 0;border-bottom:1px solid var(--border)}
+.post:last-child{border-bottom:0}
+
+/* Calendar */
+.cal{border-collapse:separate;border-spacing:4px;width:100%;table-layout:fixed}
+.cal th{font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:2px}
+.cal td{background:var(--surface);border:1px solid var(--border);border-radius:12px;vertical-align:top;height:78px;padding:5px;font-size:11px;overflow:hidden}
+.cal td.out{opacity:.45}
+.cal td.today{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.cal .n{font-weight:750;font-size:12.5px;margin-bottom:2px}
+.cal td.today .n{color:var(--accent)}
+.cal .e{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:color-mix(in srgb,var(--accent) 14%,transparent);border-radius:5px;padding:1px 4px;margin-top:2px}
+.cal .e.b{background:color-mix(in srgb,#f472b6 22%,transparent)}
+.day{margin:16px 0 6px;font-weight:720}
+.card > .day:first-child{margin-top:0}
+@media (max-width:600px){
+ .cal{border-spacing:3px}
+ .cal td{height:52px;padding:4px 3px;border-radius:10px}
+ .cal .e{display:inline-block;width:7px;height:7px;padding:0;margin:1px;border-radius:50%;font-size:0;background:var(--accent)}
+ .cal .e.b{background:#f472b6}
+ .cal td > div:not(.n):not(.e){font-size:9px;color:var(--muted)}
+}
+.tbl{min-width:620px}
+.monthnav{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+'''
+
+_UI_JS_SRC = r'''
+(() => {
+  // Theme, mode and layout live in the theta_ui cookie so pages render
+  // with them from the server (no flash). __THEMES__ is filled in by the hub.
+  const T = __THEMES__;
+  const root = document.documentElement;
+  const KEY = new URLSearchParams(location.search).get("key") || "";
+  window.THETA_H = {"Content-Type": "application/json", "x-dashboard-key": KEY};
+  const dark = matchMedia("(prefers-color-scheme: dark)");
+  function metaColors() {
+    const t = T[root.dataset.theme] || T.theta, m = root.dataset.mode;
+    document.querySelectorAll('meta[name="theme-color"]').forEach(x => x.remove());
+    const mk = (c, media) => {
+      const el = document.createElement("meta");
+      el.name = "theme-color"; el.content = c;
+      if (media) el.media = media;
+      document.head.append(el);
+    };
+    if (m === "auto") { mk(t.light, "(prefers-color-scheme: light)"); mk(t.dark, "(prefers-color-scheme: dark)"); }
+    else mk(m === "dark" ? t.dark : t.light);
+  }
+  function save() {
+    document.cookie = "theta_ui=" + [root.dataset.theme, root.dataset.mode, root.dataset.layout].join(".")
+      + ";path=/;max-age=31536000;samesite=lax";
+  }
+  function mark() {
+    document.querySelectorAll("[data-pref]").forEach(b => {
+      const on = root.dataset[b.dataset.pref] === b.dataset.val;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-pressed", String(on));
+    });
+  }
+  function setPref(k, v) {
+    if (k === "theme") {
+      const t = T[v];
+      if (!t) return;
+      root.dataset.theme = v;
+      if (t.glass) root.setAttribute("data-glass", ""); else root.removeAttribute("data-glass");
+      if (t.mono) root.dataset.font = "mono"; else delete root.dataset.font;
     } else {
-      b.textContent = "/" + x.name; small.textContent = (x.args ? " " + x.args : "") + " \u2014 " + x.about;
-      li.append(b, small);
+      root.dataset[k] = v;
     }
-    li.onmousedown = ev => { ev.preventDefault(); pickMenu(i); };
-    return li;
-  }));
-  menu.hidden = false;
-  msg.setAttribute("aria-activedescendant", "chat-menu-" + menuActive);
-}
-function pickMenu(i) {
-  const x = menuItems[i], q = menuRange;
-  if (!x || !q) return;
-  const insert = q.kind === "@" ? "@" + x.name + " " : "/" + x.name + " ";
-  const end = msg.selectionStart;
-  msg.value = msg.value.slice(0, q.start) + insert + msg.value.slice(end);
-  const pos = q.start + insert.length;
-  msg.setSelectionRange(pos, pos); msg.focus();
-  menuActive = 0; closeMenu();
-}
-msg.addEventListener("input", () => { menuActive = 0; renderMenu(); });
-msg.addEventListener("click", renderMenu);
-msg.addEventListener("blur", () => setTimeout(closeMenu, 150));
-msg.addEventListener("keydown", e => {
-  if (menu.hidden) return;
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-    e.preventDefault();
-    menuActive = (menuActive + (e.key === "ArrowDown" ? 1 : menuItems.length - 1)) % menuItems.length;
-    renderMenu();
-  } else if (e.key === "Enter" || e.key === "Tab") {
-    e.preventDefault(); pickMenu(menuActive);
-  } else if (e.key === "Escape") {
-    e.preventDefault(); closeMenu();
+    metaColors(); save(); mark();
   }
-});
+  window.thetaPref = setPref;
+  document.addEventListener("click", e => {
+    const b = e.target.closest("[data-pref]");
+    if (b) { e.preventDefault(); setPref(b.dataset.pref, b.dataset.val); }
+  });
+  mark();
+  if (dark.addEventListener) dark.addEventListener("change", metaColors);
 
-document.getElementById("chat-form").onsubmit = async e => {
-  e.preventDefault();
-  const text = msg.value.trim(), agent = agentSel.value;
-  if (!text) return;
-  msg.value = ""; btn.disabled = true; closeMenu();
-  if (text.startsWith("/")) return runCommand(text);
-  if (agent === ALL) {
-    status.textContent = "Waiting for replies...";
-    thread = [...thread, {name: "You", text}];
-    show();
+  // "Run a round" (Home and Settings)
+  document.querySelectorAll("[data-run-round]").forEach(btn => btn.onclick = async () => {
+    const out = document.getElementById(btn.dataset.runRound);
+    btn.disabled = true;
+    if (out) out.textContent = "Running every agent's job. This can take up to a minute...";
     try {
-      const d = await (await fetch("/api/allchat", {method: "POST", headers: H, body: JSON.stringify({text})})).json();
+      const d = await (await fetch("/api/round", {method: "POST", headers: THETA_H, body: JSON.stringify({force: true})})).json();
       if (!d.ok) throw new Error(d.error);
-      thread = d.messages;
-      const errs = Object.entries(d.errors || {}).map(([n, m]) => n + " couldn't reply: " + m);
-      const routed = (d.routed || []).length ? "Mistral passed this to " + d.routed.join(" and ") + "." : "";
-      status.textContent = [routed, ...errs].filter(Boolean).join(" | ");
+      const failed = Object.entries(d.ran || {}).filter(([, r]) => !r.ok).map(([a]) => a);
+      if (out) out.textContent = "Done" + (failed.length ? " (" + failed.join(", ") + " failed; see #command)" : "") + ". Refreshing...";
+      setTimeout(() => location.reload(), 900);
     } catch (err) {
-      thread = thread.slice(0, -1); msg.value = text;
+      if (out) out.textContent = "Round failed: " + err.message;
+      btn.disabled = false;
+    }
+  });
+})();
+'''
+
+# All Agents chat, Discord-style (channels, avatars, @ and / menus).
+_CHAT_JS = r'''
+(() => {
+  // Discord-style chat over the All Agents thread. HUB_CHAT: {channel,
+  // channels, agents: {id: {name, color, tier}}, to}; HUB_MENU: @ and / lists.
+  const C = window.HUB_CHAT, H = window.THETA_H;
+  const box = document.getElementById("msgs"), form = document.getElementById("chat-form");
+  const msg = document.getElementById("chat-msg"), btn = document.getElementById("chat-send");
+  const status = document.getElementById("chat-status");
+  let thread = [], lastIds = new Set(), first = true;
+  const touch = matchMedia("(pointer: coarse)").matches;
+
+  const parseAt = s => s ? new Date(s.replace(" ", "T") + "Z") : new Date();
+  const clock = d => d.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"});
+  const dayLabel = d => {
+    const t = new Date(), y = new Date(Date.now() - 864e5);
+    if (d.toDateString() === t.toDateString()) return "Today";
+    if (d.toDateString() === y.toDateString()) return "Yesterday";
+    return d.toLocaleDateString([], {weekday: "long", month: "long", day: "numeric"});
+  };
+  function avatar(id, size) {
+    const img = document.createElement("img");
+    img.src = "/avatar/" + (C.agents[id] || id === "you" || id === "hub" ? id : "hub") + ".svg";
+    img.width = img.height = size; img.alt = ""; img.className = "av";
+    return img;
+  }
+  // Text with links and @mentions, built from nodes (never innerHTML).
+  function richText(text) {
+    const span = document.createElement("div");
+    span.className = "text";
+    const re = /(https?:\/\/[^\s<]+)|(@[A-Za-z][\w-]*)/g;
+    let last = 0, m;
+    while ((m = re.exec(text))) {
+      span.append(text.slice(last, m.index));
+      if (m[1]) {
+        const a = document.createElement("a");
+        let url = m[1].replace(/[).,!?]+$/, "");
+        a.href = url; a.target = "_blank"; a.rel = "noopener";
+        try { const u = new URL(url); a.textContent = u.hostname.replace(/^www\./, "") + (u.pathname.length > 1 ? u.pathname.slice(0, 28) + (u.pathname.length > 28 ? "…" : "") : ""); }
+        catch (_) { a.textContent = url; }
+        span.append(a);
+        last = m.index + url.length;
+        re.lastIndex = last;
+        continue;
+      }
+      const at = document.createElement("span");
+      at.className = "at"; at.textContent = m[2];
+      span.append(at);
+      last = m.index + m[0].length;
+    }
+    span.append(text.slice(last));
+    return span;
+  }
+  function render() {
+    const near = first || box.scrollHeight - box.scrollTop - box.clientHeight < 140;
+    const out = [];
+    let prev = null, prevDay = "";
+    for (const m of thread) {
+      const d = parseAt(m.at), day = d.toDateString();
+      if (day !== prevDay) {
+        const sep = document.createElement("div");
+        sep.className = "daysep"; sep.textContent = dayLabel(d);
+        out.push(sep); prev = null; prevDay = day;
+      }
+      const fresh = !first && !lastIds.has(m.id);
+      if (m.kind === "event") {
+        const row = document.createElement("div"), t = document.createElement("span");
+        row.className = "evt" + (fresh ? " new" : "");
+        t.textContent = m.text;
+        row.append(avatar(m.from, 16), t);
+        out.push(row); prev = null;
+        continue;
+      }
+      const cont = prev && prev.from === m.from && d - parseAt(prev.at) < 7 * 60e3;
+      const row = document.createElement("div");
+      row.className = "msg" + (cont ? " cont" : "") + (fresh ? " new" : "");
+      const avcol = document.createElement("div");
+      avcol.className = "avcol";
+      avcol.append(avatar(m.from, 40));
+      const body = document.createElement("div");
+      body.style.minWidth = "0";
+      const meta = document.createElement("div"), name = document.createElement("span"), time = document.createElement("time");
+      meta.className = "meta"; name.className = "name";
+      const a = C.agents[m.from];
+      name.textContent = m.name || (a && a.name) || m.from;
+      name.style.setProperty("--n", a ? a.color : "var(--text)");
+      time.textContent = clock(d); time.dateTime = d.toISOString();
+      meta.append(name);
+      if (a && a.tier) { const tier = document.createElement("span"); tier.className = "tier"; tier.textContent = a.tier; meta.append(tier); }
+      if (C.channel === "all" && m.ch && m.ch !== "all" && C.channelNames[m.ch]) {
+        const ch = document.createElement("a");
+        ch.href = "/chat?ch=" + m.ch; ch.className = "muted small"; ch.textContent = "#" + C.channelNames[m.ch];
+        meta.append(ch);
+      }
+      meta.append(time);
+      body.append(meta, richText(m.text));
+      if (m.image) {
+        const img = document.createElement("img");
+        img.src = m.image; img.alt = m.text.split("\n")[0]; img.className = "att"; img.loading = "lazy";
+        body.append(img);
+      }
+      row.append(avcol, body);
+      out.push(row); prev = m;
+    }
+    if (!thread.length) {
+      const e = document.createElement("p");
+      e.className = "empty"; e.style.padding = "24px 16px";
+      e.textContent = "Nothing here yet. Say hello, or @mention an agent.";
+      out.push(e);
+    }
+    box.replaceChildren(...out);
+    lastIds = new Set(thread.map(m => m.id));
+    if (near) box.scrollTop = box.scrollHeight;
+    first = false;
+  }
+  async function load() {
+    try {
+      const d = await (await fetch("/api/allchat?channel=" + C.channel, {headers: H})).json();
+      if (d.ok) {
+        const ids = d.messages.map(m => m.id).join();
+        if (ids !== thread.map(m => m.id).join()) { thread = d.messages; render(); }
+      }
+    } catch (_) {}
+  }
+  setInterval(() => { if (!document.hidden) load(); }, 6000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+
+  // Composer: grows with its text; Enter sends on keyboards, Return is a new line on phones.
+  function grow() { msg.style.height = "auto"; msg.style.height = Math.min(msg.scrollHeight, 168) + "px"; }
+  msg.addEventListener("input", grow);
+  msg.addEventListener("focus", () => { if (touch) document.body.classList.add("typing"); });
+  msg.addEventListener("blur", () => setTimeout(() => document.body.classList.remove("typing"), 120));
+
+  // "@" and "/" menus, like Discord: type to filter, arrows + Enter/Tab, Esc, or tap.
+  const menu = document.getElementById("chat-menu");
+  let items = [], active = 0, range = null;
+  function query() {
+    const before = msg.value.slice(0, msg.selectionStart);
+    let m = before.match(/(^|\s)@([\w-]*)$/);
+    if (m) return {kind: "@", q: m[2].toLowerCase(), start: before.length - m[2].length - 1};
+    m = before.match(/^\/(\w*)$/);
+    if (m) return {kind: "/", q: m[1].toLowerCase(), start: 0};
+    return null;
+  }
+  function closeMenu() { menu.hidden = true; items = []; range = null; msg.removeAttribute("aria-activedescendant"); }
+  function renderMenu() {
+    const q = query();
+    if (!q) return closeMenu();
+    const src = q.kind === "@" ? HUB_MENU.agents : HUB_MENU.commands;
+    const key = x => x.name.toLowerCase();
+    items = src.filter(x => key(x).startsWith(q.q) || (q.kind === "@" && x.id.startsWith(q.q)))
+      .concat(src.filter(x => !key(x).startsWith(q.q) && key(x).includes(q.q) && q.q)).slice(0, 12);
+    if (!items.length) return closeMenu();
+    range = q; active = Math.min(active, items.length - 1);
+    menu.replaceChildren(...items.map((x, i) => {
+      const li = document.createElement("li");
+      li.id = "chat-menu-" + i; li.setAttribute("role", "option");
+      li.setAttribute("aria-selected", String(i === active));
+      const b = document.createElement("b"), small = document.createElement("span");
+      small.className = "muted";
+      if (q.kind === "@") {
+        const w = document.createElement("span"), dot = document.createElement("span");
+        w.className = "avw"; dot.className = "dot" + (x.online ? " on" : "");
+        w.append(avatar(x.id, 26), dot);
+        b.textContent = x.name; small.textContent = x.tier;
+        const txt = document.createElement("span"); txt.style.minWidth = "0";
+        txt.append(b, document.createElement("br"), small);
+        li.append(w, txt);
+      } else {
+        b.textContent = "/" + x.name;
+        small.textContent = (x.args ? x.args + " · " : "") + x.about;
+        const txt = document.createElement("span"); txt.style.minWidth = "0";
+        txt.append(b, document.createElement("br"), small);
+        li.append(txt);
+      }
+      li.onmousedown = ev => { ev.preventDefault(); pick(i); };
+      return li;
+    }));
+    menu.hidden = false;
+    msg.setAttribute("aria-activedescendant", "chat-menu-" + active);
+  }
+  function pick(i) {
+    const x = items[i], q = range;
+    if (!x || !q) return;
+    const insert = (q.kind === "@" ? "@" : "/") + x.name + " ";
+    const end = msg.selectionStart;
+    msg.value = msg.value.slice(0, q.start) + insert + msg.value.slice(end);
+    const pos = q.start + insert.length;
+    msg.setSelectionRange(pos, pos); msg.focus();
+    active = 0; closeMenu(); grow();
+  }
+  msg.addEventListener("input", () => { active = 0; renderMenu(); });
+  msg.addEventListener("click", renderMenu);
+  msg.addEventListener("blur", () => setTimeout(closeMenu, 150));
+  msg.addEventListener("keydown", e => {
+    if (!menu.hidden) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        active = (active + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length;
+        renderMenu();
+      } else if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault(); pick(active);
+      } else if (e.key === "Escape") {
+        e.preventDefault(); closeMenu();
+      }
+      return;
+    }
+    if (e.key === "Enter" && !e.shiftKey && !touch) { e.preventDefault(); form.requestSubmit(); }
+  });
+
+  form.onsubmit = async e => {
+    e.preventDefault();
+    const text = msg.value.trim();
+    if (!text) return;
+    msg.value = ""; grow(); btn.disabled = true; closeMenu();
+    const isCmd = text.startsWith("/");
+    status.textContent = isCmd ? "Running " + text.split(" ")[0] + "..." : "Waiting for replies...";
+    if (!isCmd) {
+      thread = [...thread, {id: "pending", from: "you", name: "You", text, kind: "message", at: new Date().toISOString().slice(0, 19).replace("T", " "), ch: C.channel}];
+      render(); box.scrollTop = box.scrollHeight;
+    }
+    try {
+      const d = await (await fetch("/api/allchat", {method: "POST", headers: H, body: JSON.stringify({text, channel: C.channel})})).json();
+      if (!d.ok) throw new Error(d.error);
+      thread = d.messages; render(); box.scrollTop = box.scrollHeight;
+      if (isCmd) status.textContent = d.result;
+      else {
+        const errs = Object.entries(d.errors || {}).map(([n, m]) => n + " couldn't reply: " + m);
+        const routed = (d.routed || []).length ? "Mistral passed this to " + d.routed.join(" and ") + "." : "";
+        status.textContent = [routed, ...errs].filter(Boolean).join(" | ");
+      }
+    } catch (err) {
+      if (!isCmd) { thread = thread.filter(m => m.id !== "pending"); render(); }
+      msg.value = text; grow();
       status.textContent = "Error: " + err.message;
     }
     btn.disabled = false;
-    show();
-    return;
-  }
-  const h = hist[agent] = hist[agent] || [];
-  h.push({role: "user", content: text});
-  status.textContent = "Thinking...";
-  show();
-  try {
-    const r = await fetch("/api/chat", {method: "POST", headers: H, body: JSON.stringify({agent, messages: h})});
-    const d = await r.json();
-    if (!d.ok) throw new Error(d.error);
-    h.push({role: "assistant", content: d.reply, image: d.image});
-    status.textContent = "";
-  } catch (err) {
-    h.pop(); msg.value = text;
-    status.textContent = "Error: " + err.message;
-  }
-  btn.disabled = false;
-  show();
-};
-onAgent();
+  };
 
-const wiringBody = document.getElementById("wiring-rows");
-const MARK = {ok: ["Wired", "#1a7f37"], bad: ["Not wired", "#b3261e"], off: ["Not set up", "#8a6d00"]};
-function cell(text, style) {
-  const td = document.createElement("td");
-  td.textContent = text;
-  if (style) td.style.cssText = style;
-  return td;
-}
-async function loadWiring() {
-  const note = document.getElementById("wiring-note");
-  note.textContent = "Checking...";
+  // Members sheet on phones
+  const mb = document.getElementById("members-btn"), members = document.getElementById("members"), scrim = document.getElementById("scrim");
+  const toggle = open => { members.classList.toggle("open", open); scrim.classList.toggle("open", open); };
+  if (mb) mb.onclick = () => toggle(!members.classList.contains("open"));
+  if (scrim) scrim.onclick = () => toggle(false);
+
+  if (C.to && C.agents[C.to]) { msg.value = "@" + C.agents[C.to].name + " "; grow(); }
+  thread = C.initial || [];
+  render();
+  load();
+})();
+'''
+
+
+_BUDGET_JS = """
+document.getElementById("csv-import").onclick = async () => {
+  const f = document.getElementById("csv-file").files[0], out = document.getElementById("csv-status");
+  if (!f) { out.textContent = "Pick your Rocket Money CSV first."; return; }
+  out.textContent = "Importing...";
   try {
-    const d = await (await fetch("/api/wiring", {headers: H})).json();
+    const d = await (await fetch("/api/glass/import", {method: "POST",
+      headers: {"Content-Type": "application/json", "x-dashboard-key": new URLSearchParams(location.search).get("key") || ""},
+      body: JSON.stringify({csv: await f.text()})})).json();
     if (!d.ok) throw new Error(d.error);
-    wiringBody.replaceChildren(...d.agents.map(a => {
-      const tr = document.createElement("tr");
-      const [label, color] = MARK[a.state] || ["Unknown", "#888"];
-      const result = cell(a.note, "color:#666");
-      const test = document.createElement("td");
-      if (a.testable !== false) {
-        const b = document.createElement("button");
-        b.type = "button"; b.textContent = "Test";
-        b.onclick = () => testAgent(a.agent, result, b);
-        test.append(b);
-      }
-      tr.append(cell(a.name), cell(a.model, "font-family:monospace;font-size:0.85em"),
-                cell(label, "font-weight:bold;color:" + color), result, test);
-      return tr;
-    }));
-    note.textContent = "Checked " + new Date().toLocaleTimeString() + ". Test sends a tiny message and uses a few tokens.";
-  } catch (err) {
-    note.textContent = "Couldn't check wiring: " + err.message;
-  }
-}
-async function testAgent(agent, out, b) {
-  b.disabled = true; out.textContent = "Testing...";
-  const t0 = performance.now();
-  try {
-    const d = await (await fetch("/api/chat", {method: "POST", headers: H, body: JSON.stringify(
-      {agent, messages: [{role: "user", content: "Wiring test: reply with just OK."}]})})).json();
-    const secs = ((performance.now() - t0) / 1000).toFixed(1);
-    if (!d.ok) throw new Error(d.error);
-    out.textContent = "Replied in " + secs + " s: " + d.reply.slice(0, 80);
-    out.style.color = "#1a7f37";
-  } catch (err) {
-    out.textContent = "Failed: " + err.message;
-    out.style.color = "#b3261e";
-  }
-  b.disabled = false;
-}
-document.getElementById("wiring-recheck").onclick = loadWiring;
-const roundBtn = document.getElementById("run-round");
-if (roundBtn) roundBtn.onclick = async () => {
-  const out = document.getElementById("round-status");
-  roundBtn.disabled = true; out.textContent = "Running every agent's job...";
-  try {
-    const d = await (await fetch("/api/round", {method: "POST", headers: H, body: JSON.stringify({force: true})})).json();
-    if (!d.ok) throw new Error(d.error);
-    out.textContent = "Done. See All Agents for what each did.";
-    loadThread();
-  } catch (err) {
-    out.textContent = "Round failed: " + err.message;
-  }
-  roundBtn.disabled = false;
+    const sk = Object.entries(d.skipped).filter(([, n]) => n).map(([k, n]) => n + " " + k).join(", ");
+    out.textContent = "Added " + d.added + " expenses" + (d.duplicates ? ", " + d.duplicates + " already imported" : "")
+      + (sk ? "; skipped " + sk : "") + ". Read columns " + Object.values(d.columns).join(", ")
+      + "; expenses were " + d.expenses_were + " in this file. Reload to see the totals.";
+  } catch (err) { out.textContent = "Import failed: " + err.message; }
 };
-loadWiring();
 """
 
 
-def _chat_html():
-    groups = ['<option value="__all" data-name="All Agents">All Agents (shared chat)</option>']
-    for tier in reversed(TIERS):  # High Brain first
-        opts = "".join(
-            f"<option value=\"{a}\" data-name=\"{html.escape(v['name'])}\">"
-            f"{html.escape(v['name'])}{' (' + html.escape(v['home']) + ')' if v.get('home') else ''}</option>"
-            for a, v in AGENTS.items() if v["tier"] == tier)
-        if opts:
-            groups.append(f"<optgroup label=\"{TIER_LABELS[tier]} — "
-                          f"{html.escape(MODELS[tier])}\">{opts}</optgroup>")
-    menu = json.dumps(menu_data()).replace("</", "<\\/")
-    return (f"<p><select id=\"chat-agent\" style=\"max-width:100%\">{''.join(groups)}</select></p>"
-            "<div id=\"chat-log\"></div>"
-            "<form id=\"chat-form\" style=\"position:relative\">"
-            "<ul id=\"chat-menu\" role=\"listbox\" hidden style=\"position:absolute;bottom:100%;left:0;"
-            "right:0;max-height:260px;overflow-y:auto;margin:0 0 4px;padding:4px 0;list-style:none;"
-            "background:#fff;border:1px solid #ccc;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.15);"
-            "z-index:5\"></ul>"
-            "<textarea id=\"chat-msg\" rows=\"3\" aria-autocomplete=\"list\" aria-controls=\"chat-menu\" "
-            "style=\"width:100%\"></textarea><br><button id=\"chat-send\">Send</button> "
-            "<i id=\"chat-status\"></i></form>"
-            f"<script>window.HUB_MENU = {menu};</script>"
-            "<h3>Wiring</h3><div style=\"overflow-x:auto\"><table style=\"border-collapse:collapse\" "
-            "cellpadding=\"4\"><thead><tr><th align=\"left\">Agent</th><th align=\"left\">Model</th>"
-            "<th align=\"left\">Status</th><th align=\"left\">Details</th><th></th></tr></thead>"
-            "<tbody id=\"wiring-rows\"></tbody></table></div>"
-            "<p><button id=\"wiring-recheck\" type=\"button\">Recheck</button> "
-            "<i id=\"wiring-note\"></i></p>"
-            f"<script>{_CHAT_JS}</script>")
+UI_ICONS = {
+    "home": '<path d="M3.5 10.5L12 3.5l8.5 7"/><path d="M5.5 9v11h13V9"/><path d="M10 20v-5.5h4V20"/>',
+    "chat": '<path d="M20.5 11.5a8 8 0 0 1-11.7 7.1L4 19.8l1.2-4.4A8 8 0 1 1 20.5 11.5z"/><path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01"/>',
+    "calendar": '<rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+    "money": '<rect x="3" y="6" width="18" height="13.5" rx="3"/><path d="M3 10.5h18M15.5 15h2.5"/>',
+    "settings": '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+    "play": '<path d="M7 5l12 7-12 7z"/>',
+    "send": '<path d="M5 12l15-7-5 15-2.5-6.5z"/><path d="M12.5 13.5L20 5"/>',
+    "users": '<circle cx="9" cy="8.5" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 5.2a3.5 3.5 0 0 1 0 6.6M18.5 20a6.5 6.5 0 0 0-2.7-5.3"/>',
+    "bolt": '<path d="M13 3L5 13.5h6L10 21l8-10.5h-6z"/>',
+    "news": '<path d="M5 4.5h11v15H6.5A1.5 1.5 0 0 1 5 18z"/><path d="M16 8.5h3v9.5a1.5 1.5 0 0 1-3 0M8 8.5h5M8 12h5M8 15.5h3"/>',
+    "arrow": '<path d="M5 12h14M13 6l6 6-6 6"/>',
+}
+NAV = [("/", "Home", "home"), ("/chat", "Chat", "chat"), ("/calendar", "Calendar", "calendar"),
+       ("/money", "Money", "money"), ("/settings", "Settings", "settings")]
 
 
-_PAGE_CSS = ("<style>body{font-family:system-ui,sans-serif;margin:0;padding:12px 16px 40px;"
-             "max-width:960px}nav{display:flex;gap:16px;border-bottom:1px solid #ccc;"
-             "padding-bottom:8px;margin-bottom:8px}nav a{text-decoration:none;color:#555;"
-             "padding:4px 2px}nav a.on{color:#000;font-weight:bold;border-bottom:3px solid #2f5bd3}"
-             ".cal{border-collapse:collapse;width:100%;table-layout:fixed}"
-             ".cal th{font-size:12px;color:#666;padding:4px}"
-             ".cal td{border:1px solid #ddd;vertical-align:top;height:72px;padding:3px;font-size:11px;"
-             "overflow:hidden}.cal td.out{background:#f6f6f6;color:#aaa}.cal td.today{outline:2px solid #2f5bd3}"
-             ".cal .n{font-weight:bold;font-size:12px}.cal .e{white-space:nowrap;overflow:hidden;"
-             "text-overflow:ellipsis}.cal .b{color:#a35d00}.day{margin:14px 0 4px;font-weight:bold}"
-             ".tag{color:#a35d00;font-size:12px}</style>")
+def ui_icon(name):
+    return (f'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" '
+            f'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{UI_ICONS[name]}</svg>')
 
 
-def _nav(active):
-    tabs = [("/", "Dashboard"), ("/calendar", "Remi's calendar")]
-    return "<nav>" + "".join(
-        f"<a href=\"{href}\" class=\"{'on' if href == active else ''}\">{label}</a>"
-        for href, label in tabs) + "</nav>"
+_UI_CSS = theme_css() + "\n" + _BASE_CSS
+_UI_JS = _UI_JS_SRC.replace("__THEMES__", json.dumps(
+    {n: {"glass": bool(t.get("glass")), "mono": bool(t.get("mono")), "light": t["light"]["bg"],
+         "dark": t["dark"]["bg"]} for n, t in THEMES.items()}))
+_ASSET_V = hashlib.sha1((_UI_CSS + _UI_JS + _CHAT_JS).encode()).hexdigest()[:10]
 
 
-def calendar_page(query):
+def ui_prefs(headers):
+    """(theme, mode, layout) from the theta_ui cookie, with defaults."""
+    raw = (_cookie(headers, "theta_ui") or "").split(".")
+    theme = raw[0] if raw[0] in THEMES else "theta"
+    mode = raw[1] if len(raw) > 1 and raw[1] in MODES else "auto"
+    layout = raw[2] if len(raw) > 2 and raw[2] in LAYOUTS else "grid"
+    return theme, mode, layout
+
+
+def avatar_img(agent, size=40):
+    return (f'<img src="/avatar/{html.escape(agent)}.svg" width="{size}" height="{size}" alt="" '
+            f'class="av" loading="lazy">')
+
+
+def _json_script(name, obj):
+    safe = json.dumps(obj).replace("</", "<\\/")  # a "</script>" in the data can't end the tag
+    return f"<script>window.{name} = {safe};</script>"
+
+
+def page(headers, title, active, body, body_class="", statuses=None):
+    """A full page in the app shell: sidebar on wide screens, tab bar on phones."""
+    theme, mode, layout = ui_prefs(headers)
+    t = THEMES[theme]
+    if mode == "auto":
+        metas = (f'<meta name="theme-color" content="{t["light"]["bg"]}" media="(prefers-color-scheme: light)">'
+                 f'<meta name="theme-color" content="{t["dark"]["bg"]}" media="(prefers-color-scheme: dark)">')
+    else:
+        metas = f'<meta name="theme-color" content="{t[mode]["bg"]}">'
+    flags = (" data-glass" if t.get("glass") else "") + (' data-font="mono"' if t.get("mono") else "")
+    statuses = agent_statuses() if statuses is None else statuses
+    crew = "".join(
+        f'<a class="crewlink" href="/agent/{a["bot_id"]}" title="{html.escape(a["name"])}"><span class="avw">{avatar_img(a["bot_id"], 26)}'
+        f'<span class="dot{" on" if a["online"] else ""}"></span></span>{html.escape(a["name"])}'
+        f'<span class="act">{html.escape(a["activity"] if a["online"] else a["tier"])}</span></a>'
+        for a in statuses if a["bot_id"] in AGENTS)
+    nav = "".join(f'<a href="{href}" class="{"on" if href == active else ""}" aria-label="{label}" title="{label}"'
+                  f'{" aria-current=page" if href == active else ""}>{ui_icon(icon)}<span>{label}</span></a>'
+                  for href, label, icon in NAV)
+    return (
+        f'<!doctype html><html lang="en" data-theme="{theme}" data-mode="{mode}" data-layout="{layout}"{flags}>'
+        '<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
+        f'<title>{html.escape(title)} · {APP_NAME}</title>'
+        '<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">'
+        '<link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="icon" href="/avatar/theta.svg" type="image/svg+xml">'
+        f'<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="{APP_NAME}">'
+        '<meta name="apple-mobile-web-app-status-bar-style" content="default">'
+        f'{metas}<link rel="stylesheet" href="/ui.css?v={_ASSET_V}"></head>'
+        f'<body class="{body_class}"><div class="app"><aside class="rail" aria-label="Sidebar">'
+        f'<a class="brand" href="/">{avatar_img("theta", 32)}{APP_NAME}</a><nav aria-label="Main">{nav}</nav>'
+        f'<div class="label">Crew</div>{crew}</aside><main class="main">{body}</main></div>'
+        f'<nav class="tabbar" aria-label="Main">{nav}</nav>'
+        f'<script src="/ui.js?v={_ASSET_V}"></script></body></html>')
+
+
+def _ago(ts, now=None):
+    if not ts:
+        return ""
+    secs = max(0, (now or time.time()) - ts)
+    if secs < 90:
+        return "now"
+    for size, unit in ((86400, "d"), (3600, "h"), (60, "m")):
+        if secs >= size:
+            return f"{int(secs // size)}{unit}"
+    return ""
+
+
+_OUTLET_LOOKS = [("#334155", "#0f172a"), ("#1e3a8a", "#312e81"), ("#7c2d12", "#431407"), ("#134e4a", "#042f2e"),
+                 ("#581c87", "#3b0764"), ("#9f1239", "#4c0519"), ("#365314", "#1a2e05"), ("#0c4a6e", "#082f49")]
+
+
+def win_html(w):
+    if w["agent"]:
+        c1, c2, glyph = agent_look(w["agent"])
+    else:  # a story with no picture: a newspaper on its outlet's own color
+        c1, c2 = _OUTLET_LOOKS[int(hashlib.sha1((w.get("source") or "").encode()).hexdigest(), 16) % len(_OUTLET_LOOKS)]
+        glyph = UI_ICONS["news"]
+    ph = (f'<div class="ph" style="--c1:{c1};--c2:{c2}"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" '
+          f'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{glyph}</svg></div>')
+    img = (f'<img src="{html.escape(w["image"])}" alt="" loading="lazy" decoding="async"'
+           f'{" class=fit" if w.get("fit") else ""} referrerpolicy="no-referrer" onerror="this.remove()">'
+           if w.get("image") else "")
+    tag = f'<span class="tag">{html.escape(w["tag"])}</span>' if w.get("tag") else ""
+    if w["agent"]:
+        who = f'{avatar_img(w["agent"], 18)}<span class="nm">{html.escape(display_name(w["agent"]))}</span>'
+        if w.get("source"):
+            who += f'<span class="src">· {html.escape(w["source"])}</span>'
+    else:
+        who = f'<span>{html.escape(w.get("source") or "")}</span>'
+    when = _ago(w.get("at"))
+    sub = f'<div class="sub">{html.escape(w["sub"])}</div>' if w.get("sub") else ""
+    ext = ' target="_blank" rel="noopener"' if w.get("external") else ""
+    return (f'<a class="win" href="{html.escape(w["href"])}"{ext}><div class="pic">{ph}{img}{tag}</div>'
+            f'<div class="body"><div class="who">{who}<span class="t">{when}</span></div>'
+            f'<div class="title">{html.escape(w["title"] or "")}</div>{sub}</div></a>')
+
+
+def ring_svg(frac, size=46, color="var(--accent)"):
+    r = (size - 7) / 2
+    circ = 2 * 3.14159 * r
+    frac = max(0.0, min(frac, 1.0))
+    return (f'<svg class="ring" width="{size}" height="{size}" viewBox="0 0 {size} {size}" aria-hidden="true">'
+            f'<circle cx="{size / 2}" cy="{size / 2}" r="{r:.1f}" fill="none" stroke="var(--surface2)" stroke-width="6"/>'
+            f'<circle cx="{size / 2}" cy="{size / 2}" r="{r:.1f}" fill="none" stroke="{color}" stroke-width="6" '
+            f'stroke-linecap="round" stroke-dasharray="{circ * frac:.1f} {circ:.1f}" '
+            f'transform="rotate(-90 {size / 2} {size / 2})"/></svg>')
+
+
+def kpi_html(value, label, sub="", frac=None, color="var(--accent)", icon="bolt", href=None):
+    lead = ring_svg(frac, color=color) if frac is not None else f'<span class="ico">{ui_icon(icon)}</span>'
+    tag, attrs = ("a", f' href="{href}"') if href else ("div", "")
+    sub_html = f'<div class="s">{html.escape(sub)}</div>' if sub else ""
+    return (f'<{tag} class="kpi"{attrs}>{lead}<div><div class="v">{html.escape(value)}</div>'
+            f'<div class="l">{html.escape(label)}</div>{sub_html}</div></{tag}>')
+
+
+def home_page(headers):
+    st = store()
+    _fetch_feeds(list(dict.fromkeys(NEWS_FEEDS + ENTERTAINMENT_FEEDS + [u for us in SIDE_FEEDS.values() for u in us])))
+    chat = st.list_chat(ALLCHAT_KEEP)
+    shorts, images, cards = _meta_json("cards:short", {}), _meta_json("cards:img", {}), _meta_json("cards", {})
+    crew = finish_windows(agent_windows(chat, cards), shorts, images)
+    if ui_prefs(headers)[2] == "magazine":  # lead with the newest window that has a real photo
+        photos = [w for w in crew if (w["image"] or "").startswith("http") and not w["fit"]]
+        if photos:
+            hero = max(photos, key=lambda w: w["at"] or 0)
+            crew = [hero] + [w for w in crew if w is not hero]
+    news = finish_windows(news_windows(), shorts, images)
+    trend = finish_windows(trending_windows(), shorts, images)
+    statuses = agent_statuses()
+    now = datetime.now(hub_tz())
+    hello = "Good morning" if 4 <= now.hour < 12 else "Good afternoon" if now.hour < 18 else "Good evening"
+    month = now.strftime("%Y-%m")
+    status = month_status(month)
+    spent = sum(v["spent"] for v in status.values())
+    budget = sum(v["budget"] or 0 for v in status.values())
+    if budget:
+        share = spent / budget
+        k_money = kpi_html(f"{share:.0%}", "Budget used", f"${spent:,.0f} of ${budget:,.0f}", share,
+                           "var(--bad)" if share >= 1 else "var(--warn)" if share >= 0.9 else "var(--accent)", href="/money")
+    else:
+        k_money = kpi_html(f"${spent:,.0f}", "Spent this month", "No budgets set", icon="money", href="/money")
+    todays = []
+    if calendar_linked():
+        try:
+            todays = [o for o in calendar_events(now.date(), now.date())]
+        except Exception:
+            todays = []
+    k_cal = kpi_html(str(len(todays)) if calendar_linked() else "–", "On today",
+                     (todays[0]["title"] if todays else "Nothing scheduled") if calendar_linked() else "No calendar linked",
+                     icon="calendar", href="/calendar")
+    online = sum(1 for a in statuses if a["online"] and a["bot_id"] in AGENTS)
+    k_crew = kpi_html(f"{online}/{len(AGENTS)}", "Crew online", "in the last 10 min",
+                      online / len(AGENTS), "var(--good)", href="/chat")
+    breaking = sum(1 for w in news if w.get("tag"))
+    k_news = kpi_html(str(breaking) if breaking else str(len(news)), "Breaking" if breaking else "Top stories",
+                      f"from {len({w['source'] for w in news})} outlets", icon="news")
+    swipe = lambda ws: "".join(win_html(w) for w in ws)
+    body = (
+        f'<header class="top tight"><div><p class="eyebrow">{now:%A, %B} {now.day}</p><h1>{hello}</h1></div>'
+        f'<button class="btn rr" type="button" data-run-round="round-status" aria-label="Run a round">{ui_icon("play")}'
+        f'<span>Run a round</span></button></header><p class="note" id="round-status" style="margin:-8px 0 14px"></p>'
+        f'<section class="kpis" aria-label="Today at a glance">{k_money}{k_cal}{k_crew}{k_news}</section>'
+        f'<div class="sect"><h2>Your crew</h2><a href="/chat">Open chat →</a></div>'
+        f'<section class="wins" aria-label="Agent windows">{"".join(win_html(w) for w in crew)}</section>'
+        f'<div class="sect"><h2>Top stories</h2><span class="muted small">{len(NEWS_FEEDS)} outlets, {NEWS_TOP} top + up to {NEWS_BREAKING_MAX} breaking</span></div>'
+        + (f'<section class="wins swipe" aria-label="Top stories">{swipe(news)}</section>' if news else
+           '<p class="empty">No headlines right now.</p>')
+        + '<div class="sect"><h2>Watch &amp; listen</h2><a href="/agent/lenz">Lenz →</a></div>'
+        + (f'<section class="wins swipe" aria-label="Trending">{swipe(trend)}</section>' if trend else
+           '<p class="empty">Nothing trending right now.</p>')
+        + '<footer class="foot">'
+        + (f"<p>{TMDB_NOTICE}</p>" if TMDB_API_KEY else "")
+        + ("<p>Storage: memory (not persistent). Connect Upstash Redis in Vercel and redeploy.</p>"
+           if STORAGE_MODE.startswith("memory") else "")
+        + "<p>Pictures come from each outlet's feed, TMDB, Apple Music and Wikipedia.</p></footer>")
+    return page(headers, "Home", "/", body, statuses=statuses)
+
+
+def chat_page(headers, query):
+    ch = query.get("ch", ["all"])[0]
+    ch = ch if ch in CHANNEL_IDS else "all"
+    c = CHANNEL_IDS[ch]
+    statuses = agent_statuses()
+    chans = "".join(
+        f'<a href="/chat?ch={x["id"]}" class="{"on" if x["id"] == ch else ""}"><span class="hash">#</span>{html.escape(x["name"])}</a>'
+        for x in CHANNELS)
+    chips = "".join(
+        f'<a href="/chat?ch={x["id"]}" class="chip{" on" if x["id"] == ch else ""}">#{html.escape(x["name"])}</a>'
+        for x in CHANNELS)
+    by_tier = []
+    for tier in reversed(TIERS):
+        rows = [a for a in statuses if a["bot_id"] in AGENTS and AGENTS[a["bot_id"]]["tier"] == tier]
+        if rows:
+            by_tier.append(f'<div class="label">{TIER_LABELS[tier]} — {sum(a["online"] for a in rows)}/{len(rows)}</div>' + "".join(
+                f'<a class="mrow" href="/agent/{a["bot_id"]}"><span class="avw">{avatar_img(a["bot_id"], 34)}'
+                f'<span class="dot{" on" if a["online"] else ""}"></span></span><span><b>{html.escape(a["name"])}</b>'
+                f'<span class="muted">{html.escape(a["activity"])}</span></span></a>' for a in rows))
+    agents = {a: {"name": v["name"], "color": AGENT_LOOKS.get(a, AGENT_LOOKS["hub"])[0],
+                  "tier": TIER_LABELS[v["tier"]]} for a, v in AGENTS.items()}
+    agents["hub"] = {"name": "Hub", "color": AGENT_LOOKS["hub"][0], "tier": ""}
+    data = {"channel": ch, "channelNames": {x["id"]: x["name"] for x in CHANNELS}, "agents": agents,
+            "to": query.get("to", [""])[0], "initial": allchat_view(80, ch)}
+    body = (
+        '<div class="chat">'
+        f'<aside class="chans" aria-label="Channels"><div class="brand" style="padding-left:10px;font-size:18px">{APP_NAME} crew</div>'
+        f'<div class="label">Channels</div>{chans}</aside>'
+        '<section class="thread">'
+        f'<header class="chathead"><span class="hash">#</span><b>{html.escape(c["name"])}</b>'
+        f'<span class="about muted">{html.escape(c["about"])}</span>'
+        f'<button class="btn ghost small" id="members-btn" type="button" aria-label="Members">{ui_icon("users")}</button></header>'
+        f'<nav class="chiprow" aria-label="Channels">{chips}</nav>'
+        '<div class="msgs" id="msgs" role="log" aria-live="polite"></div>'
+        '<form class="composer" id="chat-form"><ul id="chat-menu" role="listbox" hidden></ul>'
+        f'<div class="box"><textarea id="chat-msg" rows="1" placeholder="Message #{html.escape(c["name"])}" '
+        'aria-label="Message" aria-autocomplete="list" aria-controls="chat-menu"></textarea>'
+        f'<button class="btn send" id="chat-send" aria-label="Send">{ui_icon("send")}</button></div>'
+        '<div class="note" id="chat-status"></div></form></section>'
+        f'<aside class="members" id="members" aria-label="Members">{"".join(by_tier)}</aside>'
+        '<div class="scrim" id="scrim"></div></div>'
+        + _json_script("HUB_MENU", menu_data()) + _json_script("HUB_CHAT", data)
+        + f'<script src="/chat.js?v={_ASSET_V}" defer></script>')
+    return page(headers, f"#{c['name']}", "/chat", body, "chatpage", statuses)
+
+
+_LAYOUT_PICS = {
+    "grid": '<rect x="2" y="2" width="26" height="18" rx="3"/><rect x="32" y="2" width="26" height="18" rx="3"/>'
+            '<rect x="2" y="24" width="26" height="18" rx="3"/><rect x="32" y="24" width="26" height="18" rx="3"/>',
+    "feed": '<rect x="10" y="2" width="40" height="24" rx="3"/><rect x="10" y="30" width="40" height="12" rx="3"/>',
+    "magazine": '<rect x="2" y="2" width="56" height="22" rx="3"/><rect x="2" y="28" width="17" height="14" rx="3"/>'
+                '<rect x="22" y="28" width="17" height="14" rx="3"/><rect x="42" y="28" width="16" height="14" rx="3"/>',
+    "compact": '<rect x="2" y="3" width="10" height="10" rx="2"/><rect x="16" y="6" width="40" height="4" rx="2"/>'
+               '<rect x="2" y="17" width="10" height="10" rx="2"/><rect x="16" y="20" width="34" height="4" rx="2"/>'
+               '<rect x="2" y="31" width="10" height="10" rx="2"/><rect x="16" y="34" width="38" height="4" rx="2"/>',
+}
+
+_WIRING_JS = r"""
+(() => {
+  const H = window.THETA_H, rows = document.getElementById("wiring-rows");
+  const MARK = {ok: ["Wired", "var(--good)"], bad: ["Not wired", "var(--bad)"], off: ["Not set up", "var(--warn)"]};
+  const cell = (text, style) => { const td = document.createElement("td"); td.textContent = text; if (style) td.style.cssText = style; return td; };
+  async function load() {
+    const note = document.getElementById("wiring-note");
+    note.textContent = "Checking...";
+    try {
+      const d = await (await fetch("/api/wiring", {headers: H})).json();
+      if (!d.ok) throw new Error(d.error);
+      rows.replaceChildren(...d.agents.map(a => {
+        const tr = document.createElement("tr");
+        const [label, color] = MARK[a.state] || ["Unknown", "var(--muted)"];
+        const result = cell(a.note, "color:var(--muted)"), test = document.createElement("td");
+        if (a.testable !== false) {
+          const b = document.createElement("button");
+          b.type = "button"; b.className = "btn ghost small"; b.textContent = "Test";
+          b.onclick = () => testAgent(a.agent, result, b);
+          test.append(b);
+        }
+        tr.append(cell(a.name, "font-weight:650"), cell(a.model, "font-family:ui-monospace,monospace;font-size:12px"),
+                  cell(label, "font-weight:700;color:" + color), result, test);
+        return tr;
+      }));
+      note.textContent = "Checked " + new Date().toLocaleTimeString() + ". Test sends a tiny message and uses a few tokens.";
+    } catch (err) { note.textContent = "Couldn't check wiring: " + err.message; }
+  }
+  async function testAgent(agent, out, b) {
+    b.disabled = true; out.textContent = "Testing..."; out.style.color = "var(--muted)";
+    const t0 = performance.now();
+    try {
+      const d = await (await fetch("/api/chat", {method: "POST", headers: H, body: JSON.stringify(
+        {agent, messages: [{role: "user", content: "Wiring test: reply with just OK."}]})})).json();
+      if (!d.ok) throw new Error(d.error);
+      out.textContent = "Replied in " + ((performance.now() - t0) / 1000).toFixed(1) + " s: " + d.reply.slice(0, 80);
+      out.style.color = "var(--good)";
+    } catch (err) { out.textContent = "Failed: " + err.message; out.style.color = "var(--bad)"; }
+    b.disabled = false;
+  }
+  document.getElementById("wiring-recheck").onclick = load;
+  load();
+})();
+"""
+
+
+def settings_page(headers):
+    theme, mode, layout = ui_prefs(headers)
+    st = store()
+    swatches = "".join(
+        f'<button type="button" class="sw" data-pref="theme" data-val="{n}" aria-label="{html.escape(t["label"])} theme">'
+        f'<span class="pv">' + "".join(
+            f'<span style="background:{t[m]["bg"]}"><i style="background:{t[m]["accent"]};width:80%"></i>'
+            f'<i style="background:{t[m]["accent2"]};width:50%"></i><i style="background:{t[m]["muted"]};width:65%;opacity:.5"></i></span>'
+            for m in ("light", "dark"))
+        + f'</span><span class="nm">{html.escape(t["label"])}<small>{html.escape(t["about"])}</small></span></button>'
+        for n, t in THEMES.items())
+    modes = "".join(f'<button type="button" data-pref="mode" data-val="{m}">{label}</button>' for m, label in MODES.items())
+    layouts = "".join(
+        f'<button type="button" class="lo" data-pref="layout" data-val="{k}"><svg viewBox="0 0 60 44" fill="currentColor" '
+        f'opacity=".55" aria-hidden="true">{_LAYOUT_PICS[k]}</svg><b>{label}</b><small>{about}</small></button>'
+        for k, (label, about) in LAYOUTS.items())
+    orders = "".join(f"<li>{html.escape(_order_line(o))}</li>" for o in st.list_active_orders()) or \
+        '<li class="empty">No standing orders. Give one in chat with /commandeer.</li>'
+    escs = "".join(f"<li>#{e['id']} {html.escape(display_name(e['from_bot']))} → {e['to_role']}: "
+                   f"{html.escape(e['issue'])} <span class=\"chip\">{e['status']}</span></li>"
+                   for e in st.list_escalations(20, open_only=True)) or '<li class="empty">No open escalations.</li>'
+    reports = "".join(f"<li><b>{html.escape(display_name(r['bot_id']))}</b> {html.escape(r['event_type'])}: "
+                      f"{html.escape(_gist(r['payload']))} <span class=\"muted small\">{html.escape(r['created_at'])}</span></li>"
+                      for r in st.list_reports(15)) or '<li class="empty">No reports yet.</li>'
+    body = (
+        '<header class="top"><div><p class="eyebrow">Settings</p><h1>Make it yours</h1></div></header>'
+        '<div class="stack">'
+        '<section class="card stack"><div><h2>Color scheme</h2><p class="muted small">Every scheme has a light and a dark '
+        'version. Saved on this device.</p></div>'
+        f'<div class="swatches">{swatches}</div>'
+        f'<div><h3>Light or dark</h3><p class="muted small">Match device follows your phone\'s setting.</p><div class="seg" role="group" aria-label="Light or dark">{modes}</div></div>'
+        f'<div><h3>Home layout</h3><p class="muted small">How the windows on Home are arranged.</p><div class="layouts">{layouts}</div></div></section>'
+        '<section class="card stack"><div><h2>Phone notifications</h2><p class="muted small">Mistral sends these: '
+        'the morning digest, breaking news, budget alerts and birthdays. On iPhone, open Theta from its Home Screen icon.</p></div>'
+        '<p><button class="btn" id="push-on" type="button">Turn on</button> <button class="btn ghost" id="push-test" '
+        'type="button">Send a test</button></p><p class="note" id="push-status"></p></section>'
+        '<section class="card stack"><div class="brow"><h2>Rounds</h2></div><p class="muted small">Every agent does its '
+        'job three times a day (Supabase Cron). Run one now to refresh the windows.</p>'
+        f'<p><button class="btn" type="button" data-run-round="round-status-s">{ui_icon("play")}Run a round now</button></p>'
+        '<p class="note" id="round-status-s"></p></section>'
+        '<section class="card stack"><div><h2>Wiring</h2><p class="muted small">Is each agent\'s model actually reachable?</p></div>'
+        '<div class="scrollx"><table class="tbl"><thead><tr><th>Agent</th><th>Model</th><th>Status</th><th>Details</th><th></th></tr>'
+        '</thead><tbody id="wiring-rows"></tbody></table></div>'
+        '<p><button class="btn ghost small" id="wiring-recheck" type="button">Recheck</button> <span class="note" id="wiring-note"></span></p></section>'
+        f'<div class="grid2"><section class="card"><h2>Standing orders</h2><ul class="list">{orders}</ul></section>'
+        f'<section class="card"><h2>Open escalations</h2><ul class="list">{escs}</ul></section></div>'
+        f'<section class="card"><h2>Latest reports</h2><ul class="list">{reports}</ul></section>'
+        f'<section class="card"><h2>About</h2><p class="muted small">Storage: {html.escape(STORAGE_MODE)}. '
+        f'Times in {html.escape(HUB_TIMEZONE)}.</p>' + (f'<p class="muted small">{TMDB_NOTICE}</p>' if TMDB_API_KEY else "")
+        + '</section></div>'
+        f"<script>{_PUSH_JS}</script><script>{_WIRING_JS}</script>")
+    return page(headers, "Settings", "/settings", body)
+
+
+def money_page(headers):
+    now = datetime.now(hub_tz())
+    month = now.strftime("%Y-%m")
+    status = month_status(month)
+    spent = sum(v["spent"] for v in status.values())
+    budget = sum(v["budget"] or 0 for v in status.values())
+    rows = []
+    for cat, v in sorted(status.items(), key=lambda kv: -kv[1]["spent"]):
+        if v["budget"]:
+            share = v["spent"] / v["budget"]
+            cls = "bad" if share >= 1 else "warn" if share >= 0.9 else ""
+            rows.append(f'<li><div class="brow"><span>{html.escape(cat)}</span><span>${v["spent"]:,.2f} '
+                        f'<span class="muted">of ${v["budget"]:,.0f}</span></span></div>'
+                        f'<div class="bar"><i class="{cls}" style="width:{min(share, 1) * 100:.0f}%"></i></div></li>')
+        elif v["spent"]:
+            rows.append(f'<li><div class="brow"><span>{html.escape(cat)}</span><span>${v["spent"]:,.2f} '
+                        f'<span class="muted">no budget</span></span></div></li>')
+    listing = (f'<ul class="list">{"".join(rows)}</ul>' if rows else
+               '<p class="empty">No budgets or expenses yet. Set GLASS_BUDGETS in Vercel (like '
+               '<code>Groceries:600,Dining:200</code>), tell Glass "$42 groceries" in #money, or import a Rocket Money export.</p>')
+    recent = sorted(store().list_expenses(month), key=lambda e: e["date"], reverse=True)[:12]
+    recent_html = "".join(f'<li><div class="brow"><span>{html.escape(e["category"])}'
+                          f'{" · " + html.escape(e["note"]) if e.get("note") else ""}</span>'
+                          f'<span>${e["amount"]:,.2f}</span></div><span class="muted small">{e["date"]}</span></li>'
+                          for e in recent) or '<li class="empty">Nothing logged this month.</li>'
+    charts = [m for m in reversed(store().list_chat(ALLCHAT_KEEP)) if m["from"] == "charter" and m.get("image")][:4]
+    charts_html = "".join(f'<figure style="margin:0"><img class="att" src="{html.escape(m["image"])}" alt="">'
+                          f'<figcaption class="muted small">{html.escape(_first_line(m["text"]))}</figcaption></figure>'
+                          for m in charts) or '<p class="empty">Ask in #money: "@charter chart my spending".</p>'
+    share = spent / budget if budget else None
+    body = (
+        f'<header class="top"><div class="hero">{avatar_img("glass", 56)}<div><p class="eyebrow">Glass · {now:%B %Y}</p>'
+        f'<h1>${spent:,.2f} spent</h1></div></div><a class="btn ghost" href="/chat?ch=money">{ui_icon("chat")}Ask Glass</a></header>'
+        '<div class="kpis">'
+        + (kpi_html(f"{share:.0%}", "Of the budget", f"${budget:,.0f} budgeted", share,
+                    "var(--bad)" if share >= 1 else "var(--warn)" if share >= 0.9 else "var(--accent)") if budget else
+           kpi_html("–", "No budgets set", "GLASS_BUDGETS in Vercel", icon="money"))
+        + kpi_html(str(len(store().list_expenses(month))), "Expenses logged", "this month", icon="money")
+        + '</div><div class="grid2" style="margin-top:14px">'
+        f'<section class="card"><h2>Budgets</h2>{listing}</section>'
+        f'<section class="card"><h2>Recent</h2><ul class="list">{recent_html}</ul></section></div>'
+        f'<section class="card stack" style="margin-top:14px"><h2>Charter\'s charts</h2>{charts_html}</section>'
+        '<section class="card stack" style="margin-top:14px"><div><h2>Import from Rocket Money</h2><p class="muted small">'
+        'On a computer: Transactions → Export. Duplicates are skipped.</p></div>'
+        '<p><input id="csv-file" type="file" accept=".csv,text/csv"> <button class="btn" id="csv-import" type="button">Import</button></p>'
+        f'<p class="note" id="csv-status"></p></section><script>{_BUDGET_JS}</script>')
+    return page(headers, "Money", "/money", body)
+
+
+def agent_page(headers, agent):
+    v = AGENTS[agent]
+    st_row = next((a for a in agent_statuses() if a["bot_id"] == agent), None)
+    win = finish_windows([w for w in agent_windows() if w["agent"] == agent])
+    posts = [m for m in reversed(store().list_chat(ALLCHAT_KEEP)) if m["from"] == agent][:8]
+    post_html = "".join(
+        f'<div class="post"><div class="meta"><time>{html.escape(m["at"])} UTC</time></div>'
+        f'<div class="text">{html.escape(m["text"])}</div>'
+        + (f'<img class="att" src="{html.escape(m["image"])}" alt="">' if m.get("image") else "") + "</div>"
+        for m in posts) or '<p class="empty">Nothing posted yet.</p>'
+    persona = "".join(f'<span class="chip">{html.escape(k)}</span>' for k in PERSONAS.get(agent, []))
+    extra = ""
+    if agent == "james":
+        fit = next(iter(store().list_fitness(1)), None)
+        if fit and isinstance(fit.get("summary"), dict):
+            extra += ('<section class="card stack" style="margin-bottom:14px"><h2>Health summary</h2><dl class="kv">' + "".join(
+                f"<dt>{html.escape(str(k))}</dt><dd>{html.escape(str(v))}</dd>" for k, v in fit["summary"].items())
+                + f'</dl><p class="muted small">From {html.escape(display_name(fit["bot_id"]))} at '
+                f'{html.escape(fit["created_at"])} UTC</p></section>')
+        j = james_summary()
+        extra += (f'<section class="card stack"><h2>Training</h2><div class="text">{html.escape(j.get("summary") or "")}</div>'
+                 + (f'<p><a href="{html.escape(FITNESS_APP_URL)}">Open Garage Gym →</a></p>' if FITNESS_APP_URL else "")
+                 + "</section>") if j else ""
+    ch = home_channel(agent)
+    online = bool(st_row and st_row["online"])
+    body = (
+        f'<header class="top"><div class="hero"><span class="avw">{avatar_img(agent, 76)}<span class="dot{" on" if online else ""}"></span></span>'
+        f'<div><p class="eyebrow">{TIER_LABELS[v["tier"]]}{" · " + html.escape(v["home"]) if v.get("home") else ""}</p>'
+        f'<h1>{html.escape(v["name"])}</h1><p class="muted small">{html.escape(st_row["activity"] if st_row else "offline")}</p></div></div>'
+        f'<a class="btn" href="/chat?ch={ch}&amp;to={agent}">{ui_icon("chat")}Message {html.escape(v["name"])}</a></header>'
+        '<div class="grid2">'
+        f'<section class="card stack"><h2>Latest</h2><div class="wins" style="grid-template-columns:minmax(0,1fr)">{"".join(win_html(w) for w in win)}</div></section>'
+        '<section class="card stack"><h2>About</h2>'
+        f'<dl class="kv"><dt>Job</dt><dd>{html.escape(v["role"])}</dd><dt>Can</dt><dd>{html.escape(ABILITIES.get(agent, "chat"))}</dd>'
+        f'<dt>Model</dt><dd><code>{html.escape(agent_model(agent))}</code></dd><dt>Channel</dt><dd><a href="/chat?ch={ch}">#{CHANNEL_IDS[ch]["name"]}</a></dd></dl>'
+        + (f'<div><h3>Persona</h3><div class="chips" style="margin-top:6px">{persona}</div></div>' if persona else "")
+        + f'</section></div>{extra}<section class="card" style="margin-top:14px"><h2>Recent posts</h2>{post_html}</section>')
+    return page(headers, v["name"], "", body)
+
+
+def calendar_page(headers, query):
     """Remi's tab: a month grid plus the same month as a day-by-day list."""
     tz = hub_tz()
     today = datetime.now(tz).date()
@@ -3028,14 +4439,15 @@ def calendar_page(query):
         first = today.replace(day=1)
     nxt = (first + timedelta(days=32)).replace(day=1)
     prev = (first - timedelta(days=1)).replace(day=1)
-    head = (f"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-            f"<title>Remi's calendar</title>{_PAGE_CSS}{_nav('/calendar')}"
-            f"<h1>Remi's calendar</h1>")
+    head = (f'<header class="top"><div class="hero">{avatar_img("remi", 56)}<div><p class="eyebrow">Remi\'s calendar</p>'
+            f'<h1>{first:%B %Y}</h1></div></div><div class="monthnav"><a class="btn ghost small" href="/calendar?month={prev:%Y-%m}">'
+            f'← {prev:%b}</a><a class="btn ghost small" href="/calendar">Today</a><a class="btn ghost small" '
+            f'href="/calendar?month={nxt:%Y-%m}">{nxt:%b} →</a></div></header>')
     if not calendar_linked():
-        return head + ("<p>No calendar linked yet. In Google Calendar on a computer: Settings → "
-                       "your calendar → <b>Integrate calendar</b> → copy <b>Secret address in "
-                       "iCal format</b>. In Vercel, set <code>REMI_CALENDAR_URLS</code> to it "
-                       "(comma-separate several) and redeploy. Treat it like a password.</p>")
+        return page(headers, "Calendar", "/calendar", head + (
+            '<section class="card"><h2>No calendar linked yet</h2><p>In Google Calendar on a computer: Settings → '
+            'your calendar → <b>Integrate calendar</b> → copy <b>Secret address in iCal format</b>. In Vercel, set '
+            '<code>REMI_CALENDAR_URLS</code> to it (comma-separate several) and redeploy. Treat it like a password.</p></section>'))
     grid_start = first - timedelta(days=(first.weekday() + 1) % 7)  # Sunday
     grid_end = grid_start + timedelta(days=41)
     occ = calendar_events(grid_start, grid_end)
@@ -3067,61 +4479,19 @@ def calendar_page(query):
     while d < nxt:
         items = by_day.get(d, [])
         if items:
-            listing.append(f"<div class=\"day\">{d:%A %B %d}</div><ul>" + "".join(
+            listing.append(f"<div class=\"day\">{d:%A %B} {d.day}</div><ul class=\"list\">" + "".join(
                 f"<li>{html.escape(occurrence_text(o))}"
-                f"{' <span class=tag>birthday</span>' if o['birthday'] else ''}</li>" for o in items) + "</ul>")
+                f"{' <span class=chip>birthday</span>' if o['birthday'] else ''}</li>" for o in items) + "</ul>")
         d += timedelta(days=1)
-    return head + (
-        f"<p><a href=\"/calendar?month={prev:%Y-%m}\">&larr; {prev:%B}</a> · "
-        f"<b>{first:%B %Y}</b> · <a href=\"/calendar?month={nxt:%Y-%m}\">{nxt:%B} &rarr;</a></p>"
-        "<div style=\"overflow-x:auto\"><table class=\"cal\"><tr>"
+    body = head + (
+        "<section class=\"card scrollx\" style=\"padding:10px\"><table class=\"cal\"><tr>"
         + "".join(f"<th>{d}</th>" for d in ("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"))
-        + "</tr>" + "".join(rows) + "</table></div>"
-        + ("".join(listing) or "<p>Nothing scheduled this month.</p>")
-        + f"<p><small>Times in {html.escape(HUB_TIMEZONE)}. From your Google Calendar "
-          "(read-only), refreshed every 10 minutes.</small></p>")
+        + "</tr>" + "".join(rows) + "</table></section>"
+        + f"<section class=\"card\" style=\"margin-top:14px\">{''.join(listing) or '<p class=empty>Nothing scheduled this month.</p>'}</section>"
+        + f"<p class=\"foot\">Times in {html.escape(HUB_TIMEZONE)}. From your Google Calendar "
+          "(read-only), refreshed every 10 minutes.</p>")
+    return page(headers, "Calendar", "/calendar", body)
 
-
-_BUDGET_JS = """
-document.getElementById("csv-import").onclick = async () => {
-  const f = document.getElementById("csv-file").files[0], out = document.getElementById("csv-status");
-  if (!f) { out.textContent = "Pick your Rocket Money CSV first."; return; }
-  out.textContent = "Importing...";
-  try {
-    const d = await (await fetch("/api/glass/import", {method: "POST",
-      headers: {"Content-Type": "application/json", "x-dashboard-key": new URLSearchParams(location.search).get("key") || ""},
-      body: JSON.stringify({csv: await f.text()})})).json();
-    if (!d.ok) throw new Error(d.error);
-    const sk = Object.entries(d.skipped).filter(([, n]) => n).map(([k, n]) => n + " " + k).join(", ");
-    out.textContent = "Added " + d.added + " expenses" + (d.duplicates ? ", " + d.duplicates + " already imported" : "")
-      + (sk ? "; skipped " + sk : "") + ". Read columns " + Object.values(d.columns).join(", ")
-      + "; expenses were " + d.expenses_were + " in this file. Reload to see the totals.";
-  } catch (err) { out.textContent = "Import failed: " + err.message; }
-};
-"""
-
-
-def _budget_html():
-    month = datetime.now(hub_tz()).strftime("%Y-%m")
-    rows = []
-    for cat, v in month_status(month).items():
-        if v["budget"]:
-            share = v["spent"] / v["budget"]
-            color = "#b3261e" if share >= 1 else "#a35d00" if share >= 0.9 else "#1a7f37"
-            rows.append(f"<li><b>{html.escape(cat)}</b> ${v['spent']:,.2f} of ${v['budget']:,.0f}"
-                        f"<div style=\"background:#e4e8ee;height:6px;max-width:320px\"><div style=\""
-                        f"background:{color};height:6px;width:{min(share, 1) * 100:.0f}%\"></div></div></li>")
-        elif v["spent"]:
-            rows.append(f"<li><b>{html.escape(cat)}</b> ${v['spent']:,.2f} <i>(no budget)</i></li>")
-    listing = (f"<ul style=\"list-style:none;padding-left:0\">{''.join(rows)}</ul>" if rows else
-               "<p>No budgets or expenses yet. Set GLASS_BUDGETS in Vercel (e.g. "
-               "<code>Groceries:600,Dining:200</code>), log spending with \"@glass $42 groceries\", "
-               "or import a Rocket Money export.</p>")
-    return (f"<p><small>{month}</small></p>{listing}"
-            "<p>Import a Rocket Money export (Transactions → Export on a computer): "
-            "<input id=\"csv-file\" type=\"file\" accept=\".csv,text/csv\"> "
-            "<button id=\"csv-import\" type=\"button\">Import</button> <i id=\"csv-status\"></i></p>"
-            f"<script>{_BUDGET_JS}</script>")
 
 
 def _limit(query, default):
@@ -3242,13 +4612,14 @@ def handle(method, path, query, headers, body):
 
         if path == "/api/allchat":
             text, bot_id = data.get("text"), data.get("bot_id")
+            ch = data.get("channel") if data.get("channel") in CHANNEL_IDS else "all"
             if not isinstance(text, str) or not text.strip():
                 return _json(400, {"ok": False, "error": "text required"})
             if bot_id:  # a bot posting: no replies, so agents can't loop
                 if not _auth_bot(bot_id, headers):
                     return _json(401, {"ok": False, "error": "bad bot_id or key"})
-                store().add_chat(bot_id, text.strip()[:2000])
-                return _json(200, {"ok": True, "messages": allchat_view()})
+                store().add_chat(bot_id, text.strip()[:2000], channel=data.get("channel") if ch != "all" else None)
+                return _json(200, {"ok": True, "messages": allchat_view(channel=ch)})
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
             if text.strip().startswith("/"):
@@ -3257,17 +4628,25 @@ def handle(method, path, query, headers, body):
                 except CommandError as e:
                     return _json(400, {"ok": False, "error": str(e)})
                 return _json(200, {"ok": True, "command": True, "result": result,
-                                   "messages": allchat_view(), "errors": {}, "routed": []})
+                                   "messages": allchat_view(channel=ch), "errors": {}, "routed": []})
             st = store()
-            st.add_chat("you", text.strip()[:2000])
-            thread = st.list_chat(CHAT_HISTORY)
+            st.add_chat("you", text.strip()[:2000], channel=ch)
+            thread = (st.list_chat(CHAT_HISTORY) if ch == "all" else
+                      [m for m in st.list_chat(ALLCHAT_KEEP) if message_channel(m) == ch][-CHAT_HISTORY:])
             agents = mentioned_agents(text)
+            members = CHANNEL_IDS[ch]["members"]
             errors, routed = {}, []
-            if not agents and ALLCHAT_AUTO:
+            if not agents and ch == "news":
+                agents = list(members)  # the debate channel: all three weigh in
+            elif not agents and len(members) == 1:
+                agents = list(members)
+            elif not agents and ALLCHAT_AUTO:
                 try:
-                    agents = routed = pick_responders(thread)
+                    agents = routed = pick_responders(thread, members or None)
                 except LLMError as e:
                     errors["Mistral (picking who answers)"] = str(e)
+                    if members:
+                        agents = members[:1]
 
             def answer(a):
                 try:
@@ -3278,12 +4657,12 @@ def handle(method, path, query, headers, body):
                 with ThreadPoolExecutor(max_workers=len(agents)) as ex:
                     for a, reply, err in ex.map(answer, agents):
                         if isinstance(reply, tuple):  # Charter's (caption, chart url)
-                            st.add_chat(a, reply[0], image=reply[1])
+                            st.add_chat(a, reply[0], image=reply[1], channel=ch)
                         elif reply:
-                            st.add_chat(a, reply.strip()[:4000])
+                            st.add_chat(a, reply.strip()[:4000], channel=ch)
                         else:
                             errors[AGENTS[a]["name"]] = err
-            return _json(200, {"ok": True, "messages": allchat_view(), "errors": errors,
+            return _json(200, {"ok": True, "messages": allchat_view(channel=ch), "errors": errors,
                                "routed": [AGENTS[a]["name"] for a in routed]})
 
         if path == "/api/glass/expense":
@@ -3331,7 +4710,7 @@ def handle(method, path, query, headers, body):
         if path == "/api/push/test":
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
-            sent = notify("Mistral", "Test: phone notifications from Bot Hub work.")
+            sent = notify("Mistral", f"Test: phone notifications from {APP_NAME} work.")
             problem = push_problem()
             return _json(200, {"ok": True, "sent": sent, "error": (problem[1] if problem else None)
                                or store().get_meta("push:last_error")
@@ -3361,6 +4740,15 @@ def handle(method, path, query, headers, body):
     # GET
     if path == "/sw.js":
         return 200, "text/javascript; charset=utf-8", _SW_JS.encode(), [("Cache-Control", "no-cache")]
+    assets = {"/ui.css": ("text/css; charset=utf-8", _UI_CSS), "/ui.js": ("text/javascript; charset=utf-8", _UI_JS),
+              "/chat.js": ("text/javascript; charset=utf-8", _CHAT_JS)}
+    if path in assets:  # versioned URLs (?v=), so they can be cached for good
+        kind, text = assets[path]
+        return 200, kind, text.encode(), [("Cache-Control", "public, max-age=31536000, immutable")]
+    if path.startswith("/avatar/") and path.endswith(".svg"):
+        who = path[len("/avatar/"):-len(".svg")]
+        return (200, "image/svg+xml", avatar_svg(who if who in AGENT_LOOKS else "hub").encode(),
+                [("Cache-Control", "public, max-age=86400")])
     if path in ("/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/favicon.ico"):
         size = {"/icon-192.png": 192, "/icon-512.png": 512, "/favicon.ico": 32}.get(path, 180)
         return 200, "image/png", _icon_png(size), [("Cache-Control", "public, max-age=604800")]
@@ -3368,8 +4756,9 @@ def handle(method, path, query, headers, body):
         # Opened signed in (Safari's "Add to Home Screen"), the app starts with the
         # key, so the Home Screen copy (which has its own cookies) is signed in too.
         start = (f"/?key={DASHBOARD_KEY}" if DASHBOARD_KEY and _auth_dashboard(query, headers) else "/")
-        manifest = {"name": "Bot Hub", "short_name": "Bot Hub", "start_url": start, "scope": "/",
-                    "display": "standalone", "background_color": "#ffffff", "theme_color": "#2f5bd3",
+        manifest = {"name": APP_NAME, "short_name": APP_NAME, "start_url": start, "scope": "/",
+                    "display": "standalone", "background_color": THEMES["theta"]["dark"]["bg"],
+                    "theme_color": AGENT_LOOKS["theta"][0],
                     "icons": [{"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
                               {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png"}]}
         return (200, "application/manifest+json", json.dumps(manifest).encode(),
@@ -3399,109 +4788,16 @@ def handle(method, path, query, headers, body):
         host = headers.get("host")
         if host and st.get_meta("hub:origin") != f"https://{host}":
             st.set_meta("hub:origin", f"https://{host}")  # the push "subject" when VAPID_SUBJECT is unset
-        reports = st.list_reports(20)
-        escs = st.list_escalations(20, open_only=True)
-        orders = st.list_active_orders()
-        fit_rows = st.list_fitness(1)
-        fit = fit_rows[0] if fit_rows else None
-        james = james_summary()  # before agent_statuses: an answer marks James online
+        return 200, "text/html; charset=utf-8", home_page(headers).encode(), _login_cookie(query)
 
-        def _render_list(items):
-            parts = []
-            for w in items[:20]:
-                title, src = html.escape(w["title"]), html.escape(w["source"])
-                if w.get("url"):
-                    parts.append(f"<li><a href=\"{html.escape(w['url'])}\">{title}</a> <i>({src})</i></li>")
-                else:
-                    parts.append(f"<li>{title} <i>({src})</i></li>")
-            return "".join(parts)
-
-        items = "".join(
-            f"<li><b>{html.escape(display_name(r['bot_id']))}</b> {html.escape(r['event_type'])} — "
-            f"{html.escape(json.dumps(r['payload']))} <i>({html.escape(r['created_at'])})</i></li>"
-            for r in reports
-        ) or "<li>No reports yet.</li>"
-        esc_items = "".join(
-            f"<li>#{e['id']} {html.escape(display_name(e['from_bot']))} -&gt; {e['to_role']}: "
-            f"{html.escape(e['issue'])} [{e['status']}]</li>"
-            for e in escs
-        ) or "<li>No open escalations.</li>"
-        ord_items = "".join(
-            f"<li>{html.escape(_order_line(o))}</li>"
-            for o in orders
-        ) or "<li>No active commandeer orders.</li>"
-        ent_items = _render_list(
-            pushed_items("entertainment") + widget_items(ENTERTAINMENT_FEEDS)
-        ) or "<li>No entertainment items right now.</li>"
-        breaking, top = news_items()
-        news_html = (f"<h3>Breaking</h3><ul>{_render_list(breaking)}</ul>" if breaking else "")
-        news_html += ("<h3>Top stories</h3>" if breaking else "") + (
-            f"<ul>{_render_list(top) or '<li>No headlines right now.</li>'}</ul>")
-        from_bots = _render_list(pushed_items("news"))
-        if from_bots:
-            news_html += f"<h3>From your bots</h3><ul>{from_bots}</ul>"
-        round_btn = ("<p><button id=\"run-round\" type=\"button\">Run a round now</button> "
-                     "<i id=\"round-status\"></i></p>"
-                     "<p>Phone notifications (from Mistral): <button id=\"push-on\" type=\"button\">Turn on</button> "
-                     "<button id=\"push-test\" type=\"button\">Send a test</button> <i id=\"push-status\"></i></p>"
-                     f"<script>{_PUSH_JS}</script>")
-        agent_items = "".join(
-            f"<li><span style=\"color:{'#1a7f37' if a['online'] else '#888'}\">●</span> "
-            f"<b>{html.escape(a['name'])}</b> — {a['tier']} · {html.escape(a['activity'])}</li>"
-            for a in agent_statuses())
-        if james:
-            james_html = (f"<p><b>{html.escape(james.get('coach') or 'James')}</b>'s summary</p>"
-                          f"<div style=\"white-space:pre-wrap\">{html.escape(james.get('summary') or '')}</div>")
-        elif GARAGE_GYM_SECRET:
-            james_html = ("<p>Garage Gym didn't answer. Check GARAGE_GYM_URL, and that "
-                          "HUB_SECRET there matches GARAGE_GYM_SECRET here.</p>")
-        else:
-            james_html = ""
-        if fit:
-            fit_html = james_html + "<ul>" + "".join(
-                f"<li><b>{html.escape(str(k))}:</b> {html.escape(str(v))}</li>"
-                for k, v in fit["summary"].items()
-            ) + f"</ul><i>from {html.escape(display_name(fit['bot_id']))} at {html.escape(fit['created_at'])}</i>"
-        elif james_html:
-            fit_html = james_html
-        else:
-            fit_html = ("<p>No health summary yet. Link Garage Gym (GARAGE_GYM_URL and "
-                        "GARAGE_GYM_SECRET) to show James's summary here.</p>")
-        app_link = (
-            f"<p><a href=\"{html.escape(FITNESS_APP_URL)}\">Open fitness app</a></p>"
-            if FITNESS_APP_URL else
-            f"<p><a href=\"{FITNESS_REPO_URL}\">Fitness app repo</a></p>"
-        )
-        if STORAGE_MODE.startswith("memory"):
-            storage_note = ("<p><i>Storage: memory (not persistent) — data will not "
-                            "persist between requests. Connect Upstash Redis to the "
-                            "project in Vercel and redeploy to fix this.</i></p>")
-        else:
-            storage_note = f"<p><i>Storage: {html.escape(STORAGE_MODE)}.</i></p>"
-        body = (
-            "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-            "<title>Bot Hub</title><link rel=\"manifest\" href=\"/manifest.webmanifest\" crossorigin=\"use-credentials\">"
-            "<link rel=\"apple-touch-icon\" href=\"/apple-touch-icon.png\"><meta name=\"theme-color\" content=\"#2f5bd3\">"
-            "<meta name=\"apple-mobile-web-app-capable\" content=\"yes\">"
-            f"{_PAGE_CSS}{_nav('/')}<h1>Bot hub</h1>"
-            f"<h2>Agents</h2><ul style=\"list-style:none;padding-left:0\">{agent_items}</ul>{round_btn}"
-            f"<h2>Chat</h2>{_chat_html()}"
-            f"<h2>News</h2>{news_html}"
-            f"<h2>Entertainment</h2><ul>{ent_items}</ul>"
-            f"<h2>Fitness — overall health</h2>{fit_html}{app_link}"
-            f"<h2>Budget (Glass)</h2>{_budget_html()}"
-            f"<h2>Reports</h2><ul>{items}</ul>"
-            f"<h2>Escalations</h2><ul>{esc_items}</ul>"
-            f"<h2>Commandeer orders</h2><ul>{ord_items}</ul>"
-            f"{storage_note}"
-            + (f"<p><small>{TMDB_NOTICE}</small></p>" if TMDB_API_KEY else "")
-        ).encode()
-        return 200, "text/html; charset=utf-8", body, _login_cookie(query)
-
-    if path == "/calendar":
+    pages = {"/chat": lambda: chat_page(headers, query), "/calendar": lambda: calendar_page(headers, query),
+             "/money": lambda: money_page(headers), "/settings": lambda: settings_page(headers)}
+    agent_path = path.startswith("/agent/") and path[len("/agent/"):] in AGENTS
+    if path in pages or agent_path:
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
-        return 200, "text/html; charset=utf-8", calendar_page(query).encode(), _login_cookie(query)
+        out = agent_page(headers, path[len("/agent/"):]) if agent_path else pages[path]()
+        return 200, "text/html; charset=utf-8", out.encode(), _login_cookie(query)
 
     if path == "/api/feed":
         if not _auth_dashboard(query, headers):
@@ -3559,7 +4855,7 @@ def handle(method, path, query, headers, body):
         bot_id = query.get("bot_id", [None])[0]
         if not (_auth_dashboard(query, headers) if not bot_id else _auth_bot(bot_id, headers)):
             return _json(401, {"ok": False, "error": "dashboard key or bot key required"})
-        return _json(200, {"ok": True, "messages": allchat_view()})
+        return _json(200, {"ok": True, "messages": allchat_view(channel=query.get("channel", ["all"])[0])})
 
     if path.startswith("/chart/") and path.endswith(".svg"):
         if not _auth_dashboard(query, headers):
@@ -3632,5 +4928,5 @@ if __name__ == "__main__":
     from wsgiref.simple_server import make_server
     port = int(os.environ.get("PORT", "8770"))
     host = os.environ.get("HOST", "127.0.0.1")
-    print(f"Bot hub (Vercel edition) on http://{host}:{port} — storage: {STORAGE_MODE}")
+    print(f"Theta (Vercel edition) on http://{host}:{port} — storage: {STORAGE_MODE}")
     make_server(host, port, app).serve_forever()
