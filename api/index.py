@@ -1478,6 +1478,22 @@ def _claude_content(content):
     return out
 
 
+def anthropic_key_hint():
+    """What's off about the key's shape, without showing any of it."""
+    raw = os.environ.get("ANTHROPIC_API_KEY", "")
+    key = _clean_secret(raw)
+    notes = []
+    if key != raw:
+        notes.append("it had spaces, a line break or quotes around it (now ignored)")
+    if not key.startswith("sk-ant-api"):
+        notes.append("it doesn't start with sk-ant-api, so it may be the wrong value "
+                     "(an admin key, a key ID or a Claude.ai login won't work)")
+    elif len(key) < 40:
+        notes.append(f"it's only {len(key)} characters, so it may be cut off")
+    return ("; ".join(notes) + ". " if notes else "its shape looks right, so it was likely revoked, expired, "
+            "or deleted in the Console. ") + "Make a new key at console.anthropic.com, update it in Vercel, then redeploy"
+
+
 def claude_chat(messages, max_tokens):
     """Theta on Claude. Thinking is always on for Opus 5.5 and counts as
     output, so the token ceiling is roomier than the visible reply needs.
@@ -1488,14 +1504,15 @@ def claude_chat(messages, max_tokens):
              for m in messages if m["role"] in ("user", "assistant")]
     if not convo or convo[0]["role"] != "user":
         convo.insert(0, {"role": "user", "content": "(continue)"})
-    client = anthropic.Anthropic(timeout=MASTER_TIMEOUT, max_retries=1)
+    client = anthropic.Anthropic(api_key=_clean_secret(os.environ.get("ANTHROPIC_API_KEY", "")),
+                                 timeout=MASTER_TIMEOUT, max_retries=1)
     try:
         resp = client.beta.messages.create(
             model=MASTER_MODEL_ID, max_tokens=max(4000, max_tokens * 4), system=system or anthropic.omit,
             messages=convo, output_config={"effort": MASTER_EFFORT},
             betas=["server-side-fallback-2026-07-01"], fallbacks="default")
     except anthropic.AuthenticationError:
-        raise LLMError("Anthropic rejected ANTHROPIC_API_KEY (check it in Vercel)")
+        raise LLMError("Anthropic rejected ANTHROPIC_API_KEY: " + anthropic_key_hint())
     except anthropic.PermissionDeniedError as e:
         raise LLMError(f"Anthropic refused the request: {e.message[:120]}")
     except anthropic.NotFoundError:
