@@ -1770,6 +1770,7 @@ def run_tick(now=None):
     ones not marked done yet. Cheap; meant for every few minutes."""
     now = now or time.time()
     fired, nagged = [], []
+    store().set_meta("tick:last", str(time.time()))
     with _REM_LOCK:
         keep = []
         for r in reminders():
@@ -5073,6 +5074,34 @@ def wiring():
         rows.append({"agent": "remi-calendar", "name": "Remi's calendar", "tier": "",
                      "model": "Google Calendar (iCal)", "testable": False, "state": "off",
                      "note": "Not linked: set REMI_CALENDAR_URLS"})
+    now = time.time()
+    ago = lambda t: "just now" if _ago(t) == "now" else f"{_ago(t)} ago"
+    last_round = max(json.loads(store().get_meta("round:last") or "{}").values(), default=0)
+    rows.append({"agent": "rounds", "name": "Rounds", "tier": "", "model": "Supabase Cron → /api/round", "testable": False,
+                 **({"state": "off", "note": "No round has run yet: run the bot-hub-rounds job in supabase/cron.sql.example"}
+                    if not last_round else
+                    {"state": "ok", "note": f"Last round {ago(last_round)}"} if now - last_round < 13 * 3600 else
+                    {"state": "bad", "note": f"Last round {ago(last_round)}: check the bot-hub-rounds job in Supabase"})})
+    last_tick = float(store().get_meta("tick:last") or 0)
+    rows.append({"agent": "tick", "name": "Reminders and digest", "tier": "", "model": "Supabase Cron → /api/tick",
+                 "testable": False,
+                 **({"state": "off", "note": "Not running yet: run the bot-hub-tick job in supabase/cron.sql.example"}
+                    if not last_tick else
+                    {"state": "ok", "note": f"Last check {ago(last_tick)}"} if now - last_tick < 20 * 60 else
+                    {"state": "bad", "note": f"Last check {ago(last_tick)}: check the bot-hub-tick job in Supabase"})})
+    rows.append({"agent": "gmail", "name": "Remi's Gmail", "tier": "", "model": "Gmail (OAuth)", "testable": False,
+                 **({"state": "ok", "note": f"Connected as {store().get_meta('gmail:me') or 'you'}"} if gmail_connected() else
+                    {"state": "off", "note": "Ready: Settings → Gmail → Connect"} if gmail_configured() else
+                    {"state": "off", "note": "Not linked: set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET"})})
+    if not FINNHUB_API_KEY or not stocks_on():
+        rows.append({"agent": "stocks", "name": "Glass's stocks", "tier": "", "model": "Finnhub", "testable": False,
+                     "state": "off", "note": "Not linked: set FINNHUB_API_KEY" if not FINNHUB_API_KEY else
+                     "Set GLASS_HOLDINGS and/or GLASS_WATCHLIST"})
+    else:
+        have = stock_quotes()
+        rows.append({"agent": "stocks", "name": "Glass's stocks", "tier": "", "model": "Finnhub", "testable": False,
+                     **({"state": "ok", "note": f"{len(have)} prices"} if have else
+                        {"state": "off", "note": "Prices arrive with Glass's next round"})})
     return rows
 
 
