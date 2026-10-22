@@ -60,6 +60,21 @@ Vercel's serverless model: `api/index.py` is one Python function,
      `GARAGE_GYM_SECRET` — links James. The secret must equal
      `HUB_SECRET` in Garage Gym, where `HUB_USER_ID` picks whose
      training James sees (see Garage Gym's README, "Bot hub link")
+   - Agent jobs (each optional; the Wiring panel shows what's set up):
+     - `CRON_SECRET` — lets Supabase Cron run rounds (see Rounds)
+     - `REMI_CALENDAR_URLS` — Google Calendar "Secret address in iCal
+       format" (Settings → your calendar → Integrate calendar), comma-
+       separated; treat like a password. `BIRTHDAYS` — `Name:MM-DD,...`.
+       `HUB_TIMEZONE` (`America/Denver`) for times
+     - `RED_FEEDS`, `BLUE_FEEDS`, `GRAY_FEEDS` — override each news
+       miner's outlets
+     - `TMDB_API_KEY` — Lenz's trending movies and shows (themoviedb.org,
+       free for personal use; v3 key or v4 read token)
+     - `GLASS_BUDGETS` — `Groceries:600,Dining:200,...` monthly limits;
+       `GLASS_CATEGORY_MAP` — `Restaurants:Dining,...` renames
+     - `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` — phone notifications;
+       open `/api/push/new-keys` (signed in) for a pair. `VAPID_SUBJECT`
+       optional (defaults to the dashboard's own address)
 5. Deploy. The dashboard is at `https://<project>.vercel.app`, and
    bots point at `https://<project>.vercel.app/api/report`.
 
@@ -86,7 +101,14 @@ Same as the Railway build: `POST /api/report`, `POST /api/escalate`,
 `GET /api/widgets`, `GET /api/fitness`, `GET /api/agents` (dashboard
 key), `GET /api/models` (dashboard key), `GET /api/wiring` (dashboard
 key), `GET|POST /api/allchat` (dashboard key or bot key), `GET /api/bots`,
-`GET /api/tiers`, `POST /api/round` (CRON_SECRET or dashboard key).
+`GET /api/tiers`, `POST /api/round` (CRON_SECRET or dashboard key),
+`GET /calendar` (Remi's tab), `GET /api/glass`, `POST /api/glass/expense`
+(dashboard or bot key), `POST /api/glass/import` (`{"csv": ...}`),
+`GET /chart/<id>.svg`, `GET /api/push/key`, `GET /api/push/new-keys`,
+`POST /api/push/subscribe`, `POST /api/push/test`, plus the Home Screen
+app files `/manifest.webmanifest`, `/sw.js` and icons. Every page
+accepts the dashboard key once as `?key=` and then remembers it in a
+cookie.
 
 ## Agents
 
@@ -149,16 +171,42 @@ fitness summaries, and status changes. Agents see them as `[event]`
 lines in their context.
 
 **Rounds.** `POST /api/round` runs each agent's own job and posts what
-it did; agents whose job needs a data source they don't have yet (Glass,
-Remi, Charter) say "no job yet" instead of inventing work.
+it did. Every job works from real data only; with nothing to work from
+an agent says so instead of inventing work.
 
 | Agent | Each round | Tokens |
 |---|---|---|
-| Theta | Summarizes new bot reports into the thread | only when there are reports |
-| Mistral | Wiring check; posts only the first time and when it changes | none |
-| Red, Blue, Gray | A 2-3 sentence take on the same new top headline, with its link | 3 small calls |
-| Lenz | A short pitch for a new entertainment-feed item | 1 small call |
+| Theta | Summarizes new reports; decides escalations that reach him (`ORDER:` replies issue a commandeer order); Sundays, a weekly review from the week's real facts | only when there's something to do |
+| Mistral | Once a day, the morning digest (calendar, birthdays, headlines, budget, overnight activity); flags breaking news; answers Low Brain escalations or forwards them to Theta; wiring check on first run and on change | ~1 a day, plus triage |
+| Remi | Once a day, today's agenda from the family calendar; an update when today's plans change; birthdays 7 days, 1 day and the day of | 1 a day |
+| Glass | Budget alerts at 90% and 100% (once per category per month); Sundays, the week in review | none |
+| Red, Blue, Gray | Each takes the same new top story, grounded in how their own outlets covered it, or noting they haven't | 3 small calls |
+| Lenz | Pitches a new trending title from TMDB's real synopsis, date and rating (feeds without a key) | 1 small call |
+| Charter | Sundays, the month's spending chart | none |
 | James | Refreshes your Garage Gym summary; notes when it changed | none |
+
+**Phone notifications.** Mistral pushes the digest one-liner, breaking
+news, Remi's birthday reminders, Glass's budget alerts, wiring problems,
+escalations to Theta and Theta's decisions. On iPhone (iOS 16.4+):
+open the dashboard in Safari, Share → Add to Home Screen, open it from
+the Home Screen, and tap **Turn on** under Agents. Needs the VAPID keys.
+
+**Remi's calendar** is its own tab (`/calendar`): a month grid and a
+day-by-day list from your Google Calendar, plus `BIRTHDAYS`. Remi's chat
+answers from the same calendar.
+
+**Glass's budget.** Log spending with "@glass $42 groceries" (in his
+chat or All Agents; confirmed with exact numbers, no model call),
+`POST /api/glass/expense`, or import a Rocket Money export on the Budget
+card. Rocket Money has no public API: export CSV from Transactions on a
+computer. The importer finds the columns by header, works out whether
+expenses are positive or negative, skips income, transfers, card
+payments, refunds and ignored rows, and is safe to re-run.
+
+**Charter's charts** are SVG images drawn from hub data: spending by
+category against budgets, daily spending, calendar busyness, news
+coverage by side, and All Agents activity. Ask "@charter chart my
+spending".
 
 A failed job doesn't count as run, so it's retried next round. Run one
 from the dashboard (**Run a round now**, under Agents) or on a schedule:

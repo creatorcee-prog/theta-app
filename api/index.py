@@ -2899,8 +2899,8 @@ def handle(method, path, query, headers, body):
     # GET
     if path == "/sw.js":
         return 200, "text/javascript; charset=utf-8", _SW_JS.encode(), [("Cache-Control", "no-cache")]
-    if path in ("/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"):
-        size = {"/icon-192.png": 192, "/icon-512.png": 512}.get(path, 180)
+    if path in ("/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/favicon.ico"):
+        size = {"/icon-192.png": 192, "/icon-512.png": 512, "/favicon.ico": 32}.get(path, 180)
         return 200, "image/png", _icon_png(size), [("Cache-Control", "public, max-age=604800")]
     if path == "/manifest.webmanifest":
         # Opened signed in (Safari's "Add to Home Screen"), the app starts with the
