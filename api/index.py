@@ -1105,8 +1105,8 @@ def handle(method, path, query, headers, body):
     if path == "/api/bots":
         bots = []
         for bot_id in list(AGENTS) + sorted((set(BOT_KEYS) | set(BOT_ROLES)) - set(AGENTS)):
-            bots.append({"bot_id": bot_id, "name": display_name(bot_id),
-                         "role": role_of(bot_id), "model": MODELS[role_of(bot_id)]})
+            bots.append({"bot_id": bot_id, "name": display_name(bot_id), "role": role_of(bot_id),
+                         "model": agent_model(bot_id) if bot_id in AGENTS else MODELS[role_of(bot_id)]})
         return _json(200, bots)
 
     if path == "/api/agents":
