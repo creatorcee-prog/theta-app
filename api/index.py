@@ -1821,6 +1821,10 @@ _WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Satur
 _DAY_RE = r"(mon|tue|wed|thu|fri|sat|sun)(?:days?|sdays?|nesdays?|rsdays?|urdays?|s|t|r|rs|n)?"
 
 
+_MONTHS = {m: i + 1 for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"))}
+_MON_RE = r"jan|feb|mar|apr|may|jun|jul|aug|sept?|oct|nov|dec"
+
+
 def parse_reminder(text, now=None):
     """'8am every day take my meds until done' -> {what, at, repeat, weekday,
     hour, minute, nag}. Raises ValueError with a hint when it can't tell."""
@@ -1847,6 +1851,26 @@ def parse_reminder(text, now=None):
         repeat = "weekly"
     rel = take("rel", r"\bin (\d{1,3}) ?(minutes?|mins?|m|hours?|hrs?|h)\b")
     dayword = take("day", r"\b(today|tonight|tomorrow)\b")
+    on_date = None  # an explicit date: 1-22-2027, 1/22, 2027-01-22, Jan 22, 22 January 2027
+    for pat, order in ((r"\b(?:on )?(\d{4})-(\d{1,2})-(\d{1,2})\b", "ymd"),
+                       (r"\b(?:on )?(" + _MON_RE + r")[a-z]*\.? (\d{1,2})(?:st|nd|rd|th)?(?:,? (\d{4}))?\b", "mdy"),
+                       (r"\b(?:on )?(\d{1,2})(?:st|nd|rd|th)? (?:of )?(" + _MON_RE + r")[a-z]*\.?(?:,? (\d{4}))?\b", "dmy"),
+                       (r"\b(?:on )?(\d{1,2})[/-](\d{1,2})(?:[/-](\d{4}|\d{2}))?\b", "mdy")):
+        m = re.search(pat, s, re.I)
+        if not m:
+            continue
+        g = m.groups()
+        y, mo, d = (g[0], g[1], g[2]) if order == "ymd" else (g[2], g[0], g[1]) if order == "mdy" else (g[2], g[1], g[0])
+        mo = _MONTHS.get(mo[:3].lower()) if not mo.isdigit() else int(mo)
+        year = int(y) + (2000 if len(y) == 2 else 0) if y else now.year
+        try:
+            on_date = date(year, mo, int(d))
+        except (TypeError, ValueError):
+            continue  # not a real date: leave the text alone
+        if not y and on_date < now.date():
+            on_date = on_date.replace(year=now.year + 1)  # "Jan 22" in October means next January
+        s = s[:m.start()] + " " + s[m.end():]
+        break
     if weekday is None and take("wd", r"\b(?:on |this |next )?" + _DAY_RE + r"\b"):
         weekday = _WEEKDAY[found["wd"].group(1).lower()]
     hour = minute = None
@@ -1869,7 +1893,7 @@ def parse_reminder(text, now=None):
     what = re.sub(r"\s+(?:at|on|to)$", "", what.strip(" ,.:;-"), flags=re.I).strip(" ,.:;-")
     if not what:
         raise ValueError("What should I remind you about?")
-    if not (rel or hour is not None or dayword or weekday is not None or repeat):
+    if not (rel or hour is not None or dayword or weekday is not None or repeat or on_date):
         raise ValueError("When? Try '8am', 'in 20 min', 'tomorrow 9am' or 'every day at 8pm'.")
     if rel:
         n, unit = int(rel.group(1)), rel.group(2).lower()
@@ -1879,8 +1903,12 @@ def parse_reminder(text, now=None):
     if hour is None:
         hour, minute = 9, 0  # a day but no time: 9 in the morning
     r = {"what": what[:200], "repeat": repeat, "weekday": weekday, "hour": hour, "minute": minute, "nag": nag}
-    day = now.date() + timedelta(days=1 if dayword and dayword.group(1).lower() == "tomorrow" else 0)
+    if on_date and not repeat:
+        weekday = r["weekday"] = None  # the date decides; a weekday named beside it is just a label
+    day = on_date or now.date() + timedelta(days=1 if dayword and dayword.group(1).lower() == "tomorrow" else 0)
     first = _occurrence(r, day)
+    if on_date and first <= now and not repeat:
+        raise ValueError(f"{on_date:%b} {on_date.day}, {on_date.year} has already passed.")
     while (first <= now or (weekday is not None and first.weekday() != weekday)
            or (repeat == "weekdays" and first.weekday() >= 5)):
         day += timedelta(days=1)
@@ -6223,6 +6251,10 @@ body.typing .chat{height:100dvh}
 .meta .tier{font-size:10px;font-weight:750;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);border:1px solid var(--border);border-radius:5px;padding:0 4px}
 .meta time{font-size:11.5px;color:var(--muted)}
 .text{white-space:pre-wrap;overflow-wrap:anywhere}
+/* Phones: iOS zooms the page when a field's text is under 16px, and the page then drifts. Keep fields at 16px and
+   stop the page itself from sliding sideways (scrolling strips inside it still scroll). */
+@media (pointer:coarse){input:not([type=checkbox]):not([type=radio]),textarea,select{font-size:16px!important}}
+html,body{overflow-x:clip;max-width:100%}
 .md>div:empty.md-gap{height:.5em}.md .md-h{font-weight:700;margin-top:4px}
 .md .md-list{margin:2px 0;padding-left:1.3em;white-space:normal}.md .md-list li{margin:2px 0}
 .md .md-list.tasks{list-style:none;padding-left:0}.md li.task{display:flex;gap:8px;align-items:flex-start}
