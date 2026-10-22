@@ -32,16 +32,22 @@ Local test (memory mode, no KV needed):
   BOT_KEYS="miner-1:key1,master-1:mkey" BOT_ROLES="miner-1:miner,master-1:master" \
   PORT=8770 python3 api/index.py
 """
+import csv
+import hashlib
 import html
+import io
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from http.cookies import SimpleCookie
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from urllib.parse import parse_qs, urlparse
 
 # ---- Bot config (same env vars as the Railway build) ----
@@ -77,6 +83,10 @@ ALLCHAT_MENTIONS = 3  # agents that may answer one message of yours
 # ("off" in ALLCHAT_AUTO keeps un-mentioned messages unanswered).
 ALLCHAT_AUTO = os.environ.get("ALLCHAT_AUTO", "on").lower() != "off"
 ALLCHAT_AUTO_MAX = int(os.environ.get("ALLCHAT_AUTO_MAX", "2"))
+# Rounds: Supabase Cron calls /api/round (Bearer CRON_SECRET) a few times a
+# day; an agent's job is skipped if it ran less than ROUND_MIN_GAP_MINUTES ago.
+CRON_SECRET = os.environ.get("CRON_SECRET", "")
+ROUND_MIN_GAP = int(os.environ.get("ROUND_MIN_GAP_MINUTES", "120")) * 60
 
 # ---- Agents: the hub's named personas. The name is the persona, not
 # the model (like James in Garage Gym); each runs on its tier's model.
@@ -181,7 +191,25 @@ NEWS_SOURCE_NAMES = {
     "rss.nytimes.com": "New York Times", "thehill.com": "The Hill",
     "moxie.foxnews.com": "Fox News", "nypost.com": "New York Post",
     "feeds.bbci.co.uk": "BBC News",
+    "www.dailywire.com": "Daily Wire", "www.washingtonexaminer.com": "Washington Examiner",
+    "www.nationalreview.com": "National Review", "www.theguardian.com": "Guardian US",
+    "www.vox.com": "Vox", "www.motherjones.com": "Mother Jones",
+    "www.newsnationnow.com": "NewsNation", "reason.com": "Reason",
 }
+# Each news miner's own outlets ({RED,BLUE,GRAY}_FEEDS override), so the
+# three takes come from three different slices of the press.
+SIDE_FEEDS = {
+    "red": os.environ.get("RED_FEEDS", "https://moxie.foxnews.com/google-publisher/politics.xml,"
+                          "https://nypost.com/news/feed/,https://www.dailywire.com/feeds/rss.xml,"
+                          "https://www.washingtonexaminer.com/feed,https://www.nationalreview.com/feed/"),
+    "blue": os.environ.get("BLUE_FEEDS", "https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml,"
+                           "https://feeds.npr.org/1014/rss.xml,https://www.theguardian.com/us-news/rss,"
+                           "https://www.vox.com/rss/index.xml,https://www.motherjones.com/feed/"),
+    "gray": os.environ.get("GRAY_FEEDS", "https://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml,"
+                           "https://thehill.com/homenews/feed/,https://www.pbs.org/newshour/feeds/rss/politics,"
+                           "https://www.newsnationnow.com/feed/,https://reason.com/feed/"),
+}
+SIDE_FEEDS = {k: [u.strip() for u in v.split(",") if u.strip()] for k, v in SIDE_FEEDS.items()}
 NEWS_TOP = int(os.environ.get("NEWS_TOP", "8"))
 NEWS_BREAKING_MAX = int(os.environ.get("NEWS_BREAKING_MAX", "2"))
 NEWS_BREAKING_MINUTES = int(os.environ.get("NEWS_BREAKING_MINUTES", "90"))
@@ -192,6 +220,7 @@ ENTERTAINMENT_FEEDS = [u.strip() for u in os.environ.get(
 FITNESS_APP_URL = os.environ.get(
     "FITNESS_APP_URL", "https://fitness-tracker-snowy-seven-83.vercel.app/")
 FITNESS_REPO_URL = "https://github.com/creatorcee-prog/fitness-tracker"
+TMDB_BASE = "https://api.themoviedb.org/3"
 # Garage Gym's /api/hub (James): GARAGE_GYM_SECRET must equal its HUB_SECRET.
 GARAGE_GYM_URL = (os.environ.get("GARAGE_GYM_URL") or FITNESS_APP_URL).rstrip("/")
 GARAGE_GYM_SECRET = os.environ.get("GARAGE_GYM_SECRET", "")
@@ -236,6 +265,8 @@ class MemoryStore:
         self.order_ids, self.fitness, self.processed, self.seq = [], [], set(), 0
         self.seen, self.activity = {}, {}
         self.allchat = []  # newest first
+        self.meta = {}
+        self.ledger = {}  # "YYYY-MM" -> {id: expense}
 
     def _next_id(self):
         self.seq += 1
@@ -301,11 +332,29 @@ class MemoryStore:
         if activity is not None:
             self.activity[bot_id] = activity
 
-    def add_chat(self, sender, text):
-        item = {"id": self._next_id(), "from": sender, "text": text, "at": _now()}
+    def add_chat(self, sender, text, kind="message", image=None):
+        item = {"id": self._next_id(), "from": sender, "text": text, "kind": kind, "at": _now()}
+        if image:
+            item["image"] = image
         self.allchat.insert(0, item)
         del self.allchat[ALLCHAT_KEEP:]
         return item
+
+    def get_meta(self, key):
+        return self.meta.get(key)
+
+    def add_expenses(self, month, rows):
+        """rows: {id: expense}; returns how many were new (ids dedupe)."""
+        book = self.ledger.setdefault(month, {})
+        new = {k: v for k, v in rows.items() if k not in book}
+        book.update(new)
+        return len(new)
+
+    def list_expenses(self, month):
+        return list(self.ledger.get(month, {}).values())
+
+    def set_meta(self, key, value):
+        self.meta[key] = value
 
     def list_chat(self, limit):
         return list(reversed(self.allchat[:limit]))  # oldest first
@@ -413,11 +462,31 @@ class KVStore:
         if activity is not None:
             self._cmd("HSET", "hub:activity", bot_id, activity)
 
-    def add_chat(self, sender, text):
-        item = {"id": self._next_id(), "from": sender, "text": text, "at": _now()}
+    def add_chat(self, sender, text, kind="message", image=None):
+        item = {"id": self._next_id(), "from": sender, "text": text, "kind": kind, "at": _now()}
+        if image:
+            item["image"] = image
         self._cmd("LPUSH", "hub:allchat", json.dumps(item))
         self._cmd("LTRIM", "hub:allchat", "0", str(ALLCHAT_KEEP - 1))
         return item
+
+    def get_meta(self, key):
+        return self._cmd("HGET", "hub:meta", key)
+
+    def add_expenses(self, month, rows):
+        """rows: {id: expense}; returns how many were new (ids dedupe)."""
+        have = set((self._cmd("HGETALL", f"hub:ledger:{month}") or [])[::2])
+        new = [x for k, v in rows.items() if k not in have for x in (k, json.dumps(v))]
+        if new:
+            self._cmd("HSET", f"hub:ledger:{month}", *new)
+        return len(new) // 2
+
+    def list_expenses(self, month):
+        flat = self._cmd("HGETALL", f"hub:ledger:{month}") or []
+        return [json.loads(v) for v in flat[1::2]]
+
+    def set_meta(self, key, value):
+        self._cmd("HSET", "hub:meta", key, value)
 
     def list_chat(self, limit):
         rows = self._cmd("LRANGE", "hub:allchat", "0", str(limit - 1))
@@ -524,13 +593,16 @@ def feed_items(url):
     return items
 
 
-def _fetch_feeds(urls):
-    """feed_items() for each url, fetched in parallel (one slow outlet
-    doesn't hold up the rest)."""
+def _fetch_feeds_with(fn, urls):
+    """fn(url) for each url, in parallel (one slow source doesn't hold up the rest)."""
     if not urls:
         return []
     with ThreadPoolExecutor(max_workers=min(10, len(urls))) as ex:
-        return list(ex.map(feed_items, urls))
+        return list(ex.map(fn, urls))
+
+
+def _fetch_feeds(urls):
+    return _fetch_feeds_with(feed_items, urls)
 
 
 def widget_items(feeds):
@@ -559,6 +631,90 @@ def _names(title):
     return {w.lower() for w in words if w[:1].isupper() and len(w) >= 3} - _STOP
 
 
+# ---- Lenz's TMDB link: trending movies and shows with real facts.
+# TMDB_API_KEY takes either the v3 "API key" or the v4 "read access token".
+TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "")
+TMDB_NOTICE = "This product uses the TMDB API but is not endorsed or certified by TMDB."
+_TMDB_CACHE = {"at": 0.0, "items": None}
+
+
+def tmdb_trending():
+    """This week's trending movies and shows ({title, kind, overview, date,
+    rating, url}), cached 30 min. Raises LLMError when TMDB refuses."""
+    if not TMDB_API_KEY:
+        return []
+    if _TMDB_CACHE["items"] is not None and time.time() - _TMDB_CACHE["at"] < 1800:
+        return _TMDB_CACHE["items"]
+    bearer = TMDB_API_KEY.startswith("eyJ")  # v4 tokens are JWTs
+    url = TMDB_BASE + "/trending/all/week" + ("" if bearer else f"?api_key={TMDB_API_KEY}")
+    headers = {"User-Agent": "bot-hub/1.0", "Accept": "application/json"}
+    if bearer:
+        headers["Authorization"] = f"Bearer {TMDB_API_KEY}"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=8) as resp:
+            results = json.loads(resp.read()).get("results", [])
+    except urllib.error.HTTPError as e:
+        raise LLMError(f"TMDB returned {e.code}")
+    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+        raise LLMError(f"TMDB unreachable: {e!r}")
+    items = []
+    for r in results:
+        kind = r.get("media_type")
+        if kind not in ("movie", "tv") or not r.get("id"):
+            continue
+        items.append({
+            "title": r.get("title") or r.get("name") or "?", "kind": "movie" if kind == "movie" else "TV show",
+            "overview": (r.get("overview") or "")[:400], "date": r.get("release_date") or r.get("first_air_date") or "",
+            "rating": round(float(r.get("vote_average") or 0), 1),
+            "url": f"https://www.themoviedb.org/{kind}/{r['id']}"})
+    _TMDB_CACHE.update(at=time.time(), items=items)
+    return items
+
+
+def tmdb_fact_line(it):
+    bits = [it["kind"]] + ([f"released {it['date']}"] if it["date"] else []) \
+        + ([f"rated {it['rating']}/10 on TMDB"] if it["rating"] else [])
+    return f"{it['title']} ({', '.join(bits)})"
+
+
+def story_key(title):
+    return _keywords(title), _names(title)
+
+
+def _same_story(a, b):
+    """Two story_key()s describe the same story: 3+ shared keywords, 2 of them names."""
+    return len(a[0] & b[0]) >= 3 and len(a[1] & b[1]) >= 2
+
+
+def outlet_items(urls):
+    """Every item from these feeds, each with a readable outlet name."""
+    out = []
+    for url, items in zip(urls, _fetch_feeds(urls)):
+        host = urlparse(url).netloc
+        out += [dict(it, source=NEWS_SOURCE_NAMES.get(host) or it.get("source") or host) for it in items]
+    return out
+
+
+def side_coverage(agent, title, limit=3):
+    """How this news miner's own outlets covered a story (matching headlines)."""
+    key = story_key(title)
+    return [it for it in outlet_items(SIDE_FEEDS.get(agent, []))
+            if _same_story(key, story_key(it["title"]))][:limit]
+
+
+def side_headlines(agent, limit=8):
+    """Each of the miner's outlets' latest headlines, in turn."""
+    by_outlet = {}
+    for it in outlet_items(SIDE_FEEDS.get(agent, [])):
+        by_outlet.setdefault(it["source"], []).append(it)
+    out = []
+    for rank in range(10):
+        for items in by_outlet.values():
+            if len(out) < limit and rank < len(items):
+                out.append(items[rank])
+    return out
+
+
 def news_items(now=None):
     """(breaking, top) from NEWS_FEEDS.
 
@@ -576,8 +732,7 @@ def news_items(now=None):
     keyed = [(it, (_keywords(it["title"]), _names(it["title"])))
              for items in feeds for it in items]
 
-    def same_story(a, b):
-        return len(a[0] & b[0]) >= 3 and len(a[1] & b[1]) >= 2
+    same_story = _same_story
 
     def outlets_carrying(kw):
         return {o["source"] for o, okw in keyed if same_story(kw, okw)}
@@ -708,9 +863,26 @@ def system_prompt(agent_id):
     traits = [k for k in persona if k != "concise"]
     personality = f" Your personality: {', '.join(traits)}." if traits else ""
     brevity = " and be concise" if "concise" in persona else ""
+    extra = {"remi": remi_context, "glass": glass_context, "charter": charter_context}.get(agent_id, str)()
+    if agent_id == "lenz":
+        try:
+            trending = tmdb_trending()[:10]
+        except LLMError:
+            trending = []
+        charts = [i["title"] for i in widget_items(ENTERTAINMENT_FEEDS)[:8]]
+        if trending or charts:
+            extra = ("\n\nWhat's current (only these facts; say so rather than guess):"
+                     + "".join(f"\n- Trending: {tmdb_fact_line(i)}" for i in trending)
+                     + "".join(f"\n- In the feeds: {t}" for t in charts))
+    if agent_id in SIDE_FEEDS:
+        latest = side_headlines(agent_id)
+        if latest:
+            extra = ("\n\nLatest headlines from your outlets (you only know these headlines; "
+                     "say so rather than guess details):\n"
+                     + "\n".join(f"- {it['source']}: {it['title']}" for it in latest))
     return (f"You are {a['name']}, the {TIER_LABELS[a['tier']]} of a personal bot "
             f"hub. {a['role']}{stand_in}{personality} The team: {team}. "
-            f"Stay in character{brevity}.")
+            f"Stay in character{brevity}.{extra}")
 
 
 def provider_extra(provider, model):
@@ -789,6 +961,8 @@ def summarize(unprocessed):
     except LLMError as e:
         return {"ok": False, "error": str(e), "unprocessed_count": len(unprocessed)}
     store().mark_processed([r["id"] for r in unprocessed])
+    n = len(unprocessed)
+    store().add_chat("theta", f"Summary of {n} new report{'s' if n != 1 else ''}:\n{text}")
     return {"ok": True, "summary": text, "model": MODELS["master"],
             "unprocessed_count": len(unprocessed)}
 
@@ -812,7 +986,26 @@ def master_work(escalation):
 # (up to ALLCHAT_MENTIONS). Replies never trigger further replies, so
 # agents can't run up each other's API limits in a loop.
 def chat_name(sender):
-    return "You" if sender == "you" else display_name(sender)
+    return {"you": "You", "hub": "Hub"}.get(sender) or display_name(sender)
+
+
+def chat_line(m):
+    """One thread entry as plain text, for model context."""
+    if m.get("kind") == "event":
+        return f"[event] {m['text']}"
+    return f"{chat_name(m['from'])}: {m['text']}"
+
+
+def post_event(sender, text):
+    """A templated All Agents line for something an agent did. No tokens."""
+    store().add_chat(sender, text[:500], kind="event")
+
+
+def _gist(payload):
+    if isinstance(payload, dict) and payload.get("title"):
+        return str(payload["title"])[:120]
+    text = json.dumps(payload)
+    return text if len(text) <= 120 else text[:117] + "..."
 
 
 def mentioned_agents(text):
@@ -829,9 +1022,18 @@ def mentioned_agents(text):
 
 def allchat_reply(agent, thread):
     """One agent's reply to the latest message, with the thread as context."""
+    if agent == "glass" and thread[-1]["from"] == "you":
+        parsed = parse_expense(thread[-1]["text"])
+        if parsed:
+            return glass_log_reply(parsed)
+    text = thread[-1]["text"].lower()
+    if agent == "charter" and ("@charter" in text or any(w in text for w in ("chart", "graph", "plot", "visual"))):
+        chart = charter_reply(thread[-1]["text"])
+        if chart:
+            return chart  # (caption, image url): the caller posts it with the image
     if agent == "james":  # Garage Gym takes a single question
         return james_chat([{"role": "user", "content": thread[-1]["text"]}])
-    transcript = "\n".join(f"{chat_name(m['from'])}: {m['text']}" for m in thread[-CHAT_HISTORY:])
+    transcript = "\n".join(chat_line(m) for m in thread[-CHAT_HISTORY:])
     name = AGENTS[agent]["name"]
     return llm_chat(AGENTS[agent]["tier"], [
         {"role": "system", "content": system_prompt(agent) + " You're in the All Agents "
@@ -843,12 +1045,11 @@ def allchat_reply(agent, thread):
 def pick_responders(thread):
     """Mistral triages a message nobody was @mentioned in: which agents
     should answer it. Always at least one (Mistral herself when nothing
-    fits), at most ALLCHAT_AUTO_MAX, never James: each of his answers
-    uses one of his daily questions, so he waits for an @mention."""
-    candidates = [a for a, v in AGENTS.items() if not v.get("home")]
+    fits), at most ALLCHAT_AUTO_MAX."""
+    candidates = list(AGENTS)
     roster = "\n".join(f"- {a}: {AGENTS[a]['name']} ({TIER_LABELS[AGENTS[a]['tier']]}). "
                        f"{AGENTS[a]['role']}" for a in candidates)
-    transcript = "\n".join(f"{chat_name(m['from'])}: {m['text']}" for m in thread[-10:])
+    transcript = "\n".join(chat_line(m) for m in thread[-10:])
     reply = llm_chat("low_brain", [
         {"role": "system", "content": system_prompt("mistral")},
         {"role": "user", "content": "You route messages in the All Agents chat. Agents:\n"
@@ -868,6 +1069,1154 @@ def allchat_view(limit=50):
     return [dict(m, name=chat_name(m["from"])) for m in store().list_chat(limit)]
 
 
+# ---- Remi's calendar: Google Calendar "secret address in iCal format"
+# links (read-only), plus BIRTHDAYS. Times are shown in HUB_TIMEZONE.
+HUB_TIMEZONE = os.environ.get("HUB_TIMEZONE", "America/Denver")
+REMI_CALENDAR_URLS = [u.strip() for u in os.environ.get("REMI_CALENDAR_URLS", "").split(",") if u.strip()]
+BIRTHDAYS = [p.split(":", 1) for p in os.environ.get("BIRTHDAYS", "").split(",") if ":" in p]
+CALENDAR_CACHE_SECONDS = 600
+_CAL_CACHE = {}  # url -> (fetched_at, events or None)
+_WEEKDAYS = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
+
+
+def hub_tz():
+    try:
+        return ZoneInfo(HUB_TIMEZONE)
+    except (ZoneInfoNotFoundError, ValueError):
+        return timezone.utc
+
+
+def _ics_unescape(text):
+    return (text.replace("\\n", "\n").replace("\\N", "\n").replace("\\,", ",")
+            .replace("\\;", ";").replace("\\\\", "\\"))
+
+
+def parse_ics(text):
+    """VEVENTs as {NAME: (params, value)}; EXDATE collects every value."""
+    lines = []
+    for raw in text.replace("\r\n", "\n").split("\n"):
+        if raw[:1] in (" ", "\t") and lines:
+            lines[-1] += raw[1:]  # folded line
+        else:
+            lines.append(raw)
+    events, cur = [], None
+    for line in lines:
+        if line == "BEGIN:VEVENT":
+            cur = {"EXDATE": []}
+        elif line == "END:VEVENT":
+            if cur is not None:
+                events.append(cur)
+            cur = None
+        elif cur is not None and ":" in line:
+            head, value = line.split(":", 1)
+            name, *params = head.split(";")
+            params = dict(x.split("=", 1) for x in params if "=" in x)
+            if name == "EXDATE":
+                cur["EXDATE"] += [(params, v) for v in value.split(",")]
+            elif name not in cur:
+                cur[name] = (params, value)
+    return events
+
+
+def _ics_time(params, value, tz):
+    """(date or aware datetime in tz, all_day)."""
+    value = value.strip()
+    if params.get("VALUE") == "DATE" or (len(value) == 8 and value.isdigit()):
+        return date(int(value[:4]), int(value[4:6]), int(value[6:8])), True
+    dt = datetime.strptime(value.rstrip("Z")[:15], "%Y%m%dT%H%M%S")
+    if value.endswith("Z"):
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        zone = tz
+        if params.get("TZID"):
+            try:
+                zone = ZoneInfo(params["TZID"].strip('"'))
+            except (ZoneInfoNotFoundError, ValueError):
+                pass  # e.g. a Windows zone name: assume the hub's
+        dt = dt.replace(tzinfo=zone)
+    return dt.astimezone(tz), False
+
+
+def _nth_weekday(year, month, weekday, n):
+    """The nth (1-based; negative counts from the end) weekday of a month, or None."""
+    first = date(year, month, 1)
+    days = [first + timedelta(d) for d in range(31)
+            if (first + timedelta(d)).month == month and (first + timedelta(d)).weekday() == weekday]
+    try:
+        return days[n - 1] if n > 0 else days[n]
+    except IndexError:
+        return None
+
+
+def _rrule_dates(first, rule, last_day):
+    """Dates a recurring event starts on, from its first date up to last_day."""
+    r = dict(x.split("=", 1) for x in rule.split(";") if "=" in x)
+    freq, step = r.get("FREQ"), max(1, int(r.get("INTERVAL", "1") or 1))
+    count = int(r["COUNT"]) if r.get("COUNT", "").isdigit() else None
+    until = date(int(r["UNTIL"][:4]), int(r["UNTIL"][4:6]), int(r["UNTIL"][6:8])) if r.get("UNTIL") else None
+    byday = [d.strip() for d in r.get("BYDAY", "").split(",") if d.strip()]
+    stop = min(last_day, until) if until else last_day
+
+    def candidates():
+        if freq == "DAILY":
+            d = first
+            while True:
+                yield d
+                d += timedelta(days=step)
+        elif freq == "WEEKLY":
+            days = sorted({_WEEKDAYS[b[-2:]] for b in byday if b[-2:] in _WEEKDAYS} or {first.weekday()})
+            week = first - timedelta(days=first.weekday())
+            while True:
+                for wd in days:
+                    yield week + timedelta(days=wd)
+                week += timedelta(weeks=step)
+        elif freq == "MONTHLY":
+            y, m = first.year, first.month
+            while True:
+                if byday and byday[0][-2:] in _WEEKDAYS and byday[0][:-2].lstrip("+-").isdigit():
+                    d = _nth_weekday(y, m, _WEEKDAYS[byday[0][-2:]], int(byday[0][:-2]))
+                else:
+                    day = int(r.get("BYMONTHDAY", first.day))
+                    try:
+                        d = date(y, m, day)
+                    except ValueError:
+                        d = None
+                if d:
+                    yield d
+                m += step
+                y, m = y + (m - 1) // 12, (m - 1) % 12 + 1
+        elif freq == "YEARLY":
+            y = first.year
+            while True:
+                try:
+                    yield date(y, first.month, first.day)
+                except ValueError:
+                    pass  # Feb 29 in a non-leap year
+                y += step
+        else:
+            yield first
+
+    out, n = [], 0
+    for d in candidates():
+        if d < first:
+            continue
+        if d > stop or (count is not None and n >= count) or n > 3000:
+            break
+        n += 1
+        out.append(d)
+    return out
+
+
+def _calendar_source(url):
+    """Parsed events for one calendar, cached; None if it couldn't be read."""
+    hit = _CAL_CACHE.get(url)
+    if hit and time.time() - hit[0] < CALENDAR_CACHE_SECONDS:
+        return hit[1]
+    try:
+        events = parse_ics(_fetch_url(url, timeout=8).decode("utf-8", "replace"))
+    except Exception as e:  # a bad link shouldn't break the dashboard
+        print(f"calendar fetch failed: {e!r}")
+        events = None
+    _CAL_CACHE[url] = (time.time(), events)
+    return events
+
+
+def calendar_events(first_day, last_day):
+    """Every occurrence overlapping first_day..last_day (local dates), sorted:
+    {title, location, start, end, all_day, birthday}. Timed starts/ends are
+    aware datetimes in hub_tz(); all-day ones are dates (end exclusive)."""
+    tz = hub_tz()
+    occ = []
+    sources = _fetch_feeds_with(_calendar_source, REMI_CALENDAR_URLS)
+    for events in sources:
+        if not events:
+            continue
+        overridden = set()
+        for ev in events:
+            if "RECURRENCE-ID" in ev and "UID" in ev:
+                overridden.add((ev["UID"][1], _ics_time(*ev["RECURRENCE-ID"], tz)[0]))
+        for ev in events:
+            if "DTSTART" not in ev or ev.get("STATUS", ({}, ""))[1].upper() == "CANCELLED":
+                continue
+            start, all_day = _ics_time(*ev["DTSTART"], tz)
+            if "DTEND" in ev:
+                end = _ics_time(*ev["DTEND"], tz)[0]
+            elif "DURATION" in ev and not all_day:
+                dur = ev["DURATION"][1]
+                h = int(dur.split("T")[1].split("H")[0]) if "H" in dur else 0
+                mins = int(dur.split("H")[-1].split("M")[0].lstrip("PT")) if "M" in dur.split("T")[-1] else 0
+                end = start + timedelta(hours=h, minutes=mins)
+            else:
+                end = start + timedelta(days=1) if all_day else start
+            length = end - start
+            title = _ics_unescape(ev.get("SUMMARY", ({}, "(no title)"))[1]).strip() or "(no title)"
+            where = _ics_unescape(ev.get("LOCATION", ({}, ""))[1]).strip()
+            first = start if all_day else start.date()
+            if "RRULE" in ev and "RECURRENCE-ID" not in ev:
+                skip = {_ics_time(p, v, tz)[0] for p, v in ev["EXDATE"]}
+                starts = []
+                for d in _rrule_dates(first, ev["RRULE"][1], last_day):
+                    st = d if all_day else datetime.combine(d, start.time(), tzinfo=tz)
+                    if st in skip or (ev.get("UID", ({}, ""))[1], st) in overridden:
+                        continue
+                    starts.append(st)
+            else:
+                starts = [start]
+            for st in starts:
+                en = st + length
+                s_day = st if all_day else st.date()
+                e_day = en if all_day else (en - timedelta(microseconds=1)).date() + timedelta(days=1)
+                if s_day <= last_day and max(e_day, s_day + timedelta(days=1)) > first_day:
+                    occ.append({"title": title, "location": where, "start": st, "end": en,
+                                "all_day": all_day, "birthday": "birthday" in title.lower()})
+    for name, md in BIRTHDAYS:
+        try:
+            month, day = (int(x) for x in md.strip().split("-"))
+        except ValueError:
+            continue
+        for year in range(first_day.year, last_day.year + 1):
+            try:
+                d = date(year, month, day)
+            except ValueError:
+                continue
+            if first_day <= d <= last_day:
+                occ.append({"title": f"{name.strip()}'s birthday", "location": "", "start": d,
+                            "end": d + timedelta(days=1), "all_day": True, "birthday": True})
+    occ.sort(key=lambda o: (o["start"] if o["all_day"] else o["start"].date(),
+                            0 if o["all_day"] else 1,
+                            "" if o["all_day"] else o["start"].strftime("%H%M"), o["title"]))
+    return occ
+
+
+def calendar_linked():
+    return bool(REMI_CALENDAR_URLS or BIRTHDAYS)
+
+
+def calendar_problems():
+    """Calendar links that couldn't be read last time (for wiring)."""
+    return [i + 1 for i, u in enumerate(REMI_CALENDAR_URLS) if _calendar_source(u) is None]
+
+
+def _clock(dt):
+    return dt.strftime("%I:%M %p").lstrip("0").replace(":00 ", " ")
+
+
+def occurrence_text(o, with_day=False):
+    day = (o["start"] if o["all_day"] else o["start"].date()).strftime("%a %b %d ") if with_day else ""
+    when = "All day" if o["all_day"] else f"{_clock(o['start'])}–{_clock(o['end'])}"
+    return f"{day}{when}: {o['title']}" + (f" ({o['location']})" if o["location"] else "")
+
+
+def remi_context():
+    """The next 14 days, for Remi's prompt, so she answers from the real calendar."""
+    if not calendar_linked():
+        return ""
+    today = datetime.now(hub_tz()).date()
+    items = calendar_events(today, today + timedelta(days=13))
+    listing = "\n".join(f"- {occurrence_text(o, with_day=True)}" for o in items[:60]) or "- nothing scheduled"
+    return (f"\n\nToday is {today:%A %B %d}. The family calendar for the next 14 days "
+            f"(exact; never change times or add events):\n{listing}")
+
+
+# ---- Glass's ledger: expenses from chat ("@glass $42 groceries"), bots, or
+# Rocket Money CSV exports, against monthly budgets (GLASS_BUDGETS
+# "Groceries:600,Dining:200"). GLASS_CATEGORY_MAP renames categories
+# ("Restaurants:Dining,Coffee:Dining"). Rocket Money has no public API.
+def _pairs(env):
+    return [(k.strip(), v.strip()) for k, v in (p.split(":", 1) for p in os.environ.get(env, "").split(",") if ":" in p)]
+
+
+GLASS_BUDGETS = {}
+for _k, _v in _pairs("GLASS_BUDGETS"):
+    try:
+        GLASS_BUDGETS[_k] = float(_v)
+    except ValueError:
+        pass
+GLASS_CATEGORY_MAP = {k.lower(): v for k, v in _pairs("GLASS_CATEGORY_MAP")}
+_SKIP_CATEGORIES = ("income", "paycheck", "transfer", "credit card payment", "loan payment", "refund")
+
+
+def ledger_category(raw):
+    """A budget category for a raw category name (map, then case-insensitive match)."""
+    raw = (raw or "").strip()
+    mapped = GLASS_CATEGORY_MAP.get(raw.lower(), raw)
+    for name in GLASS_BUDGETS:
+        if name.lower() == mapped.lower():
+            return name
+    return mapped or "Other"
+
+
+def _expense(day, amount, category, note, source, salt=""):
+    key = hashlib.sha1(f"{day}|{note.lower()}|{amount:.2f}|{source}|{salt}".encode()).hexdigest()[:16]
+    return key, {"date": day.isoformat(), "amount": round(amount, 2), "category": ledger_category(category),
+                 "note": note[:120], "source": source}
+
+
+def add_expense(amount, category, note="", day=None, source="chat"):
+    """Log one expense; returns the stored expense."""
+    day = day or datetime.now(hub_tz()).date()
+    # each entry gets its own id, so the same purchase logged twice counts twice
+    key, exp = _expense(day, amount, category, note, source, salt=str(time.time_ns()))
+    store().add_expenses(day.strftime("%Y-%m"), {key: exp})
+    return exp
+
+
+_AMOUNT = re.compile(r"\$\s?(\d{1,7}(?:,\d{3})*(?:\.\d{1,2})?)")
+
+
+def parse_expense(text):
+    """'@glass $42.50 groceries at Costco' -> (42.5, 'Groceries', 'groceries at Costco'), or None."""
+    m = _AMOUNT.search(text)
+    if not m:
+        return None
+    amount = float(m.group(1).replace(",", ""))
+    rest = re.sub(r"@\w+", "", (text[:m.start()] + text[m.end():])).strip(" ,.-:")
+    words = rest.lower()
+    names = list(GLASS_BUDGETS) + [v for v in GLASS_CATEGORY_MAP.values()]
+    category = next((n for n in names if n.lower() in words), None)
+    if not category:
+        category = next((v for k, v in GLASS_CATEGORY_MAP.items() if k in words), "Other")
+    return amount, category, rest or category
+
+
+def month_status(month=None):
+    """{category: {"spent", "budget"}} for a month ("YYYY-MM"), budgets first."""
+    month = month or datetime.now(hub_tz()).strftime("%Y-%m")
+    out = {c: {"spent": 0.0, "budget": b} for c, b in GLASS_BUDGETS.items()}
+    for e in store().list_expenses(month):
+        out.setdefault(e["category"], {"spent": 0.0, "budget": None})["spent"] += e["amount"]
+    return out
+
+
+def status_lines(month=None):
+    lines = []
+    for cat, v in month_status(month).items():
+        if v["budget"]:
+            lines.append(f"{cat}: ${v['spent']:,.2f} of ${v['budget']:,.0f} ({v['spent'] / v['budget']:.0%})")
+        elif v["spent"]:
+            lines.append(f"{cat}: ${v['spent']:,.2f} (no budget)")
+    return lines
+
+
+def glass_log_reply(parsed):
+    """Log a chat expense; Glass confirms with exact numbers (no model call)."""
+    amount, category, note = parsed
+    exp = add_expense(amount, category, note)
+    v = month_status()[exp["category"]]
+    tail = (f" {exp['category']} this month: ${v['spent']:,.2f} of ${v['budget']:,.0f}."
+            if v["budget"] else f" {exp['category']} this month: ${v['spent']:,.2f} (no budget set).")
+    return f"Logged ${amount:,.2f} for {exp['category']} ({note}).{tail}"
+
+
+def _parse_day(text):
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(text.strip(), fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
+def import_csv(text):
+    """Import a Rocket Money (or similar) transactions CSV. Columns are found
+    by header; whether expenses are positive or negative is read from the
+    file (most rows are spending). Income, transfers, card payments and
+    rows marked ignored are skipped; re-importing is safe (deduped)."""
+    rows = list(csv.DictReader(io.StringIO(text.lstrip("﻿"))))
+    if not rows:
+        return {"ok": False, "error": "no rows found"}
+    cols = {c.strip().lower(): c for c in rows[0].keys() if c}
+
+    def col(*names):
+        return next((cols[n] for n in names if n in cols), None)
+    c_date, c_amount = col("date", "transaction date", "original date"), col("amount")
+    c_name, c_custom = col("name", "description", "merchant", "payee"), col("custom name")
+    c_cat, c_ignored = col("category"), col("ignored from")
+    if not (c_date and c_amount):
+        return {"ok": False, "error": f"need Date and Amount columns; found {', '.join(cols.values())}"}
+    parsed, skipped = [], {"income/transfers": 0, "ignored": 0, "unreadable": 0}
+    for r in rows:
+        day = _parse_day(r.get(c_date) or "")
+        try:
+            amount = float((r.get(c_amount) or "").replace("$", "").replace(",", ""))
+        except ValueError:
+            amount = None
+        if day is None or amount is None:
+            skipped["unreadable"] += 1
+            continue
+        cat = (r.get(c_cat) or "").strip() if c_cat else ""
+        if c_ignored and (r.get(c_ignored) or "").strip():
+            skipped["ignored"] += 1
+            continue
+        if any(k in cat.lower() for k in _SKIP_CATEGORIES):
+            skipped["income/transfers"] += 1
+            continue
+        note = ((r.get(c_custom) or "").strip() if c_custom else "") or ((r.get(c_name) or "").strip() if c_name else "")
+        parsed.append((day, amount, cat, note))
+    positive = sum(1 for p in parsed if p[1] > 0)
+    sign = 1 if positive >= len(parsed) - positive else -1  # spending is the majority
+    by_month = {}
+    for day, amount, cat, note in parsed:
+        if amount * sign <= 0:
+            skipped["income/transfers"] += 1  # money in, e.g. refunds
+            continue
+        key, exp = _expense(day, amount * sign, cat, note, "csv")
+        by_month.setdefault(day.strftime("%Y-%m"), {})[key] = exp
+    added = sum(store().add_expenses(m, rows_) for m, rows_ in by_month.items())
+    total = sum(len(v) for v in by_month.values())
+    return {"ok": True, "added": added, "duplicates": total - added, "skipped": skipped,
+            "expenses_were": "positive" if sign > 0 else "negative",
+            "columns": {k: v for k, v in {"date": c_date, "amount": c_amount, "name": c_custom or c_name,
+                                          "category": c_cat}.items() if v},
+            "months": sorted(by_month)}
+
+
+def glass_context():
+    month = datetime.now(hub_tz()).strftime("%Y-%m")
+    lines = status_lines(month)
+    recent = sorted(store().list_expenses(month), key=lambda e: e["date"])[-8:]
+    if not (lines or recent):
+        return "\n\nNo expenses logged this month yet. People log them with '@glass $42 groceries'."
+    return (f"\n\nThis month ({month}) so far (exact; never invent numbers):\n"
+            + "\n".join(f"- {x}" for x in lines)
+            + ("\nRecent expenses:\n" + "\n".join(f"- {e['date']} ${e['amount']:,.2f} {e['category']}: {e['note']}"
+                                                  for e in recent) if recent else ""))
+
+
+# ---- Charter's charts: SVG drawn here from data the hub already has (no
+# library, no tokens). Stored in meta as chart:<id>, served at /chart/<id>.svg;
+# the newest CHART_KEEP are kept.
+CHART_KEEP = 30
+
+
+def _x(text):
+    return html.escape(str(text), quote=True)
+
+
+def bar_chart_svg(title, rows, money=False, limits=None):
+    """Horizontal bars. rows: [(label, value)]; limits: {label: budget} draws
+    a budget tick per row. Scale: 0 to the largest value or limit."""
+    limits = limits or {}
+    w, left, right, top, row_h = 640, 150, 90, 46, 30
+    h = top + row_h * max(1, len(rows)) + 20
+    biggest = max([v for _, v in rows] + [l for l in limits.values() if l] + [1])
+    fmt = (lambda v: f"${v:,.0f}") if money else (lambda v: f"{v:,.0f}")
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w}" height="{h}" '
+           f'font-family="system-ui,sans-serif" font-size="13">',
+           f'<rect width="{w}" height="{h}" fill="#ffffff"/>',
+           f'<text x="16" y="28" font-size="16" font-weight="bold" fill="#17202b">{_x(title)}</text>']
+    span = w - left - right
+    for i, (label, value) in enumerate(rows):
+        y = top + i * row_h
+        bw = span * value / biggest
+        limit = limits.get(label)
+        color = "#b3261e" if limit and value > limit else "#2f5bd3"  # red only means over budget
+        out.append(f'<text x="{left - 8}" y="{y + 18}" text-anchor="end" fill="#17202b">{_x(label)[:22]}</text>')
+        if limit:  # light track up to the budget, so the bar and its label read as one row
+            out.append(f'<rect x="{left}" y="{y + 5}" width="{span * limit / biggest:.1f}" height="18" fill="#e4e8ee"/>')
+        out.append(f'<rect x="{left}" y="{y + 5}" width="{max(bw, 1):.1f}" height="18" fill="{color}"/>')
+        if limit:
+            lx = left + span * limit / biggest
+            out.append(f'<line x1="{lx:.1f}" x2="{lx:.1f}" y1="{y + 1}" y2="{y + 27}" stroke="#17202b" stroke-width="2"/>')
+        tail = fmt(value) + (f" of {fmt(limit)}" if limit else "")
+        label_x = left + max(bw, span * limit / biggest if limit else 0, 1) + 6  # clear of the tick
+        out.append(f'<text x="{label_x:.1f}" y="{y + 18}" fill="#5a6573">{_x(tail)}</text>')
+    if not rows:
+        out.append(f'<text x="{left}" y="{top + 18}" fill="#5a6573">No data yet</text>')
+    out.append("</svg>")
+    return "".join(out)
+
+
+def column_chart_svg(title, cols, money=False):
+    """Vertical bars over time. cols: [(label, value)], labels thinned to fit."""
+    w, h, left, bottom, top = 640, 300, 56, 40, 46
+    span_w, span_h = w - left - 16, h - top - bottom
+    biggest = max([v for _, v in cols] + [1])
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w}" height="{h}" '
+           f'font-family="system-ui,sans-serif" font-size="12">',
+           f'<rect width="{w}" height="{h}" fill="#ffffff"/>',
+           f'<text x="16" y="28" font-size="16" font-weight="bold" fill="#17202b">{_x(title)}</text>']
+    for frac in (0, 0.5, 1):
+        y = top + span_h * (1 - frac)
+        val = biggest * frac
+        out.append(f'<line x1="{left}" x2="{w - 16}" y1="{y:.1f}" y2="{y:.1f}" stroke="#e4e8ee"/>')
+        out.append(f'<text x="{left - 6}" y="{y + 4:.1f}" text-anchor="end" fill="#5a6573">'
+                   f'{_x(f"${val:,.0f}" if money else f"{val:,.0f}")}</text>')
+    n = max(1, len(cols))
+    slot = span_w / n
+    every = max(1, round(n / 10))
+    for i, (label, value) in enumerate(cols):
+        bh = span_h * value / biggest
+        x = left + i * slot
+        out.append(f'<rect x="{x + slot * 0.15:.1f}" y="{top + span_h - bh:.1f}" width="{slot * 0.7:.1f}" '
+                   f'height="{bh:.1f}" fill="#2f5bd3"/>')
+        if i % every == 0:
+            out.append(f'<text x="{x + slot / 2:.1f}" y="{h - bottom + 16}" text-anchor="middle" fill="#5a6573">{_x(label)}</text>')
+    out.append("</svg>")
+    return "".join(out)
+
+
+def _chart_spending(month=None):
+    month = month or datetime.now(hub_tz()).strftime("%Y-%m")
+    st = month_status(month)
+    rows = sorted(((c, v["spent"]) for c, v in st.items() if v["spent"] or v["budget"]), key=lambda r: -r[1])
+    over = [c for c, v in st.items() if v["budget"] and v["spent"] > v["budget"]]
+    top_cat = rows[0] if rows and rows[0][1] else None
+    caption = (f"Spending by category for {month}"
+               + (f": {top_cat[0]} leads at ${top_cat[1]:,.2f}" if top_cat else ": nothing logged yet")
+               + (f"; over budget: {', '.join(over)}" if over else "") + ".")
+    return caption, bar_chart_svg(f"Spending by category, {month}", rows, money=True,
+                                  limits={c: v["budget"] for c, v in st.items() if v["budget"]})
+
+
+def _chart_daily(month=None):
+    today = datetime.now(hub_tz()).date()
+    month = month or today.strftime("%Y-%m")
+    per = {}
+    for e in store().list_expenses(month):
+        per[e["date"]] = per.get(e["date"], 0) + e["amount"]
+    first = date.fromisoformat(month + "-01")
+    days = [(first + timedelta(d)) for d in range(31) if (first + timedelta(d)).month == first.month
+            and (first + timedelta(d)) <= today]
+    cols = [(str(d.day), per.get(d.isoformat(), 0)) for d in days]
+    total = sum(v for _, v in cols)
+    return (f"Daily spending for {month}: ${total:,.2f} so far.",
+            column_chart_svg(f"Daily spending, {month}", cols, money=True))
+
+
+def _chart_calendar():
+    today = datetime.now(hub_tz()).date()
+    days = [today + timedelta(d) for d in range(14)]
+    counts = {d: 0 for d in days}
+    for o in calendar_events(days[0], days[-1]) if calendar_linked() else []:
+        d = o["start"] if o["all_day"] else o["start"].date()
+        if d in counts and not o["birthday"]:
+            counts[d] += 1
+    busiest = max(days, key=lambda d: counts[d])
+    caption = ("Events per day for the next two weeks"
+               + (f"; busiest is {busiest:%a %b %d} with {counts[busiest]}." if counts[busiest] else ": nothing scheduled."))
+    return caption, column_chart_svg("Events per day, next 14 days",
+                                     [(f"{d:%m/%d}", counts[d]) for d in days])
+
+
+def _chart_coverage():
+    raw = store().get_meta("round:news:last")
+    if not raw:
+        return "No story has been covered in a round yet.", bar_chart_svg("Coverage", [])
+    last = json.loads(raw)
+    rows = [(f"{AGENTS[a]['name']}'s outlets", last["coverage"].get(a, 0)) for a in ("red", "blue", "gray")]
+    return (f"How many of each side's outlets covered \"{last['title'][:80]}\".",
+            bar_chart_svg("Outlets covering the latest story", rows))
+
+
+def _chart_activity():
+    counts = {}
+    for m in store().list_chat(ALLCHAT_KEEP):
+        if m.get("kind") != "event" and m["from"] in AGENTS:
+            counts[AGENTS[m["from"]]["name"]] = counts.get(AGENTS[m["from"]]["name"], 0) + 1
+    rows = sorted(counts.items(), key=lambda r: -r[1])
+    return ("Messages per agent in the recent All Agents thread"
+            + (f"; {rows[0][0]} has said the most." if rows else ": nobody has posted yet."),
+            bar_chart_svg("Who's been talking (All Agents)", rows))
+
+
+CHARTS = {  # name: (words that ask for it, builder)
+    "daily": (("daily", "per day", "each day", "by day"), _chart_daily),
+    "spending": (("spend", "budget", "money", "expense", "category"), _chart_spending),
+    "calendar": (("calendar", "schedule", "busy", "events", "week ahead"), _chart_calendar),
+    "coverage": (("coverage", "covered", "outlets", "news", "story"), _chart_coverage),
+    "activity": (("activity", "talking", "messages", "posted"), _chart_activity),
+}
+
+
+def pick_chart(text):
+    words = text.lower()
+    return next((name for name, (keys, _) in CHARTS.items() if any(k in words for k in keys)), None)
+
+
+def save_chart(svg):
+    """Store an SVG; returns its URL."""
+    st = store()
+    cid = hashlib.sha1(f"{time.time_ns()}".encode()).hexdigest()[:12]
+    st.set_meta(f"chart:{cid}", svg)
+    ids = json.loads(st.get_meta("charts") or "[]")
+    ids.append(cid)
+    for old in ids[:-CHART_KEEP]:
+        st.set_meta(f"chart:{old}", "")
+    st.set_meta("charts", json.dumps(ids[-CHART_KEEP:]))
+    return f"/chart/{cid}.svg"
+
+
+def charter_reply(text):
+    """(caption, image_url) when the text asks for a chart Charter can draw, else None."""
+    name = pick_chart(text)
+    if not name:
+        return None
+    caption, svg = CHARTS[name][1]()
+    return caption, save_chart(svg)
+
+
+def charter_context():
+    return ("\n\nYou can draw these charts from real hub data when asked: spending by category, "
+            "daily spending, calendar busyness, news coverage by side, and All Agents activity. "
+            "You can't chart anything else yet (e.g. workouts); say so instead of making up numbers.")
+
+
+# ---- Phone notifications (Web Push). Mistral delivers them. Needs the
+# dashboard installed to the iPhone Home Screen (iOS 16.4+), VAPID keys in
+# Vercel (VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY; /api/push/new-keys makes a
+# pair) and a tap on "Turn on" inside the Home Screen app.
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
+VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT", "")
+
+
+def push_subs():
+    return json.loads(store().get_meta("push:subs") or "[]")
+
+
+def notify(title, body, url="/"):
+    """Push to every subscribed device; returns how many got it. Quietly
+    does nothing until keys and a subscription exist. Dead subscriptions
+    (404/410) are dropped."""
+    subs = push_subs()
+    if not (VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY and subs):
+        return 0
+    try:
+        from py_vapid import Vapid02
+        from pywebpush import WebPushException, webpush
+    except ImportError:
+        return 0
+    subject = VAPID_SUBJECT or store().get_meta("hub:origin") or ""
+    if not subject:
+        store().set_meta("push:last_error", "no VAPID_SUBJECT and the dashboard hasn't been opened yet")
+        return 0
+    vapid = Vapid02.from_raw(VAPID_PRIVATE_KEY.encode())
+    payload = json.dumps({"title": title, "body": body[:240], "url": url})
+    sent, keep, error = 0, [], ""
+    for sub in subs:
+        try:
+            webpush(sub, payload, vapid_private_key=vapid, vapid_claims={"sub": subject}, ttl=3600, timeout=10)
+            sent += 1
+            keep.append(sub)
+        except WebPushException as e:
+            code = getattr(e.response, "status_code", None)
+            if code not in (404, 410):  # gone for good: drop it
+                keep.append(sub)
+            error = f"push service returned {code}: {str(e)[:120]}"
+        except Exception as e:  # network trouble shouldn't break a round
+            keep.append(sub)
+            error = f"push failed: {e!r}"[:160]
+    if keep != subs:
+        store().set_meta("push:subs", json.dumps(keep))
+    store().set_meta("push:last_error", error)
+    return sent
+
+
+def new_vapid_keys():
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    import base64
+    key = ec.generate_private_key(ec.SECP256R1())
+    b64 = lambda raw: base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+    return {"VAPID_PUBLIC_KEY": b64(key.public_key().public_bytes(
+                serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)),
+            "VAPID_PRIVATE_KEY": b64(key.private_numbers().private_value.to_bytes(32, "big"))}
+
+
+_ICONS = {}
+
+
+def _icon_png(size):
+    """The Home Screen icon: a white ring and dot on the hub blue (PNG, no deps)."""
+    if size in _ICONS:
+        return _ICONS[size]
+    import struct
+    import zlib
+    c, r_out, r_in, dot = size / 2, size * 0.30, size * 0.20, size * 0.08
+    rows = []
+    for y in range(size):
+        row = bytearray(b"\x00")
+        for x in range(size):
+            d = ((x + 0.5 - c) ** 2 + (y + 0.5 - c) ** 2) ** 0.5
+            row += b"\xff\xff\xff" if (r_in <= d <= r_out or d <= dot) else b"\x2f\x5b\xd3"
+        rows.append(bytes(row))
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+    _ICONS[size] = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
+                    + chunk(b"IDAT", zlib.compress(b"".join(rows), 9)) + chunk(b"IEND", b""))
+    return _ICONS[size]
+
+
+_SW_JS = """
+self.addEventListener("push", e => {
+  let d = {};
+  try { d = e.data.json(); } catch (_) { d = {title: "Bot Hub", body: e.data ? e.data.text() : ""}; }
+  e.waitUntil(self.registration.showNotification(d.title || "Bot Hub",
+    {body: d.body || "", data: {url: d.url || "/"}, icon: "/icon-192.png", badge: "/icon-192.png"}));
+});
+self.addEventListener("notificationclick", e => {
+  e.notification.close();
+  e.waitUntil(clients.openWindow((e.notification.data && e.notification.data.url) || "/"));
+});
+"""
+
+
+_PUSH_JS = """
+(async () => {
+  const status = document.getElementById("push-status");
+  const PH = {"Content-Type": "application/json", "x-dashboard-key": new URLSearchParams(location.search).get("key") || ""};
+  if (!("serviceWorker" in navigator)) { status.textContent = "This browser can't show notifications."; return; }
+  const reg = await navigator.serviceWorker.register("/sw.js");
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  if (!("PushManager" in window) || !("Notification" in window)) {
+    status.textContent = standalone ? "Notifications need iOS 16.4 or later."
+      : "On iPhone: Share, then Add to Home Screen. Open Bot Hub from the Home Screen and tap Turn on here.";
+    return;
+  }
+  let key = null;
+  try { key = (await (await fetch("/api/push/key", {headers: PH})).json()).publicKey; } catch (_) {}
+  const sub = await reg.pushManager.getSubscription();
+  status.textContent = sub ? "Notifications are on for this device." : (key ? "" : "Phone notifications aren't set up yet (VAPID keys).");
+  document.getElementById("push-on").onclick = async () => {
+    const perm = await Notification.requestPermission();  // first: iOS needs the tap's user gesture
+    if (perm !== "granted") { status.textContent = "Notifications were not allowed. To retry on iPhone, remove the Home Screen app and add it again."; return; }
+    if (!key) { status.textContent = "Set VAPID keys in Vercel first (see /api/push/new-keys)."; return; }
+    const raw = atob(key.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - key.length % 4) % 4));
+    const s = await reg.pushManager.subscribe({userVisibleOnly: true,
+      applicationServerKey: Uint8Array.from(raw, c => c.charCodeAt(0))});
+    const d = await (await fetch("/api/push/subscribe", {method: "POST", headers: PH, body: JSON.stringify({subscription: s})})).json();
+    status.textContent = d.ok ? "Notifications are on for this device." : "Couldn't turn on: " + d.error;
+  };
+  document.getElementById("push-test").onclick = async () => {
+    const d = await (await fetch("/api/push/test", {method: "POST", headers: PH, body: "{}"})).json();
+    status.textContent = d.ok ? (d.sent ? "Sent to " + d.sent + " device(s)." : "Nothing sent: " + (d.error || "no device subscribed")) : d.error;
+  };
+})();
+"""
+
+
+# ---- Mistral's daily digest and escalation triage
+def morning_digest():
+    """(post, phone one-liner) for today, from real data only."""
+    today = datetime.now(hub_tz()).date()
+    lines, brief = [f"Here's today, {today:%A %B %d}:"], []
+    if calendar_linked():
+        events = calendar_events(today, today)
+        todays = [o for o in events if not o["birthday"]]
+        lines.append("Calendar: " + ("; ".join(occurrence_text(o) for o in todays) or "nothing scheduled"))
+        if todays:
+            brief.append(f"{len(todays)} event{'s' if len(todays) != 1 else ''}")
+        soon = [o for o in calendar_events(today, today + timedelta(days=1)) if o["birthday"]]
+        for o in soon:
+            lines.append(f"Birthday: {o['title']} {'today' if (o['start'] == today) else 'tomorrow'}.")
+            brief.append(o["title"])
+    try:
+        breaking, top = news_items()
+        heads = (breaking + top)[:3]
+    except Exception:
+        heads = []
+    if heads:
+        lines.append("Headlines:\n" + "\n".join(f"- {i['title']} ({i['source']})" for i in heads))
+        brief.append(f"{len(heads)} headlines")
+    if GLASS_BUDGETS:
+        status = month_status()
+        over = [f"{c} (${v['spent']:,.0f} of ${v['budget']:,.0f})" for c, v in status.items()
+                if v["budget"] and v["spent"] > v["budget"]]
+        near = [c for c, v in status.items() if v["budget"] and 0.9 <= v["spent"] / v["budget"] <= 1]
+        if over or near:
+            lines.append("Budget: " + "; ".join([f"over in {x}" for x in over] + [f"{c} near its limit" for c in near]))
+            brief += [f"{c.split(' (')[0]} over budget" for c in over]
+        else:
+            lines.append("Budget: all categories on track.")
+    since = store().get_meta("round:mistral:digest_id")
+    recent = [m for m in store().list_chat(ALLCHAT_KEEP) if since and m["id"] > int(since)]
+    if recent:
+        lines.append(f"Since yesterday's digest: {len(recent)} posts in All Agents.")
+    return "\n".join(lines), " · ".join(brief) or "Nothing pressing today"
+
+
+def _triage_escalations(did):
+    """Mistral answers what the Low Brain can; forwards the rest to Theta."""
+    st = store()
+    done = set(json.loads(st.get_meta("mistral:triaged") or "[]"))
+    todo = [e for e in st.list_escalations(50, open_only=True)
+            if e["to_role"] == "low_brain" and e["id"] not in done][:3]
+    for e in todo:
+        reply = llm_chat("low_brain", [
+            {"role": "system", "content": system_prompt("mistral")},
+            {"role": "user", "content": f"Escalation #{e['id']} from {display_name(e['from_bot'])}: "
+             f"{e['issue']}\nContext: {json.dumps(e.get('context') or {})[:600]}\nHandle it in 2-3 "
+             "sentences. If it truly needs Theta's decision, start your reply with THETA:"}])
+        if reply.strip().upper().startswith("THETA:"):
+            note = reply.strip()[6:].strip()
+            new_id = st.add_escalation("mistral", "low_brain", "master", f"#{e['id']}: {e['issue']}",
+                                       {"from_escalation": e["id"], "mistral": note}, "awaiting_master")
+            st.add_chat("mistral", f"#{e['id']} needs Theta, so I passed it up as #{new_id}. {note}")
+            notify("Mistral", f"Escalated to Theta: {e['issue'][:120]}")
+            did.append(f"forwarded #{e['id']} to Theta")
+        else:
+            st.add_chat("mistral", f"On #{e['id']} from {display_name(e['from_bot'])}: {reply.strip()}")
+            did.append(f"handled #{e['id']}")
+        done.add(e["id"])
+    st.set_meta("mistral:triaged", json.dumps(sorted(done)[-500:]))
+
+
+# ---- Rounds: each agent's own job, run on a schedule (Supabase Cron ->
+# /api/round). Jobs post real results to All Agents; agents without a data
+# source yet say so instead of inventing work.
+def _seen(key):
+    return json.loads(store().get_meta(key) or "[]")
+
+
+def _mark_seen(key, url):
+    store().set_meta(key, json.dumps(([url] + [u for u in _seen(key) if u != url])[:50]))
+
+
+def _theta_decisions(did):
+    """Decide escalations that reached the High Brain; an ORDER: reply also
+    issues a commandeer order."""
+    st = store()
+    done = set(json.loads(st.get_meta("theta:decided") or "[]"))
+    for e in [e for e in st.list_escalations(50, open_only=True)
+              if e["to_role"] == "master" and e["id"] not in done][:3]:
+        reply = llm_chat("master", [
+            {"role": "system", "content": system_prompt("theta")},
+            {"role": "user", "content": f"Escalation #{e['id']} from {display_name(e['from_bot'])}: "
+             f"{e['issue']}\nContext: {json.dumps(e.get('context') or {})[:600]}\nDecide in 2-3 "
+             "sentences. If the crew must act on it, start your reply with ORDER: and the order."}]).strip()
+        if reply.upper().startswith("ORDER:"):
+            order = reply[6:].strip()
+            oid = st.add_order(order[:500], "theta")
+            post_event("theta", f"Theta issued order #{oid}: {order[:200]}")
+            st.add_chat("theta", f"On #{e['id']}: {order}")
+            did.append(f"ordered on #{e['id']}")
+        else:
+            st.add_chat("theta", f"On #{e['id']}: {reply}")
+            did.append(f"decided #{e['id']}")
+        notify("Mistral", f"Theta decided #{e['id']}: {reply[:140]}")
+        done.add(e["id"])
+    st.set_meta("theta:decided", json.dumps(sorted(done)[-500:]))
+
+
+def week_facts(today):
+    """The week's real numbers for Theta's review."""
+    st = store()
+    since = datetime.combine(today - timedelta(days=6), datetime.min.time())
+    recent = [m for m in st.list_chat(ALLCHAT_KEEP)
+              if datetime.strptime(m["at"], "%Y-%m-%d %H:%M:%S") >= since]
+    talk = {}
+    for m in recent:
+        if m.get("kind") != "event" and m["from"] in AGENTS:
+            talk[AGENTS[m["from"]]["name"]] = talk.get(AGENTS[m["from"]]["name"], 0) + 1
+    escs = st.list_escalations(50)
+    facts = [f"All Agents posts this week: {sum(talk.values())} "
+             f"({', '.join(f'{k} {v}' for k, v in sorted(talk.items(), key=lambda x: -x[1])) or 'none'})",
+             f"Open escalations: {sum(1 for e in escs if e['status'] != 'resolved')}"]
+    week_spend = sum(e["amount"] for mth in {today.strftime("%Y-%m"), (today - timedelta(days=6)).strftime("%Y-%m")}
+                     for e in st.list_expenses(mth) if e["date"] >= (today - timedelta(days=6)).isoformat())
+    if GLASS_BUDGETS or week_spend:
+        over = [c for c, v in month_status().items() if v["budget"] and v["spent"] > v["budget"]]
+        facts.append(f"Spending this week: ${week_spend:,.2f}; over budget this month: {', '.join(over) or 'none'}")
+    if calendar_linked():
+        nxt = [o for o in calendar_events(today + timedelta(days=1), today + timedelta(days=7)) if not o["birthday"]]
+        bdays = [o["title"] for o in calendar_events(today + timedelta(days=1), today + timedelta(days=7)) if o["birthday"]]
+        facts.append(f"Next 7 days: {len(nxt)} calendar events" + (f"; birthdays: {', '.join(bdays)}" if bdays else ""))
+    last = st.get_meta("round:news:last")
+    if last:
+        facts.append(f"Latest story the news miners covered: {json.loads(last)['title']}")
+    return facts
+
+
+def _round_theta(ctx):
+    """Summarize new reports, decide escalations that reached him, and post a
+    weekly review on Sundays."""
+    st = store()
+    did = []
+    unprocessed = st.unprocessed_reports(50)
+    if unprocessed:
+        r = summarize(unprocessed)
+        if not r["ok"]:
+            raise LLMError(r["error"])
+        n = r["unprocessed_count"]
+        did.append(f"summarized {n} report{'s' if n != 1 else ''}")
+    _theta_decisions(did)
+    today = datetime.now(hub_tz()).date()
+    if today.weekday() == 6 and st.get_meta("round:theta:week") != today.isoformat():
+        facts = week_facts(today)
+        review = llm_chat("master", [
+            {"role": "system", "content": system_prompt("theta")},
+            {"role": "user", "content": "Write this week's review for the crew in 4-6 sentences, then "
+             "'Priorities for next week:' with 2-3 bullets. Use only these facts; don't invent "
+             "numbers or events:\n" + "\n".join(f"- {f}" for f in facts)}], max_tokens=900)
+        st.add_chat("theta", f"Weekly review ({today:%b %d}):\n{review.strip()}")
+        st.set_meta("round:theta:week", today.isoformat())
+        notify("Mistral", "Theta's weekly review is in.")
+        did.append("posted the weekly review")
+    return ", ".join(did) or "nothing new to summarize"
+
+
+def _round_mistral(ctx):
+    """Morning digest (once a day), breaking-news alerts, escalation triage,
+    and the wiring check (posted on the first run and when it changes)."""
+    st = store()
+    did = []
+    today = datetime.now(hub_tz()).date().isoformat()
+    if st.get_meta("round:mistral:digest_day") != today:
+        post, brief = morning_digest()
+        try:
+            opener = llm_chat("low_brain", [
+                {"role": "system", "content": system_prompt("mistral")},
+                {"role": "user", "content": "Write one short sentence to open today's digest. "
+                 "Don't mention any events, numbers or headlines."}], max_tokens=300)
+            post = f"{opener.strip()}\n{post}"
+        except LLMError:
+            pass
+        item = st.add_chat("mistral", post)
+        st.set_meta("round:mistral:digest_day", today)
+        st.set_meta("round:mistral:digest_id", str(item["id"]))
+        notify("Mistral", brief)
+        did.append("posted the morning digest")
+    try:
+        breaking = news_items()[0]
+    except Exception:
+        breaking = []
+    pushed = _seen("push:breaking")
+    for b in [b for b in breaking if b["url"] not in pushed][:2]:
+        st.add_chat("mistral", f"Breaking ({b['source']}): {b['title']}\n{b['url']}")
+        notify("Mistral", f"Breaking ({b['source']}): {b['title']}", b["url"])
+        _mark_seen("push:breaking", b["url"])
+        did.append("flagged breaking news")
+    _triage_escalations(did)
+    # Optional links (testable False, e.g. the calendar) only count once set up and failing.
+    problems = sorted(f"{r['name']}: {r['note']}" for r in wiring()
+                      if r["state"] == "bad" or (r["state"] == "off" and r.get("testable", True)))
+    sig = "|".join(problems)
+    if sig == st.get_meta("round:mistral:wiring"):  # None on the first check: report it
+        did.append("wiring unchanged")
+    else:
+        st.set_meta("round:mistral:wiring", sig)
+        st.add_chat("mistral", "Wiring check: everyone is wired." if not problems else
+                    "Wiring check found problems:\n" + "\n".join(f"- {x}" for x in problems))
+        if problems:
+            notify("Mistral", f"Wiring problem: {problems[0]}" + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else ""))
+        did.append("posted a wiring check")
+    return ", ".join(did)
+
+
+def _round_news(agent):
+    """Red, Blue and Gray take the same top story, each grounded in how their
+    own outlets covered it (or noting that they haven't)."""
+    def job(ctx):
+        story = ctx.get("story")
+        if not story:
+            return "no new headlines"
+        seen = side_coverage(agent, story["title"])
+        if seen:
+            coverage = "How your outlets covered it:\n" + "\n".join(
+                f"- {it['source']}: {it['title']}" for it in seen)
+        else:
+            coverage = "None of your outlets have covered it yet; say so, that's worth knowing."
+        take = llm_chat(AGENTS[agent]["tier"], [
+            {"role": "system", "content": system_prompt(agent) + " You're posting in the All "
+             "Agents group chat."},
+            {"role": "user", "content": f"Today's top story ({story['source']}): {story['title']}\n"
+             f"{coverage}\nGive your take in 2-3 sentences. You only have these headlines: "
+             "say so instead of guessing details."}])
+        links = [story["url"]] + [it["url"] for it in seen if it["url"] != story["url"]][:1]
+        store().add_chat(agent, take.strip() + "\n" + "\n".join(links))
+        return (f"posted a take on \"{story['title'][:60]}\""
+                + (f" ({len(seen)} of their outlets covered it)" if seen else " (their outlets haven't covered it)"))
+    return job
+
+
+def _round_lenz(ctx):
+    """Pitch one new trending title (TMDB facts when linked, else the feeds)."""
+    trending = tmdb_trending()
+    item = next((i for i in trending if i["url"] not in _seen("round:lenz:seen")), None)
+    if item:
+        facts = (f"Trending this week on TMDB: {tmdb_fact_line(item)}\n"
+                 f"Synopsis: {item['overview'] or 'none given'}\n"
+                 "In 1-2 sentences, say why it might be worth a watch. Use only these facts.")
+    else:
+        item = next((i for i in widget_items(ENTERTAINMENT_FEEDS)
+                     if i["url"] not in _seen("round:lenz:seen")), None)
+        if not item:
+            return "nothing new to pitch"
+        facts = (f"New in the feeds ({item['source']}): {item['title']}\n"
+                 "In 1-2 sentences, say why it might be worth a look. You only have the title: "
+                 "don't invent details.")
+    pitch = llm_chat("miner", [
+        {"role": "system", "content": system_prompt("lenz") + " You're posting in the All "
+         "Agents group chat."},
+        {"role": "user", "content": facts}])
+    store().add_chat("lenz", f"{pitch.strip()}\n{item['url']}")
+    _mark_seen("round:lenz:seen", item["url"])
+    return f"pitched \"{item['title'][:60]}\""
+
+
+def _round_james(ctx):
+    if not GARAGE_GYM_SECRET:
+        return "not linked to Garage Gym"
+    _JAMES_CACHE.update(ttl=0)  # a round always asks for fresh numbers
+    summary = james_summary()
+    if not summary:
+        raise LLMError("Garage Gym didn't answer")
+    digest = hashlib.sha256((summary.get("summary") or "").encode()).hexdigest()
+    if digest == store().get_meta("round:james:summary"):
+        return "training unchanged"
+    store().set_meta("round:james:summary", digest)
+    post_event("james", "James checked your training: new numbers on the Fitness card.")
+    return "updated your training summary"
+
+
+def _round_remi(ctx):
+    """Today's agenda once a day, an update when today's plans change, and
+    birthdays 7 days, 1 day and 0 days ahead."""
+    if not calendar_linked():
+        return "no calendar linked"
+    if REMI_CALENDAR_URLS and len(calendar_problems()) == len(REMI_CALENDAR_URLS) and not BIRTHDAYS:
+        raise LLMError("couldn't read any calendar link")
+    today = datetime.now(hub_tz()).date()
+    todays = [o for o in calendar_events(today, today) if not o["birthday"]]
+    agenda = "\n".join(f"- {occurrence_text(o)}" for o in todays) or "- Nothing on the calendar."
+    digest = hashlib.sha256(agenda.encode()).hexdigest()
+    st = store()
+    if st.get_meta("round:remi:day") != today.isoformat():
+        lines = [f"Today, {today:%A %B %d}:", agenda]
+        for o in calendar_events(today, today + timedelta(days=7)):
+            if not o["birthday"]:
+                continue
+            days = ((o["start"] if o["all_day"] else o["start"].date()) - today).days
+            if days == 0:
+                lines.append(f"Today: {o['title']}!")
+                notify("Mistral", f"Remi: today is {o['title']}!", "/calendar")
+            elif days in (1, 7):
+                lines.append(f"Coming up: {o['title']} {'tomorrow' if days == 1 else 'in a week'}.")
+                if days == 1:
+                    notify("Mistral", f"Remi: {o['title']} is tomorrow.", "/calendar")
+        try:
+            opener = llm_chat("manager", [
+                {"role": "system", "content": system_prompt("remi")},
+                {"role": "user", "content": "Write one warm sentence to open today's family "
+                 "agenda post. Don't list or mention any events or times."}], max_tokens=300)
+            lines.insert(0, opener.strip())
+        except LLMError:
+            pass  # the agenda matters more than the greeting
+        st.add_chat("remi", "\n".join(lines))
+        st.set_meta("round:remi:day", today.isoformat())
+        st.set_meta("round:remi:digest", digest)
+        return "posted today's agenda"
+    if digest != st.get_meta("round:remi:digest"):
+        st.add_chat("remi", f"Today's plans changed:\n{agenda}")
+        st.set_meta("round:remi:digest", digest)
+        return "posted an agenda update"
+    return "agenda unchanged"
+
+
+def _round_glass(ctx):
+    """Budget alerts at 90% and 100% (once each per category per month), and a
+    week-in-review on the first round of each Sunday."""
+    st = store()
+    today = datetime.now(hub_tz()).date()
+    month = today.strftime("%Y-%m")
+    did = []
+    alerted = set(json.loads(st.get_meta(f"round:glass:alerts:{month}") or "[]"))
+    for cat, v in month_status(month).items():
+        if not v["budget"]:
+            continue
+        share = v["spent"] / v["budget"]
+        level = "100" if share >= 1 else "90" if share >= 0.9 else None
+        if level and f"{cat}:{level}" not in alerted:
+            alerted.add(f"{cat}:{level}")
+            alert = (f"{cat} is over budget: ${v['spent']:,.2f} of ${v['budget']:,.0f}."
+                     if level == "100" else
+                     f"Heads up: {cat} is at {share:.0%} of its budget "
+                     f"(${v['spent']:,.2f} of ${v['budget']:,.0f}).")
+            st.add_chat("glass", alert)
+            notify("Mistral", f"Glass: {alert}")
+            did.append(f"{cat} alert")
+    st.set_meta(f"round:glass:alerts:{month}", json.dumps(sorted(alerted)))
+    if today.weekday() == 6 and st.get_meta("round:glass:week") != today.isoformat():
+        week = [e for m in {month, (today - timedelta(days=6)).strftime("%Y-%m")}
+                for e in st.list_expenses(m) if (today - timedelta(days=6)).isoformat() <= e["date"] <= today.isoformat()]
+        by_cat = {}
+        for e in week:
+            by_cat[e["category"]] = by_cat.get(e["category"], 0) + e["amount"]
+        lines = [f"Week in review (through {today:%b %d}): ${sum(by_cat.values()):,.2f} spent."]
+        lines += [f"- {c}: ${a:,.2f}" for c, a in sorted(by_cat.items(), key=lambda x: -x[1])]
+        lines += ["Month so far:"] + [f"- {x}" for x in status_lines(month)]
+        st.add_chat("glass", "\n".join(lines))
+        st.set_meta("round:glass:week", today.isoformat())
+        did.append("posted the week in review")
+    if not GLASS_BUDGETS and not st.list_expenses(month):
+        return "no budgets or expenses yet"
+    return ", ".join(did) or "budgets on track"
+
+
+def _round_charter(ctx):
+    """Sundays: this month's spending chart next to Glass's week in review."""
+    st = store()
+    today = datetime.now(hub_tz()).date()
+    if today.weekday() != 6 or st.get_meta("round:charter:week") == today.isoformat():
+        return "no chart due"
+    if not st.list_expenses(today.strftime("%Y-%m")):
+        return "no spending to chart"
+    caption, svg = _chart_spending()
+    st.add_chat("charter", caption, image=save_chart(svg))
+    st.set_meta("round:charter:week", today.isoformat())
+    return "posted the spending chart"
+
+
+ROUND_JOBS = {
+    "theta": _round_theta, "remi": _round_remi, "glass": _round_glass, "charter": _round_charter, "mistral": _round_mistral, "james": _round_james,
+    "lenz": _round_lenz, "red": _round_news("red"), "blue": _round_news("blue"),
+    "gray": _round_news("gray"),
+}
+_NEWS_AGENTS = {"red", "blue", "gray"}
+
+
+def run_round(force=False, now=None):
+    """Run every agent's job that is due (or all, with force), in parallel,
+    and post one Hub line saying what each did."""
+    now = now or time.time()
+    st = store()
+    last = json.loads(st.get_meta("round:last") or "{}")
+    due = [a for a in ROUND_JOBS if force or now - last.get(a, 0) >= ROUND_MIN_GAP]
+    ctx = {}
+    if _NEWS_AGENTS & set(due):  # the news miners all take the same new story
+        breaking, top = news_items()
+        ctx["story"] = next((i for i in breaking + top if i["url"] not in _seen("round:news:seen")), None)
+
+    def run(a):
+        try:
+            return a, ROUND_JOBS[a](ctx), None
+        except (LLMError, ValueError, KeyError) as e:
+            return a, None, str(e)[:160]
+    results = {}
+    with ThreadPoolExecutor(max_workers=max(1, len(due))) as ex:
+        for a, done, err in ex.map(run, due):
+            results[a] = {"ok": err is None, "did": done or err}
+            if err is None:
+                last[a] = now
+                st.touch(a, done[:80])
+    st.set_meta("round:last", json.dumps(last))
+    if ctx.get("story") and any(results.get(a, {}).get("ok") for a in _NEWS_AGENTS):
+        _mark_seen("round:news:seen", ctx["story"]["url"])
+        st.set_meta("round:news:last", json.dumps({"title": ctx["story"]["title"], "coverage": {
+            a: len(side_coverage(a, ctx["story"]["title"])) for a in _NEWS_AGENTS}}))
+    parts = [f"{AGENTS[a]['name']}: {r['did']}" if r["ok"] else f"{AGENTS[a]['name']}: failed ({r['did']})"
+             for a, r in results.items()]
+    idle = [AGENTS[a]["name"] for a in AGENTS if a not in ROUND_JOBS]
+    if idle:
+        parts.append(f"{', '.join(idle)}: no job yet")
+    if results:
+        post_event("hub", "Round: " + "; ".join(parts) + ".")
+    return {"ok": True, "ran": results,
+            "skipped": [a for a in ROUND_JOBS if a not in due], "no_job": idle}
+
+
 # ---- Wiring: is each agent's model actually reachable?
 def wiring():
     """Per agent: what answers for it and whether it's wired in. Checks the
@@ -876,7 +2225,7 @@ def wiring():
     rows = []
     for aid, a in AGENTS.items():
         row = {"agent": aid, "name": a["name"], "tier": TIER_LABELS[a["tier"]],
-               "model": agent_model(aid), "testable": not a.get("home")}
+               "model": agent_model(aid)}
         if a.get("home"):
             if not GARAGE_GYM_SECRET:
                 row.update(state="off", note="Not linked: set GARAGE_GYM_SECRET")
@@ -898,6 +2247,40 @@ def wiring():
                 row.update(state="ok", note="Key set and model available"
                            + (f" ({MASTER_MODEL} not connected; standing in)" if a["tier"] == "master" else ""))
         rows.append(row)
+    if TMDB_API_KEY:
+        try:
+            n = len(tmdb_trending())
+            rows.append({"agent": "lenz-tmdb", "name": "Lenz's TMDB", "tier": "", "model": "TMDB trending",
+                         "testable": False, "state": "ok", "note": f"{n} trending titles"})
+        except LLMError as e:
+            rows.append({"agent": "lenz-tmdb", "name": "Lenz's TMDB", "tier": "", "model": "TMDB trending",
+                         "testable": False, "state": "bad", "note": f"{e}: check TMDB_API_KEY"})
+    else:
+        rows.append({"agent": "lenz-tmdb", "name": "Lenz's TMDB", "tier": "", "model": "TMDB trending",
+                     "testable": False, "state": "off", "note": "Not linked: set TMDB_API_KEY"})
+    subs = len(push_subs())
+    if not (VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY):
+        push_row = {"state": "off", "note": "Not set up: add VAPID keys (see /api/push/new-keys)"}
+    elif not subs:
+        push_row = {"state": "off", "note": "No device yet: tap Turn on in the Home Screen app"}
+    elif store().get_meta("push:last_error"):
+        push_row = {"state": "bad", "note": store().get_meta("push:last_error")}
+    else:
+        push_row = {"state": "ok", "note": f"{subs} device(s) subscribed"}
+    rows.append({"agent": "push", "name": "Phone notifications", "tier": "", "model": "Web Push (Mistral)",
+                 "testable": False, **push_row})
+    if calendar_linked():
+        bad = calendar_problems()
+        rows.append({"agent": "remi-calendar", "name": "Remi's calendar", "tier": "",
+                     "model": f"{len(REMI_CALENDAR_URLS)} calendar link(s), {len(BIRTHDAYS)} birthdays",
+                     "testable": False,
+                     **({"state": "bad", "note": f"Couldn't read link(s) {', '.join(map(str, bad))}: "
+                                                  "check REMI_CALENDAR_URLS"} if bad else
+                        {"state": "ok", "note": "Calendar readable"})})
+    else:
+        rows.append({"agent": "remi-calendar", "name": "Remi's calendar", "tier": "",
+                     "model": "Google Calendar (iCal)", "testable": False, "state": "off",
+                     "note": "Not linked: set REMI_CALENDAR_URLS"})
     return rows
 
 
@@ -931,7 +2314,9 @@ def agent_statuses(now=None):
             "bot_id": bot_id, "name": display_name(bot_id), "role": tier,
             "tier": TIER_LABELS[tier], "online": online,
             "model": agent_model(bot_id) if bot_id in AGENTS else MODELS[tier],
-            "activity": (st["activity"] or "online") if online else "offline",
+            "activity": ((st["activity"] or "online") if online else
+                         f"idle, last active {datetime.fromtimestamp(st['seen'], timezone.utc):%b %d %H:%M} UTC"
+                         if st else "offline"),
             "last_seen": (datetime.fromtimestamp(st["seen"], timezone.utc)
                           .strftime("%Y-%m-%d %H:%M:%S") if st else None),
         })
@@ -939,11 +2324,30 @@ def agent_statuses(now=None):
     return out
 
 
+def _cookie(headers, name):
+    try:
+        c = SimpleCookie(headers.get("cookie", ""))
+    except Exception:
+        return None
+    return c[name].value if name in c else None
+
+
 def _auth_dashboard(query, headers):
+    """Dashboard key as a header, ?key= or the hub_key cookie (set the first
+    time you open the dashboard with ?key=, so links and the Home Screen app
+    don't need it)."""
     if not DASHBOARD_KEY:
         return True
-    return (headers.get("x-dashboard-key") == DASHBOARD_KEY
-            or query.get("key", [None])[0] == DASHBOARD_KEY)
+    return DASHBOARD_KEY in (headers.get("x-dashboard-key"), query.get("key", [None])[0],
+                             _cookie(headers, "hub_key"))
+
+
+def _login_cookie(query):
+    """Set-Cookie header when the page was opened with the right ?key=."""
+    if DASHBOARD_KEY and query.get("key", [None])[0] == DASHBOARD_KEY:
+        return [("Set-Cookie", f"hub_key={DASHBOARD_KEY}; Path=/; Max-Age=31536000; "
+                               "HttpOnly; Secure; SameSite=Lax")]
+    return []
 
 
 # Dashboard chat box. One-on-one history lives in the page only (one per
@@ -959,20 +2363,31 @@ let thread = [], poll = null;
 const agentSel = document.getElementById("chat-agent"), log = document.getElementById("chat-log");
 const msg = document.getElementById("chat-msg"), btn = document.getElementById("chat-send");
 const status = document.getElementById("chat-status");
-function line(who, text) {
+function line(who, text, image) {
   const p = document.createElement("p"), b = document.createElement("b");
   b.textContent = who + ": ";
   p.style.whiteSpace = "pre-wrap";
   p.append(b, text);
+  if (image) {
+    const img = document.createElement("img");
+    img.src = image; img.alt = text; img.style.cssText = "display:block;max-width:100%;margin-top:6px;border:1px solid #ddd";
+    p.append(img);
+  }
+  return p;
+}
+function eventLine(text) {
+  const p = document.createElement("p");
+  p.style.cssText = "white-space:pre-wrap;color:#666;font-style:italic;font-size:0.9em";
+  p.textContent = "\u2022 " + text;
   return p;
 }
 function show() {
   if (agentSel.value === ALL) {
-    log.replaceChildren(...thread.map(m => line(m.name, m.text)));
+    log.replaceChildren(...thread.map(m => m.kind === "event" ? eventLine(m.text) : line(m.name, m.text, m.image)));
     return;
   }
   const name = agentSel.selectedOptions[0].dataset.name;
-  log.replaceChildren(...(hist[agentSel.value] || []).map(m => line(m.role === "user" ? "You" : name, m.content)));
+  log.replaceChildren(...(hist[agentSel.value] || []).map(m => line(m.role === "user" ? "You" : name, m.content, m.image)));
 }
 async function loadThread() {
   try {
@@ -1025,7 +2440,7 @@ document.getElementById("chat-form").onsubmit = async e => {
     const r = await fetch("/api/chat", {method: "POST", headers: H, body: JSON.stringify({agent, messages: h})});
     const d = await r.json();
     if (!d.ok) throw new Error(d.error);
-    h.push({role: "assistant", content: d.reply});
+    h.push({role: "assistant", content: d.reply, image: d.image});
     status.textContent = "";
   } catch (err) {
     h.pop(); msg.value = text;
@@ -1055,13 +2470,11 @@ async function loadWiring() {
       const [label, color] = MARK[a.state] || ["Unknown", "#888"];
       const result = cell(a.note, "color:#666");
       const test = document.createElement("td");
-      if (a.testable) {
+      if (a.testable !== false) {
         const b = document.createElement("button");
         b.type = "button"; b.textContent = "Test";
         b.onclick = () => testAgent(a.agent, result, b);
         test.append(b);
-      } else {
-        test.append(cell("No test: it would use a daily question").firstChild);
       }
       tr.append(cell(a.name), cell(a.model, "font-family:monospace;font-size:0.85em"),
                 cell(label, "font-weight:bold;color:" + color), result, test);
@@ -1089,6 +2502,20 @@ async function testAgent(agent, out, b) {
   b.disabled = false;
 }
 document.getElementById("wiring-recheck").onclick = loadWiring;
+const roundBtn = document.getElementById("run-round");
+if (roundBtn) roundBtn.onclick = async () => {
+  const out = document.getElementById("round-status");
+  roundBtn.disabled = true; out.textContent = "Running every agent's job...";
+  try {
+    const d = await (await fetch("/api/round", {method: "POST", headers: H, body: JSON.stringify({force: true})})).json();
+    if (!d.ok) throw new Error(d.error);
+    out.textContent = "Done. See All Agents for what each did.";
+    loadThread();
+  } catch (err) {
+    out.textContent = "Round failed: " + err.message;
+  }
+  roundBtn.disabled = false;
+};
 loadWiring();
 """
 
@@ -1117,6 +2544,133 @@ def _chat_html():
             f"<script>{_CHAT_JS}</script>")
 
 
+_PAGE_CSS = ("<style>body{font-family:system-ui,sans-serif;margin:0;padding:12px 16px 40px;"
+             "max-width:960px}nav{display:flex;gap:16px;border-bottom:1px solid #ccc;"
+             "padding-bottom:8px;margin-bottom:8px}nav a{text-decoration:none;color:#555;"
+             "padding:4px 2px}nav a.on{color:#000;font-weight:bold;border-bottom:3px solid #2f5bd3}"
+             ".cal{border-collapse:collapse;width:100%;table-layout:fixed}"
+             ".cal th{font-size:12px;color:#666;padding:4px}"
+             ".cal td{border:1px solid #ddd;vertical-align:top;height:72px;padding:3px;font-size:11px;"
+             "overflow:hidden}.cal td.out{background:#f6f6f6;color:#aaa}.cal td.today{outline:2px solid #2f5bd3}"
+             ".cal .n{font-weight:bold;font-size:12px}.cal .e{white-space:nowrap;overflow:hidden;"
+             "text-overflow:ellipsis}.cal .b{color:#a35d00}.day{margin:14px 0 4px;font-weight:bold}"
+             ".tag{color:#a35d00;font-size:12px}</style>")
+
+
+def _nav(active):
+    tabs = [("/", "Dashboard"), ("/calendar", "Remi's calendar")]
+    return "<nav>" + "".join(
+        f"<a href=\"{href}\" class=\"{'on' if href == active else ''}\">{label}</a>"
+        for href, label in tabs) + "</nav>"
+
+
+def calendar_page(query):
+    """Remi's tab: a month grid plus the same month as a day-by-day list."""
+    tz = hub_tz()
+    today = datetime.now(tz).date()
+    try:
+        y, m = (int(x) for x in query.get("month", [""])[0].split("-"))
+        first = date(y, m, 1)
+    except ValueError:
+        first = today.replace(day=1)
+    nxt = (first + timedelta(days=32)).replace(day=1)
+    prev = (first - timedelta(days=1)).replace(day=1)
+    head = (f"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            f"<title>Remi's calendar</title>{_PAGE_CSS}{_nav('/calendar')}"
+            f"<h1>Remi's calendar</h1>")
+    if not calendar_linked():
+        return head + ("<p>No calendar linked yet. In Google Calendar on a computer: Settings → "
+                       "your calendar → <b>Integrate calendar</b> → copy <b>Secret address in "
+                       "iCal format</b>. In Vercel, set <code>REMI_CALENDAR_URLS</code> to it "
+                       "(comma-separate several) and redeploy. Treat it like a password.</p>")
+    grid_start = first - timedelta(days=(first.weekday() + 1) % 7)  # Sunday
+    grid_end = grid_start + timedelta(days=41)
+    occ = calendar_events(grid_start, grid_end)
+    by_day = {}
+    for o in occ:
+        d0 = o["start"] if o["all_day"] else o["start"].date()
+        d1 = (o["end"] - timedelta(days=1)) if o["all_day"] else o["end"].date()
+        d = max(d0, grid_start)
+        while d <= max(d0, d1) and d <= grid_end:
+            by_day.setdefault(d, []).append(o)
+            d += timedelta(days=1)
+    rows = []
+    for w in range(6):
+        cells = []
+        for i in range(7):
+            d = grid_start + timedelta(days=w * 7 + i)
+            items = by_day.get(d, [])
+            evs = "".join(
+                f"<div class=\"e{' b' if o['birthday'] else ''}\">"
+                f"{'' if o['all_day'] else html.escape(_clock(o['start'])) + ' '}{html.escape(o['title'])}</div>"
+                for o in items[:3])
+            more = f"<div>+{len(items) - 3} more</div>" if len(items) > 3 else ""
+            cls = " ".join(c for c in ("out" if d.month != first.month else "",
+                                       "today" if d == today else "") if c)
+            cells.append(f"<td class=\"{cls}\"><div class=\"n\">{d.day}</div>{evs}{more}</td>")
+        rows.append("<tr>" + "".join(cells) + "</tr>")
+    listing = []
+    d = first
+    while d < nxt:
+        items = by_day.get(d, [])
+        if items:
+            listing.append(f"<div class=\"day\">{d:%A %B %d}</div><ul>" + "".join(
+                f"<li>{html.escape(occurrence_text(o))}"
+                f"{' <span class=tag>birthday</span>' if o['birthday'] else ''}</li>" for o in items) + "</ul>")
+        d += timedelta(days=1)
+    return head + (
+        f"<p><a href=\"/calendar?month={prev:%Y-%m}\">&larr; {prev:%B}</a> · "
+        f"<b>{first:%B %Y}</b> · <a href=\"/calendar?month={nxt:%Y-%m}\">{nxt:%B} &rarr;</a></p>"
+        "<div style=\"overflow-x:auto\"><table class=\"cal\"><tr>"
+        + "".join(f"<th>{d}</th>" for d in ("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"))
+        + "</tr>" + "".join(rows) + "</table></div>"
+        + ("".join(listing) or "<p>Nothing scheduled this month.</p>")
+        + f"<p><small>Times in {html.escape(HUB_TIMEZONE)}. From your Google Calendar "
+          "(read-only), refreshed every 10 minutes.</small></p>")
+
+
+_BUDGET_JS = """
+document.getElementById("csv-import").onclick = async () => {
+  const f = document.getElementById("csv-file").files[0], out = document.getElementById("csv-status");
+  if (!f) { out.textContent = "Pick your Rocket Money CSV first."; return; }
+  out.textContent = "Importing...";
+  try {
+    const d = await (await fetch("/api/glass/import", {method: "POST",
+      headers: {"Content-Type": "application/json", "x-dashboard-key": new URLSearchParams(location.search).get("key") || ""},
+      body: JSON.stringify({csv: await f.text()})})).json();
+    if (!d.ok) throw new Error(d.error);
+    const sk = Object.entries(d.skipped).filter(([, n]) => n).map(([k, n]) => n + " " + k).join(", ");
+    out.textContent = "Added " + d.added + " expenses" + (d.duplicates ? ", " + d.duplicates + " already imported" : "")
+      + (sk ? "; skipped " + sk : "") + ". Read columns " + Object.values(d.columns).join(", ")
+      + "; expenses were " + d.expenses_were + " in this file. Reload to see the totals.";
+  } catch (err) { out.textContent = "Import failed: " + err.message; }
+};
+"""
+
+
+def _budget_html():
+    month = datetime.now(hub_tz()).strftime("%Y-%m")
+    rows = []
+    for cat, v in month_status(month).items():
+        if v["budget"]:
+            share = v["spent"] / v["budget"]
+            color = "#b3261e" if share >= 1 else "#a35d00" if share >= 0.9 else "#1a7f37"
+            rows.append(f"<li><b>{html.escape(cat)}</b> ${v['spent']:,.2f} of ${v['budget']:,.0f}"
+                        f"<div style=\"background:#e4e8ee;height:6px;max-width:320px\"><div style=\""
+                        f"background:{color};height:6px;width:{min(share, 1) * 100:.0f}%\"></div></div></li>")
+        elif v["spent"]:
+            rows.append(f"<li><b>{html.escape(cat)}</b> ${v['spent']:,.2f} <i>(no budget)</i></li>")
+    listing = (f"<ul style=\"list-style:none;padding-left:0\">{''.join(rows)}</ul>" if rows else
+               "<p>No budgets or expenses yet. Set GLASS_BUDGETS in Vercel (e.g. "
+               "<code>Groceries:600,Dining:200</code>), log spending with \"@glass $42 groceries\", "
+               "or import a Rocket Money export.</p>")
+    return (f"<p><small>{month}</small></p>{listing}"
+            "<p>Import a Rocket Money export (Transactions → Export on a computer): "
+            "<input id=\"csv-file\" type=\"file\" accept=\".csv,text/csv\"> "
+            "<button id=\"csv-import\" type=\"button\">Import</button> <i id=\"csv-status\"></i></p>"
+            f"<script>{_BUDGET_JS}</script>")
+
+
 def _limit(query, default):
     """Parse ?limit=; None means invalid (not an int in 1..100)."""
     try:
@@ -1140,6 +2694,8 @@ def handle(method, path, query, headers, body):
             if not bot_id or not event_type or not _auth_bot(bot_id, headers):
                 return _json(401, {"ok": False, "error": "bad bot_id or key"})
             store().add_report(bot_id, event_type, data.get("payload", {}))
+            post_event(bot_id, f"{display_name(bot_id)} reported {event_type}: "
+                               f"{_gist(data.get('payload', {}))}")
             return _json(200, {"ok": True})
 
         if path == "/api/escalate":
@@ -1153,6 +2709,8 @@ def handle(method, path, query, headers, body):
             status = "awaiting_master" if to_role == "master" else "open"
             esc_id = store().add_escalation(
                 bot_id, from_role, to_role, issue, data.get("context", {}), status)
+            post_event(bot_id, f"{display_name(bot_id)} escalated #{esc_id} to the "
+                               f"{TIER_LABELS[to_role]}: {str(issue)[:200]}")
             return _json(200, {"ok": True, "escalation_id": esc_id,
                                "from_role": from_role, "to_role": to_role,
                                "status": status})
@@ -1164,6 +2722,7 @@ def handle(method, path, query, headers, body):
             if role_of(bot_id) != "master":
                 return _json(403, {"ok": False, "error": "only master may commandeer"})
             order_id = store().add_order(request, bot_id)
+            post_event(bot_id, f"{display_name(bot_id)} issued order #{order_id}: {str(request)[:200]}")
             return _json(200, {"ok": True, "order_id": order_id, "status": "active"})
 
         if path.startswith("/api/orders/") and path.endswith("/ack"):
@@ -1177,6 +2736,7 @@ def handle(method, path, query, headers, body):
             acked = store().ack_order(order_id, bot_id)
             if acked is None:
                 return _json(404, {"ok": False, "error": "no such order"})
+            post_event(bot_id, f"{display_name(bot_id)} acknowledged order #{order_id}")
             return _json(200, {"ok": True, "order_id": order_id, "acked_by": acked})
 
         if path == "/api/fitness":
@@ -1184,6 +2744,7 @@ def handle(method, path, query, headers, body):
             if not bot_id or not isinstance(summary, dict) or not _auth_bot(bot_id, headers):
                 return _json(401, {"ok": False, "error": "bad bot_id, key or summary"})
             store().add_fitness(bot_id, summary)
+            post_event(bot_id, f"{display_name(bot_id)} posted a fitness summary")
             return _json(200, {"ok": True})
 
         if path == "/api/summary":
@@ -1209,7 +2770,14 @@ def handle(method, path, query, headers, body):
             if history[-1]["role"] != "user":
                 return _json(400, {"ok": False, "error": "last message must be from user"})
             try:
-                if agent == "james":
+                parsed = parse_expense(history[-1]["content"]) if agent == "glass" else None
+                chart = charter_reply(history[-1]["content"]) if agent == "charter" else None
+                image = None
+                if chart:
+                    reply, image = chart
+                elif parsed:
+                    reply = glass_log_reply(parsed)
+                elif agent == "james":
                     reply = james_chat(history)
                 else:
                     reply = llm_chat(AGENTS[agent]["tier"],
@@ -1217,7 +2785,7 @@ def handle(method, path, query, headers, body):
             except LLMError as e:
                 return _json(502, {"ok": False, "error": str(e)})
             return _json(200, {"ok": True, "agent": agent, "name": AGENTS[agent]["name"],
-                               "model": agent_model(agent), "reply": reply})
+                               "model": agent_model(agent), "reply": reply, "image": image})
 
         if path == "/api/allchat":
             text, bot_id = data.get("text"), data.get("bot_id")
@@ -1244,17 +2812,68 @@ def handle(method, path, query, headers, body):
             def answer(a):
                 try:
                     return a, allchat_reply(a, thread), None
-                except LLMError as e:
+                except (LLMError, ValueError, KeyError) as e:
                     return a, None, str(e)
             if agents:
                 with ThreadPoolExecutor(max_workers=len(agents)) as ex:
                     for a, reply, err in ex.map(answer, agents):
-                        if reply:
+                        if isinstance(reply, tuple):  # Charter's (caption, chart url)
+                            st.add_chat(a, reply[0], image=reply[1])
+                        elif reply:
                             st.add_chat(a, reply.strip()[:4000])
                         else:
                             errors[AGENTS[a]["name"]] = err
             return _json(200, {"ok": True, "messages": allchat_view(), "errors": errors,
                                "routed": [AGENTS[a]["name"] for a in routed]})
+
+        if path == "/api/glass/expense":
+            bot_id = data.get("bot_id")
+            if not (_auth_bot(bot_id, headers) if bot_id else _auth_dashboard(query, headers)):
+                return _json(401, {"ok": False, "error": "dashboard key or bot key required"})
+            try:
+                amount = float(data.get("amount"))
+            except (TypeError, ValueError):
+                return _json(400, {"ok": False, "error": "amount must be a number"})
+            if amount <= 0 or not str(data.get("category") or "").strip():
+                return _json(400, {"ok": False, "error": "positive amount and a category required"})
+            day = _parse_day(str(data.get("date") or "")) if data.get("date") else None
+            exp = add_expense(amount, str(data["category"]), str(data.get("note") or ""), day=day,
+                              source=bot_id or "dashboard")
+            post_event("glass", f"Glass logged ${amount:,.2f} for {exp['category']}"
+                                + (f" from {display_name(bot_id)}" if bot_id else ""))
+            return _json(200, {"ok": True, "expense": exp})
+
+        if path == "/api/glass/import":
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            if not isinstance(data.get("csv"), str):
+                return _json(400, {"ok": False, "error": "send {\"csv\": <file text>}"})
+            result = import_csv(data["csv"])
+            if result["ok"] and result["added"]:
+                post_event("glass", f"Glass imported {result['added']} expenses from a CSV "
+                                    f"({', '.join(result['months'])})")
+            return _json(200 if result["ok"] else 400, result)
+
+        if path == "/api/push/subscribe":
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            sub = data.get("subscription")
+            if not (isinstance(sub, dict) and str(sub.get("endpoint", "")).startswith("https://")
+                    and isinstance(sub.get("keys"), dict) and sub["keys"].get("p256dh") and sub["keys"].get("auth")):
+                return _json(400, {"ok": False, "error": "not a push subscription"})
+            subs = [x for x in push_subs() if x.get("endpoint") != sub["endpoint"]]
+            subs.append({"endpoint": sub["endpoint"], "keys": {"p256dh": sub["keys"]["p256dh"], "auth": sub["keys"]["auth"]}})
+            store().set_meta("push:subs", json.dumps(subs[-10:]))
+            store().set_meta("push:last_error", "")
+            post_event("mistral", "Mistral will now send phone notifications to a new device")
+            return _json(200, {"ok": True, "devices": len(subs[-10:])})
+
+        if path == "/api/push/test":
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            sent = notify("Mistral", "Test: phone notifications from Bot Hub work.")
+            return _json(200, {"ok": True, "sent": sent, "error": store().get_meta("push:last_error") or
+                               (None if sent else "no device subscribed or keys missing")})
 
         if path == "/api/status":
             bot_id, activity = data.get("bot_id"), data.get("activity")
@@ -1262,16 +2881,55 @@ def handle(method, path, query, headers, body):
                 return _json(400, {"ok": False, "error": "activity required, e.g. \"researching\""})
             if not bot_id or not _auth_bot(bot_id, headers):
                 return _json(401, {"ok": False, "error": "bad bot_id or key"})
-            store().touch(bot_id, activity.strip()[:80])
+            st = store()
+            before = st.list_status().get(bot_id, {}).get("activity")
+            st.touch(bot_id, activity.strip()[:80])
+            if before != activity.strip()[:80]:
+                post_event(bot_id, f"{display_name(bot_id)} is now {activity.strip()[:80]}")
             return _json(200, {"ok": True})
+
+        if path == "/api/round":
+            cron = bool(CRON_SECRET) and headers.get("authorization") == f"Bearer {CRON_SECRET}"
+            if not (cron or (DASHBOARD_KEY and _auth_dashboard(query, headers))):
+                return _json(401, {"ok": False, "error": "CRON_SECRET or dashboard key required"})
+            return _json(200, run_round(force=bool(data.get("force"))))
 
         return _json(404, {"ok": False, "error": "unknown route"})
 
     # GET
+    if path == "/sw.js":
+        return 200, "text/javascript; charset=utf-8", _SW_JS.encode(), [("Cache-Control", "no-cache")]
+    if path in ("/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/favicon.ico"):
+        size = {"/icon-192.png": 192, "/icon-512.png": 512, "/favicon.ico": 32}.get(path, 180)
+        return 200, "image/png", _icon_png(size), [("Cache-Control", "public, max-age=604800")]
+    if path == "/manifest.webmanifest":
+        # Opened signed in (Safari's "Add to Home Screen"), the app starts with the
+        # key, so the Home Screen copy (which has its own cookies) is signed in too.
+        start = (f"/?key={DASHBOARD_KEY}" if DASHBOARD_KEY and _auth_dashboard(query, headers) else "/")
+        manifest = {"name": "Bot Hub", "short_name": "Bot Hub", "start_url": start, "scope": "/",
+                    "display": "standalone", "background_color": "#ffffff", "theme_color": "#2f5bd3",
+                    "icons": [{"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
+                              {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png"}]}
+        return (200, "application/manifest+json", json.dumps(manifest).encode(),
+                [("Cache-Control", "no-store")])
+    if path == "/api/push/key":
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        return _json(200, {"ok": True, "publicKey": VAPID_PUBLIC_KEY or None})
+    if path == "/api/push/new-keys":
+        if not _auth_dashboard(query, headers) or not DASHBOARD_KEY:
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        return _json(200, {"ok": True, **new_vapid_keys(), "next": "Add both to Vercel (Production and Preview, "
+                           "Sensitive on), redeploy, then tap Turn on in the Home Screen app. Keep "
+                           "VAPID_PRIVATE_KEY secret; this page makes a new pair each time."})
+
     if path == "/":
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
         st = store()
+        host = headers.get("host")
+        if host and st.get_meta("hub:origin") != f"https://{host}":
+            st.set_meta("hub:origin", f"https://{host}")  # the push "subject" when VAPID_SUBJECT is unset
         reports = st.list_reports(20)
         escs = st.list_escalations(20, open_only=True)
         orders = st.list_active_orders()
@@ -1314,6 +2972,11 @@ def handle(method, path, query, headers, body):
         from_bots = _render_list(pushed_items("news"))
         if from_bots:
             news_html += f"<h3>From your bots</h3><ul>{from_bots}</ul>"
+        round_btn = ("<p><button id=\"run-round\" type=\"button\">Run a round now</button> "
+                     "<i id=\"round-status\"></i></p>"
+                     "<p>Phone notifications (from Mistral): <button id=\"push-on\" type=\"button\">Turn on</button> "
+                     "<button id=\"push-test\" type=\"button\">Send a test</button> <i id=\"push-status\"></i></p>"
+                     f"<script>{_PUSH_JS}</script>")
         agent_items = "".join(
             f"<li><span style=\"color:{'#1a7f37' if a['online'] else '#888'}\">●</span> "
             f"<b>{html.escape(a['name'])}</b> — {a['tier']} · {html.escape(a['activity'])}</li>"
@@ -1348,18 +3011,29 @@ def handle(method, path, query, headers, body):
         else:
             storage_note = f"<p><i>Storage: {html.escape(STORAGE_MODE)}.</i></p>"
         body = (
-            f"<h1>Bot hub</h1>"
-            f"<h2>Agents</h2><ul style=\"list-style:none;padding-left:0\">{agent_items}</ul>"
+            "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            "<title>Bot Hub</title><link rel=\"manifest\" href=\"/manifest.webmanifest\" crossorigin=\"use-credentials\">"
+            "<link rel=\"apple-touch-icon\" href=\"/apple-touch-icon.png\"><meta name=\"theme-color\" content=\"#2f5bd3\">"
+            "<meta name=\"apple-mobile-web-app-capable\" content=\"yes\">"
+            f"{_nav('/')}<h1>Bot hub</h1>"
+            f"<h2>Agents</h2><ul style=\"list-style:none;padding-left:0\">{agent_items}</ul>{round_btn}"
             f"<h2>Chat</h2>{_chat_html()}"
             f"<h2>News</h2>{news_html}"
             f"<h2>Entertainment</h2><ul>{ent_items}</ul>"
             f"<h2>Fitness — overall health</h2>{fit_html}{app_link}"
+            f"<h2>Budget (Glass)</h2>{_budget_html()}"
             f"<h2>Reports</h2><ul>{items}</ul>"
             f"<h2>Escalations</h2><ul>{esc_items}</ul>"
             f"<h2>Commandeer orders</h2><ul>{ord_items}</ul>"
             f"{storage_note}"
+            + (f"<p><small>{TMDB_NOTICE}</small></p>" if TMDB_API_KEY else "")
         ).encode()
-        return 200, "text/html; charset=utf-8", body
+        return 200, "text/html; charset=utf-8", body, _login_cookie(query)
+
+    if path == "/calendar":
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        return 200, "text/html; charset=utf-8", calendar_page(query).encode(), _login_cookie(query)
 
     if path == "/api/feed":
         if not _auth_dashboard(query, headers):
@@ -1418,6 +3092,22 @@ def handle(method, path, query, headers, body):
             return _json(401, {"ok": False, "error": "dashboard key or bot key required"})
         return _json(200, {"ok": True, "messages": allchat_view()})
 
+    if path.startswith("/chart/") and path.endswith(".svg"):
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        cid = path[len("/chart/"):-len(".svg")]
+        svg = store().get_meta(f"chart:{cid}") if cid.isalnum() else None
+        if not svg:
+            return _json(404, {"ok": False, "error": "no such chart"})
+        return 200, "image/svg+xml", svg.encode(), [("Cache-Control", "private, max-age=86400")]
+
+    if path == "/api/glass":
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        month = query.get("month", [datetime.now(hub_tz()).strftime("%Y-%m")])[0]
+        return _json(200, {"ok": True, "month": month, "status": month_status(month),
+                           "expenses": sorted(store().list_expenses(month), key=lambda e: e["date"])})
+
     if path == "/api/wiring":
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
@@ -1458,12 +3148,13 @@ def app(environ, start_response):
         length = 0
     body = environ["wsgi.input"].read(length) if length > 0 else b""
     try:
-        status, ctype, out = handle(method, path, query, headers, body)
+        status, ctype, out, *extra = handle(method, path, query, headers, body)
     except Exception as exc:  # e.g. storage down: answer, don't crash
         print(f"handle error on {method} {path}: {exc!r}")
-        status, ctype, out = _json(500, {"ok": False, "error": "internal error"})
+        (status, ctype, out), extra = _json(500, {"ok": False, "error": "internal error"}), []
     start_response(f"{status} {_REASONS.get(status, '')}",
-                   [("Content-Type", ctype), ("Content-Length", str(len(out)))])
+                   [("Content-Type", ctype), ("Content-Length", str(len(out)))]
+                   + (extra[0] if extra else []))
     return [out]
 
 
