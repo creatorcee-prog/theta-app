@@ -843,9 +843,8 @@ def allchat_reply(agent, thread):
 def pick_responders(thread):
     """Mistral triages a message nobody was @mentioned in: which agents
     should answer it. Always at least one (Mistral herself when nothing
-    fits), at most ALLCHAT_AUTO_MAX, never James: each of his answers
-    uses one of his daily questions, so he waits for an @mention."""
-    candidates = [a for a, v in AGENTS.items() if not v.get("home")]
+    fits), at most ALLCHAT_AUTO_MAX."""
+    candidates = list(AGENTS)
     roster = "\n".join(f"- {a}: {AGENTS[a]['name']} ({TIER_LABELS[AGENTS[a]['tier']]}). "
                        f"{AGENTS[a]['role']}" for a in candidates)
     transcript = "\n".join(f"{chat_name(m['from'])}: {m['text']}" for m in thread[-10:])
@@ -876,7 +875,7 @@ def wiring():
     rows = []
     for aid, a in AGENTS.items():
         row = {"agent": aid, "name": a["name"], "tier": TIER_LABELS[a["tier"]],
-               "model": agent_model(aid), "testable": not a.get("home")}
+               "model": agent_model(aid)}
         if a.get("home"):
             if not GARAGE_GYM_SECRET:
                 row.update(state="off", note="Not linked: set GARAGE_GYM_SECRET")
@@ -1055,14 +1054,10 @@ async function loadWiring() {
       const [label, color] = MARK[a.state] || ["Unknown", "#888"];
       const result = cell(a.note, "color:#666");
       const test = document.createElement("td");
-      if (a.testable) {
-        const b = document.createElement("button");
-        b.type = "button"; b.textContent = "Test";
-        b.onclick = () => testAgent(a.agent, result, b);
-        test.append(b);
-      } else {
-        test.append(cell("No test: it would use a daily question").firstChild);
-      }
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = "Test";
+      b.onclick = () => testAgent(a.agent, result, b);
+      test.append(b);
       tr.append(cell(a.name), cell(a.model, "font-family:monospace;font-size:0.85em"),
                 cell(label, "font-weight:bold;color:" + color), result, test);
       return tr;
