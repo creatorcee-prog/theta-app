@@ -88,6 +88,28 @@ ALLCHAT_AUTO_MAX = int(os.environ.get("ALLCHAT_AUTO_MAX", "2"))
 CRON_SECRET = os.environ.get("CRON_SECRET", "")
 ROUND_MIN_GAP = int(os.environ.get("ROUND_MIN_GAP_MINUTES", "120")) * 60
 
+# What each agent can actually do. Goes in every prompt, so agents
+# acknowledge orders (and answer questions) honestly.
+ABILITIES = {
+    "theta": "summarize the bots' reports, decide escalations that reach you, issue commandeer "
+             "orders, and write the weekly review",
+    "mistral": "post the morning digest, flag breaking news, send phone notifications, triage "
+               "escalations, check what's wired, and decide who answers in All Agents",
+    "glass": "log expenses, report budgets and send budget alerts, review weekly spending, and "
+             "import Rocket Money CSVs. You can't see bank accounts or block spending",
+    "remi": "read the family calendar (read-only), post agendas, and remind people of birthdays. "
+            "You can't add or change calendar events or text anyone, and Discord moderation "
+            "isn't built yet",
+    "lenz": "recommend from TMDB's trending list and the entertainment feeds",
+    "red": "read your outlets' headlines and give your take on the top story. You can't search "
+           "beyond those feeds", "blue": "read your outlets' headlines and give your take on the "
+           "top story. You can't search beyond those feeds", "gray": "read your outlets' "
+           "headlines and give your take on the top story. You can't search beyond those feeds",
+    "charter": "draw charts of spending, daily spending, calendar busyness, news coverage and "
+               "All Agents activity, and nothing else yet",
+}
+
+
 # ---- Agents: the hub's named personas. The name is the persona, not
 # the model (like James in Garage Gym); each runs on its tier's model.
 # An agent's id doubles as its bot_id in BOT_KEYS when it runs as a bot.
@@ -252,6 +274,34 @@ def next_role(role):
     return TIERS[min(i + 1, len(TIERS) - 1)]
 
 
+ORDER_DAYS = int(os.environ.get("ORDER_DAYS", "7"))
+_ORDERS_CACHE = {"at": 0.0, "items": []}
+
+
+def order_live(order, now=None):
+    """Active orders expire ORDER_DAYS after they're issued (older orders,
+    saved before expiry existed, count from their created_at)."""
+    exp = order.get("expires_at")
+    if not exp:
+        try:
+            exp = datetime.strptime(order["created_at"], "%Y-%m-%d %H:%M:%S").replace(
+                tzinfo=timezone.utc).timestamp() + ORDER_DAYS * 86400
+        except (KeyError, ValueError):
+            return True
+    return (now or time.time()) < float(exp)
+
+
+def active_orders():
+    """Active orders, cached briefly: every agent prompt reads them."""
+    if time.time() - _ORDERS_CACHE["at"] > 10:
+        _ORDERS_CACHE.update(at=time.time(), items=store().list_active_orders())
+    return _ORDERS_CACHE["items"]
+
+
+def orders_for(agent_id):
+    return [o for o in active_orders() if not o.get("targets") or agent_id in o["targets"]]
+
+
 def _now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -297,16 +347,26 @@ class MemoryStore:
             e for e in self.escalations if e["status"] != "resolved"]
         return rows[:limit]
 
-    def add_order(self, request, issued_by):
+    def add_order(self, request, issued_by, targets=None, expires_at=None):
         oid = self._next_id()
         self.orders[oid] = {"id": oid, "request": request, "issued_by": issued_by,
-                            "status": "active", "acked_by": [], "created_at": _now()}
+                            "status": "active", "acked_by": [], "created_at": _now(),
+                            "targets": list(targets or []), "expires_at": expires_at}
         self.order_ids.insert(0, oid)
+        _ORDERS_CACHE["at"] = 0
         return oid
 
     def list_active_orders(self):
         return [self.orders[i] for i in self.order_ids
-                if self.orders[i]["status"] == "active"]
+                if self.orders[i]["status"] == "active" and order_live(self.orders[i])]
+
+    def close_order(self, order_id):
+        order = self.orders.get(order_id)
+        if not order or order["status"] != "active":
+            return None
+        order["status"] = "done"
+        _ORDERS_CACHE["at"] = 0
+        return order
 
     def ack_order(self, order_id, bot_id):
         order = self.orders.get(order_id)
@@ -314,6 +374,7 @@ class MemoryStore:
             return None
         if bot_id not in order["acked_by"]:
             order["acked_by"].append(bot_id)
+            _ORDERS_CACHE["at"] = 0
         return order["acked_by"]
 
     def add_fitness(self, bot_id, summary):
@@ -414,13 +475,23 @@ class KVStore:
             rows = [e for e in rows if e["status"] != "resolved"]
         return rows[:limit]
 
-    def add_order(self, request, issued_by):
+    def add_order(self, request, issued_by, targets=None, expires_at=None):
         oid = self._next_id()
         self._cmd("HSET", f"hub:order:{oid}",
                   "request", request, "issued_by", issued_by,
-                  "status", "active", "acked_by", "[]", "created_at", _now())
+                  "status", "active", "acked_by", "[]", "created_at", _now(),
+                  "targets", json.dumps(list(targets or [])), "expires_at", str(expires_at or ""))
         self._cmd("LPUSH", "hub:order_ids", str(oid))
+        _ORDERS_CACHE["at"] = 0
         return oid
+
+    def close_order(self, order_id):
+        if self._cmd("HGET", f"hub:order:{order_id}", "status") != "active":
+            return None
+        self._cmd("HSET", f"hub:order:{order_id}", "status", "done")
+        _ORDERS_CACHE["at"] = 0
+        flat = self._cmd("HGETALL", f"hub:order:{order_id}")
+        return dict(zip(flat[::2], flat[1::2]), id=order_id)
 
     def list_active_orders(self):
         out = []
@@ -430,7 +501,10 @@ class KVStore:
             if order.get("status") == "active":
                 order["id"] = int(oid)
                 order["acked_by"] = json.loads(order.get("acked_by", "[]"))
-                out.append(order)
+                order["targets"] = json.loads(order.get("targets") or "[]")
+                order["expires_at"] = float(order["expires_at"]) if order.get("expires_at") else None
+                if order_live(order):
+                    out.append(order)
         return out
 
     def ack_order(self, order_id, bot_id):
@@ -441,6 +515,7 @@ class KVStore:
         if bot_id not in names:
             names.append(bot_id)
             self._cmd("HSET", f"hub:order:{order_id}", "acked_by", json.dumps(names))
+            _ORDERS_CACHE["at"] = 0
         return names
 
     def add_fitness(self, bot_id, summary):
@@ -882,8 +957,14 @@ def system_prompt(agent_id):
             extra = ("\n\nLatest headlines from your outlets (you only know these headlines; "
                      "say so rather than guess details):\n"
                      + "\n".join(f"- {it['source']}: {it['title']}" for it in latest))
+    can = f" What you can actually do: {ABILITIES[agent_id]}." if agent_id in ABILITIES else ""
+    mine = orders_for(agent_id)
+    if mine:
+        extra += ("\n\nStanding orders from the user (follow them; if one asks for something "
+                  "you can't do, say so plainly):\n" + "\n".join(
+                      f"- #{o['id']}: {o['request']}" for o in mine))
     return (f"You are {a['name']}, the {TIER_LABELS[a['tier']]} of a personal bot "
-            f"hub. {a['role']}{stand_in}{personality} The team: {team}. "
+            f"hub. {a['role']}{stand_in}{personality}{can} The team: {team}. "
             f"Stay in character{brevity}.{extra}")
 
 
@@ -1668,8 +1749,13 @@ def charter_context():
 # dashboard installed to the iPhone Home Screen (iOS 16.4+), VAPID keys in
 # Vercel (VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY; /api/push/new-keys makes a
 # pair) and a tap on "Turn on" inside the Home Screen app.
-VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
-VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
+def _clean_secret(value):
+    """Forgive the usual paste slips: spaces, line breaks and quotes."""
+    return "".join(value.split()).strip("\"'")
+
+
+VAPID_PUBLIC_KEY = _clean_secret(os.environ.get("VAPID_PUBLIC_KEY", ""))
+VAPID_PRIVATE_KEY = _clean_secret(os.environ.get("VAPID_PRIVATE_KEY", ""))
 VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT", "")
 
 
@@ -1677,12 +1763,54 @@ def push_subs():
     return json.loads(store().get_meta("push:subs") or "[]")
 
 
+def _b64url(text):
+    import base64
+    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+
+def push_problem():
+    """(code, explanation) of why phone notifications can't work, or None.
+    Never includes key material."""
+    if not VAPID_PUBLIC_KEY and not VAPID_PRIVATE_KEY:
+        return "no_keys", ("VAPID keys aren't in this deployment: add VAPID_PUBLIC_KEY and "
+                           "VAPID_PRIVATE_KEY in Vercel, then redeploy")
+    if not VAPID_PUBLIC_KEY or not VAPID_PRIVATE_KEY:
+        missing = "VAPID_PUBLIC_KEY" if not VAPID_PUBLIC_KEY else "VAPID_PRIVATE_KEY"
+        return "half_keys", f"{missing} is missing in this deployment: add it in Vercel, then redeploy"
+    try:
+        pub, priv = _b64url(VAPID_PUBLIC_KEY), _b64url(VAPID_PRIVATE_KEY)
+    except ValueError:
+        return "bad_format", "a VAPID key isn't valid: copy it again exactly as shown, then redeploy"
+    if len(pub) == 32 and len(priv) == 65:
+        return "swapped", "VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are swapped in Vercel"
+    if len(pub) != 65 or pub[0] != 4:
+        return "bad_public", "VAPID_PUBLIC_KEY isn't a valid public key: copy it again"
+    if len(priv) != 32:
+        return "bad_private", "VAPID_PRIVATE_KEY isn't a valid private key: copy it again"
+    try:
+        from cryptography.hazmat.primitives import serialization
+        from py_vapid import Vapid02
+        import pywebpush  # noqa: F401
+    except ImportError:
+        return "no_library", "the push library isn't installed on the server (requirements.txt)"
+    derived = Vapid02.from_raw(VAPID_PRIVATE_KEY.encode()).public_key.public_bytes(
+        serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+    if derived != pub:
+        return "mismatch", ("the two VAPID keys aren't a pair (one came from another refresh): "
+                            "generate a new pair and replace both")
+    return None
+
+
 def notify(title, body, url="/"):
     """Push to every subscribed device; returns how many got it. Quietly
     does nothing until keys and a subscription exist. Dead subscriptions
     (404/410) are dropped."""
     subs = push_subs()
-    if not (VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY and subs):
+    problem = push_problem()
+    if problem:
+        store().set_meta("push:last_error", problem[1])
+        return 0
+    if not subs:
         return 0
     try:
         from py_vapid import Vapid02
@@ -1777,14 +1905,18 @@ _PUSH_JS = """
       : "On iPhone: Share, then Add to Home Screen. Open Bot Hub from the Home Screen and tap Turn on here.";
     return;
   }
-  let key = null;
-  try { key = (await (await fetch("/api/push/key", {headers: PH})).json()).publicKey; } catch (_) {}
+  let key = null, problem = "";
+  try {
+    const r = await fetch("/api/push/key", {headers: PH});
+    if (r.status === 401) problem = "This app isn't signed in: open it once with ?key=YOUR_KEY, then add it to the Home Screen again.";
+    else { const d = await r.json(); key = d.publicKey; problem = d.problem || ""; }
+  } catch (_) { problem = "Couldn't reach the hub to check notifications."; }
   const sub = await reg.pushManager.getSubscription();
-  status.textContent = sub ? "Notifications are on for this device." : (key ? "" : "Phone notifications aren't set up yet (VAPID keys).");
+  status.textContent = sub ? "Notifications are on for this device." : problem;
   document.getElementById("push-on").onclick = async () => {
     const perm = await Notification.requestPermission();  // first: iOS needs the tap's user gesture
     if (perm !== "granted") { status.textContent = "Notifications were not allowed. To retry on iPhone, remove the Home Screen app and add it again."; return; }
-    if (!key) { status.textContent = "Set VAPID keys in Vercel first (see /api/push/new-keys)."; return; }
+    if (!key) { status.textContent = problem || "Phone notifications aren't set up on the server yet."; return; }
     const raw = atob(key.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - key.length % 4) % 4));
     const s = await reg.pushManager.subscribe({userVisibleOnly: true,
       applicationServerKey: Uint8Array.from(raw, c => c.charCodeAt(0))});
@@ -1890,7 +2022,7 @@ def _theta_decisions(did):
              "sentences. If the crew must act on it, start your reply with ORDER: and the order."}]).strip()
         if reply.upper().startswith("ORDER:"):
             order = reply[6:].strip()
-            oid = st.add_order(order[:500], "theta")
+            oid = st.add_order(order[:500], "theta", expires_at=time.time() + ORDER_DAYS * 86400)
             post_event("theta", f"Theta issued order #{oid}: {order[:200]}")
             st.add_chat("theta", f"On #{e['id']}: {order}")
             did.append(f"ordered on #{e['id']}")
@@ -2227,12 +2359,73 @@ class CommandError(Exception):
     """Unknown command or wrong usage; shown to you, not posted."""
 
 
+def acknowledge_order(oid, request, agents):
+    """Each agent says, in character, what it will do and what it can't."""
+    def ack(a):
+        try:
+            if a == "james":
+                return a, james_chat([{"role": "user", "content": f"Order from me: {request}. "
+                                       "Acknowledge in 1-2 sentences: what will you do?"}]), None
+            return a, llm_chat(AGENTS[a]["tier"], [
+                {"role": "system", "content": system_prompt(a) + " You're in the All Agents group chat."},
+                {"role": "user", "content": f"The user issued order #{oid}: \"{request}\". Acknowledge "
+                 "it in 1-2 sentences: what you'll do to follow it, and plainly what part (if any) "
+                 "is outside what you can do."}], max_tokens=400), None
+        except LLMError as e:
+            return a, None, str(e)
+    acked, failed = [], []
+    with ThreadPoolExecutor(max_workers=max(1, len(agents))) as ex:
+        for a, text, err in ex.map(ack, agents):
+            if text:
+                store().add_chat(a, f"On order #{oid}: {text.strip()}")
+                store().ack_order(oid, a)
+                acked.append(AGENTS[a]["name"])
+            else:
+                failed.append(f"{AGENTS[a]['name']} ({err[:80]})")
+    return acked, failed
+
+
 def _cmd_commandeer(arg):
     if not arg:
-        raise CommandError("Usage: /commandeer <order for the crew>")
-    oid = store().add_order(arg[:500], "you")
-    post_event("you", f"You issued order #{oid}: {arg[:200]}")
-    return f"Order #{oid} issued. Bots see it at /api/orders and acknowledge it."
+        raise CommandError("Usage: /commandeer [@agent ...] <order>")
+    targets = mentioned_agents(arg)
+    expires = time.time() + ORDER_DAYS * 86400
+    oid = store().add_order(arg[:500], "you", targets=targets, expires_at=expires)
+    who = ", ".join(AGENTS[a]["name"] for a in targets) or "the whole crew"
+    post_event("you", f"You issued order #{oid} to {who}: {arg[:200]}")
+    # Targeted agents acknowledge; for the whole crew, Theta answers as commander.
+    acked, failed = acknowledge_order(oid, arg[:500], targets or ["theta"])
+    until = datetime.fromtimestamp(expires, hub_tz())
+    return (f"Order #{oid} to {who}, standing until {until:%b %d}."
+            + (f" Acknowledged by {', '.join(acked)}." if acked else "")
+            + (f" Couldn't acknowledge: {'; '.join(failed)}." if failed else ""))
+
+
+def _order_line(o):
+    to = ", ".join(display_name(t) for t in o.get("targets") or []) or "everyone"
+    exp = o.get("expires_at")
+    until = f", until {datetime.fromtimestamp(float(exp), hub_tz()):%b %d}" if exp else ""
+    acks = f"; acknowledged by {', '.join(display_name(a) for a in o['acked_by'])}" if o.get("acked_by") else ""
+    return f"#{o['id']} to {to} (from {display_name(o['issued_by'])}{until}{acks}): {o['request']}"
+
+
+def _cmd_orders(arg):
+    orders = store().list_active_orders()
+    store().add_chat("hub", "Active orders:\n" + "\n".join(f"- {_order_line(o)}" for o in orders)
+                     if orders else "No active orders.")
+    return f"{len(orders)} active order(s)."
+
+
+def _cmd_done(arg):
+    try:
+        oid = int(arg.strip().lstrip("#"))
+    except ValueError:
+        raise CommandError("Usage: /done <order number>, e.g. /done 12")
+    order = store().close_order(oid)
+    if not order:
+        raise CommandError(f"No active order #{oid}. /orders lists them.")
+    post_event("you", f"You closed order #{oid}: {order['request'][:200]}")
+    return f"Closed order #{oid}."
 
 
 def _cmd_round(arg):
@@ -2316,7 +2509,9 @@ def _cmd_help(arg):
 
 
 COMMANDS = [  # shown in the "/" menu in this order
-    {"name": "commandeer", "args": "<order>", "about": "Issue an order to the whole crew", "run": _cmd_commandeer},
+    {"name": "commandeer", "args": "[@agent] <order>", "about": "Give the crew (or named agents) a standing order", "run": _cmd_commandeer},
+    {"name": "orders", "args": "", "about": "List active orders", "run": _cmd_orders},
+    {"name": "done", "args": "<number>", "about": "Close an order", "run": _cmd_done},
     {"name": "round", "args": "", "about": "Run every agent's job now", "run": _cmd_round},
     {"name": "digest", "args": "", "about": "Mistral posts today's digest", "run": _cmd_digest},
     {"name": "agenda", "args": "[tomorrow]", "about": "Remi posts the agenda", "run": _cmd_agenda},
@@ -2394,8 +2589,9 @@ def wiring():
         rows.append({"agent": "lenz-tmdb", "name": "Lenz's TMDB", "tier": "", "model": "TMDB trending",
                      "testable": False, "state": "off", "note": "Not linked: set TMDB_API_KEY"})
     subs = len(push_subs())
-    if not (VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY):
-        push_row = {"state": "off", "note": "Not set up: add VAPID keys (see /api/push/new-keys)"}
+    problem = push_problem()
+    if problem:
+        push_row = {"state": "off" if problem[0] == "no_keys" else "bad", "note": problem[1]}
     elif not subs:
         push_row = {"state": "off", "note": "No device yet: tap Turn on in the Home Screen app"}
     elif store().get_meta("push:last_error"):
@@ -3106,8 +3302,10 @@ def handle(method, path, query, headers, body):
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
             sent = notify("Mistral", "Test: phone notifications from Bot Hub work.")
-            return _json(200, {"ok": True, "sent": sent, "error": store().get_meta("push:last_error") or
-                               (None if sent else "no device subscribed or keys missing")})
+            problem = push_problem()
+            return _json(200, {"ok": True, "sent": sent, "error": (problem[1] if problem else None)
+                               or store().get_meta("push:last_error")
+                               or (None if sent else "no device has turned notifications on yet")})
 
         if path == "/api/status":
             bot_id, activity = data.get("bot_id"), data.get("activity")
@@ -3149,7 +3347,14 @@ def handle(method, path, query, headers, body):
     if path == "/api/push/key":
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
-        return _json(200, {"ok": True, "publicKey": VAPID_PUBLIC_KEY or None})
+        problem = push_problem()
+        return _json(200, {"ok": True, "publicKey": None if problem else VAPID_PUBLIC_KEY,
+                           "problem": problem[1] if problem else None})
+    if path == "/api/push/health":
+        # Public on purpose: says whether push is configured, never with what.
+        problem = push_problem()
+        return _json(200, {"ok": True, "status": problem[0] if problem else "ok",
+                           "devices": len(push_subs())})
     if path == "/api/push/new-keys":
         if not _auth_dashboard(query, headers) or not DASHBOARD_KEY:
             return _json(401, {"ok": False, "error": "dashboard key required"})
@@ -3192,8 +3397,7 @@ def handle(method, path, query, headers, body):
             for e in escs
         ) or "<li>No open escalations.</li>"
         ord_items = "".join(
-            f"<li>#{o['id']} commandeer by {html.escape(display_name(o['issued_by']))}: "
-            f"{html.escape(o['request'])}</li>"
+            f"<li>{html.escape(_order_line(o))}</li>"
             for o in orders
         ) or "<li>No active commandeer orders.</li>"
         ent_items = _render_list(
@@ -3281,7 +3485,8 @@ def handle(method, path, query, headers, body):
         bot_id = query.get("bot_id", [None])[0]
         if not bot_id or not _auth_bot(bot_id, headers):
             return _json(401, {"ok": False, "error": "bad bot_id or key"})
-        return _json(200, store().list_active_orders())
+        return _json(200, [o for o in store().list_active_orders()
+                           if not o.get("targets") or bot_id in o["targets"]])
 
     if path == "/api/escalations":
         if not _auth_dashboard(query, headers):

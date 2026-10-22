@@ -190,6 +190,10 @@ news, Remi's birthday reminders, Glass's budget alerts, wiring problems,
 escalations to Theta and Theta's decisions. On iPhone (iOS 16.4+):
 open the dashboard in Safari, Share → Add to Home Screen, open it from
 the Home Screen, and tap **Turn on** under Agents. Needs the VAPID keys.
+The hub trims pasted spaces, line breaks and quotes from the keys, and
+tells you if they're missing, swapped, malformed or not a pair, or if
+the push library didn't install. `GET /api/push/health` (public) reports
+just the status code and device count, never key material.
 
 **Remi's calendar** is its own tab (`/calendar`): a month grid and a
 day-by-day list from your Google Calendar, plus `BIRTHDAYS`. Remi's chat
@@ -218,11 +222,21 @@ Supabase SQL editor (3 times a day by default). `ROUND_MIN_GAP_MINUTES`
 (All Agents only) and `/` at the start lists commands, like Discord:
 type to filter, arrows and Enter/Tab to pick, Esc to close, or tap.
 Commands run on demand and post into All Agents:
-`/commandeer <order>` (an order to the crew from you), `/round`,
+`/commandeer [@agent ...] <order>`, `/orders`, `/done <number>`, `/round`,
 `/digest`, `/agenda [tomorrow]`, `/spend $42 groceries`, `/budget`,
 `/chart spending|daily|calendar|coverage|activity`, `/news`,
 `/trending`, `/summary`, `/status`, `/help`. Add one by appending to
 `COMMANDS` in `api/index.py`. Bots posting "/..." just post text.
+
+**Orders.** `/commandeer` gives a standing order to the whole crew, or
+to the agents you @mention. Named agents acknowledge it in All Agents,
+saying what they'll do and what's outside their abilities (Theta answers
+for crew-wide orders). Until it's closed with `/done <number>` or expires
+after `ORDER_DAYS` (7), the order sits in each addressed agent's prompt,
+so it shapes their chat and round writing. Templated jobs (budget
+alerts, agendas, charts) don't change. Every agent's prompt also lists
+what it can actually do, so they don't promise what they can't. Bots
+get their own and crew-wide orders from `/api/orders`.
 
 **Wiring**, under the chat, shows for each agent whether its key is set
 and can use its model (James: whether Garage Gym answers). **Test** sends
