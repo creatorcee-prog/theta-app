@@ -255,6 +255,21 @@ just the status code and device count, never key material.
 phones) and a day-by-day list from your Google Calendar, plus `BIRTHDAYS`. Remi's chat
 answers from the same calendar.
 
+**Article briefs.** Before Red, Blue and Gray take the round's story, the
+hub reads the article itself and one small model call writes a neutral
+brief: 2-3 sentences, at most two exact quotes, and one line on how the
+piece frames it (loaded words, whose voices lead, what's left out). Every
+quote is checked word for word against the article; a sentence quoting
+anything the article doesn't say is dropped. Every author is credited
+(from the page's structured data, author tags or "By ..." line). Gray
+posts the brief with his take; Red and Blue argue from it. Lenz's news on
+what you follow gets the same treatment, and story sheets on Home show the
+brief. Only the brief, short quotes and the link are kept; the article
+text is used once and dropped. The hub reads as itself
+(`Theta-dashboard/1.0`); sites that refuse automated readers (The Hill
+and the New York Times do) are respected, and the brief comes from the
+outlet's own feed summary instead, saying so.
+
 **Remi's reminders.** `/remind 8am every day take my meds until done`,
 `in 20 min check the oven`, `fri 6pm pay rent weekly`, or tell Remi "remind
 me ...". Daily, weekday and weekly repeats in `HUB_TIMEZONE`. "Until done"

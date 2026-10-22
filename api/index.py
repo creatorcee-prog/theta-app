@@ -115,10 +115,12 @@ ABILITIES = {
     "lenz": "recommend from TMDB's trending list and the entertainment feeds, keep the user's library "
             "(what they watch, play and read, their ratings and rankings), log what they finish "
             "(\"I finished Frieren, 9/10\"), post news about titles they follow, and a weekly taste report",
-    "red": "read your outlets' headlines and give your take on the top story. You can't search "
-           "beyond those feeds", "blue": "read your outlets' headlines and give your take on the "
-           "top story. You can't search beyond those feeds", "gray": "read your outlets' "
-           "headlines and give your take on the top story. You can't search beyond those feeds",
+    "red": "read your outlets' headlines and the top story's article brief (summary, exact quotes, "
+           "framing, byline), and give your take. You can't search beyond those feeds",
+    "blue": "read your outlets' headlines and the top story's article brief (summary, exact quotes, "
+            "framing, byline), and give your take. You can't search beyond those feeds",
+    "gray": "read the top story's article and brief it neutrally (summary, exact quotes, how it's framed, "
+            "who wrote it), read your outlets' headlines, and give your take. You can't search beyond those feeds",
     "charter": "draw charts of spending, daily spending, calendar busyness, news coverage and "
                "All Agents activity, and nothing else yet",
 }
@@ -2626,16 +2628,24 @@ def _round_news(agent):
                 f"- {it['source']}: {it['title']}" for it in seen)
         else:
             coverage = "None of your outlets have covered it yet; say so, that's worth knowing."
+        brief = ctx.get("brief")
+        grounded = (f"A neutral brief of the article ({brief['credit']}):\n{brief['summary']}\n"
+                    f"Its framing: {brief['bias']}\n" if brief and brief.get("summary") else
+                    "You only have the headline; say so instead of guessing details.\n")
         take = llm_chat(AGENTS[agent]["tier"], [
             {"role": "system", "content": system_prompt(agent) + " You're posting in the All "
              "Agents group chat."},
             {"role": "user", "content": f"Today's top story ({story['source']}): {story['title']}\n"
-             f"{coverage}\nGive your take in 2-3 sentences. You only have these headlines: "
-             "say so instead of guessing details."}])
+             f"{grounded}{coverage}\nGive your take in 2-3 sentences, from the brief and your outlets' "
+             "coverage only. Don't put anything in quotation marks."}])
         links = [story["url"]] + [it["url"] for it in seen if it["url"] != story["url"]][:1]
-        store().add_chat(agent, take.strip() + "\n" + "\n".join(links))
+        # Gray, the independent, posts the brief itself; Red and Blue argue from it.
+        has_brief = bool(brief and brief.get("summary"))
+        lead = f"Brief: {brief_text(brief)}\n\n" if has_brief and agent == "gray" else ""
+        store().add_chat(agent, lead + take.strip() + "\n" + "\n".join(links))
         pic = story.get("image") or next((it.get("image") for it in seen if it.get("image")), None)
-        save_card(agent, story["title"], take.strip(), pic, story["url"], story["source"])
+        save_card(agent, story["title"], take.strip() + (f"\n\n{brief_text(brief)}" if has_brief else ""),
+                  pic, story["url"], story["source"])
         return (f"posted a take on \"{story['title'][:60]}\""
                 + (f" ({len(seen)} of their outlets covered it)" if seen else " (their outlets haven't covered it)"))
     return job
@@ -2666,8 +2676,15 @@ def _round_lenz(ctx):
     seen = _seen("round:lenz:news")
     fresh = [n for n in followed_news() if n["url"] not in seen][:3]
     if fresh:
-        st.add_chat("lenz", "News on what you follow:\n" + "\n".join(
-            f"- {n['about']}: {n['title']} ({n['source']})\n  {n['url']}" for n in fresh), channel="screen")
+        def brief_for(n):
+            try:
+                return brief_text(story_brief(n["title"], n["url"], n["source"], n.get("summary", "")))
+            except LLMError:
+                return n["source"]
+        with ThreadPoolExecutor(max_workers=len(fresh)) as ex:
+            briefs = list(ex.map(brief_for, fresh))
+        st.add_chat("lenz", "News on what you follow:\n\n" + "\n\n".join(
+            f"{n['about']}: {n['title']}\n{b}\n{n['url']}" for n, b in zip(fresh, briefs)), channel="screen")
         for n in fresh:
             _mark_seen("round:lenz:news", n["url"])
             if n["waiting"]:
@@ -2846,6 +2863,12 @@ def run_round(force=False, now=None, only=None):
     if _NEWS_AGENTS & set(due):  # the news miners all take the same new story
         breaking, top = news_items()
         ctx["story"] = next((i for i in breaking + top if i["url"] not in _seen("round:news:seen")), None)
+        if ctx["story"]:
+            try:  # one neutral brief, read from the article itself, for all three
+                ctx["brief"] = story_brief(ctx["story"]["title"], ctx["story"]["url"], ctx["story"]["source"],
+                                           ctx["story"].get("summary", ""))
+            except LLMError:
+                ctx["brief"] = None
 
     def run(a):
         try:
@@ -3432,6 +3455,189 @@ def lenz_logged_line(it):
     return f"Logged {it['title']}: {it['rating']}/10.{rank}"
 
 
+# ---- Reading articles: the news bots (and Lenz) read the story itself,
+# write a short neutral brief with a few exact quotes and a line on the
+# article's framing, and credit everyone who wrote it. Only the brief,
+# short quotes and the link are kept; the article text is used once and
+# dropped (republishing whole articles would be copying the outlets' work).
+# Sites that refuse automated readers are respected, not dodged.
+ARTICLE_UA = "Theta-dashboard/1.0 (personal news reader; https://github.com/creatorcee-prog/dashboard-app)"
+ARTICLE_TYPES = {"newsarticle", "article", "reportagenewsarticle", "analysisnewsarticle", "blogposting",
+                 "opinionnewsarticle", "backgroundnewsarticle", "liveblogposting", "webpage"}
+_ARTICLE_CACHE = {}  # url -> (fetched_at, article); per process
+BRIEF_KEEP = 60  # briefs remembered (by story URL)
+_BRIEF_LOCK = threading.Lock()
+
+
+def _ld_objects(page):
+    out = []
+    for block in re.findall(r"<script[^>]+application/ld\+json[^>]*>(.*?)</script>", page, re.S | re.I):
+        try:
+            data = json.loads(html.unescape(block.strip()))
+        except ValueError:
+            continue
+        stack = data if isinstance(data, list) else [data]
+        while stack:
+            o = stack.pop(0)
+            if isinstance(o, dict):
+                stack += o.get("@graph", []) if isinstance(o.get("@graph"), list) else []
+                out.append(o)
+            elif isinstance(o, list):
+                stack += o
+    return out
+
+
+def _author_names(v):
+    """Author names from JSON-LD's author field (a dict, a list or text)."""
+    if isinstance(v, list):
+        return [n for x in v for n in _author_names(x)]
+    if isinstance(v, dict):
+        return _author_names(v.get("name"))
+    if isinstance(v, str) and v.strip() and not v.startswith("http"):
+        return [n.strip() for n in re.split(r",| and ", re.sub(r"^by\s+", "", v.strip(), flags=re.I)) if n.strip()]
+    return []
+
+
+def _meta(page, *names):
+    vals = []
+    for n in names:
+        for m in re.finditer(r"<meta\b[^>]*>", page, re.I):
+            tag = m.group(0)
+            if re.search(r"(?:name|property)=[\"']" + re.escape(n) + r"[\"']", tag, re.I):
+                c = re.search(r"content=[\"']([^\"']*)", tag, re.I)
+                if c and c.group(1).strip():
+                    vals.append(html.unescape(c.group(1).strip()))
+    return vals
+
+
+def read_article(url):
+    """{title, authors, publisher, text, blocked}: the article's text and
+    byline from its page (structured data first, then meta tags, then
+    paragraphs). blocked: the site refused us or had no readable text."""
+    hit = _ARTICLE_CACHE.get(url)
+    if hit and time.time() - hit[0] < 3600:
+        return hit[1]
+    art = {"title": "", "authors": [], "publisher": "", "text": "", "blocked": ""}
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": ARTICLE_UA, "Accept": "text/html"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            page = resp.read(1_500_000).decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        art["blocked"] = (f"the site doesn't allow automated reading ({e.code})" if e.code in (401, 403, 429, 451)
+                          else f"the site returned {e.code}")
+        _ARTICLE_CACHE[url] = (time.time(), art)
+        return art
+    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+        art["blocked"] = "the site didn't answer"
+        return art
+    for o in _ld_objects(page):
+        types = o.get("@type") or []
+        types = {t.lower() for t in (types if isinstance(types, list) else [types]) if isinstance(t, str)}
+        if not types & ARTICLE_TYPES:
+            continue
+        art["title"] = art["title"] or str(o.get("headline") or "")
+        art["authors"] = art["authors"] or _author_names(o.get("author"))
+        pub = o.get("publisher")
+        art["publisher"] = art["publisher"] or (pub.get("name", "") if isinstance(pub, dict) else "")
+        if isinstance(o.get("articleBody"), str) and len(o["articleBody"]) > len(art["text"]):
+            art["text"] = o["articleBody"]
+    if not art["authors"]:
+        for v in _meta(page, "author", "byl", "parsely-author", "sailthru.author", "article:author"):
+            if v.startswith("http"):  # profile links: "/profile/jane-doe" -> Jane Doe
+                art["authors"] += [p.rstrip("/").rsplit("/", 1)[-1].replace("-", " ").title()
+                                   for p in v.split(",") if "/" in p]
+            else:
+                art["authors"] += _author_names(v)
+    art["authors"] = list(dict.fromkeys(a for a in art["authors"] if 1 < len(a) < 60))[:6]
+    art["publisher"] = art["publisher"] or (_meta(page, "og:site_name") or [""])[0]
+    if len(art["text"]) < 400:
+        page = re.sub(r"<(script|style|noscript|template)\b.*?</\1\s*>", " ", page, flags=re.S | re.I)
+        body = re.search(r"<article\b.*?</article>", page, re.S | re.I)
+        paras = re.findall(r"<p\b[^>]*>(.*?)</p>", body.group(0) if body else page, re.S | re.I)
+        paras = [_plain(p, 2000) for p in paras]
+        art["text"] = "\n".join(p for p in paras if len(p) > 60 and not re.search(
+            r"(?i)subscribe|sign up|newsletter|cookies|all rights reserved|advertis", p))
+    art["text"] = _plain(art["text"], 6000) if "<" in art["text"] else art["text"][:6000]
+    if len(art["text"]) < 300:
+        art["blocked"] = art["blocked"] or "there was no readable article text (likely a paywall)"
+    _ARTICLE_CACHE[url] = (time.time(), art)
+    return art
+
+
+def credit_line(art, outlet):
+    names = art.get("authors") or []
+    who = (", ".join(names[:-1]) + " and " + names[-1]) if len(names) > 1 else (names[0] if names else "")
+    return f"By {who}, {outlet}" if who else f"{outlet} (no byline given)"
+
+
+_QUOTE_RE = re.compile(r"[\"“]([^\"”]{12,300})[\"”]")
+
+
+def _squash(text):
+    t = text.replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"').replace("—", "-").replace("–", "-")
+    return " ".join(re.sub(r"[^\w' -]", " ", t.lower()).split())
+
+
+def keep_true_quotes(text, source):
+    """Drop any sentence that quotes words the article doesn't contain
+    (models sometimes invent quotes). Returns (text, how many dropped)."""
+    src = _squash(source)
+    sentences = re.split(r"(?<=[.!?][\"”])\s+|(?<=[.!?])\s+(?=[A-Z\"“])", text.strip())
+    kept, dropped = [], 0
+    for sent in sentences:
+        quotes = _QUOTE_RE.findall(sent)
+        if quotes and not all(_squash(q) in src for q in quotes):
+            dropped += 1
+            continue
+        kept.append(sent)
+    return " ".join(kept), dropped
+
+
+def story_brief(title, url, outlet, fallback=""):
+    """A neutral brief of one story: {summary, bias, credit, read} where
+    read says whether the article itself was read. One miner-model call,
+    remembered by URL. Quotes are checked against the article's text."""
+    have = _meta_json("briefs", {}).get(url)
+    if have:
+        return have
+    art = read_article(url)
+    source = art["text"] if not art["blocked"] else (fallback or "")
+    credit = credit_line(art, outlet)
+    if not source.strip():
+        brief = {"summary": "", "bias": "", "credit": credit, "read": False,
+                 "note": f"Couldn't read it: {art['blocked'] or 'no text'}."}
+        return brief
+    reply = llm_chat("miner", [
+        {"role": "system", "content": "You brief news stories for a busy reader: neutral, exact, short."},
+        {"role": "user", "content": f"Story: {title} ({outlet})\n"
+         + ("Article text" if not art["blocked"] else "Only the outlet's own summary (the article couldn't be read)")
+         + f":\n{source[:4000]}\n\nWrite exactly two lines.\n"
+         "SUMMARY: 2-3 neutral sentences on what happened, using only this text. Where the exact words matter, "
+         "quote them word for word in quotation marks (at most 2 short quotes). Never put anything in quotes "
+         "that isn't in the text.\n"
+         "BIAS: one sentence on how this piece frames the story: loaded words, whose voices lead, context left "
+         "out. If it reads as straight reporting, say that. Be fair."}], max_tokens=700)
+    summary = re.search(r"SUMMARY:\s*(.+?)(?=\n\s*BIAS:|$)", reply, re.S | re.I)
+    bias = re.search(r"BIAS:\s*(.+)", reply, re.S | re.I)
+    text, dropped = keep_true_quotes((summary.group(1) if summary else reply).strip(), source)
+    brief = {"summary": text, "bias": (bias.group(1).strip().split("\n")[0] if bias else ""), "credit": credit,
+             "read": not art["blocked"], "dropped_quotes": dropped,
+             "note": "" if not art["blocked"] else f"From the outlet's summary; {art['blocked']}."}
+    with _BRIEF_LOCK:
+        briefs = _meta_json("briefs", {})
+        briefs[url] = brief
+        store().set_meta("briefs", json.dumps(dict(list(briefs.items())[-BRIEF_KEEP:])))
+    return brief
+
+
+def brief_text(b):
+    parts = [b["summary"]] if b.get("summary") else []
+    if b.get("bias"):
+        parts.append(f"Framing: {b['bias']}")
+    parts.append(b["credit"] + (f". {b['note']}" if b.get("note") else ""))
+    return "\n".join(parts)
+
+
 # ---- Agent windows: each agent's latest output as a small card with a
 # short title and a picture. Round jobs save cards; after each round the
 # titles are condensed (one cheap model call) and missing pictures are
@@ -3767,9 +3973,11 @@ def _pushed_windows(event_type):
 
 def news_windows():
     breaking, top = news_items()
+    briefs = _meta_json("briefs", {})  # stories the bots have read
     return [_win("", it["title"], "", it.get("image"), it["url"], it.get("published"),
                  tag="Breaking" if it in breaking else None, source=it["source"], external=True,
-                 text=it.get("summary", ""), coverage=story_coverage(it["title"]))
+                 text=brief_text(briefs[it["url"]]) if it["url"] in briefs else it.get("summary", ""),
+                 coverage=story_coverage(it["title"]))
             for it in breaking + top] + _pushed_windows("news")
 
 
