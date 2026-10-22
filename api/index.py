@@ -41,8 +41,10 @@ import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from http.cookies import SimpleCookie
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from urllib.parse import parse_qs, urlparse
 
 # ---- Bot config (same env vars as the Railway build) ----
@@ -542,13 +544,16 @@ def feed_items(url):
     return items
 
 
-def _fetch_feeds(urls):
-    """feed_items() for each url, fetched in parallel (one slow outlet
-    doesn't hold up the rest)."""
+def _fetch_feeds_with(fn, urls):
+    """fn(url) for each url, in parallel (one slow source doesn't hold up the rest)."""
     if not urls:
         return []
     with ThreadPoolExecutor(max_workers=min(10, len(urls))) as ex:
-        return list(ex.map(feed_items, urls))
+        return list(ex.map(fn, urls))
+
+
+def _fetch_feeds(urls):
+    return _fetch_feeds_with(feed_items, urls)
 
 
 def widget_items(feeds):
@@ -726,9 +731,10 @@ def system_prompt(agent_id):
     traits = [k for k in persona if k != "concise"]
     personality = f" Your personality: {', '.join(traits)}." if traits else ""
     brevity = " and be concise" if "concise" in persona else ""
+    extra = remi_context() if agent_id == "remi" else ""
     return (f"You are {a['name']}, the {TIER_LABELS[a['tier']]} of a personal bot "
             f"hub. {a['role']}{stand_in}{personality} The team: {team}. "
-            f"Stay in character{brevity}.")
+            f"Stay in character{brevity}.{extra}")
 
 
 def provider_extra(provider, model):
@@ -906,6 +912,255 @@ def allchat_view(limit=50):
     return [dict(m, name=chat_name(m["from"])) for m in store().list_chat(limit)]
 
 
+# ---- Remi's calendar: Google Calendar "secret address in iCal format"
+# links (read-only), plus BIRTHDAYS. Times are shown in HUB_TIMEZONE.
+HUB_TIMEZONE = os.environ.get("HUB_TIMEZONE", "America/Denver")
+REMI_CALENDAR_URLS = [u.strip() for u in os.environ.get("REMI_CALENDAR_URLS", "").split(",") if u.strip()]
+BIRTHDAYS = [p.split(":", 1) for p in os.environ.get("BIRTHDAYS", "").split(",") if ":" in p]
+CALENDAR_CACHE_SECONDS = 600
+_CAL_CACHE = {}  # url -> (fetched_at, events or None)
+_WEEKDAYS = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
+
+
+def hub_tz():
+    try:
+        return ZoneInfo(HUB_TIMEZONE)
+    except (ZoneInfoNotFoundError, ValueError):
+        return timezone.utc
+
+
+def _ics_unescape(text):
+    return (text.replace("\\n", "\n").replace("\\N", "\n").replace("\\,", ",")
+            .replace("\\;", ";").replace("\\\\", "\\"))
+
+
+def parse_ics(text):
+    """VEVENTs as {NAME: (params, value)}; EXDATE collects every value."""
+    lines = []
+    for raw in text.replace("\r\n", "\n").split("\n"):
+        if raw[:1] in (" ", "\t") and lines:
+            lines[-1] += raw[1:]  # folded line
+        else:
+            lines.append(raw)
+    events, cur = [], None
+    for line in lines:
+        if line == "BEGIN:VEVENT":
+            cur = {"EXDATE": []}
+        elif line == "END:VEVENT":
+            if cur is not None:
+                events.append(cur)
+            cur = None
+        elif cur is not None and ":" in line:
+            head, value = line.split(":", 1)
+            name, *params = head.split(";")
+            params = dict(x.split("=", 1) for x in params if "=" in x)
+            if name == "EXDATE":
+                cur["EXDATE"] += [(params, v) for v in value.split(",")]
+            elif name not in cur:
+                cur[name] = (params, value)
+    return events
+
+
+def _ics_time(params, value, tz):
+    """(date or aware datetime in tz, all_day)."""
+    value = value.strip()
+    if params.get("VALUE") == "DATE" or (len(value) == 8 and value.isdigit()):
+        return date(int(value[:4]), int(value[4:6]), int(value[6:8])), True
+    dt = datetime.strptime(value.rstrip("Z")[:15], "%Y%m%dT%H%M%S")
+    if value.endswith("Z"):
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        zone = tz
+        if params.get("TZID"):
+            try:
+                zone = ZoneInfo(params["TZID"].strip('"'))
+            except (ZoneInfoNotFoundError, ValueError):
+                pass  # e.g. a Windows zone name: assume the hub's
+        dt = dt.replace(tzinfo=zone)
+    return dt.astimezone(tz), False
+
+
+def _nth_weekday(year, month, weekday, n):
+    """The nth (1-based; negative counts from the end) weekday of a month, or None."""
+    first = date(year, month, 1)
+    days = [first + timedelta(d) for d in range(31)
+            if (first + timedelta(d)).month == month and (first + timedelta(d)).weekday() == weekday]
+    try:
+        return days[n - 1] if n > 0 else days[n]
+    except IndexError:
+        return None
+
+
+def _rrule_dates(first, rule, last_day):
+    """Dates a recurring event starts on, from its first date up to last_day."""
+    r = dict(x.split("=", 1) for x in rule.split(";") if "=" in x)
+    freq, step = r.get("FREQ"), max(1, int(r.get("INTERVAL", "1") or 1))
+    count = int(r["COUNT"]) if r.get("COUNT", "").isdigit() else None
+    until = date(int(r["UNTIL"][:4]), int(r["UNTIL"][4:6]), int(r["UNTIL"][6:8])) if r.get("UNTIL") else None
+    byday = [d.strip() for d in r.get("BYDAY", "").split(",") if d.strip()]
+    stop = min(last_day, until) if until else last_day
+
+    def candidates():
+        if freq == "DAILY":
+            d = first
+            while True:
+                yield d
+                d += timedelta(days=step)
+        elif freq == "WEEKLY":
+            days = sorted({_WEEKDAYS[b[-2:]] for b in byday if b[-2:] in _WEEKDAYS} or {first.weekday()})
+            week = first - timedelta(days=first.weekday())
+            while True:
+                for wd in days:
+                    yield week + timedelta(days=wd)
+                week += timedelta(weeks=step)
+        elif freq == "MONTHLY":
+            y, m = first.year, first.month
+            while True:
+                if byday and byday[0][-2:] in _WEEKDAYS and byday[0][:-2].lstrip("+-").isdigit():
+                    d = _nth_weekday(y, m, _WEEKDAYS[byday[0][-2:]], int(byday[0][:-2]))
+                else:
+                    day = int(r.get("BYMONTHDAY", first.day))
+                    try:
+                        d = date(y, m, day)
+                    except ValueError:
+                        d = None
+                if d:
+                    yield d
+                m += step
+                y, m = y + (m - 1) // 12, (m - 1) % 12 + 1
+        elif freq == "YEARLY":
+            y = first.year
+            while True:
+                try:
+                    yield date(y, first.month, first.day)
+                except ValueError:
+                    pass  # Feb 29 in a non-leap year
+                y += step
+        else:
+            yield first
+
+    out, n = [], 0
+    for d in candidates():
+        if d < first:
+            continue
+        if d > stop or (count is not None and n >= count) or n > 3000:
+            break
+        n += 1
+        out.append(d)
+    return out
+
+
+def _calendar_source(url):
+    """Parsed events for one calendar, cached; None if it couldn't be read."""
+    hit = _CAL_CACHE.get(url)
+    if hit and time.time() - hit[0] < CALENDAR_CACHE_SECONDS:
+        return hit[1]
+    try:
+        events = parse_ics(_fetch_url(url, timeout=8).decode("utf-8", "replace"))
+    except Exception as e:  # a bad link shouldn't break the dashboard
+        print(f"calendar fetch failed: {e!r}")
+        events = None
+    _CAL_CACHE[url] = (time.time(), events)
+    return events
+
+
+def calendar_events(first_day, last_day):
+    """Every occurrence overlapping first_day..last_day (local dates), sorted:
+    {title, location, start, end, all_day, birthday}. Timed starts/ends are
+    aware datetimes in hub_tz(); all-day ones are dates (end exclusive)."""
+    tz = hub_tz()
+    occ = []
+    sources = _fetch_feeds_with(_calendar_source, REMI_CALENDAR_URLS)
+    for events in sources:
+        if not events:
+            continue
+        overridden = set()
+        for ev in events:
+            if "RECURRENCE-ID" in ev and "UID" in ev:
+                overridden.add((ev["UID"][1], _ics_time(*ev["RECURRENCE-ID"], tz)[0]))
+        for ev in events:
+            if "DTSTART" not in ev or ev.get("STATUS", ({}, ""))[1].upper() == "CANCELLED":
+                continue
+            start, all_day = _ics_time(*ev["DTSTART"], tz)
+            if "DTEND" in ev:
+                end = _ics_time(*ev["DTEND"], tz)[0]
+            elif "DURATION" in ev and not all_day:
+                dur = ev["DURATION"][1]
+                h = int(dur.split("T")[1].split("H")[0]) if "H" in dur else 0
+                mins = int(dur.split("H")[-1].split("M")[0].lstrip("PT")) if "M" in dur.split("T")[-1] else 0
+                end = start + timedelta(hours=h, minutes=mins)
+            else:
+                end = start + timedelta(days=1) if all_day else start
+            length = end - start
+            title = _ics_unescape(ev.get("SUMMARY", ({}, "(no title)"))[1]).strip() or "(no title)"
+            where = _ics_unescape(ev.get("LOCATION", ({}, ""))[1]).strip()
+            first = start if all_day else start.date()
+            if "RRULE" in ev and "RECURRENCE-ID" not in ev:
+                skip = {_ics_time(p, v, tz)[0] for p, v in ev["EXDATE"]}
+                starts = []
+                for d in _rrule_dates(first, ev["RRULE"][1], last_day):
+                    st = d if all_day else datetime.combine(d, start.time(), tzinfo=tz)
+                    if st in skip or (ev.get("UID", ({}, ""))[1], st) in overridden:
+                        continue
+                    starts.append(st)
+            else:
+                starts = [start]
+            for st in starts:
+                en = st + length
+                s_day = st if all_day else st.date()
+                e_day = en if all_day else (en - timedelta(microseconds=1)).date() + timedelta(days=1)
+                if s_day <= last_day and max(e_day, s_day + timedelta(days=1)) > first_day:
+                    occ.append({"title": title, "location": where, "start": st, "end": en,
+                                "all_day": all_day, "birthday": "birthday" in title.lower()})
+    for name, md in BIRTHDAYS:
+        try:
+            month, day = (int(x) for x in md.strip().split("-"))
+        except ValueError:
+            continue
+        for year in range(first_day.year, last_day.year + 1):
+            try:
+                d = date(year, month, day)
+            except ValueError:
+                continue
+            if first_day <= d <= last_day:
+                occ.append({"title": f"{name.strip()}'s birthday", "location": "", "start": d,
+                            "end": d + timedelta(days=1), "all_day": True, "birthday": True})
+    occ.sort(key=lambda o: (o["start"] if o["all_day"] else o["start"].date(),
+                            0 if o["all_day"] else 1,
+                            "" if o["all_day"] else o["start"].strftime("%H%M"), o["title"]))
+    return occ
+
+
+def calendar_linked():
+    return bool(REMI_CALENDAR_URLS or BIRTHDAYS)
+
+
+def calendar_problems():
+    """Calendar links that couldn't be read last time (for wiring)."""
+    return [i + 1 for i, u in enumerate(REMI_CALENDAR_URLS) if _calendar_source(u) is None]
+
+
+def _clock(dt):
+    return dt.strftime("%I:%M %p").lstrip("0").replace(":00 ", " ")
+
+
+def occurrence_text(o, with_day=False):
+    day = (o["start"] if o["all_day"] else o["start"].date()).strftime("%a %b %d ") if with_day else ""
+    when = "All day" if o["all_day"] else f"{_clock(o['start'])}–{_clock(o['end'])}"
+    return f"{day}{when}: {o['title']}" + (f" ({o['location']})" if o["location"] else "")
+
+
+def remi_context():
+    """The next 14 days, for Remi's prompt, so she answers from the real calendar."""
+    if not calendar_linked():
+        return ""
+    today = datetime.now(hub_tz()).date()
+    items = calendar_events(today, today + timedelta(days=13))
+    listing = "\n".join(f"- {occurrence_text(o, with_day=True)}" for o in items[:60]) or "- nothing scheduled"
+    return (f"\n\nToday is {today:%A %B %d}. The family calendar for the next 14 days "
+            f"(exact; never change times or add events):\n{listing}")
+
+
 # ---- Rounds: each agent's own job, run on a schedule (Supabase Cron ->
 # /api/round). Jobs post real results to All Agents; agents without a data
 # source yet say so instead of inventing work.
@@ -986,8 +1241,49 @@ def _round_james(ctx):
     return "updated your training summary"
 
 
+def _round_remi(ctx):
+    """Today's agenda once a day, an update when today's plans change, and
+    birthdays 7 days, 1 day and 0 days ahead."""
+    if not calendar_linked():
+        return "no calendar linked"
+    if REMI_CALENDAR_URLS and len(calendar_problems()) == len(REMI_CALENDAR_URLS) and not BIRTHDAYS:
+        raise LLMError("couldn't read any calendar link")
+    today = datetime.now(hub_tz()).date()
+    todays = [o for o in calendar_events(today, today) if not o["birthday"]]
+    agenda = "\n".join(f"- {occurrence_text(o)}" for o in todays) or "- Nothing on the calendar."
+    digest = hashlib.sha256(agenda.encode()).hexdigest()
+    st = store()
+    if st.get_meta("round:remi:day") != today.isoformat():
+        lines = [f"Today, {today:%A %B %d}:", agenda]
+        for o in calendar_events(today, today + timedelta(days=7)):
+            if not o["birthday"]:
+                continue
+            days = ((o["start"] if o["all_day"] else o["start"].date()) - today).days
+            if days == 0:
+                lines.append(f"Today: {o['title']}!")
+            elif days in (1, 7):
+                lines.append(f"Coming up: {o['title']} {'tomorrow' if days == 1 else 'in a week'}.")
+        try:
+            opener = llm_chat("manager", [
+                {"role": "system", "content": system_prompt("remi")},
+                {"role": "user", "content": "Write one warm sentence to open today's family "
+                 "agenda post. Don't list or mention any events or times."}], max_tokens=300)
+            lines.insert(0, opener.strip())
+        except LLMError:
+            pass  # the agenda matters more than the greeting
+        st.add_chat("remi", "\n".join(lines))
+        st.set_meta("round:remi:day", today.isoformat())
+        st.set_meta("round:remi:digest", digest)
+        return "posted today's agenda"
+    if digest != st.get_meta("round:remi:digest"):
+        st.add_chat("remi", f"Today's plans changed:\n{agenda}")
+        st.set_meta("round:remi:digest", digest)
+        return "posted an agenda update"
+    return "agenda unchanged"
+
+
 ROUND_JOBS = {
-    "theta": _round_theta, "mistral": _round_mistral, "james": _round_james,
+    "theta": _round_theta, "remi": _round_remi, "mistral": _round_mistral, "james": _round_james,
     "lenz": _round_lenz, "red": _round_news("red"), "blue": _round_news("blue"),
     "gray": _round_news("gray"),
 }
@@ -1062,6 +1358,18 @@ def wiring():
                 row.update(state="ok", note="Key set and model available"
                            + (f" ({MASTER_MODEL} not connected; standing in)" if a["tier"] == "master" else ""))
         rows.append(row)
+    if calendar_linked():
+        bad = calendar_problems()
+        rows.append({"agent": "remi-calendar", "name": "Remi's calendar", "tier": "",
+                     "model": f"{len(REMI_CALENDAR_URLS)} calendar link(s), {len(BIRTHDAYS)} birthdays",
+                     "testable": False,
+                     **({"state": "bad", "note": f"Couldn't read link(s) {', '.join(map(str, bad))}: "
+                                                  "check REMI_CALENDAR_URLS"} if bad else
+                        {"state": "ok", "note": "Calendar readable"})})
+    else:
+        rows.append({"agent": "remi-calendar", "name": "Remi's calendar", "tier": "",
+                     "model": "Google Calendar (iCal)", "testable": False, "state": "off",
+                     "note": "Not linked: set REMI_CALENDAR_URLS"})
     return rows
 
 
@@ -1105,11 +1413,30 @@ def agent_statuses(now=None):
     return out
 
 
+def _cookie(headers, name):
+    try:
+        c = SimpleCookie(headers.get("cookie", ""))
+    except Exception:
+        return None
+    return c[name].value if name in c else None
+
+
 def _auth_dashboard(query, headers):
+    """Dashboard key as a header, ?key= or the hub_key cookie (set the first
+    time you open the dashboard with ?key=, so links and the Home Screen app
+    don't need it)."""
     if not DASHBOARD_KEY:
         return True
-    return (headers.get("x-dashboard-key") == DASHBOARD_KEY
-            or query.get("key", [None])[0] == DASHBOARD_KEY)
+    return DASHBOARD_KEY in (headers.get("x-dashboard-key"), query.get("key", [None])[0],
+                             _cookie(headers, "hub_key"))
+
+
+def _login_cookie(query):
+    """Set-Cookie header when the page was opened with the right ?key=."""
+    if DASHBOARD_KEY and query.get("key", [None])[0] == DASHBOARD_KEY:
+        return [("Set-Cookie", f"hub_key={DASHBOARD_KEY}; Path=/; Max-Age=31536000; "
+                               "HttpOnly; Secure; SameSite=Lax")]
+    return []
 
 
 # Dashboard chat box. One-on-one history lives in the page only (one per
@@ -1227,10 +1554,12 @@ async function loadWiring() {
       const [label, color] = MARK[a.state] || ["Unknown", "#888"];
       const result = cell(a.note, "color:#666");
       const test = document.createElement("td");
-      const b = document.createElement("button");
-      b.type = "button"; b.textContent = "Test";
-      b.onclick = () => testAgent(a.agent, result, b);
-      test.append(b);
+      if (a.testable !== false) {
+        const b = document.createElement("button");
+        b.type = "button"; b.textContent = "Test";
+        b.onclick = () => testAgent(a.agent, result, b);
+        test.append(b);
+      }
       tr.append(cell(a.name), cell(a.model, "font-family:monospace;font-size:0.85em"),
                 cell(label, "font-weight:bold;color:" + color), result, test);
       return tr;
@@ -1297,6 +1626,91 @@ def _chat_html():
             "<p><button id=\"wiring-recheck\" type=\"button\">Recheck</button> "
             "<i id=\"wiring-note\"></i></p>"
             f"<script>{_CHAT_JS}</script>")
+
+
+_PAGE_CSS = ("<style>body{font-family:system-ui,sans-serif;margin:0;padding:12px 16px 40px;"
+             "max-width:960px}nav{display:flex;gap:16px;border-bottom:1px solid #ccc;"
+             "padding-bottom:8px;margin-bottom:8px}nav a{text-decoration:none;color:#555;"
+             "padding:4px 2px}nav a.on{color:#000;font-weight:bold;border-bottom:3px solid #2f5bd3}"
+             ".cal{border-collapse:collapse;width:100%;table-layout:fixed}"
+             ".cal th{font-size:12px;color:#666;padding:4px}"
+             ".cal td{border:1px solid #ddd;vertical-align:top;height:72px;padding:3px;font-size:11px;"
+             "overflow:hidden}.cal td.out{background:#f6f6f6;color:#aaa}.cal td.today{outline:2px solid #2f5bd3}"
+             ".cal .n{font-weight:bold;font-size:12px}.cal .e{white-space:nowrap;overflow:hidden;"
+             "text-overflow:ellipsis}.cal .b{color:#a35d00}.day{margin:14px 0 4px;font-weight:bold}"
+             ".tag{color:#a35d00;font-size:12px}</style>")
+
+
+def _nav(active):
+    tabs = [("/", "Dashboard"), ("/calendar", "Remi's calendar")]
+    return "<nav>" + "".join(
+        f"<a href=\"{href}\" class=\"{'on' if href == active else ''}\">{label}</a>"
+        for href, label in tabs) + "</nav>"
+
+
+def calendar_page(query):
+    """Remi's tab: a month grid plus the same month as a day-by-day list."""
+    tz = hub_tz()
+    today = datetime.now(tz).date()
+    try:
+        y, m = (int(x) for x in query.get("month", [""])[0].split("-"))
+        first = date(y, m, 1)
+    except ValueError:
+        first = today.replace(day=1)
+    nxt = (first + timedelta(days=32)).replace(day=1)
+    prev = (first - timedelta(days=1)).replace(day=1)
+    head = (f"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            f"<title>Remi's calendar</title>{_PAGE_CSS}{_nav('/calendar')}"
+            f"<h1>Remi's calendar</h1>")
+    if not calendar_linked():
+        return head + ("<p>No calendar linked yet. In Google Calendar on a computer: Settings → "
+                       "your calendar → <b>Integrate calendar</b> → copy <b>Secret address in "
+                       "iCal format</b>. In Vercel, set <code>REMI_CALENDAR_URLS</code> to it "
+                       "(comma-separate several) and redeploy. Treat it like a password.</p>")
+    grid_start = first - timedelta(days=(first.weekday() + 1) % 7)  # Sunday
+    grid_end = grid_start + timedelta(days=41)
+    occ = calendar_events(grid_start, grid_end)
+    by_day = {}
+    for o in occ:
+        d0 = o["start"] if o["all_day"] else o["start"].date()
+        d1 = (o["end"] - timedelta(days=1)) if o["all_day"] else o["end"].date()
+        d = max(d0, grid_start)
+        while d <= max(d0, d1) and d <= grid_end:
+            by_day.setdefault(d, []).append(o)
+            d += timedelta(days=1)
+    rows = []
+    for w in range(6):
+        cells = []
+        for i in range(7):
+            d = grid_start + timedelta(days=w * 7 + i)
+            items = by_day.get(d, [])
+            evs = "".join(
+                f"<div class=\"e{' b' if o['birthday'] else ''}\">"
+                f"{'' if o['all_day'] else html.escape(_clock(o['start'])) + ' '}{html.escape(o['title'])}</div>"
+                for o in items[:3])
+            more = f"<div>+{len(items) - 3} more</div>" if len(items) > 3 else ""
+            cls = " ".join(c for c in ("out" if d.month != first.month else "",
+                                       "today" if d == today else "") if c)
+            cells.append(f"<td class=\"{cls}\"><div class=\"n\">{d.day}</div>{evs}{more}</td>")
+        rows.append("<tr>" + "".join(cells) + "</tr>")
+    listing = []
+    d = first
+    while d < nxt:
+        items = by_day.get(d, [])
+        if items:
+            listing.append(f"<div class=\"day\">{d:%A %B %d}</div><ul>" + "".join(
+                f"<li>{html.escape(occurrence_text(o))}"
+                f"{' <span class=tag>birthday</span>' if o['birthday'] else ''}</li>" for o in items) + "</ul>")
+        d += timedelta(days=1)
+    return head + (
+        f"<p><a href=\"/calendar?month={prev:%Y-%m}\">&larr; {prev:%B}</a> · "
+        f"<b>{first:%B %Y}</b> · <a href=\"/calendar?month={nxt:%Y-%m}\">{nxt:%B} &rarr;</a></p>"
+        "<div style=\"overflow-x:auto\"><table class=\"cal\"><tr>"
+        + "".join(f"<th>{d}</th>" for d in ("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"))
+        + "</tr>" + "".join(rows) + "</table></div>"
+        + ("".join(listing) or "<p>Nothing scheduled this month.</p>")
+        + f"<p><small>Times in {html.escape(HUB_TIMEZONE)}. From your Google Calendar "
+          "(read-only), refreshed every 10 minutes.</small></p>")
 
 
 def _limit(query, default):
@@ -1549,7 +1963,7 @@ def handle(method, path, query, headers, body):
         else:
             storage_note = f"<p><i>Storage: {html.escape(STORAGE_MODE)}.</i></p>"
         body = (
-            f"<h1>Bot hub</h1>"
+            f"{_nav('/')}<h1>Bot hub</h1>"
             f"<h2>Agents</h2><ul style=\"list-style:none;padding-left:0\">{agent_items}</ul>{round_btn}"
             f"<h2>Chat</h2>{_chat_html()}"
             f"<h2>News</h2>{news_html}"
@@ -1560,7 +1974,12 @@ def handle(method, path, query, headers, body):
             f"<h2>Commandeer orders</h2><ul>{ord_items}</ul>"
             f"{storage_note}"
         ).encode()
-        return 200, "text/html; charset=utf-8", body
+        return 200, "text/html; charset=utf-8", body, _login_cookie(query)
+
+    if path == "/calendar":
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        return 200, "text/html; charset=utf-8", calendar_page(query).encode(), _login_cookie(query)
 
     if path == "/api/feed":
         if not _auth_dashboard(query, headers):
@@ -1659,12 +2078,13 @@ def app(environ, start_response):
         length = 0
     body = environ["wsgi.input"].read(length) if length > 0 else b""
     try:
-        status, ctype, out = handle(method, path, query, headers, body)
+        status, ctype, out, *extra = handle(method, path, query, headers, body)
     except Exception as exc:  # e.g. storage down: answer, don't crash
         print(f"handle error on {method} {path}: {exc!r}")
-        status, ctype, out = _json(500, {"ok": False, "error": "internal error"})
+        (status, ctype, out), extra = _json(500, {"ok": False, "error": "internal error"}), []
     start_response(f"{status} {_REASONS.get(status, '')}",
-                   [("Content-Type", ctype), ("Content-Length", str(len(out)))])
+                   [("Content-Type", ctype), ("Content-Length", str(len(out)))]
+                   + (extra[0] if extra else []))
     return [out]
 
 
