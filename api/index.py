@@ -1662,6 +1662,207 @@ def charter_context():
             "You can't chart anything else yet (e.g. workouts); say so instead of making up numbers.")
 
 
+# ---- Phone notifications (Web Push). Mistral delivers them. Needs the
+# dashboard installed to the iPhone Home Screen (iOS 16.4+), VAPID keys in
+# Vercel (VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY; /api/push/new-keys makes a
+# pair) and a tap on "Turn on" inside the Home Screen app.
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
+VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT", "")
+
+
+def push_subs():
+    return json.loads(store().get_meta("push:subs") or "[]")
+
+
+def notify(title, body, url="/"):
+    """Push to every subscribed device; returns how many got it. Quietly
+    does nothing until keys and a subscription exist. Dead subscriptions
+    (404/410) are dropped."""
+    subs = push_subs()
+    if not (VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY and subs):
+        return 0
+    try:
+        from py_vapid import Vapid02
+        from pywebpush import WebPushException, webpush
+    except ImportError:
+        return 0
+    subject = VAPID_SUBJECT or store().get_meta("hub:origin") or ""
+    if not subject:
+        store().set_meta("push:last_error", "no VAPID_SUBJECT and the dashboard hasn't been opened yet")
+        return 0
+    vapid = Vapid02.from_raw(VAPID_PRIVATE_KEY.encode())
+    payload = json.dumps({"title": title, "body": body[:240], "url": url})
+    sent, keep, error = 0, [], ""
+    for sub in subs:
+        try:
+            webpush(sub, payload, vapid_private_key=vapid, vapid_claims={"sub": subject}, ttl=3600, timeout=10)
+            sent += 1
+            keep.append(sub)
+        except WebPushException as e:
+            code = getattr(e.response, "status_code", None)
+            if code not in (404, 410):  # gone for good: drop it
+                keep.append(sub)
+            error = f"push service returned {code}: {str(e)[:120]}"
+        except Exception as e:  # network trouble shouldn't break a round
+            keep.append(sub)
+            error = f"push failed: {e!r}"[:160]
+    if keep != subs:
+        store().set_meta("push:subs", json.dumps(keep))
+    store().set_meta("push:last_error", error)
+    return sent
+
+
+def new_vapid_keys():
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    import base64
+    key = ec.generate_private_key(ec.SECP256R1())
+    b64 = lambda raw: base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+    return {"VAPID_PUBLIC_KEY": b64(key.public_key().public_bytes(
+                serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)),
+            "VAPID_PRIVATE_KEY": b64(key.private_numbers().private_value.to_bytes(32, "big"))}
+
+
+_ICONS = {}
+
+
+def _icon_png(size):
+    """The Home Screen icon: a white ring and dot on the hub blue (PNG, no deps)."""
+    if size in _ICONS:
+        return _ICONS[size]
+    import struct
+    import zlib
+    c, r_out, r_in, dot = size / 2, size * 0.30, size * 0.20, size * 0.08
+    rows = []
+    for y in range(size):
+        row = bytearray(b"\x00")
+        for x in range(size):
+            d = ((x + 0.5 - c) ** 2 + (y + 0.5 - c) ** 2) ** 0.5
+            row += b"\xff\xff\xff" if (r_in <= d <= r_out or d <= dot) else b"\x2f\x5b\xd3"
+        rows.append(bytes(row))
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+    _ICONS[size] = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
+                    + chunk(b"IDAT", zlib.compress(b"".join(rows), 9)) + chunk(b"IEND", b""))
+    return _ICONS[size]
+
+
+_SW_JS = """
+self.addEventListener("push", e => {
+  let d = {};
+  try { d = e.data.json(); } catch (_) { d = {title: "Bot Hub", body: e.data ? e.data.text() : ""}; }
+  e.waitUntil(self.registration.showNotification(d.title || "Bot Hub",
+    {body: d.body || "", data: {url: d.url || "/"}, icon: "/icon-192.png", badge: "/icon-192.png"}));
+});
+self.addEventListener("notificationclick", e => {
+  e.notification.close();
+  e.waitUntil(clients.openWindow((e.notification.data && e.notification.data.url) || "/"));
+});
+"""
+
+
+_PUSH_JS = """
+(async () => {
+  const status = document.getElementById("push-status");
+  const PH = {"Content-Type": "application/json", "x-dashboard-key": new URLSearchParams(location.search).get("key") || ""};
+  if (!("serviceWorker" in navigator)) { status.textContent = "This browser can't show notifications."; return; }
+  const reg = await navigator.serviceWorker.register("/sw.js");
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  if (!("PushManager" in window) || !("Notification" in window)) {
+    status.textContent = standalone ? "Notifications need iOS 16.4 or later."
+      : "On iPhone: Share, then Add to Home Screen. Open Bot Hub from the Home Screen and tap Turn on here.";
+    return;
+  }
+  let key = null;
+  try { key = (await (await fetch("/api/push/key", {headers: PH})).json()).publicKey; } catch (_) {}
+  const sub = await reg.pushManager.getSubscription();
+  status.textContent = sub ? "Notifications are on for this device." : (key ? "" : "Phone notifications aren't set up yet (VAPID keys).");
+  document.getElementById("push-on").onclick = async () => {
+    const perm = await Notification.requestPermission();  // first: iOS needs the tap's user gesture
+    if (perm !== "granted") { status.textContent = "Notifications were not allowed. To retry on iPhone, remove the Home Screen app and add it again."; return; }
+    if (!key) { status.textContent = "Set VAPID keys in Vercel first (see /api/push/new-keys)."; return; }
+    const raw = atob(key.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - key.length % 4) % 4));
+    const s = await reg.pushManager.subscribe({userVisibleOnly: true,
+      applicationServerKey: Uint8Array.from(raw, c => c.charCodeAt(0))});
+    const d = await (await fetch("/api/push/subscribe", {method: "POST", headers: PH, body: JSON.stringify({subscription: s})})).json();
+    status.textContent = d.ok ? "Notifications are on for this device." : "Couldn't turn on: " + d.error;
+  };
+  document.getElementById("push-test").onclick = async () => {
+    const d = await (await fetch("/api/push/test", {method: "POST", headers: PH, body: "{}"})).json();
+    status.textContent = d.ok ? (d.sent ? "Sent to " + d.sent + " device(s)." : "Nothing sent: " + (d.error || "no device subscribed")) : d.error;
+  };
+})();
+"""
+
+
+# ---- Mistral's daily digest and escalation triage
+def morning_digest():
+    """(post, phone one-liner) for today, from real data only."""
+    today = datetime.now(hub_tz()).date()
+    lines, brief = [f"Here's today, {today:%A %B %d}:"], []
+    if calendar_linked():
+        events = calendar_events(today, today)
+        todays = [o for o in events if not o["birthday"]]
+        lines.append("Calendar: " + ("; ".join(occurrence_text(o) for o in todays) or "nothing scheduled"))
+        if todays:
+            brief.append(f"{len(todays)} event{'s' if len(todays) != 1 else ''}")
+        soon = [o for o in calendar_events(today, today + timedelta(days=1)) if o["birthday"]]
+        for o in soon:
+            lines.append(f"Birthday: {o['title']} {'today' if (o['start'] == today) else 'tomorrow'}.")
+            brief.append(o["title"])
+    try:
+        breaking, top = news_items()
+        heads = (breaking + top)[:3]
+    except Exception:
+        heads = []
+    if heads:
+        lines.append("Headlines:\n" + "\n".join(f"- {i['title']} ({i['source']})" for i in heads))
+        brief.append(f"{len(heads)} headlines")
+    if GLASS_BUDGETS:
+        status = month_status()
+        over = [f"{c} (${v['spent']:,.0f} of ${v['budget']:,.0f})" for c, v in status.items()
+                if v["budget"] and v["spent"] > v["budget"]]
+        near = [c for c, v in status.items() if v["budget"] and 0.9 <= v["spent"] / v["budget"] <= 1]
+        if over or near:
+            lines.append("Budget: " + "; ".join([f"over in {x}" for x in over] + [f"{c} near its limit" for c in near]))
+            brief += [f"{c.split(' (')[0]} over budget" for c in over]
+        else:
+            lines.append("Budget: all categories on track.")
+    since = store().get_meta("round:mistral:digest_id")
+    recent = [m for m in store().list_chat(ALLCHAT_KEEP) if since and m["id"] > int(since)]
+    if recent:
+        lines.append(f"Since yesterday's digest: {len(recent)} posts in All Agents.")
+    return "\n".join(lines), " · ".join(brief) or "Nothing pressing today"
+
+
+def _triage_escalations(did):
+    """Mistral answers what the Low Brain can; forwards the rest to Theta."""
+    st = store()
+    done = set(json.loads(st.get_meta("mistral:triaged") or "[]"))
+    todo = [e for e in st.list_escalations(50, open_only=True)
+            if e["to_role"] == "low_brain" and e["id"] not in done][:3]
+    for e in todo:
+        reply = llm_chat("low_brain", [
+            {"role": "system", "content": system_prompt("mistral")},
+            {"role": "user", "content": f"Escalation #{e['id']} from {display_name(e['from_bot'])}: "
+             f"{e['issue']}\nContext: {json.dumps(e.get('context') or {})[:600]}\nHandle it in 2-3 "
+             "sentences. If it truly needs Theta's decision, start your reply with THETA:"}])
+        if reply.strip().upper().startswith("THETA:"):
+            note = reply.strip()[6:].strip()
+            new_id = st.add_escalation("mistral", "low_brain", "master", f"#{e['id']}: {e['issue']}",
+                                       {"from_escalation": e["id"], "mistral": note}, "awaiting_master")
+            st.add_chat("mistral", f"#{e['id']} needs Theta, so I passed it up as #{new_id}. {note}")
+            notify("Mistral", f"Escalated to Theta: {e['issue'][:120]}")
+            did.append(f"forwarded #{e['id']} to Theta")
+        else:
+            st.add_chat("mistral", f"On #{e['id']} from {display_name(e['from_bot'])}: {reply.strip()}")
+            did.append(f"handled #{e['id']}")
+        done.add(e["id"])
+    st.set_meta("mistral:triaged", json.dumps(sorted(done)[-500:]))
+
+
 # ---- Rounds: each agent's own job, run on a schedule (Supabase Cron ->
 # /api/round). Jobs post real results to All Agents; agents without a data
 # source yet say so instead of inventing work.
@@ -1685,16 +1886,51 @@ def _round_theta(ctx):
 
 
 def _round_mistral(ctx):
+    """Morning digest (once a day), breaking-news alerts, escalation triage,
+    and the wiring check (posted on the first run and when it changes)."""
+    st = store()
+    did = []
+    today = datetime.now(hub_tz()).date().isoformat()
+    if st.get_meta("round:mistral:digest_day") != today:
+        post, brief = morning_digest()
+        try:
+            opener = llm_chat("low_brain", [
+                {"role": "system", "content": system_prompt("mistral")},
+                {"role": "user", "content": "Write one short sentence to open today's digest. "
+                 "Don't mention any events, numbers or headlines."}], max_tokens=300)
+            post = f"{opener.strip()}\n{post}"
+        except LLMError:
+            pass
+        item = st.add_chat("mistral", post)
+        st.set_meta("round:mistral:digest_day", today)
+        st.set_meta("round:mistral:digest_id", str(item["id"]))
+        notify("Mistral", brief)
+        did.append("posted the morning digest")
+    try:
+        breaking = news_items()[0]
+    except Exception:
+        breaking = []
+    pushed = _seen("push:breaking")
+    for b in [b for b in breaking if b["url"] not in pushed][:2]:
+        st.add_chat("mistral", f"Breaking ({b['source']}): {b['title']}\n{b['url']}")
+        notify("Mistral", f"Breaking ({b['source']}): {b['title']}", b["url"])
+        _mark_seen("push:breaking", b["url"])
+        did.append("flagged breaking news")
+    _triage_escalations(did)
     # Optional links (testable False, e.g. the calendar) only count once set up and failing.
     problems = sorted(f"{r['name']}: {r['note']}" for r in wiring()
                       if r["state"] == "bad" or (r["state"] == "off" and r.get("testable", True)))
     sig = "|".join(problems)
-    if sig == store().get_meta("round:mistral:wiring"):  # None on the first check: report it
-        return "wiring unchanged"
-    store().set_meta("round:mistral:wiring", sig)
-    store().add_chat("mistral", "Wiring check: everyone is wired." if not problems else
-                     "Wiring check found problems:\n" + "\n".join(f"- {x}" for x in problems))
-    return "posted a wiring check"
+    if sig == st.get_meta("round:mistral:wiring"):  # None on the first check: report it
+        did.append("wiring unchanged")
+    else:
+        st.set_meta("round:mistral:wiring", sig)
+        st.add_chat("mistral", "Wiring check: everyone is wired." if not problems else
+                    "Wiring check found problems:\n" + "\n".join(f"- {x}" for x in problems))
+        if problems:
+            notify("Mistral", f"Wiring problem: {problems[0]}" + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else ""))
+        did.append("posted a wiring check")
+    return ", ".join(did)
 
 
 def _round_news(agent):
@@ -1783,8 +2019,11 @@ def _round_remi(ctx):
             days = ((o["start"] if o["all_day"] else o["start"].date()) - today).days
             if days == 0:
                 lines.append(f"Today: {o['title']}!")
+                notify("Mistral", f"Remi: today is {o['title']}!", "/calendar")
             elif days in (1, 7):
                 lines.append(f"Coming up: {o['title']} {'tomorrow' if days == 1 else 'in a week'}.")
+                if days == 1:
+                    notify("Mistral", f"Remi: {o['title']} is tomorrow.", "/calendar")
         try:
             opener = llm_chat("manager", [
                 {"role": "system", "content": system_prompt("remi")},
@@ -1819,10 +2058,12 @@ def _round_glass(ctx):
         level = "100" if share >= 1 else "90" if share >= 0.9 else None
         if level and f"{cat}:{level}" not in alerted:
             alerted.add(f"{cat}:{level}")
-            st.add_chat("glass", (f"{cat} is over budget: ${v['spent']:,.2f} of ${v['budget']:,.0f}."
-                                  if level == "100" else
-                                  f"Heads up: {cat} is at {share:.0%} of its budget "
-                                  f"(${v['spent']:,.2f} of ${v['budget']:,.0f})."))
+            alert = (f"{cat} is over budget: ${v['spent']:,.2f} of ${v['budget']:,.0f}."
+                     if level == "100" else
+                     f"Heads up: {cat} is at {share:.0%} of its budget "
+                     f"(${v['spent']:,.2f} of ${v['budget']:,.0f}).")
+            st.add_chat("glass", alert)
+            notify("Mistral", f"Glass: {alert}")
             did.append(f"{cat} alert")
     st.set_meta(f"round:glass:alerts:{month}", json.dumps(sorted(alerted)))
     if today.weekday() == 6 and st.get_meta("round:glass:week") != today.isoformat():
@@ -1945,6 +2186,17 @@ def wiring():
     else:
         rows.append({"agent": "lenz-tmdb", "name": "Lenz's TMDB", "tier": "", "model": "TMDB trending",
                      "testable": False, "state": "off", "note": "Not linked: set TMDB_API_KEY"})
+    subs = len(push_subs())
+    if not (VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY):
+        push_row = {"state": "off", "note": "Not set up: add VAPID keys (see /api/push/new-keys)"}
+    elif not subs:
+        push_row = {"state": "off", "note": "No device yet: tap Turn on in the Home Screen app"}
+    elif store().get_meta("push:last_error"):
+        push_row = {"state": "bad", "note": store().get_meta("push:last_error")}
+    else:
+        push_row = {"state": "ok", "note": f"{subs} device(s) subscribed"}
+    rows.append({"agent": "push", "name": "Phone notifications", "tier": "", "model": "Web Push (Mistral)",
+                 "testable": False, **push_row})
     if calendar_linked():
         bad = calendar_problems()
         rows.append({"agent": "remi-calendar", "name": "Remi's calendar", "tier": "",
@@ -2530,6 +2782,27 @@ def handle(method, path, query, headers, body):
                                     f"({', '.join(result['months'])})")
             return _json(200 if result["ok"] else 400, result)
 
+        if path == "/api/push/subscribe":
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            sub = data.get("subscription")
+            if not (isinstance(sub, dict) and str(sub.get("endpoint", "")).startswith("https://")
+                    and isinstance(sub.get("keys"), dict) and sub["keys"].get("p256dh") and sub["keys"].get("auth")):
+                return _json(400, {"ok": False, "error": "not a push subscription"})
+            subs = [x for x in push_subs() if x.get("endpoint") != sub["endpoint"]]
+            subs.append({"endpoint": sub["endpoint"], "keys": {"p256dh": sub["keys"]["p256dh"], "auth": sub["keys"]["auth"]}})
+            store().set_meta("push:subs", json.dumps(subs[-10:]))
+            store().set_meta("push:last_error", "")
+            post_event("mistral", "Mistral will now send phone notifications to a new device")
+            return _json(200, {"ok": True, "devices": len(subs[-10:])})
+
+        if path == "/api/push/test":
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            sent = notify("Mistral", "Test: phone notifications from Bot Hub work.")
+            return _json(200, {"ok": True, "sent": sent, "error": store().get_meta("push:last_error") or
+                               (None if sent else "no device subscribed or keys missing")})
+
         if path == "/api/status":
             bot_id, activity = data.get("bot_id"), data.get("activity")
             if not isinstance(activity, str) or not activity.strip():
@@ -2552,10 +2825,39 @@ def handle(method, path, query, headers, body):
         return _json(404, {"ok": False, "error": "unknown route"})
 
     # GET
+    if path == "/sw.js":
+        return 200, "text/javascript; charset=utf-8", _SW_JS.encode(), [("Cache-Control", "no-cache")]
+    if path in ("/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"):
+        size = {"/icon-192.png": 192, "/icon-512.png": 512}.get(path, 180)
+        return 200, "image/png", _icon_png(size), [("Cache-Control", "public, max-age=604800")]
+    if path == "/manifest.webmanifest":
+        # Opened signed in (Safari's "Add to Home Screen"), the app starts with the
+        # key, so the Home Screen copy (which has its own cookies) is signed in too.
+        start = (f"/?key={DASHBOARD_KEY}" if DASHBOARD_KEY and _auth_dashboard(query, headers) else "/")
+        manifest = {"name": "Bot Hub", "short_name": "Bot Hub", "start_url": start, "scope": "/",
+                    "display": "standalone", "background_color": "#ffffff", "theme_color": "#2f5bd3",
+                    "icons": [{"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
+                              {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png"}]}
+        return (200, "application/manifest+json", json.dumps(manifest).encode(),
+                [("Cache-Control", "no-store")])
+    if path == "/api/push/key":
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        return _json(200, {"ok": True, "publicKey": VAPID_PUBLIC_KEY or None})
+    if path == "/api/push/new-keys":
+        if not _auth_dashboard(query, headers) or not DASHBOARD_KEY:
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        return _json(200, {"ok": True, **new_vapid_keys(), "next": "Add both to Vercel (Production and Preview, "
+                           "Sensitive on), redeploy, then tap Turn on in the Home Screen app. Keep "
+                           "VAPID_PRIVATE_KEY secret; this page makes a new pair each time."})
+
     if path == "/":
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
         st = store()
+        host = headers.get("host")
+        if host and st.get_meta("hub:origin") != f"https://{host}":
+            st.set_meta("hub:origin", f"https://{host}")  # the push "subject" when VAPID_SUBJECT is unset
         reports = st.list_reports(20)
         escs = st.list_escalations(20, open_only=True)
         orders = st.list_active_orders()
@@ -2599,7 +2901,10 @@ def handle(method, path, query, headers, body):
         if from_bots:
             news_html += f"<h3>From your bots</h3><ul>{from_bots}</ul>"
         round_btn = ("<p><button id=\"run-round\" type=\"button\">Run a round now</button> "
-                     "<i id=\"round-status\"></i></p>")
+                     "<i id=\"round-status\"></i></p>"
+                     "<p>Phone notifications (from Mistral): <button id=\"push-on\" type=\"button\">Turn on</button> "
+                     "<button id=\"push-test\" type=\"button\">Send a test</button> <i id=\"push-status\"></i></p>"
+                     f"<script>{_PUSH_JS}</script>")
         agent_items = "".join(
             f"<li><span style=\"color:{'#1a7f37' if a['online'] else '#888'}\">●</span> "
             f"<b>{html.escape(a['name'])}</b> — {a['tier']} · {html.escape(a['activity'])}</li>"
@@ -2634,6 +2939,10 @@ def handle(method, path, query, headers, body):
         else:
             storage_note = f"<p><i>Storage: {html.escape(STORAGE_MODE)}.</i></p>"
         body = (
+            "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            "<title>Bot Hub</title><link rel=\"manifest\" href=\"/manifest.webmanifest\" crossorigin=\"use-credentials\">"
+            "<link rel=\"apple-touch-icon\" href=\"/apple-touch-icon.png\"><meta name=\"theme-color\" content=\"#2f5bd3\">"
+            "<meta name=\"apple-mobile-web-app-capable\" content=\"yes\">"
             f"{_nav('/')}<h1>Bot hub</h1>"
             f"<h2>Agents</h2><ul style=\"list-style:none;padding-left:0\">{agent_items}</ul>{round_btn}"
             f"<h2>Chat</h2>{_chat_html()}"
