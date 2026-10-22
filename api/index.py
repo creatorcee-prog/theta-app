@@ -20,11 +20,13 @@ for Vercel's serverless model:
 Everything else is env config, same as the Railway build:
   BOT_KEYS, BOT_ROLES, BOT_NAMES, DASHBOARD_KEY,
   NEWS_FEEDS, ENTERTAINMENT_FEEDS, FITNESS_APP_URL.
-Bots never hold the model keys; the hub does (GROQ_API_KEY,
-MISTRAL_API_KEY). Every tier can be chatted with from the dashboard
-(POST /api/chat). The paid master model isn't wired yet, so the low
-brain (Mistral) stands in for it in chat, `summarize()` and
-`master_work()`.
+Agents are named personas (Theta, Mistral, Glass, ...), like James
+in Garage Gym: the name is the persona, the model comes from the
+agent's tier. Bots never hold the model keys; the hub does
+(GROQ_API_KEY, GEMINI_API_KEY). Every agent can be chatted with from
+the dashboard (POST /api/chat). The paid high-brain model isn't wired
+yet, so the low brain's model stands in for Theta in chat,
+`summarize()` and `master_work()`.
 
 Local test (memory mode, no KV needed):
   BOT_KEYS="miner-1:key1,master-1:mkey" BOT_ROLES="miner-1:miner,master-1:master" \
@@ -37,21 +39,31 @@ import time
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from urllib.parse import parse_qs, urlparse
 
 # ---- Bot config (same env vars as the Railway build) ----
 TIERS = ["miner", "manager", "low_brain", "master"]
-# Chat APIs (both OpenAI-compatible): provider -> (endpoint, key env var)
+TIER_LABELS = {"miner": "Miner", "manager": "Manager",
+               "low_brain": "Low Brain", "master": "High Brain"}
+# Chat APIs (all OpenAI-compatible): provider -> (endpoint, key env var)
 PROVIDERS = {
     "groq": ("https://api.groq.com/openai/v1/chat/completions", "GROQ_API_KEY"),
-    "mistral": ("https://api.mistral.ai/v1/chat/completions", "MISTRAL_API_KEY"),
+    "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+               "GEMINI_API_KEY"),
 }
+# Extra request fields per provider. Gemini 2.5 Flash thinks by default,
+# which eats into max_tokens; "none" turns that off. Set
+# GEMINI_REASONING_EFFORT to "" for models that can't turn it off.
+_GEMINI_EFFORT = os.environ.get("GEMINI_REASONING_EFFORT", "none")
+PROVIDER_EXTRA = {"gemini": {"reasoning_effort": _GEMINI_EFFORT} if _GEMINI_EFFORT else {}}
 # tier -> (provider, model id); *_MODEL env vars override the model id
 TIER_LLM = {
     "miner": ("groq", os.environ.get("MINER_MODEL", "llama-3.1-8b-instant")),
     "manager": ("groq", os.environ.get("MANAGER_MODEL", "llama-3.3-70b-versatile")),
-    "low_brain": ("mistral", os.environ.get("LOW_BRAIN_MODEL", "mistral-small-latest")),
+    "low_brain": ("gemini", os.environ.get("LOW_BRAIN_MODEL", "gemini-2.5-flash")),
 }
 # The paid master model isn't wired yet; the low brain answers for it.
 MASTER_MODEL = os.environ.get("MASTER_MODEL", "Opus 5.5")
@@ -59,6 +71,45 @@ MODELS = {t: f"{m} ({p.title()})" for t, (p, m) in TIER_LLM.items()}
 MODELS["master"] = f"{MASTER_MODEL} (not connected; {TIER_LLM['low_brain'][1]} standing in)"
 LLM_TIMEOUT = int(os.environ.get("LLM_TIMEOUT_SECONDS", "25"))
 CHAT_HISTORY = 20  # most recent messages sent per chat request
+
+# ---- Agents: the hub's named personas. The name is the persona, not
+# the model (like James in Garage Gym); each runs on its tier's model.
+# An agent's id doubles as its bot_id in BOT_KEYS when it runs as a bot.
+AGENTS = {
+    "theta": {"name": "Theta", "tier": "master",
+              "role": "You have the final say: escalations that reach the top, "
+                      "big-picture planning and commandeer orders."},
+    "mistral": {"name": "Mistral", "tier": "low_brain",
+                "role": "You triage what the managers escalate, summarize the "
+                        "bots' reports and decide what is worth Theta's time."},
+    "glass": {"name": "Glass", "tier": "manager",
+              "role": "You are the accountant and general manager: budgets, "
+                      "bills and spending, and keeping the other bots on task."},
+    "remi": {"name": "Remi", "tier": "manager",
+             "role": "You manage family reminders and the calendar, and "
+                     "auto-moderate the family Discord. You are motherly, warm "
+                     "and caring, but firm about the rules."},
+    "lenz": {"name": "Lenz", "tier": "miner",
+             "role": "You cover entertainment: movies, TV, music and what is "
+                     "worth watching or hearing."},
+    "red": {"name": "Red", "tier": "miner",
+            "role": "You search and report the news and argue the Republican / "
+                    "conservative side of it. Say plainly it's a partisan take, "
+                    "and never invent facts."},
+    "blue": {"name": "Blue", "tier": "miner",
+             "role": "You search and report the news and argue the Democratic / "
+                     "progressive side of it. Say plainly it's a partisan take, "
+                     "and never invent facts."},
+    "gray": {"name": "Gray", "tier": "miner",
+             "role": "You search and report the news from an independent view, "
+                     "skeptical of both parties. Never invent facts."},
+    "charter": {"name": "Charter", "tier": "miner",
+                "role": "You make charts from the user's and other bots' "
+                        "requests and hand them back: say the chart type, axes "
+                        "and data plainly."},
+}
+# A bot counts as online if it called the hub this recently.
+AGENT_ONLINE_SECONDS = int(os.environ.get("AGENT_ONLINE_SECONDS", "600"))
 BOT_KEYS = dict(
     pair.split(":", 1)
     for pair in os.environ.get("BOT_KEYS", "").split(",")
@@ -75,8 +126,30 @@ BOT_NAMES = dict(
     if ":" in pair
 )
 DASHBOARD_KEY = os.environ.get("DASHBOARD_KEY", "")
+# Many outlets, few stories each, across the spectrum.
 NEWS_FEEDS = [u.strip() for u in os.environ.get(
-    "NEWS_FEEDS", "https://feeds.bbci.co.uk/news/rss.xml").split(",") if u.strip()]
+    "NEWS_FEEDS",
+    "https://feeds.npr.org/1001/rss.xml,"
+    "https://www.pbs.org/newshour/feeds/rss/headlines,"
+    "https://abcnews.go.com/abcnews/topstories,"
+    "https://www.cbsnews.com/latest/rss/main,"
+    "https://feeds.nbcnews.com/nbcnews/public/news,"
+    "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml,"
+    "https://thehill.com/news/feed/,"
+    "https://moxie.foxnews.com/google-publisher/latest.xml,"
+    "https://nypost.com/feed/,"
+    "https://feeds.bbci.co.uk/news/rss.xml").split(",") if u.strip()]
+# Display names for the default outlets (others use the feed's own title).
+NEWS_SOURCE_NAMES = {
+    "feeds.npr.org": "NPR", "www.pbs.org": "PBS NewsHour", "abcnews.go.com": "ABC News",
+    "www.cbsnews.com": "CBS News", "feeds.nbcnews.com": "NBC News",
+    "rss.nytimes.com": "New York Times", "thehill.com": "The Hill",
+    "moxie.foxnews.com": "Fox News", "nypost.com": "New York Post",
+    "feeds.bbci.co.uk": "BBC News",
+}
+NEWS_TOP = int(os.environ.get("NEWS_TOP", "8"))
+NEWS_BREAKING_MAX = int(os.environ.get("NEWS_BREAKING_MAX", "2"))
+NEWS_BREAKING_MINUTES = int(os.environ.get("NEWS_BREAKING_MINUTES", "90"))
 ENTERTAINMENT_FEEDS = [u.strip() for u in os.environ.get(
     "ENTERTAINMENT_FEEDS",
     "https://rss.marketingtools.apple.com/api/v2/us/music/most-played/10/songs.json,"
@@ -95,12 +168,14 @@ STORAGE_MODE = "upstash-redis" if (KV_URL and KV_TOKEN) else "memory (not persis
 
 
 def role_of(bot_id):
-    role = BOT_ROLES.get(bot_id, "miner")
+    role = BOT_ROLES.get(bot_id) or AGENTS.get(bot_id, {}).get("tier", "miner")
     return role if role in TIERS else "miner"
 
 
 def display_name(bot_id):
-    return BOT_NAMES.get(bot_id, "@" + bot_id)
+    if bot_id in BOT_NAMES:
+        return BOT_NAMES[bot_id]
+    return AGENTS[bot_id]["name"] if bot_id in AGENTS else "@" + bot_id
 
 
 def next_role(role):
@@ -121,6 +196,7 @@ class MemoryStore:
     def __init__(self):
         self.reports, self.escalations, self.orders = [], [], {}
         self.order_ids, self.fitness, self.processed, self.seq = [], [], set(), 0
+        self.seen, self.activity = {}, {}
 
     def _next_id(self):
         self.seq += 1
@@ -180,6 +256,15 @@ class MemoryStore:
 
     def mark_processed(self, ids):
         self.processed.update(ids)
+
+    def touch(self, bot_id, activity=None):
+        self.seen[bot_id] = time.time()
+        if activity is not None:
+            self.activity[bot_id] = activity
+
+    def list_status(self):
+        return {b: {"seen": t, "activity": self.activity.get(b, "")}
+                for b, t in self.seen.items()}
 
 
 class KVStore:
@@ -275,6 +360,18 @@ class KVStore:
         if ids:
             self._cmd("SADD", "hub:processed", *[str(i) for i in ids])
 
+    def touch(self, bot_id, activity=None):
+        self._cmd("HSET", "hub:seen", bot_id, str(int(time.time())))
+        if activity is not None:
+            self._cmd("HSET", "hub:activity", bot_id, activity)
+
+    def list_status(self):
+        seen = self._cmd("HGETALL", "hub:seen") or []
+        act = self._cmd("HGETALL", "hub:activity") or []
+        act = dict(zip(act[::2], act[1::2]))
+        return {b: {"seen": float(t), "activity": act.get(b, "")}
+                for b, t in zip(seen[::2], seen[1::2])}
+
 
 def get_store():
     if KV_URL and KV_TOKEN:
@@ -298,28 +395,50 @@ def store():
 _FEED_CACHE = {}  # url -> (fetched_at, [items]); per-process only
 
 
-def _fetch_url(url, timeout=10):
+def _fetch_url(url, timeout=6):
     req = urllib.request.Request(url, headers={"User-Agent": "bot-hub/1.0"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read()
 
 
+def _parse_date(text):
+    """RSS (RFC 822) or Atom (ISO 8601) date -> epoch seconds, or None."""
+    text = (text or "").strip()
+    if not text:
+        return None
+    try:
+        dt = parsedate_to_datetime(text)
+    except (TypeError, ValueError):
+        try:
+            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
 def _parse_rss(data):
     root = ET.fromstring(data)
+    source = (root.findtext("channel/title") or "").strip()[:40]
     items = []
     for el in root.iter("item"):
         title = (el.findtext("title") or "").strip()
         link = (el.findtext("link") or "").strip()
         if link:
-            items.append({"title": title or link, "url": link})
+            items.append({"title": title or link, "url": link, "source": source,
+                          "published": _parse_date(el.findtext("pubDate"))})
     if not items:  # Atom fallback
         ns = {"a": "http://www.w3.org/2005/Atom"}
+        source = (root.findtext("a:title", "", ns) or "").strip()[:40]
         for el in root.findall("a:entry", ns):
             title = (el.findtext("a:title", "", ns) or "").strip()
             link_el = el.find("a:link", ns)
             link = link_el.get("href", "") if link_el is not None else ""
             if link:
-                items.append({"title": title or link, "url": link})
+                items.append({"title": title or link, "url": link, "source": source,
+                              "published": _parse_date(el.findtext("a:updated", "", ns)
+                                                       or el.findtext("a:published", "", ns))})
     return items[:10]
 
 
@@ -347,12 +466,93 @@ def feed_items(url):
     return items
 
 
+def _fetch_feeds(urls):
+    """feed_items() for each url, fetched in parallel (one slow outlet
+    doesn't hold up the rest)."""
+    if not urls:
+        return []
+    with ThreadPoolExecutor(max_workers=min(10, len(urls))) as ex:
+        return list(ex.map(feed_items, urls))
+
+
 def widget_items(feeds):
     out = []
-    for url in feeds:
-        for it in feed_items(url):
-            out.append({"source": urlparse(url).netloc, "title": it["title"], "url": it["url"]})
+    for url, items in zip(feeds, _fetch_feeds(feeds)):
+        for it in items:
+            out.append({"source": it.get("source") or urlparse(url).netloc,
+                        "title": it["title"], "url": it["url"]})
     return out[:20]
+
+
+_BREAKING_WORDS = ("breaking", "live:", "live updates", "just in", "developing")
+_STOP = {"after", "about", "says", "said", "with", "from", "that", "this", "will",
+         "have", "over", "into", "amid", "more", "than", "what", "when", "their",
+         "news", "live", "updates", "first", "could", "would", "they", "were"}
+
+
+def _keywords(title):
+    words = "".join(c.lower() if c.isalnum() else " " for c in title).split()
+    return {w for w in words if len(w) >= 4 and w not in _STOP}
+
+
+def _names(title):
+    """Capitalized words past the first (roughly: the proper nouns)."""
+    words = "".join(c if c.isalnum() else " " for c in title).split()[1:]
+    return {w.lower() for w in words if w[:1].isupper() and len(w) >= 3} - _STOP
+
+
+def news_items(now=None):
+    """(breaking, top) from NEWS_FEEDS.
+
+    top: NEWS_TOP stories, each outlet's top stories taken in turn so
+    no outlet dominates, skipping stories already listed. breaking: at most NEWS_BREAKING_MAX stories from
+    the last NEWS_BREAKING_MINUTES that the outlet flags breaking/live or
+    that 3+ outlets carry (titles sharing 3+ keywords, 2 of them names),
+    newest first, one per outlet and one per story."""
+    now = now or time.time()
+    feeds = []
+    for url, items in zip(NEWS_FEEDS, _fetch_feeds(NEWS_FEEDS)):
+        host = urlparse(url).netloc
+        src = NEWS_SOURCE_NAMES.get(host)
+        feeds.append([dict(it, source=src or it.get("source") or host) for it in items])
+    keyed = [(it, (_keywords(it["title"]), _names(it["title"])))
+             for items in feeds for it in items]
+
+    def same_story(a, b):
+        return len(a[0] & b[0]) >= 3 and len(a[1] & b[1]) >= 2
+
+    def outlets_carrying(kw):
+        return {o["source"] for o, okw in keyed if same_story(kw, okw)}
+
+    breaking, used, used_src, stories = [], set(), set(), []
+    fresh = sorted(((it, kw) for it, kw in keyed if it.get("published")
+                    and 0 <= now - it["published"] <= NEWS_BREAKING_MINUTES * 60),
+                   key=lambda x: -x[0]["published"])
+    for it, kw in fresh:
+        if len(breaking) >= NEWS_BREAKING_MAX:
+            break
+        if (it["source"] in used_src or it["url"] in used
+                or any(same_story(kw, k) for k in stories)):
+            continue
+        flagged = any(w in it["title"].lower() for w in _BREAKING_WORDS)
+        if flagged or len(outlets_carrying(kw) | {it["source"]}) >= 3:
+            breaking.append(dict(it, breaking=True))
+            used.add(it["url"])
+            used_src.add(it["source"])
+            stories.append(kw)
+    kw_of = {id(it): kw for it, kw in keyed}
+    top = []
+    for rank in range(10):
+        for items in feeds:
+            if len(top) >= NEWS_TOP or rank >= len(items):
+                continue
+            it, kw = items[rank], kw_of[id(items[rank])]
+            if it["url"] in used or any(same_story(kw, k) for k in stories):
+                continue
+            top.append(it)
+            used.add(it["url"])
+            stories.append(kw)
+    return breaking, top
 
 
 def pushed_items(event_type, limit=10):
@@ -374,13 +574,14 @@ class LLMError(Exception):
     """A model call failed: missing key, API error or timeout."""
 
 
-def system_prompt(tier):
-    if tier == "master":
-        return (f"You are standing in for the master tier ({MASTER_MODEL}) of a "
-                "personal bot hub with tiers miner -> manager -> low_brain -> "
-                "master, until the paid model is connected. Be concise.")
-    return (f"You are the {tier} tier of a personal bot hub with tiers "
-            "miner -> manager -> low_brain -> master. Be concise.")
+def system_prompt(agent_id):
+    a = AGENTS[agent_id]
+    team = ", ".join(f"{x['name']} ({TIER_LABELS[x['tier']]})" for x in AGENTS.values())
+    stand_in = (f" The paid {MASTER_MODEL} model isn't connected yet, so you "
+                "run on the low brain's model for now." if a["tier"] == "master" else "")
+    return (f"You are {a['name']}, the {TIER_LABELS[a['tier']]} of a personal bot "
+            f"hub. {a['role']}{stand_in} The team: {team}. Stay in character "
+            "and be concise.")
 
 
 def llm_chat(tier, messages, max_tokens=800):
@@ -391,9 +592,10 @@ def llm_chat(tier, messages, max_tokens=800):
     key = os.environ.get(key_var, "")
     if not key:
         raise LLMError(f"{key_var} is not set in the project's env vars")
+    payload = {"model": model, "messages": messages, "max_tokens": max_tokens,
+               **PROVIDER_EXTRA.get(provider, {})}
     req = urllib.request.Request(
-        url, data=json.dumps({"model": model, "messages": messages,
-                              "max_tokens": max_tokens}).encode(),
+        url, data=json.dumps(payload).encode(),
         headers={"Authorization": f"Bearer {key}",
                  "Content-Type": "application/json",
                  "User-Agent": "bot-hub/1.0"}, method="POST")
@@ -418,7 +620,7 @@ def summarize(unprocessed):
         for r in unprocessed)
     try:
         text = llm_chat("master", [
-            {"role": "system", "content": system_prompt("master")},
+            {"role": "system", "content": system_prompt("theta")},
             {"role": "user", "content": "Summarize these bot reports; flag anything "
              "that needs action:\n" + lines}])
     except LLMError as e:
@@ -433,7 +635,7 @@ def master_work(escalation):
     master (the low brain stands in until the paid model is wired)."""
     try:
         text = llm_chat("master", [
-            {"role": "system", "content": system_prompt("master")},
+            {"role": "system", "content": system_prompt("theta")},
             {"role": "user", "content": "Work this escalation and say what to do:\n"
              + json.dumps(escalation)}])
     except LLMError as e:
@@ -449,8 +651,34 @@ def _json(status, obj):
 
 
 def _auth_bot(bot_id, headers):
-    return bool(bot_id and BOT_KEYS.get(bot_id)
-                 and headers.get("x-bot-key") == BOT_KEYS[bot_id])
+    """True if the bot's key matches; also marks the bot as seen (online)."""
+    ok = bool(bot_id and BOT_KEYS.get(bot_id)
+              and headers.get("x-bot-key") == BOT_KEYS[bot_id])
+    if ok:
+        store().touch(bot_id)
+    return ok
+
+
+def agent_statuses(now=None):
+    """Every agent and configured bot: tier, model, online and activity.
+    Online means it called the hub in the last AGENT_ONLINE_SECONDS."""
+    now = now or time.time()
+    status = store().list_status()
+    extra = sorted((set(BOT_KEYS) | set(BOT_ROLES) | set(status)) - set(AGENTS))
+    out = []
+    for bot_id in list(AGENTS) + extra:
+        tier = role_of(bot_id)
+        st = status.get(bot_id)
+        online = bool(st and now - st["seen"] <= AGENT_ONLINE_SECONDS)
+        out.append({
+            "bot_id": bot_id, "name": display_name(bot_id), "role": tier,
+            "tier": TIER_LABELS[tier], "model": MODELS[tier], "online": online,
+            "activity": (st["activity"] or "online") if online else "offline",
+            "last_seen": (datetime.fromtimestamp(st["seen"], timezone.utc)
+                          .strftime("%Y-%m-%d %H:%M:%S") if st else None),
+        })
+    out.sort(key=lambda a: -TIERS.index(a["role"]))
+    return out
 
 
 def _auth_dashboard(query, headers):
@@ -460,36 +688,38 @@ def _auth_dashboard(query, headers):
             or query.get("key", [None])[0] == DASHBOARD_KEY)
 
 
-# Dashboard chat box. History lives in the page only; each send posts
-# the tier's recent messages to /api/chat with the dashboard key.
+# Dashboard chat box. History lives in the page only (one per agent);
+# each send posts that agent's recent messages to /api/chat with the
+# dashboard key.
 _CHAT_JS = """
 const key = new URLSearchParams(location.search).get("key") || "";
 const hist = {};
-const tierSel = document.getElementById("chat-tier"), log = document.getElementById("chat-log");
+const agentSel = document.getElementById("chat-agent"), log = document.getElementById("chat-log");
 const msg = document.getElementById("chat-msg"), btn = document.getElementById("chat-send");
 const status = document.getElementById("chat-status");
 function show() {
-  log.replaceChildren(...(hist[tierSel.value] || []).map(m => {
+  const name = agentSel.selectedOptions[0].dataset.name;
+  log.replaceChildren(...(hist[agentSel.value] || []).map(m => {
     const p = document.createElement("p"), b = document.createElement("b");
-    b.textContent = m.role === "user" ? "You: " : tierSel.value + ": ";
+    b.textContent = m.role === "user" ? "You: " : name + ": ";
     p.style.whiteSpace = "pre-wrap";
     p.append(b, m.content);
     return p;
   }));
 }
-tierSel.onchange = () => { status.textContent = ""; show(); };
+agentSel.onchange = () => { status.textContent = ""; show(); };
 document.getElementById("chat-form").onsubmit = async e => {
   e.preventDefault();
-  const text = msg.value.trim(), tier = tierSel.value;
+  const text = msg.value.trim(), agent = agentSel.value;
   if (!text) return;
-  const h = hist[tier] = hist[tier] || [];
+  const h = hist[agent] = hist[agent] || [];
   h.push({role: "user", content: text});
   msg.value = ""; btn.disabled = true; status.textContent = "Thinking...";
   show();
   try {
     const r = await fetch("/api/chat", {method: "POST",
       headers: {"Content-Type": "application/json", "x-dashboard-key": key},
-      body: JSON.stringify({tier, messages: h})});
+      body: JSON.stringify({agent, messages: h})});
     const d = await r.json();
     if (!d.ok) throw new Error(d.error);
     h.push({role: "assistant", content: d.reply});
@@ -505,9 +735,16 @@ document.getElementById("chat-form").onsubmit = async e => {
 
 
 def _chat_html():
-    opts = "".join(f"<option value=\"{t}\">{html.escape(t)} — {html.escape(MODELS[t])}</option>"
-                   for t in TIERS)
-    return (f"<p><select id=\"chat-tier\" style=\"max-width:100%\">{opts}</select></p>"
+    groups = []
+    for tier in reversed(TIERS):  # High Brain first
+        opts = "".join(
+            f"<option value=\"{a}\" data-name=\"{html.escape(v['name'])}\">"
+            f"{html.escape(v['name'])}</option>"
+            for a, v in AGENTS.items() if v["tier"] == tier)
+        if opts:
+            groups.append(f"<optgroup label=\"{TIER_LABELS[tier]} — "
+                          f"{html.escape(MODELS[tier])}\">{opts}</optgroup>")
+    return (f"<p><select id=\"chat-agent\" style=\"max-width:100%\">{''.join(groups)}</select></p>"
             "<div id=\"chat-log\"></div>"
             "<form id=\"chat-form\"><textarea id=\"chat-msg\" rows=\"3\" "
             "style=\"width:100%\"></textarea><br><button id=\"chat-send\">Send</button> "
@@ -593,9 +830,9 @@ def handle(method, path, query, headers, body):
         if path == "/api/chat":
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
-            tier, msgs = data.get("tier"), data.get("messages")
-            if tier not in TIERS:
-                return _json(400, {"ok": False, "error": "unknown tier"})
+            agent, msgs = data.get("agent"), data.get("messages")
+            if agent not in AGENTS:
+                return _json(400, {"ok": False, "error": "unknown agent"})
             if not isinstance(msgs, list) or not msgs:
                 return _json(400, {"ok": False, "error": "messages must be a non-empty list"})
             history = []
@@ -607,12 +844,22 @@ def handle(method, path, query, headers, body):
             if history[-1]["role"] != "user":
                 return _json(400, {"ok": False, "error": "last message must be from user"})
             try:
-                reply = llm_chat(tier, [{"role": "system", "content": system_prompt(tier)}]
+                tier = AGENTS[agent]["tier"]
+                reply = llm_chat(tier, [{"role": "system", "content": system_prompt(agent)}]
                                  + history)
             except LLMError as e:
                 return _json(502, {"ok": False, "error": str(e)})
-            return _json(200, {"ok": True, "tier": tier, "model": MODELS[tier],
-                               "reply": reply})
+            return _json(200, {"ok": True, "agent": agent, "name": AGENTS[agent]["name"],
+                               "model": MODELS[tier], "reply": reply})
+
+        if path == "/api/status":
+            bot_id, activity = data.get("bot_id"), data.get("activity")
+            if not isinstance(activity, str) or not activity.strip():
+                return _json(400, {"ok": False, "error": "activity required, e.g. \"researching\""})
+            if not bot_id or not _auth_bot(bot_id, headers):
+                return _json(401, {"ok": False, "error": "bad bot_id or key"})
+            store().touch(bot_id, activity.strip()[:80])
+            return _json(200, {"ok": True})
 
         return _json(404, {"ok": False, "error": "unknown route"})
 
@@ -655,9 +902,17 @@ def handle(method, path, query, headers, body):
         ent_items = _render_list(
             pushed_items("entertainment") + widget_items(ENTERTAINMENT_FEEDS)
         ) or "<li>No entertainment items right now.</li>"
-        news_items = _render_list(
-            pushed_items("news") + widget_items(NEWS_FEEDS)
-        ) or "<li>No headlines right now.</li>"
+        breaking, top = news_items()
+        news_html = (f"<h3>Breaking</h3><ul>{_render_list(breaking)}</ul>" if breaking else "")
+        news_html += ("<h3>Top stories</h3>" if breaking else "") + (
+            f"<ul>{_render_list(top) or '<li>No headlines right now.</li>'}</ul>")
+        from_bots = _render_list(pushed_items("news"))
+        if from_bots:
+            news_html += f"<h3>From your bots</h3><ul>{from_bots}</ul>"
+        agent_items = "".join(
+            f"<li><span style=\"color:{'#1a7f37' if a['online'] else '#888'}\">●</span> "
+            f"<b>{html.escape(a['name'])}</b> — {a['tier']} · {html.escape(a['activity'])}</li>"
+            for a in agent_statuses())
         if fit:
             fit_html = "<ul>" + "".join(
                 f"<li><b>{html.escape(str(k))}:</b> {html.escape(str(v))}</li>"
@@ -679,9 +934,10 @@ def handle(method, path, query, headers, body):
             storage_note = f"<p><i>Storage: {html.escape(STORAGE_MODE)}.</i></p>"
         body = (
             f"<h1>Bot hub</h1>"
+            f"<h2>Agents</h2><ul style=\"list-style:none;padding-left:0\">{agent_items}</ul>"
             f"<h2>Chat</h2>{_chat_html()}"
+            f"<h2>News</h2>{news_html}"
             f"<h2>Entertainment</h2><ul>{ent_items}</ul>"
-            f"<h2>News</h2><ul>{news_items}</ul>"
             f"<h2>Fitness — overall health</h2>{fit_html}{app_link}"
             f"<h2>Reports</h2><ul>{items}</ul>"
             f"<h2>Escalations</h2><ul>{esc_items}</ul>"
@@ -713,9 +969,10 @@ def handle(method, path, query, headers, body):
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
         fit_rows = store().list_fitness(1)
+        breaking, top = news_items()
         return _json(200, {
             "entertainment": (pushed_items("entertainment") + widget_items(ENTERTAINMENT_FEEDS))[:20],
-            "news": (pushed_items("news") + widget_items(NEWS_FEEDS))[:20],
+            "news": breaking + top + pushed_items("news"),
             "fitness": fit_rows[0] if fit_rows else None,
         })
 
@@ -729,10 +986,15 @@ def handle(method, path, query, headers, body):
 
     if path == "/api/bots":
         bots = []
-        for bot_id in sorted(set(BOT_KEYS) | set(BOT_ROLES)):
+        for bot_id in list(AGENTS) + sorted((set(BOT_KEYS) | set(BOT_ROLES)) - set(AGENTS)):
             bots.append({"bot_id": bot_id, "name": display_name(bot_id),
                          "role": role_of(bot_id), "model": MODELS[role_of(bot_id)]})
         return _json(200, bots)
+
+    if path == "/api/agents":
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        return _json(200, agent_statuses())
 
     if path == "/api/tiers":
         return _json(200, {
