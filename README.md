@@ -215,6 +215,25 @@ who runs in Garage Gym. Settings → **Memory and notes** lists both, each
 with a remove button (`POST /api/memory/remove`, `/api/notes/remove`
 `{"id"}`).
 
+## Images in chat
+
+The photo button in the chat box (or pasting an image) attaches a picture.
+The browser shrinks it first (longest side 1600px, JPEG), so a phone photo
+uploads as a few hundred KB; Vercel caps a request at 4.5 MB. The hub keeps
+the last 30 (`UPLOAD_KEEP`) and serves them, key required, at
+`/upload/<id>.jpeg`. `POST /api/allchat` takes `{"text", "image": "data:image/…;base64,…"}`;
+text is optional with an image.
+
+Who sees what: Theta on Claude gets the image itself. Groq's models can't
+take images, so for everyone else the vision model (`VISION_MODEL`, default
+the low brain's Gemini model, on `GEMINI_API_KEY`) describes it once —
+text, numbers and prices copied out — and the agents answer from that
+description. It's kept, so later questions about the same picture don't
+re-run it. If Gemini can't look (out of quota, say), the agent is told to
+say it can't see the image rather than guess. A receipt photo plus
+"@glass log this" works: Glass reads the total from the description and
+logs it with the `spend` tool.
+
 ## Chat
 
 Chat works like a Discord server: channels on the left, members and
