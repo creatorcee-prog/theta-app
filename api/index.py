@@ -5485,7 +5485,81 @@ _UI_JS_SRC = r'''
     for (const name of p.like) { const v = voices.find(x => x.name.includes(name)); if (v) return v; }
     return voices.find(x => x.lang && x.lang.startsWith(p.lang)) || voices.find(x => x.lang && x.lang.startsWith("en")) || null;
   }
-  window.thetaSpeak = (agent, text) => {
+  // Babble: a game-style voice made of little pitched sounds, one per few
+  // letters as the text types out (each agent has their own pitch and
+  // timbre). No speech, no network.
+  const BABBLE = {
+    theta: [110, "sawtooth", .5], mistral: [330, "triangle", .9], glass: [220, "square", .35],
+    remi: [300, "sine", .7], lenz: [420, "triangle", 1.2], red: [160, "sawtooth", .8], blue: [250, "triangle", .8],
+    gray: [180, "sine", .45], charter: [360, "square", .6], james: [200, "sawtooth", 1], qwerty: [90, "square", .15],
+  };
+  let ac = null, lastBlip = 0;
+  function audio() {
+    if (!ac) { const C = window.AudioContext || window.webkitAudioContext; if (!C) return null; ac = new C(); }
+    if (ac.state === "suspended") ac.resume();
+    return ac;
+  }
+  addEventListener("pointerdown", () => { if (voiceStyle === "babble") audio(); }, {once: true});
+  window.thetaBlip = (agent, ch) => {
+    if (voiceStyle !== "babble" || !/[a-z0-9]/i.test(ch)) return;
+    const a = audio(); if (!a) return;
+    const now = a.currentTime;
+    if (now - lastBlip < .055) return;
+    lastBlip = now;
+    const [base, wave, spread] = BABBLE[agent] || [220, "sine", .6];
+    const code = ch.toLowerCase().charCodeAt(0), vowel = "aeiou".includes(ch.toLowerCase());
+    const o = a.createOscillator(), g = a.createGain(), f = a.createBiquadFilter();
+    o.type = wave;
+    o.frequency.value = base * Math.pow(2, (((code * 7) % 9) - 4) * spread / 12) * (vowel ? 1.12 : 1);
+    f.type = "bandpass"; f.frequency.value = vowel ? 1400 : 900; f.Q.value = 1.2;
+    g.gain.setValueAtTime(0, now);
+    g.gain.linearRampToValueAtTime(.16, now + .008);
+    g.gain.exponentialRampToValueAtTime(.001, now + .07);
+    o.connect(f); f.connect(g); g.connect(a.destination);
+    o.start(now); o.stop(now + .08);
+  };
+  function babble(agent, text) {
+    const t = String(text).replace(/https?:\/\/\S+/g, "").slice(0, 400);
+    let i = 0;
+    const timer = setInterval(() => { if (i >= t.length) return clearInterval(timer); window.thetaBlip(agent, t[i]); i += 2; }, 45);
+    return new Promise(r => setTimeout(r, t.length / 2 * 45 + 100));
+  }
+  // AI voices: Gemini speaks as each agent (needs GEMINI_API_KEY on the
+  // server); falls back to the phone's voices if that fails.
+  let playing = null;
+  async function aiVoice(agent, text) {
+    const r = await fetch("/api/voice", {method: "POST", headers: window.THETA_H, body: JSON.stringify({agent, text})});
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "no voice");
+    const el = new Audio(URL.createObjectURL(await r.blob()));
+    playing = el;
+    await el.play();
+    return new Promise(res => { el.onended = res; el.onerror = res; });
+  }
+  let voiceStyle = "babble";
+  try { voiceStyle = localStorage.getItem("theta_voice_style") || "babble"; } catch (_) {}
+  const queue = [];
+  let busy = false;
+  async function drain() {
+    if (busy) return; busy = true;
+    while (queue.length) {
+      const [agent, text] = queue.shift();
+      try {
+        if (voiceStyle === "babble") await babble(agent, text);
+        else if (voiceStyle === "ai") await aiVoice(agent, text);
+        else await phone(agent, text);
+      } catch (e) {
+        console.warn("voice:", e.message);
+        await phone(agent, text);
+      }
+    }
+    busy = false;
+  }
+  window.thetaSpeak = (agent, text) => { queue.push([agent, text]); drain(); return true; };
+  function phone(agent, text) {
+    // some phones never report the end of speech: don't let the queue wait forever
+    return new Promise(res => { setTimeout(res, 1500 + String(text).length * 110); if (!phoneSpeak(agent, text, res)) res(); });
+  }
+  function phoneSpeak(agent, text, done) {
     if (!synth) return false;
     const p = VOICE[agent] || {pitch: 1, rate: 1, like: [], lang: "en"};
     const clean = String(text).replace(/https?:\/\/\S+/g, "").replace(/[#*_`>\[\]]/g, "").slice(0, 1200);
@@ -5493,10 +5567,24 @@ _UI_JS_SRC = r'''
     u.pitch = p.pitch; u.rate = p.rate;
     const v = pickVoice(p);
     if (v) { u.voice = v; u.lang = v.lang; }
+    u.onend = u.onerror = () => done && done();
     synth.speak(u);
     return true;
-  };
-  window.thetaStopSpeaking = () => synth && synth.cancel();
+  }
+  window.thetaStopSpeaking = () => { queue.length = 0; synth && synth.cancel(); if (playing) playing.pause(); };
+  function markStyle() {
+    document.querySelectorAll("[data-voicestyle]").forEach(b => b.classList.toggle("on", b.dataset.voicestyle === voiceStyle));
+  }
+  markStyle();
+  document.addEventListener("click", e => {
+    const b = e.target.closest("[data-voicestyle]");
+    if (!b) return;
+    voiceStyle = b.dataset.voicestyle;
+    try { localStorage.setItem("theta_voice_style", voiceStyle); } catch (_) {}
+    markStyle();
+    if (voiceStyle === "babble") audio();
+  });
+  window.thetaVoiceStyle = () => voiceStyle;
   let autoVoice = false;
   try { autoVoice = localStorage.getItem("theta_voice_auto") === "on"; } catch (_) {}
   window.thetaVoiceAuto = () => autoVoice;
@@ -5513,7 +5601,7 @@ _UI_JS_SRC = r'''
     }
     const hear = e.target.closest("[data-hear]");
     if (hear) {
-      synth && synth.cancel();
+      window.thetaStopSpeaking();
       const lines = JSON.parse(hear.dataset.hear);
       lines.forEach(([a, t]) => window.thetaSpeak(a, t));
     }
@@ -5613,8 +5701,10 @@ _CHAT_JS = r'''
     const t = setInterval(() => {
       if (!wrap.isConnected) return clearInterval(t);
       const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+      const from = n;
       n += per;
       if (n >= m.text.length) return done();
+      if (window.thetaBlip && window.thetaVoiceAuto()) window.thetaBlip(m.from, m.text[from]);
       shown.textContent = m.text.slice(0, n);
       if (stick) box.scrollTop = box.scrollHeight;
     }, 16);
@@ -5673,7 +5763,7 @@ _CHAT_JS = r'''
       const agentMsg = a && m.from !== "you" && m.from !== "hub";
       if (agentMsg && window.speechSynthesis) meta.append(sayButton(m));
       body.append(meta, fresh && agentMsg ? typed(m) : richText(m.text));
-      if (fresh && agentMsg && thetaVoiceAuto()) thetaSpeak(m.from, m.text);
+      if (fresh && agentMsg && thetaVoiceAuto() && thetaVoiceStyle() !== "babble") thetaSpeak(m.from, m.text);
       if (m.image) {
         const img = document.createElement("img");
         img.src = m.image; img.alt = m.text.split("\n")[0]; img.className = "att"; img.loading = "lazy";
@@ -7016,6 +7106,78 @@ def gmail_card(headers):
     return f'<section class="card stack" id="gmail"><h2>Gmail</h2>{state}</section>'
 
 
+
+# ---- AI voices: Gemini's text-to-speech, a voice and a way of speaking per
+# agent. Used when you pick "AI voices" in Settings; the phone's own voices
+# are the fallback. Audio is made on request and kept briefly in memory.
+GEMINI_NATIVE = "https://generativelanguage.googleapis.com/v1beta"
+GEMINI_TTS_MODEL = os.environ.get("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts")
+AGENT_VOICES = {
+    "theta": ("Orus", "calm, low and deliberate; an assured leader who weighs every word"),
+    "mistral": ("Aoede", "brisk and friendly, like a capable dispatcher keeping things moving"),
+    "glass": ("Iapetus", "precise, dry and matter-of-fact, like an accountant reading figures"),
+    "remi": ("Sulafat", "warm, motherly and caring, gentle but firm"),
+    "lenz": ("Puck", "bubbly and quick, an excited pop-culture fan sharing a find"),
+    "red": ("Alnilam", "confident and punchy, like a conservative talk-radio host"),
+    "blue": ("Achird", "earnest and articulate, like a progressive commentator"),
+    "gray": ("Gacrux", "dry, wry and skeptical, unimpressed by either side"),
+    "charter": ("Schedar", "neat and upbeat, a data nerd pleased with a good chart"),
+    "james": ("Fenrir", "energetic and motivating, a gym coach mid-session"),
+    "qwerty": ("Algenib", "flat, clipped and mechanical, a security system reporting status"),
+}
+_VOICE_CACHE = {}  # sha -> wav bytes, newest last
+_VOICE_KEEP = 24
+
+
+def _wav(pcm, rate=24000):
+    """A WAV header around raw 16-bit mono PCM."""
+    import struct
+    return (b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
+            + b"data" + struct.pack("<I", len(pcm)) + pcm)
+
+
+def agent_voice(agent, text):
+    """WAV audio of this agent saying `text` (Gemini TTS)."""
+    key = os.environ.get("GEMINI_API_KEY", "")
+    if not key:
+        raise LLMError("AI voices need GEMINI_API_KEY.")
+    voice, style = AGENT_VOICES.get(agent, ("Kore", "natural and friendly"))
+    clean = re.sub(r"https?://\S+", "", str(text))
+    clean = re.sub(r"[#*_`>\[\]]", "", clean).strip()[:600]
+    if not clean:
+        raise ValueError("Nothing to say.")
+    sha = hashlib.sha256(f"{GEMINI_TTS_MODEL}|{voice}|{style}|{clean}".encode()).hexdigest()
+    if sha in _VOICE_CACHE:
+        return _VOICE_CACHE[sha]
+    body = {"model": GEMINI_TTS_MODEL,
+            "input": [{"type": "user_input", "content": [{"type": "text", "text": clean, "annotations": [
+                {"type": "speech_metadata", "style": style}]}]}],
+            "response_format": {"type": "audio", "mime_type": "audio/wav"},
+            "generation_config": {"speech_config": [{"voice": voice}]}}
+    req = urllib.request.Request(GEMINI_NATIVE + "/interactions", data=json.dumps(body).encode(), headers={
+        "x-goog-api-key": key, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        raise LLMError(f"Gemini voices returned {e.code}: {e.read()[:200].decode('utf-8', 'replace')}")
+    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+        raise LLMError(f"Gemini voices unreachable: {e!r}")
+    audio = [c for st in data.get("steps", []) if st.get("type") == "model_output"
+             for c in st.get("content", []) if c.get("type") == "audio" and c.get("data")]
+    if not audio:  # the older generateContent shape, just in case
+        audio = [{"data": p["inlineData"]["data"], "mime_type": p["inlineData"].get("mimeType", "")}
+                 for c in data.get("candidates", []) for p in c.get("content", {}).get("parts", []) if p.get("inlineData")]
+    if not audio:
+        raise LLMError("Gemini sent no audio back.")
+    raw = base64.b64decode(audio[-1]["data"])
+    wav = raw if raw[:4] == b"RIFF" else _wav(raw)
+    _VOICE_CACHE[sha] = wav
+    while len(_VOICE_CACHE) > _VOICE_KEEP:
+        _VOICE_CACHE.pop(next(iter(_VOICE_CACHE)))
+    return wav
+
+
 _VOICE_SAMPLES = [
     ["theta", "Theta. I have the final say."], ["mistral", "Mistral. I'll sort out who answers."],
     ["glass", "Glass. Your budget, to the cent."], ["remi", "Remi here, sweetheart. Did you take your meds?"],
@@ -7056,9 +7218,13 @@ def settings_page(headers):
         'version. Saved on this device.</p></div>'
         f'<div class="swatches">{swatches}</div>'
         f'<div><h3>Light or dark</h3><p class="muted small">Match device follows your phone\'s setting.</p><div class="seg" role="group" aria-label="Light or dark">{modes}</div></div>'
-        '<div><h3>Voices</h3><p class="muted small">Each agent has their own voice, from your phone\'s built-in '
-        'speech (free, works offline; voices vary by device). Tap the speaker on any message, or have new replies '
-        'read aloud.</p><div class="seg" role="group" aria-label="Read new replies aloud">'
+        '<div><h3>Voices</h3><p class="muted small"><b>Babble</b>: game-style character sounds as replies type out, '
+        'each agent with their own pitch (free, offline). <b>AI voices</b>: Gemini speaks as each agent, with a voice '
+        'and manner that fits them (uses your Gemini key). <b>Phone voices</b>: your phone\'s built-in speech.</p>'
+        '<div class="seg" role="group" aria-label="Voice style" style="margin-bottom:8px">'
+        '<button type="button" data-voicestyle="babble">Babble</button><button type="button" data-voicestyle="ai">AI voices</button>'
+        '<button type="button" data-voicestyle="phone">Phone voices</button></div>'
+        '<div class="seg" role="group" aria-label="Read new replies aloud">'
         '<button type="button" data-voiceauto="off">Speaker button only</button>'
         '<button type="button" data-voiceauto="on">Read new replies aloud</button></div>'
         f'<p style="margin-top:8px"><button class="btn ghost small" type="button" data-hear="{html.escape(json.dumps(_VOICE_SAMPLES))}">'
@@ -7779,6 +7945,16 @@ def handle(method, path, query, headers, body):
             if before != activity.strip()[:80]:
                 post_event(bot_id, f"{display_name(bot_id)} is now {activity.strip()[:80]}")
             return _json(200, {"ok": True})
+
+        if path == "/api/voice":
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            try:
+                return 200, "audio/wav", agent_voice(str(data.get("agent") or ""), str(data.get("text") or ""))
+            except ValueError as e:
+                return _json(400, {"ok": False, "error": str(e)})
+            except LLMError as e:
+                return _json(502, {"ok": False, "error": str(e)})
 
         if path.startswith(("/api/mail/", "/api/gmail/")):
             if not _auth_dashboard(query, headers):
