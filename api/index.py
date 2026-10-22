@@ -2795,6 +2795,13 @@ def push_problem():
     return None
 
 
+def _push_name(sub):
+    from urllib.parse import urlparse
+    host = urlparse(sub.get("endpoint", "")).hostname or "?"
+    svc = next((n for h, n in _PUSH_HOSTS if host.endswith(h)), host)
+    return f"{sub.get('device') or svc}" + (f", added {_when(sub['made'])}" if sub.get("made") else ", added before devices were tracked")
+
+
 def notify(title, body, url="/"):
     """Push to every subscribed device; returns how many got it. Quietly
     does nothing until keys and a subscription exist. Dead subscriptions
@@ -2817,23 +2824,33 @@ def notify(title, body, url="/"):
         return 0
     vapid = Vapid02.from_raw(VAPID_PRIVATE_KEY.encode())
     payload = json.dumps({"title": title, "body": body[:240], "url": url})
-    sent, keep, error = 0, [], ""
+    sent, keep, error, results = 0, [], "", []
     for sub in subs:
+        wire = {"endpoint": sub["endpoint"], "keys": sub["keys"]}
         try:
-            webpush(sub, payload, vapid_private_key=vapid, vapid_claims={"sub": subject}, ttl=3600, timeout=10)
+            # high urgency: phones in Low Power Mode otherwise hold pushes back
+            r = webpush(wire, payload, vapid_private_key=vapid, vapid_claims={"sub": subject}, ttl=3600, timeout=10,
+                        headers={"Urgency": "high"})
             sent += 1
             keep.append(sub)
+            results.append({"device": _push_name(sub), "ok": True, "code": getattr(r, "status_code", None)})
         except WebPushException as e:
             code = getattr(e.response, "status_code", None)
-            if code not in (404, 410):  # gone for good: drop it
+            gone = code in (404, 410)
+            if not gone:  # gone for good: drop it
                 keep.append(sub)
             error = f"push service returned {code}: {str(e)[:120]}"
+            results.append({"device": _push_name(sub), "ok": False, "code": code,
+                            "why": "this sign-up no longer exists (app removed or re-added), so it was dropped"
+                            if gone else error})
         except Exception as e:  # network trouble shouldn't break a round
             keep.append(sub)
             error = f"push failed: {e!r}"[:160]
+            results.append({"device": _push_name(sub), "ok": False, "code": None, "why": error})
     if keep != subs:
         store().set_meta("push:subs", json.dumps(keep))
     store().set_meta("push:last_error", error)
+    store().set_meta("push:last", json.dumps({"at": time.time(), "results": results}))
     return sent
 
 
@@ -3078,7 +3095,12 @@ _PUSH_JS = """
       const r = await fetch("/api/push/test", {method: "POST", headers: PH, body: "{}"});
       if (r.status === 401) { say("This app isn't signed in: open it once with ?key=YOUR_KEY, then add it to the Home Screen again."); return; }
       const d = await r.json();
-      say(d.ok ? (d.sent ? "Sent to " + d.sent + " device(s)." : "Nothing sent: " + (d.error || "no device subscribed")) : d.error);
+      if (!d.ok) { say(d.error); return; }
+      const lines = (d.results || []).map(x => (x.ok ? "\u2713 Apple/Google accepted it for " : "\u2717 ") + x.device + (x.ok ? "" : ": " + x.why));
+      say((d.sent ? "Sent to " + d.sent + " device(s)." : "Nothing sent: " + (d.error || "no device subscribed"))
+        + (lines.length ? "\n" + lines.join("\n") : "")
+        + (d.sent ? "\nNothing showed up? Check iPhone Settings, Notifications, Theta (allowed), and that Focus is off. "
+          + "If you re-added the Home Screen icon, tap Turn on again here: each icon has its own sign-up." : ""));
     } catch (e) {
       say("Couldn't send: " + why(e));
     }
@@ -8518,7 +8540,8 @@ def devices_report():
     push = []
     for x in push_subs():
         host = urlparse(x.get("endpoint", "")).hostname or "?"
-        push.append({"service": next((n for h, n in _PUSH_HOSTS if host.endswith(h)), host),
+        push.append({"id": hashlib.sha1(x.get("endpoint", "").encode()).hexdigest()[:10],
+                     "service": next((n for h, n in _PUSH_HOSTS if host.endswith(h)), host),
                      "device": x.get("device") or "added before devices were tracked",
                      "place": x.get("place", ""), "made": x.get("made")})
     return {"sessions": sorted(sessions().values(), key=lambda d: -d["seen"]),
@@ -8557,6 +8580,12 @@ _DEVICES_JS = """
 (() => {
   const box = document.getElementById("devices"); if (!box) return;
   box.addEventListener("click", async e => {
+    const pr = e.target.closest("[data-pushrm]");
+    if (pr) {
+      const d = await (await fetch("/api/push/remove", {method: "POST", headers: window.THETA_H, body: JSON.stringify({id: pr.dataset.pushrm})})).json();
+      if (d.ok) pr.closest("li").remove(); else box.querySelector(".note").textContent = d.error;
+      return;
+    }
     const b = e.target.closest("[data-signout]"); if (!b) return;
     const all = b.dataset.signout === "*";
     if (all && !confirm("Sign out every other device? They'll need the key or Face ID again.")) return;
@@ -8581,7 +8610,13 @@ def devices_card(headers):
         + f'</div><div class="muted small">{esc(d["how"])} · {esc(d.get("place") or "place unknown")} · IP {esc(d.get("ip") or "?")}'
           f'<br>Signed in {_when(d["made"])} · last seen {_when(d["seen"])}</div></li>'
         for d in r["sessions"])
-    push = "".join(f'<li>{esc(x["service"])}<div class="muted small">{esc(x["device"])}'
+    last = (_meta_json("push:last", {}) or {})
+    lastline = (f'<p class="muted small">Last push ({_when(last["at"])}): ' + "; ".join(
+        ("✓ " if x["ok"] else "✗ ") + esc(x["device"]) + ("" if x["ok"] else f' ({esc(x.get("why") or "")})')
+        for x in last.get("results", [])) + '</p>') if last.get("results") else ""
+    push = "".join(f'<li><div class="brow" style="align-items:center"><span>{esc(x["service"])}</span>'
+                   f'<button class="btn ghost small" type="button" data-pushrm="{esc(x["id"])}">Remove</button></div>'
+                   f'<div class="muted small">{esc(x["device"])}'
                    + (f' · {esc(x["place"])}' if x["place"] else "") + (f' · added {_when(x["made"])}' if x["made"] else "")
                    + '</div></li>' for x in r["push"])
     keys = "".join(f'<li>{esc(k["label"])} <span class="muted small">via {esc(k["via"])}</span><div class="muted small">'
@@ -8597,7 +8632,7 @@ def devices_card(headers):
             'they open Theta; to cut off anything you can\'t see here, change <code>DASHBOARD_KEY</code> in Vercel and '
             'redeploy.</p>'
             f'<h3>Signed in ({len(r["sessions"])})</h3><ul class="list">{rows or "<li class=empty>None yet.</li>"}</ul>'
-            f'<h3>Getting notifications ({len(r["push"])})</h3><ul class="list">{push or "<li class=empty>None.</li>"}</ul>'
+            f'<h3>Getting notifications ({len(r["push"])})</h3>{lastline}<ul class="list">{push or "<li class=empty>None.</li>"}</ul>'
             + (f'<h3>Used the key directly</h3><ul class="list">{keys}</ul>' if keys else "")
             + (f'<h3>Recent Face ID failures</h3><ul class="list">{fails}</ul>' if fails else "")
             + f'<p class="note"></p><script>{_DEVICES_JS}</script></section>')
@@ -9299,7 +9334,7 @@ def settings_page(headers):
         '<section class="card stack"><div><h2>Phone notifications</h2><p class="muted small">Mistral sends these: '
         'the morning digest, breaking news, budget alerts and birthdays. On iPhone, open Theta from its Home Screen icon.</p></div>'
         '<p><button class="btn" id="push-on" type="button">Turn on</button> <button class="btn ghost" id="push-test" '
-        'type="button">Send a test</button></p><p class="note" id="push-status"></p></section>'
+        'type="button">Send a test</button></p><p class="note" id="push-status" style="white-space:pre-line"></p></section>'
         f'<section class="card stack" id="security"><div class="hero" style="gap:12px">{avatar_img("qwerty", 40)}<div><h2>Security and health</h2>'
         '<p class="muted small">QWERTY checks this every round and tells you in #dev-and-security when it changes.</p></div></div>'
         f'<ul class="list">{security_rows()}</ul></section>' + passkeys_card(headers) + devices_card(headers) + gmail_card(headers) + memory_card() + siri_card(headers) +
@@ -10366,13 +10401,26 @@ def handle(method, path, query, headers, body):
             post_event("mistral", "Mistral will now send phone notifications to a new device")
             return _json(200, {"ok": True, "devices": len(subs[-10:])})
 
+        if path == "/api/push/remove":
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            target = str(data.get("id") or "")
+            subs = push_subs()
+            keep = [x for x in subs if hashlib.sha1(x.get("endpoint", "").encode()).hexdigest()[:10] != target]
+            if len(keep) == len(subs):
+                return _json(404, {"ok": False, "error": "no such device"})
+            store().set_meta("push:subs", json.dumps(keep))
+            return _json(200, {"ok": True})
+
         if path == "/api/push/test":
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
+            store().set_meta("push:last", "")
             sent = notify("Mistral", f"Test: phone notifications from {APP_NAME} work.")
             problem = push_problem()
-            return _json(200, {"ok": True, "sent": sent, "error": (problem[1] if problem else None)
-                               or store().get_meta("push:last_error")
+            results = (_meta_json("push:last", {}) or {}).get("results", [])
+            return _json(200, {"ok": True, "sent": sent, "results": results, "error": (problem[1] if problem else None)
+                               or (None if sent else store().get_meta("push:last_error"))
                                or (None if sent else "no device has turned notifications on yet")})
 
         if path == "/api/status":
