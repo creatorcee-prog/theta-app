@@ -369,6 +369,19 @@ for projects that aren't job hunts. Searches are counted against `SEARCH_MONTHLY
 Gemini's free tier includes 5,000 a month); `GEMINI_SEARCH_MODEL` picks
 the model.
 
+**The high brain (Theta on Claude).** Set `ANTHROPIC_API_KEY` (from
+console.anthropic.com) and Theta's calls go to Claude Opus 5.5
+(`MASTER_MODEL_ID`, default `claude-opus-5-5`) at `MASTER_EFFORT`
+(`medium`): his chat, report summaries, escalation decisions, the weekly
+review and project plans. The hub counts what each call costs from the
+token usage and stops using Claude once the month reaches
+`MASTER_MONTHLY_CAP_USD` (15), pushing you once; the low brain stands in
+until the 1st. If Claude errors or declines, Theta still answers on the
+stand-in. A refusal first falls back server-side to another Claude model
+(`fallbacks: "default"`), priced per model in the count. Settings →
+Wiring shows the month's spend. Also set a spend limit in the Anthropic
+Console as a backstop: the hub's count is an estimate.
+
 **Chat formatting.** Messages render a safe subset of markdown: tables,
 bullet, numbered and checklist items, code blocks, headings, **bold**,
 *italic*, `code` and https images. Everything is built as page elements,

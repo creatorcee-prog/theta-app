@@ -74,10 +74,17 @@ TIER_LLM = {
     "manager": ("groq", os.environ.get("MANAGER_MODEL", "openai/gpt-oss-120b")),
     "low_brain": ("gemini", os.environ.get("LOW_BRAIN_MODEL", "gemini-3.8-flash")),
 }
-# The paid master model isn't wired yet; the low brain answers for it.
+# The high brain (Theta) is Claude when ANTHROPIC_API_KEY is set, held to
+# MASTER_MONTHLY_CAP_USD a month by the hub's own count; the low brain
+# stands in without a key, over the cap, or if Claude can't answer.
 MASTER_MODEL = os.environ.get("MASTER_MODEL", "Opus 5.5")
+MASTER_MODEL_ID = os.environ.get("MASTER_MODEL_ID", "claude-opus-5-5")
+MASTER_EFFORT = os.environ.get("MASTER_EFFORT", "medium")  # low | medium | high | xhigh | max
+MASTER_MONTHLY_CAP = float(os.environ.get("MASTER_MONTHLY_CAP_USD", "15"))
+MASTER_TIMEOUT = int(os.environ.get("MASTER_TIMEOUT_SECONDS", "40"))
 MODELS = {t: f"{m} ({p.title()})" for t, (p, m) in TIER_LLM.items()}
-MODELS["master"] = f"{MASTER_MODEL} (not connected; {TIER_LLM['low_brain'][1]} standing in)"
+MODELS["master"] = (f"{MASTER_MODEL} (Anthropic)" if os.environ.get("ANTHROPIC_API_KEY") else
+                    f"{MASTER_MODEL} (not connected; {TIER_LLM['low_brain'][1]} standing in)")
 LLM_TIMEOUT = int(os.environ.get("LLM_TIMEOUT_SECONDS", "25"))
 # When a tier's provider is busy or down (429/5xx, timeouts), retry once,
 # then let a model on the other provider answer. *_FALLBACK_MODEL env vars
@@ -1025,8 +1032,8 @@ def james_summary(now=None):
 def system_prompt(agent_id):
     a = AGENTS[agent_id]
     team = ", ".join(f"{x['name']} ({TIER_LABELS[x['tier']]})" for x in AGENTS.values())
-    stand_in = (f" The paid {MASTER_MODEL} model isn't connected yet, so you "
-                "run on the low brain's model for now." if a["tier"] == "master" else "")
+    stand_in = (f" The paid {MASTER_MODEL} model isn't answering right now, so you "
+                "run on the low brain's model for now." if a["tier"] == "master" and not master_ready() else "")
     persona = PERSONAS.get(agent_id, [])
     traits = [k for k in persona if k != "concise"]
     personality = f" Your personality: {', '.join(traits)}." if traits else ""
@@ -1104,9 +1111,15 @@ def _llm_error_text(provider, code, raw):
 
 def llm_chat(tier, messages, max_tokens=800):
     """One chat-completion call for `tier`; returns the reply text.
-    Master is answered by the low brain until the paid model is wired.
+    Master is Claude while it's connected and under its monthly cap;
+    otherwise the low brain answers for it.
     A busy or down provider gets one quick retry (not after a timeout),
     then the tier's fallback model on the other provider answers."""
+    if tier == "master" and master_ready():
+        try:
+            return claude_chat(messages, max_tokens)
+        except LLMError as e:  # Theta still answers, on the stand-in
+            store().set_meta("claude:last_error", json.dumps({"at": time.time(), "error": str(e)[:200]}))
     t = "low_brain" if tier == "master" else tier
     provider, model = TIER_LLM[t]
     try:
@@ -1134,6 +1147,93 @@ def llm_chat(tier, messages, max_tokens=800):
                                                      "model": fb_model}))
     except Exception:
         pass  # noting it must never cost the reply
+    return text
+
+
+# $ per million tokens: (input, output, cache read). Unknown models (a
+# refusal fallback) are priced like Opus 4.8 so the cap errs high.
+CLAUDE_PRICES = {"claude-opus-5-5": (4.0, 20.0, 0.20), "claude-sonnet-5-5": (2.0, 10.0, 0.20),
+                 "claude-haiku-5-5": (0.10, 0.50, 0.01), "claude-fable-5-1": (10.0, 50.0, 0.25)}
+_CLAUDE_UNKNOWN = (5.0, 25.0, 0.50)
+_CLAUDE_LOCK = threading.Lock()
+
+
+def claude_spend():
+    """This month's Claude use as the hub counted it: {usd, calls, input, output}."""
+    month = datetime.now(hub_tz()).strftime("%Y-%m")
+    data = _meta_json("claude:spend", {})
+    return data.get(month, {"usd": 0.0, "calls": 0, "input": 0, "output": 0})
+
+
+def master_ready():
+    """Claude answers for Theta: a key is set and this month is under the cap."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return False
+    if claude_spend()["usd"] < MASTER_MONTHLY_CAP:
+        return True
+    month = datetime.now(hub_tz()).strftime("%Y-%m")
+    if store().get_meta("claude:capped") != month:  # tell you once a month
+        store().set_meta("claude:capped", month)
+        notify("Theta", f"The high brain hit this month's ${MASTER_MONTHLY_CAP:.0f} cap; "
+               f"{TIER_LLM['low_brain'][1]} stands in until the 1st.", "/settings#wiring")
+    return False
+
+
+def _usage_cost(usage, model):
+    """Dollars for one response: per model when it ran more than one
+    (a refusal fallback), else from the totals."""
+    parts = [(getattr(it, "model", None) or model, it) for it in (getattr(usage, "iterations", None) or [])
+             if getattr(it, "type", "") in ("message", "fallback_message")] or [(model, usage)]
+    usd, tin, tout = 0.0, 0, 0
+    for m, u in parts:
+        pin, pout, pcache = CLAUDE_PRICES.get(str(m), _CLAUDE_UNKNOWN)
+        i, o = u.input_tokens or 0, u.output_tokens or 0
+        c_read, c_write = getattr(u, "cache_read_input_tokens", 0) or 0, getattr(u, "cache_creation_input_tokens", 0) or 0
+        usd += (i * pin + o * pout + c_read * pcache + c_write * pin * 1.25) / 1e6
+        tin, tout = tin + i + c_read + c_write, tout + o
+    return usd, tin, tout
+
+
+def claude_chat(messages, max_tokens):
+    """Theta on Claude. Thinking is always on for Opus 5.5 and counts as
+    output, so the token ceiling is roomier than the visible reply needs.
+    Refusals fall back server-side to another Claude model ("default")."""
+    import anthropic  # loaded only when Theta talks, to keep other requests quick
+    system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
+    convo = [{"role": m["role"], "content": m["content"]} for m in messages if m["role"] in ("user", "assistant")]
+    if not convo or convo[0]["role"] != "user":
+        convo.insert(0, {"role": "user", "content": "(continue)"})
+    client = anthropic.Anthropic(timeout=MASTER_TIMEOUT, max_retries=1)
+    try:
+        resp = client.beta.messages.create(
+            model=MASTER_MODEL_ID, max_tokens=max(4000, max_tokens * 4), system=system or anthropic.omit,
+            messages=convo, output_config={"effort": MASTER_EFFORT},
+            betas=["server-side-fallback-2026-07-01"], fallbacks="default")
+    except anthropic.AuthenticationError:
+        raise LLMError("Anthropic rejected ANTHROPIC_API_KEY (check it in Vercel)")
+    except anthropic.PermissionDeniedError as e:
+        raise LLMError(f"Anthropic refused the request: {e.message[:120]}")
+    except anthropic.NotFoundError:
+        raise LLMError(f"Anthropic doesn't know {MASTER_MODEL_ID} (MASTER_MODEL_ID)")
+    except anthropic.RateLimitError:
+        raise LLMError("Anthropic rate limit or spend limit reached")
+    except anthropic.APIStatusError as e:
+        raise LLMError(f"Anthropic returned {e.status_code}: {str(e.message)[:120]}")
+    except anthropic.APIConnectionError as e:
+        raise LLMError(f"Anthropic unreachable: {e!r}"[:160])
+    usd, tin, tout = _usage_cost(resp.usage, resp.model)
+    month = datetime.now(hub_tz()).strftime("%Y-%m")
+    with _CLAUDE_LOCK:
+        data = _meta_json("claude:spend", {})
+        cur = data.get(month, {"usd": 0.0, "calls": 0, "input": 0, "output": 0})
+        cur.update(usd=round(cur["usd"] + usd, 6), calls=cur["calls"] + 1, input=cur["input"] + tin,
+                   output=cur["output"] + tout)
+        store().set_meta("claude:spend", json.dumps({month: cur}))
+    if resp.stop_reason == "refusal":
+        raise LLMError("Claude declined this one")
+    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    if not text:
+        raise LLMError(f"Claude returned no text (stop: {resp.stop_reason})")
     return text
 
 
@@ -5533,7 +5633,19 @@ def wiring():
                            "pick one from /api/models")
             else:
                 row.update(state="ok", note="Key set and model available"
-                           + (f" ({MASTER_MODEL} not connected; standing in)" if a["tier"] == "master" else ""))
+                           + (f" ({MASTER_MODEL} not connected: set ANTHROPIC_API_KEY; standing in)"
+                              if a["tier"] == "master" else ""))
+            if a["tier"] == "master" and os.environ.get("ANTHROPIC_API_KEY"):
+                spend, last = claude_spend(), _meta_json("claude:last_error", {})
+                used = f"${spend['usd']:.2f} of ${MASTER_MONTHLY_CAP:.0f} this month ({spend['calls']} calls)"
+                if spend["usd"] >= MASTER_MONTHLY_CAP:
+                    row.update(state="bad", note=f"{MASTER_MODEL}: monthly cap reached, {used}; the low brain stands in "
+                               "until the 1st (raise MASTER_MONTHLY_CAP_USD to lift it)")
+                elif last and time.time() - last["at"] < 86400:
+                    row.update(state="bad", note=f"{MASTER_MODEL} failed {_ago(last['at'])} ago ({last['error']}); "
+                               f"the low brain answered. {used}")
+                else:
+                    row.update(state="ok", note=f"{MASTER_MODEL} connected, effort {MASTER_EFFORT}; {used}")
             fb = recent_fallback(a["tier"])
             if fb and row["state"] == "ok":
                 row["note"] += (f". Busy {fb['ago']} ago, so {fb['model']} answered instead "

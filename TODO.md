@@ -64,12 +64,20 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
 ### 8. Projects
 - [ ] `HOME_LOCATION` (like `Denver, CO`) so "find me a job here" knows
       where "here" is.
-- [ ] Free Adzuna key: developer.adzuna.com → register → `ADZUNA_APP_ID`
+- [ ] Free Adzuna key: developer.adzuna.com → register (for "website", use
+      your hub's address, `https://<project>.vercel.app`) → `ADZUNA_APP_ID`
       and `ADZUNA_APP_KEY` (`ADZUNA_COUNTRY` if not `us`).
 - [ ] Optional, government jobs: developer.usajobs.gov → request an API key
       → `USAJOBS_API_KEY` and `USAJOBS_EMAIL` (the email you used).
 
-### 9. Voices
+### 9. High brain (Theta on Claude)
+- [ ] console.anthropic.com → API keys → create one → Vercel
+      `ANTHROPIC_API_KEY` (Sensitive), redeploy.
+- [ ] Console → Limits → set a $15 monthly spend limit (the hub also
+      stops at `MASTER_MONTHLY_CAP_USD`, 15 by default).
+- [ ] Settings → Wiring → Theta should read "connected".
+
+### 10. Voices
 - [ ] Settings → Voices → **Sound check**, and send me what it shows if
       you hear nothing.
 
