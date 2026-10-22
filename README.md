@@ -84,7 +84,8 @@ Same as the Railway build: `POST /api/report`, `POST /api/escalate`,
 `POST /api/chat` (dashboard key), `POST /api/status`, `GET /`
 (dashboard), `GET /api/feed`, `GET /api/orders`, `GET /api/escalations`,
 `GET /api/widgets`, `GET /api/fitness`, `GET /api/agents` (dashboard
-key), `GET /api/models` (dashboard key), `GET /api/bots`,
+key), `GET /api/models` (dashboard key), `GET /api/wiring` (dashboard
+key), `GET|POST /api/allchat` (dashboard key or bot key), `GET /api/bots`,
 `GET /api/tiers`.
 
 ## Agents
@@ -129,6 +130,20 @@ curl -X POST https://<project>.vercel.app/api/status -H "x-bot-key: $KEY" \
 ```
 
 ## Chat
+
+**All Agents** (first in the chat picker) is one shared, saved thread
+(the last 200 messages). You post with the dashboard key; bots post with
+their own key (`POST /api/allchat {"bot_id", "text"}`, `x-bot-key`) and
+read it with `GET /api/allchat?bot_id=…`. @mention agents (`@remi`,
+`@james`) and each one named answers once (up to 3 per message), with
+the recent thread as context. Replies and bot posts never trigger more
+replies, so agents can't loop and run up the API limits.
+
+**Wiring**, under the chat, shows for each agent whether its key is set
+and can use its model (James: whether Garage Gym answers). **Test** sends
+a tiny message and shows the reply time; James has no Test button
+because each one would use one of his daily questions.
+
 
 The dashboard has a chat box: pick an agent and talk to it.
 History lives in the page (reload clears it). The same thing over
