@@ -32,10 +32,13 @@ Local test (memory mode, no KV needed):
   BOT_KEYS="miner-1:key1,master-1:mkey" BOT_ROLES="miner-1:miner,master-1:master" \
   PORT=8770 python3 api/index.py
 """
+import csv
 import hashlib
 import html
+import io
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -263,6 +266,7 @@ class MemoryStore:
         self.seen, self.activity = {}, {}
         self.allchat = []  # newest first
         self.meta = {}
+        self.ledger = {}  # "YYYY-MM" -> {id: expense}
 
     def _next_id(self):
         self.seq += 1
@@ -336,6 +340,16 @@ class MemoryStore:
 
     def get_meta(self, key):
         return self.meta.get(key)
+
+    def add_expenses(self, month, rows):
+        """rows: {id: expense}; returns how many were new (ids dedupe)."""
+        book = self.ledger.setdefault(month, {})
+        new = {k: v for k, v in rows.items() if k not in book}
+        book.update(new)
+        return len(new)
+
+    def list_expenses(self, month):
+        return list(self.ledger.get(month, {}).values())
 
     def set_meta(self, key, value):
         self.meta[key] = value
@@ -454,6 +468,18 @@ class KVStore:
 
     def get_meta(self, key):
         return self._cmd("HGET", "hub:meta", key)
+
+    def add_expenses(self, month, rows):
+        """rows: {id: expense}; returns how many were new (ids dedupe)."""
+        have = set((self._cmd("HGETALL", f"hub:ledger:{month}") or [])[::2])
+        new = [x for k, v in rows.items() if k not in have for x in (k, json.dumps(v))]
+        if new:
+            self._cmd("HSET", f"hub:ledger:{month}", *new)
+        return len(new) // 2
+
+    def list_expenses(self, month):
+        flat = self._cmd("HGETALL", f"hub:ledger:{month}") or []
+        return [json.loads(v) for v in flat[1::2]]
 
     def set_meta(self, key, value):
         self._cmd("HSET", "hub:meta", key, value)
@@ -833,7 +859,7 @@ def system_prompt(agent_id):
     traits = [k for k in persona if k != "concise"]
     personality = f" Your personality: {', '.join(traits)}." if traits else ""
     brevity = " and be concise" if "concise" in persona else ""
-    extra = remi_context() if agent_id == "remi" else ""
+    extra = remi_context() if agent_id == "remi" else glass_context() if agent_id == "glass" else ""
     if agent_id == "lenz":
         try:
             trending = tmdb_trending()[:10]
@@ -992,6 +1018,10 @@ def mentioned_agents(text):
 
 def allchat_reply(agent, thread):
     """One agent's reply to the latest message, with the thread as context."""
+    if agent == "glass" and thread[-1]["from"] == "you":
+        parsed = parse_expense(thread[-1]["text"])
+        if parsed:
+            return glass_log_reply(parsed)
     if agent == "james":  # Garage Gym takes a single question
         return james_chat([{"role": "user", "content": thread[-1]["text"]}])
     transcript = "\n".join(chat_line(m) for m in thread[-CHAT_HISTORY:])
@@ -1279,6 +1309,171 @@ def remi_context():
             f"(exact; never change times or add events):\n{listing}")
 
 
+# ---- Glass's ledger: expenses from chat ("@glass $42 groceries"), bots, or
+# Rocket Money CSV exports, against monthly budgets (GLASS_BUDGETS
+# "Groceries:600,Dining:200"). GLASS_CATEGORY_MAP renames categories
+# ("Restaurants:Dining,Coffee:Dining"). Rocket Money has no public API.
+def _pairs(env):
+    return [(k.strip(), v.strip()) for k, v in (p.split(":", 1) for p in os.environ.get(env, "").split(",") if ":" in p)]
+
+
+GLASS_BUDGETS = {}
+for _k, _v in _pairs("GLASS_BUDGETS"):
+    try:
+        GLASS_BUDGETS[_k] = float(_v)
+    except ValueError:
+        pass
+GLASS_CATEGORY_MAP = {k.lower(): v for k, v in _pairs("GLASS_CATEGORY_MAP")}
+_SKIP_CATEGORIES = ("income", "paycheck", "transfer", "credit card payment", "loan payment", "refund")
+
+
+def ledger_category(raw):
+    """A budget category for a raw category name (map, then case-insensitive match)."""
+    raw = (raw or "").strip()
+    mapped = GLASS_CATEGORY_MAP.get(raw.lower(), raw)
+    for name in GLASS_BUDGETS:
+        if name.lower() == mapped.lower():
+            return name
+    return mapped or "Other"
+
+
+def _expense(day, amount, category, note, source, salt=""):
+    key = hashlib.sha1(f"{day}|{note.lower()}|{amount:.2f}|{source}|{salt}".encode()).hexdigest()[:16]
+    return key, {"date": day.isoformat(), "amount": round(amount, 2), "category": ledger_category(category),
+                 "note": note[:120], "source": source}
+
+
+def add_expense(amount, category, note="", day=None, source="chat"):
+    """Log one expense; returns the stored expense."""
+    day = day or datetime.now(hub_tz()).date()
+    # each entry gets its own id, so the same purchase logged twice counts twice
+    key, exp = _expense(day, amount, category, note, source, salt=str(time.time_ns()))
+    store().add_expenses(day.strftime("%Y-%m"), {key: exp})
+    return exp
+
+
+_AMOUNT = re.compile(r"\$\s?(\d{1,7}(?:,\d{3})*(?:\.\d{1,2})?)")
+
+
+def parse_expense(text):
+    """'@glass $42.50 groceries at Costco' -> (42.5, 'Groceries', 'groceries at Costco'), or None."""
+    m = _AMOUNT.search(text)
+    if not m:
+        return None
+    amount = float(m.group(1).replace(",", ""))
+    rest = re.sub(r"@\w+", "", (text[:m.start()] + text[m.end():])).strip(" ,.-:")
+    words = rest.lower()
+    names = list(GLASS_BUDGETS) + [v for v in GLASS_CATEGORY_MAP.values()]
+    category = next((n for n in names if n.lower() in words), None)
+    if not category:
+        category = next((v for k, v in GLASS_CATEGORY_MAP.items() if k in words), "Other")
+    return amount, category, rest or category
+
+
+def month_status(month=None):
+    """{category: {"spent", "budget"}} for a month ("YYYY-MM"), budgets first."""
+    month = month or datetime.now(hub_tz()).strftime("%Y-%m")
+    out = {c: {"spent": 0.0, "budget": b} for c, b in GLASS_BUDGETS.items()}
+    for e in store().list_expenses(month):
+        out.setdefault(e["category"], {"spent": 0.0, "budget": None})["spent"] += e["amount"]
+    return out
+
+
+def status_lines(month=None):
+    lines = []
+    for cat, v in month_status(month).items():
+        if v["budget"]:
+            lines.append(f"{cat}: ${v['spent']:,.2f} of ${v['budget']:,.0f} ({v['spent'] / v['budget']:.0%})")
+        elif v["spent"]:
+            lines.append(f"{cat}: ${v['spent']:,.2f} (no budget)")
+    return lines
+
+
+def glass_log_reply(parsed):
+    """Log a chat expense; Glass confirms with exact numbers (no model call)."""
+    amount, category, note = parsed
+    exp = add_expense(amount, category, note)
+    v = month_status()[exp["category"]]
+    tail = (f" {exp['category']} this month: ${v['spent']:,.2f} of ${v['budget']:,.0f}."
+            if v["budget"] else f" {exp['category']} this month: ${v['spent']:,.2f} (no budget set).")
+    return f"Logged ${amount:,.2f} for {exp['category']} ({note}).{tail}"
+
+
+def _parse_day(text):
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(text.strip(), fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
+def import_csv(text):
+    """Import a Rocket Money (or similar) transactions CSV. Columns are found
+    by header; whether expenses are positive or negative is read from the
+    file (most rows are spending). Income, transfers, card payments and
+    rows marked ignored are skipped; re-importing is safe (deduped)."""
+    rows = list(csv.DictReader(io.StringIO(text.lstrip("﻿"))))
+    if not rows:
+        return {"ok": False, "error": "no rows found"}
+    cols = {c.strip().lower(): c for c in rows[0].keys() if c}
+
+    def col(*names):
+        return next((cols[n] for n in names if n in cols), None)
+    c_date, c_amount = col("date", "transaction date", "original date"), col("amount")
+    c_name, c_custom = col("name", "description", "merchant", "payee"), col("custom name")
+    c_cat, c_ignored = col("category"), col("ignored from")
+    if not (c_date and c_amount):
+        return {"ok": False, "error": f"need Date and Amount columns; found {', '.join(cols.values())}"}
+    parsed, skipped = [], {"income/transfers": 0, "ignored": 0, "unreadable": 0}
+    for r in rows:
+        day = _parse_day(r.get(c_date) or "")
+        try:
+            amount = float((r.get(c_amount) or "").replace("$", "").replace(",", ""))
+        except ValueError:
+            amount = None
+        if day is None or amount is None:
+            skipped["unreadable"] += 1
+            continue
+        cat = (r.get(c_cat) or "").strip() if c_cat else ""
+        if c_ignored and (r.get(c_ignored) or "").strip():
+            skipped["ignored"] += 1
+            continue
+        if any(k in cat.lower() for k in _SKIP_CATEGORIES):
+            skipped["income/transfers"] += 1
+            continue
+        note = ((r.get(c_custom) or "").strip() if c_custom else "") or ((r.get(c_name) or "").strip() if c_name else "")
+        parsed.append((day, amount, cat, note))
+    positive = sum(1 for p in parsed if p[1] > 0)
+    sign = 1 if positive >= len(parsed) - positive else -1  # spending is the majority
+    by_month = {}
+    for day, amount, cat, note in parsed:
+        if amount * sign <= 0:
+            skipped["income/transfers"] += 1  # money in, e.g. refunds
+            continue
+        key, exp = _expense(day, amount * sign, cat, note, "csv")
+        by_month.setdefault(day.strftime("%Y-%m"), {})[key] = exp
+    added = sum(store().add_expenses(m, rows_) for m, rows_ in by_month.items())
+    total = sum(len(v) for v in by_month.values())
+    return {"ok": True, "added": added, "duplicates": total - added, "skipped": skipped,
+            "expenses_were": "positive" if sign > 0 else "negative",
+            "columns": {k: v for k, v in {"date": c_date, "amount": c_amount, "name": c_custom or c_name,
+                                          "category": c_cat}.items() if v},
+            "months": sorted(by_month)}
+
+
+def glass_context():
+    month = datetime.now(hub_tz()).strftime("%Y-%m")
+    lines = status_lines(month)
+    recent = sorted(store().list_expenses(month), key=lambda e: e["date"])[-8:]
+    if not (lines or recent):
+        return "\n\nNo expenses logged this month yet. People log them with '@glass $42 groceries'."
+    return (f"\n\nThis month ({month}) so far (exact; never invent numbers):\n"
+            + "\n".join(f"- {x}" for x in lines)
+            + ("\nRecent expenses:\n" + "\n".join(f"- {e['date']} ${e['amount']:,.2f} {e['category']}: {e['note']}"
+                                                  for e in recent) if recent else ""))
+
+
 # ---- Rounds: each agent's own job, run on a schedule (Supabase Cron ->
 # /api/round). Jobs post real results to All Agents; agents without a data
 # source yet say so instead of inventing work.
@@ -1421,8 +1616,46 @@ def _round_remi(ctx):
     return "agenda unchanged"
 
 
+def _round_glass(ctx):
+    """Budget alerts at 90% and 100% (once each per category per month), and a
+    week-in-review on the first round of each Sunday."""
+    st = store()
+    today = datetime.now(hub_tz()).date()
+    month = today.strftime("%Y-%m")
+    did = []
+    alerted = set(json.loads(st.get_meta(f"round:glass:alerts:{month}") or "[]"))
+    for cat, v in month_status(month).items():
+        if not v["budget"]:
+            continue
+        share = v["spent"] / v["budget"]
+        level = "100" if share >= 1 else "90" if share >= 0.9 else None
+        if level and f"{cat}:{level}" not in alerted:
+            alerted.add(f"{cat}:{level}")
+            st.add_chat("glass", (f"{cat} is over budget: ${v['spent']:,.2f} of ${v['budget']:,.0f}."
+                                  if level == "100" else
+                                  f"Heads up: {cat} is at {share:.0%} of its budget "
+                                  f"(${v['spent']:,.2f} of ${v['budget']:,.0f})."))
+            did.append(f"{cat} alert")
+    st.set_meta(f"round:glass:alerts:{month}", json.dumps(sorted(alerted)))
+    if today.weekday() == 6 and st.get_meta("round:glass:week") != today.isoformat():
+        week = [e for m in {month, (today - timedelta(days=6)).strftime("%Y-%m")}
+                for e in st.list_expenses(m) if (today - timedelta(days=6)).isoformat() <= e["date"] <= today.isoformat()]
+        by_cat = {}
+        for e in week:
+            by_cat[e["category"]] = by_cat.get(e["category"], 0) + e["amount"]
+        lines = [f"Week in review (through {today:%b %d}): ${sum(by_cat.values()):,.2f} spent."]
+        lines += [f"- {c}: ${a:,.2f}" for c, a in sorted(by_cat.items(), key=lambda x: -x[1])]
+        lines += ["Month so far:"] + [f"- {x}" for x in status_lines(month)]
+        st.add_chat("glass", "\n".join(lines))
+        st.set_meta("round:glass:week", today.isoformat())
+        did.append("posted the week in review")
+    if not GLASS_BUDGETS and not st.list_expenses(month):
+        return "no budgets or expenses yet"
+    return ", ".join(did) or "budgets on track"
+
+
 ROUND_JOBS = {
-    "theta": _round_theta, "remi": _round_remi, "mistral": _round_mistral, "james": _round_james,
+    "theta": _round_theta, "remi": _round_remi, "glass": _round_glass, "mistral": _round_mistral, "james": _round_james,
     "lenz": _round_lenz, "red": _round_news("red"), "blue": _round_news("blue"),
     "gray": _round_news("gray"),
 }
@@ -1863,6 +2096,48 @@ def calendar_page(query):
           "(read-only), refreshed every 10 minutes.</small></p>")
 
 
+_BUDGET_JS = """
+document.getElementById("csv-import").onclick = async () => {
+  const f = document.getElementById("csv-file").files[0], out = document.getElementById("csv-status");
+  if (!f) { out.textContent = "Pick your Rocket Money CSV first."; return; }
+  out.textContent = "Importing...";
+  try {
+    const d = await (await fetch("/api/glass/import", {method: "POST",
+      headers: {"Content-Type": "application/json", "x-dashboard-key": new URLSearchParams(location.search).get("key") || ""},
+      body: JSON.stringify({csv: await f.text()})})).json();
+    if (!d.ok) throw new Error(d.error);
+    const sk = Object.entries(d.skipped).filter(([, n]) => n).map(([k, n]) => n + " " + k).join(", ");
+    out.textContent = "Added " + d.added + " expenses" + (d.duplicates ? ", " + d.duplicates + " already imported" : "")
+      + (sk ? "; skipped " + sk : "") + ". Read columns " + Object.values(d.columns).join(", ")
+      + "; expenses were " + d.expenses_were + " in this file. Reload to see the totals.";
+  } catch (err) { out.textContent = "Import failed: " + err.message; }
+};
+"""
+
+
+def _budget_html():
+    month = datetime.now(hub_tz()).strftime("%Y-%m")
+    rows = []
+    for cat, v in month_status(month).items():
+        if v["budget"]:
+            share = v["spent"] / v["budget"]
+            color = "#b3261e" if share >= 1 else "#a35d00" if share >= 0.9 else "#1a7f37"
+            rows.append(f"<li><b>{html.escape(cat)}</b> ${v['spent']:,.2f} of ${v['budget']:,.0f}"
+                        f"<div style=\"background:#e4e8ee;height:6px;max-width:320px\"><div style=\""
+                        f"background:{color};height:6px;width:{min(share, 1) * 100:.0f}%\"></div></div></li>")
+        elif v["spent"]:
+            rows.append(f"<li><b>{html.escape(cat)}</b> ${v['spent']:,.2f} <i>(no budget)</i></li>")
+    listing = (f"<ul style=\"list-style:none;padding-left:0\">{''.join(rows)}</ul>" if rows else
+               "<p>No budgets or expenses yet. Set GLASS_BUDGETS in Vercel (e.g. "
+               "<code>Groceries:600,Dining:200</code>), log spending with \"@glass $42 groceries\", "
+               "or import a Rocket Money export.</p>")
+    return (f"<p><small>{month}</small></p>{listing}"
+            "<p>Import a Rocket Money export (Transactions → Export on a computer): "
+            "<input id=\"csv-file\" type=\"file\" accept=\".csv,text/csv\"> "
+            "<button id=\"csv-import\" type=\"button\">Import</button> <i id=\"csv-status\"></i></p>"
+            f"<script>{_BUDGET_JS}</script>")
+
+
 def _limit(query, default):
     """Parse ?limit=; None means invalid (not an int in 1..100)."""
     try:
@@ -1962,7 +2237,10 @@ def handle(method, path, query, headers, body):
             if history[-1]["role"] != "user":
                 return _json(400, {"ok": False, "error": "last message must be from user"})
             try:
-                if agent == "james":
+                parsed = parse_expense(history[-1]["content"]) if agent == "glass" else None
+                if parsed:
+                    reply = glass_log_reply(parsed)
+                elif agent == "james":
                     reply = james_chat(history)
                 else:
                     reply = llm_chat(AGENTS[agent]["tier"],
@@ -2008,6 +2286,34 @@ def handle(method, path, query, headers, body):
                             errors[AGENTS[a]["name"]] = err
             return _json(200, {"ok": True, "messages": allchat_view(), "errors": errors,
                                "routed": [AGENTS[a]["name"] for a in routed]})
+
+        if path == "/api/glass/expense":
+            bot_id = data.get("bot_id")
+            if not (_auth_bot(bot_id, headers) if bot_id else _auth_dashboard(query, headers)):
+                return _json(401, {"ok": False, "error": "dashboard key or bot key required"})
+            try:
+                amount = float(data.get("amount"))
+            except (TypeError, ValueError):
+                return _json(400, {"ok": False, "error": "amount must be a number"})
+            if amount <= 0 or not str(data.get("category") or "").strip():
+                return _json(400, {"ok": False, "error": "positive amount and a category required"})
+            day = _parse_day(str(data.get("date") or "")) if data.get("date") else None
+            exp = add_expense(amount, str(data["category"]), str(data.get("note") or ""), day=day,
+                              source=bot_id or "dashboard")
+            post_event("glass", f"Glass logged ${amount:,.2f} for {exp['category']}"
+                                + (f" from {display_name(bot_id)}" if bot_id else ""))
+            return _json(200, {"ok": True, "expense": exp})
+
+        if path == "/api/glass/import":
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            if not isinstance(data.get("csv"), str):
+                return _json(400, {"ok": False, "error": "send {\"csv\": <file text>}"})
+            result = import_csv(data["csv"])
+            if result["ok"] and result["added"]:
+                post_event("glass", f"Glass imported {result['added']} expenses from a CSV "
+                                    f"({', '.join(result['months'])})")
+            return _json(200 if result["ok"] else 400, result)
 
         if path == "/api/status":
             bot_id, activity = data.get("bot_id"), data.get("activity")
@@ -2119,6 +2425,7 @@ def handle(method, path, query, headers, body):
             f"<h2>News</h2>{news_html}"
             f"<h2>Entertainment</h2><ul>{ent_items}</ul>"
             f"<h2>Fitness — overall health</h2>{fit_html}{app_link}"
+            f"<h2>Budget (Glass)</h2>{_budget_html()}"
             f"<h2>Reports</h2><ul>{items}</ul>"
             f"<h2>Escalations</h2><ul>{esc_items}</ul>"
             f"<h2>Commandeer orders</h2><ul>{ord_items}</ul>"
@@ -2188,6 +2495,13 @@ def handle(method, path, query, headers, body):
         if not (_auth_dashboard(query, headers) if not bot_id else _auth_bot(bot_id, headers)):
             return _json(401, {"ok": False, "error": "dashboard key or bot key required"})
         return _json(200, {"ok": True, "messages": allchat_view()})
+
+    if path == "/api/glass":
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        month = query.get("month", [datetime.now(hub_tz()).strftime("%Y-%m")])[0]
+        return _json(200, {"ok": True, "month": month, "status": month_status(month),
+                           "expenses": sorted(store().list_expenses(month), key=lambda e: e["date"])})
 
     if path == "/api/wiring":
         if not _auth_dashboard(query, headers):
