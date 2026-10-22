@@ -40,6 +40,7 @@ import io
 import json
 import os
 import re
+import socket
 import threading
 import time
 import urllib.error
@@ -5100,32 +5101,184 @@ def _work(agent, goal, loc, part):
     return cited_leads(text, cites)
 
 
-def run_project(p, deadline):
-    """One pass: every agent searches their part; returns new leads."""
+# Job projects go to the job boards first (real listings with pay and
+# dates, free keys), then every link is checked; Gemini's web search only
+# fills in when the boards come up short, or for projects that aren't
+# job hunts.
+ADZUNA_APP_ID = os.environ.get("ADZUNA_APP_ID", "")
+ADZUNA_APP_KEY = os.environ.get("ADZUNA_APP_KEY", "")
+ADZUNA_COUNTRY = os.environ.get("ADZUNA_COUNTRY", "us").lower()
+ADZUNA_BASE = "https://api.adzuna.com/v1/api/jobs"
+USAJOBS_API_KEY = os.environ.get("USAJOBS_API_KEY", "")
+USAJOBS_EMAIL = os.environ.get("USAJOBS_EMAIL", "")
+USAJOBS_BASE = "https://data.usajobs.gov/api/Search"
+JOB_MIN_LEADS = int(os.environ.get("JOB_MIN_LEADS", "8"))  # fewer live board leads than this: search the web too
+_JOB_RE = re.compile(r"\b(jobs?|positions?|roles?|careers?|hiring|employment|openings?|vacanc(?:y|ies)|gigs?|internships?|"
+                     r"work as|part[- ]time|full[- ]time)\b", re.I)
+_DEAD_RE = re.compile(r"no longer (?:accepting|available|active)|(?:job|posting|position|listing) (?:has )?(?:expired|closed|"
+                      r"been filled|is no longer)|this job is closed|page not found", re.I)
+
+
+def boards_on():
+    return bool((ADZUNA_APP_ID and ADZUNA_APP_KEY) or (USAJOBS_API_KEY and USAJOBS_EMAIL))
+
+
+def job_query(goal, loc):
+    """(keywords, place) for the job boards, from the goal."""
+    place = loc or (re.search(r"\b(?:in|near|around)\s+([A-Z][\w .'-]+?(?:,\s*[A-Z]{2})?)(?:[.!?]|$|\s+(?:that|which|with|for|paying))",
+                              goal) or [None, ""])[1]
+    try:
+        reply = llm_chat("miner", [{"role": "user", "content": f"Job search request: \"{goal}\"\nReply with one line: "
+                                    "<job keywords, 1-4 words, or 'any'> | <place, or 'none'>"}], max_tokens=200)
+        m = re.search(r"^\W*([^|\n]+)\|([^|\n]+)", reply, re.M)
+    except LLMError:
+        m = None
+    words = m.group(1).strip().strip('"') if m else ""
+    words = "" if words.lower() in ("any", "none", "job", "jobs", "a job") else words[:60]
+    if not place and m and m.group(2).strip().lower() not in ("none", "here", ""):
+        place = m.group(2).strip()[:60]
+    return words, place
+
+
+def _money(lo, hi):
+    if not lo and not hi:
+        return ""
+    lo, hi = lo or hi, hi or lo
+    return f"${lo:,.0f}" if round(lo) == round(hi) else f"${lo:,.0f}–${hi:,.0f}"
+
+
+def adzuna_jobs(words, place, limit=20):
+    q = {"app_id": ADZUNA_APP_ID, "app_key": ADZUNA_APP_KEY, "results_per_page": str(limit), "max_days_old": "30",
+         "sort_by": "date", "content-type": "application/json"}
+    if words:
+        q["what"] = words
+    if place:
+        q["where"] = place
+    req = urllib.request.Request(f"{ADZUNA_BASE}/{ADZUNA_COUNTRY}/search/1?" + urlencode(q), headers={"User-Agent": WIKI_UA})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            rows = json.loads(resp.read()).get("results", [])
+    except urllib.error.HTTPError as e:
+        raise LLMError(f"Adzuna returned {e.code}" + (": check ADZUNA_APP_ID / ADZUNA_APP_KEY" if e.code in (401, 403) else ""))
+    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+        raise LLMError(f"Adzuna unreachable: {e!r}")
+    out = []
+    for r in rows:
+        bits = [(r.get("company") or {}).get("display_name"), (r.get("location") or {}).get("display_name"),
+                _money(r.get("salary_min"), r.get("salary_max")), f"posted {str(r.get('created', ''))[:10]}"]
+        out.append({"title": html.unescape(re.sub(r"<[^>]+>", "", r.get("title", ""))).strip()[:140],
+                    "why": " · ".join(b for b in bits if b and b != "posted "), "url": r.get("redirect_url", ""),
+                    "source": "Jobs by Adzuna", "agent": "mistral", "board": True})
+    return [x for x in out if x["url"]]
+
+
+def usajobs_jobs(words, place, limit=10):
+    q = {"ResultsPerPage": str(limit), "DatePosted": "30"}
+    if words:
+        q["Keyword"] = words
+    if place:
+        q.update(LocationName=place, Radius="50")
+    req = urllib.request.Request(USAJOBS_BASE + "?" + urlencode(q), headers={
+        "Host": "data.usajobs.gov", "User-Agent": USAJOBS_EMAIL, "Authorization-Key": USAJOBS_API_KEY})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            items = json.loads(resp.read()).get("SearchResult", {}).get("SearchResultItems", [])
+    except urllib.error.HTTPError as e:
+        raise LLMError(f"USAJOBS returned {e.code}" + (": check USAJOBS_API_KEY / USAJOBS_EMAIL" if e.code in (401, 403) else ""))
+    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+        raise LLMError(f"USAJOBS unreachable: {e!r}")
+    out = []
+    for it in items:
+        d = it.get("MatchedObjectDescriptor", {})
+        pay = (d.get("PositionRemuneration") or [{}])[0]
+        try:
+            money = _money(float(pay.get("MinimumRange") or 0), float(pay.get("MaximumRange") or 0))
+        except ValueError:
+            money = ""
+        rate = {"PA": "/yr", "PH": "/hr"}.get(pay.get("RateIntervalCode"), "")
+        bits = [d.get("OrganizationName"), d.get("PositionLocationDisplay"), money + rate if money else "",
+                f"closes {str(d.get('ApplicationCloseDate', ''))[:10]}" if d.get("ApplicationCloseDate") else ""]
+        out.append({"title": (d.get("PositionTitle") or "")[:140], "why": " · ".join(b for b in bits if b),
+                    "url": d.get("PositionURI") or "", "source": "USAJOBS", "agent": "mistral", "board": True})
+    return [x for x in out if x["url"]]
+
+
+def link_alive(url):
+    """False only when the page is clearly gone (404/410, no such site, or
+    an 'expired / no longer accepting' notice). Sites that refuse robots
+    (403/429) count as alive: we can't tell, so we don't drop them."""
+    req = urllib.request.Request(url, headers={"User-Agent": ARTICLE_UA, "Accept": "text/html"})
+    try:
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            page = resp.read(300_000).decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        return e.code not in (404, 410)
+    except urllib.error.URLError as e:
+        return not isinstance(getattr(e, "reason", None), socket.gaierror)
+    except (TimeoutError, ValueError):
+        return True
+    return not _DEAD_RE.search(_plain(page[:300_000], 20000))
+
+
+def check_links(leads):
+    if not leads:
+        return leads
+    with ThreadPoolExecutor(max_workers=min(12, len(leads))) as ex:
+        alive = list(ex.map(lambda x: link_alive(x["url"]), leads))
+    return [x for x, ok in zip(leads, alive) if ok]
+
+
+def _search_web(p, deadline):
+    """Each planned agent searches its part with Gemini; (leads, failed)."""
+    if not os.environ.get("GEMINI_API_KEY", ""):
+        return [], {}
     if not _search_budget(len(p["plan"])):
-        raise LLMError(f"This month's web searches are used up ({SEARCH_MONTHLY_CAP}; SEARCH_MONTHLY_CAP).")
+        return [], {"hub": f"this month's web searches are used up ({SEARCH_MONTHLY_CAP})"}
     results = {}
     with ThreadPoolExecutor(max_workers=len(p["plan"])) as ex:
         futs = {ex.submit(_work, a, p["goal"], p.get("loc"), part): a for a, part in p["plan"]}
         for f, a in futs.items():
             try:
-                results[a] = f.result(timeout=max(1, deadline - time.time() - 8))
+                results[a] = f.result(timeout=max(1, deadline - time.time() - 12))
             except Exception as e:  # one agent failing doesn't sink the project
                 results[a] = e
     leads = [dict(x, agent=a) for a, r in results.items() if isinstance(r, list) for x in r]
     with ThreadPoolExecutor(max_workers=8) as ex:
         for x, u in zip(leads, ex.map(lambda x: _resolve(x["url"]), leads)):
             x["url"] = u
+    return leads, {a: str(r)[:120] for a, r in results.items() if not isinstance(r, list)}
+
+
+def run_project(p, deadline):
+    """One pass. Job boards first (for job hunts), then the web search if
+    the boards came up short; every link is checked; returns new leads."""
     seen = set(p.get("seen", []))
+    key = lambda u: re.sub(r"[?#].*$", "", u).rstrip("/").lower()
+    failed, leads = {}, []
+    if p.get("jobs") and boards_on():
+        words, place = p["jobs"]
+        for name, fn, on in (("Adzuna", adzuna_jobs, ADZUNA_APP_ID and ADZUNA_APP_KEY),
+                             ("USAJOBS", usajobs_jobs, USAJOBS_API_KEY and USAJOBS_EMAIL)):
+            if on:
+                try:
+                    leads += fn(words, place)
+                except LLMError as e:
+                    failed[name] = str(e)[:120]
+        leads = check_links([x for x in leads if key(x["url"]) not in seen])
+    if not p.get("jobs") or len(leads) < JOB_MIN_LEADS:
+        if not p.get("jobs") and not os.environ.get("GEMINI_API_KEY", ""):
+            raise LLMError("Projects search the web with Gemini; set GEMINI_API_KEY first.")
+        web, web_failed = _search_web(p, deadline)
+        failed.update(web_failed)
+        leads += check_links([x for x in web if key(x["url"]) not in seen])
     fresh, keys = [], set()
     for x in leads:
-        k = re.sub(r"[?#].*$", "", x["url"]).rstrip("/").lower()
+        k = key(x["url"])
         if k in seen or k in keys:
             continue
         keys.add(k)
         fresh.append(x)
-    p["seen"] = (list(seen) + list(keys))[-400:]
-    failed = {a: str(r)[:120] for a, r in results.items() if not isinstance(r, list)}
+    p["seen"] = (list(seen) + list(keys))[-600:]
     return fresh, failed
 
 
@@ -5135,13 +5288,20 @@ def _post_leads(p, fresh, failed, first):
     for x in fresh:
         by.setdefault(x["agent"], []).append(x)
     parts = dict(p["plan"])
+    line = lambda x: f"- {x['title']}" + (f" — {x['why']}" if x["why"] else "") + f"\n  {x['url']}"
+    boards = [x for x in fresh if x.get("board")]
+    if boards:
+        names = sorted({x["source"] for x in boards})
+        st.add_chat("mistral", (f"Project #{p['id']}, from the job boards" if first else f"Project #{p['id']}, new on the job boards")
+                    + f" ({', '.join(names)}; links checked):\n" + "\n".join(line(x) for x in boards), channel="command")
     for a, xs in by.items():
-        st.add_chat(a, (f"Project #{p['id']}, my part ({parts.get(a, '')}):\n" if first else
-                        f"Project #{p['id']}, new today:\n")
-                    + "\n".join(f"- {x['title']}" + (f" — {x['why']}" if x["why"] else "") + f"\n  {x['url']}" for x in xs),
-                    channel="command")
+        xs = [x for x in xs if not x.get("board")]
+        if xs:
+            st.add_chat(a, (f"Project #{p['id']}, my part ({parts.get(a, '')}):\n" if first else
+                            f"Project #{p['id']}, new today:\n") + "\n".join(line(x) for x in xs), channel="command")
     for a, err in failed.items():
-        st.add_chat("hub", f"Project #{p['id']}: {AGENTS[a]['name']} couldn't search ({err}).", channel="command")
+        who = AGENTS[a]["name"] if a in AGENTS and a != "hub" else a if a != "hub" else "The web search"
+        st.add_chat("hub", f"Project #{p['id']}: {who} couldn't search ({err}).", channel="command")
     if first:
         summary = ""
         if fresh:
@@ -5176,23 +5336,28 @@ def _save_project(p):
 
 def start_project(goal, deadline=None):
     deadline = deadline or time.time() + 50
-    if not os.environ.get("GEMINI_API_KEY", ""):
-        raise CommandError("Projects search the web with Gemini; set GEMINI_API_KEY first.")
+    clean = re.sub(r"@\w+[\s,]*", "", goal).strip()
+    jobs = bool(_JOB_RE.search(clean))
+    if not os.environ.get("GEMINI_API_KEY", "") and not (jobs and boards_on()):
+        raise CommandError("Projects need GEMINI_API_KEY (web search), or Adzuna/USAJOBS keys for job hunts.")
     loc = HOME_LOCATION if _HERE_RE.search(goal) else ""
     if _HERE_RE.search(goal) and not loc:
-        raise CommandError("Where's “here”? Say the place (“…in Denver”) or set HOME_LOCATION in Vercel.")
+        raise CommandError("Where's \u201chere\u201d? Say the place (\u201c\u2026in Denver\u201d) or set HOME_LOCATION in Vercel.")
     targets = mentioned_agents(goal)
-    clean = re.sub(r"@\w+[\s,]*", "", goal).strip()
     pid = max([x["id"] for x in projects()] + [0]) + 1
     p = {"id": pid, "goal": clean[:300], "loc": loc, "plan": plan_project(clean, loc, targets), "seen": [],
          "until": time.time() + ORDER_DAYS * 86400, "active": True, "runs": 0}
+    if jobs and boards_on():
+        p["jobs"] = list(job_query(clean, loc))
     fresh, failed = run_project(p, deadline)
     p.update(runs=1, last_run=time.time(), leads=len(fresh))
     _save_project(p)
     _post_leads(p, fresh, failed, first=True)
-    post_event("theta", f"Theta put {', '.join(AGENTS[a]['name'] for a, _ in p['plan'])} on project #{pid}: {clean[:120]}")
-    return (f"Project #{pid}: {len(fresh)} lead{'s' if len(fresh) != 1 else ''} from "
-            f"{', '.join(AGENTS[a]['name'] for a, _ in p['plan'])}. See #command.")
+    who = sorted({AGENTS[x["agent"]]["name"] for x in fresh if not x.get("board")})
+    srcs = (["the job boards"] if any(x.get("board") for x in fresh) else []) + who
+    post_event("theta", f"Theta started project #{pid}: {clean[:120]}")
+    return (f"Project #{pid}: {len(fresh)} lead{'s' if len(fresh) != 1 else ''}"
+            + (f" from {', '.join(srcs)}" if srcs else "") + ". See #command.")
 
 
 def rerun_projects(deadline):
@@ -5382,6 +5547,10 @@ def wiring():
                                         + ("" if HOME_LOCATION else "; set HOME_LOCATION so \"here\" works")}
                                        if os.environ.get("GEMINI_API_KEY") else
                                        {"state": "off", "note": "Needs GEMINI_API_KEY"})})
+    boards = [n for n, on in (("Adzuna", ADZUNA_APP_ID and ADZUNA_APP_KEY), ("USAJOBS", USAJOBS_API_KEY and USAJOBS_EMAIL)) if on]
+    rows.append({"agent": "jobs", "name": "Job boards (projects)", "tier": "", "model": "Adzuna, USAJOBS", "testable": False,
+                 **({"state": "ok", "note": f"{' and '.join(boards)} linked; job projects use them before web search"} if boards else
+                    {"state": "off", "note": "Not linked: ADZUNA_APP_ID + ADZUNA_APP_KEY, and/or USAJOBS_API_KEY + USAJOBS_EMAIL"})})
     rows.append({"agent": "gmail", "name": "Remi's Gmail", "tier": "", "model": "Gmail (OAuth)", "testable": False,
                  **({"state": "ok", "note": f"Connected as {store().get_meta('gmail:me') or 'you'}"} if gmail_connected() else
                     {"state": "off", "note": "Ready: Settings → Gmail → Connect"} if gmail_configured() else
