@@ -61,9 +61,13 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
 - [ ] Optional: `DIGEST_TIME` (default `07:00`), `GITHUB_TOKEN`
       (fine-grained, Issues read/write on this repo) for QWERTY's `/issue`.
 
-### 8. Voices
-- [ ] Settings → Voices: try **Babble** and **AI voices** (uses
-      `GEMINI_API_KEY`, already set).
+### 8. Projects
+- [ ] `HOME_LOCATION` (like `Denver, CO`) so "find me a job here" knows
+      where "here" is.
+
+### 9. Voices
+- [ ] Settings → Voices → **Sound check**, and send me what it shows if
+      you hear nothing.
 
 ## Planned
 

@@ -344,6 +344,25 @@ as each agent with a voice and manner chosen for them, via `POST
 /api/voice`; `GEMINI_TTS_MODEL` picks the model; falls back to phone
 voices on any error), or **Phone voices**.
 
+**Projects** (`/commandeer find me a job here`, or `/project ...`). An
+order that starts like a task (find, search, look for, research, compare,
+get me, list...) becomes a project: Theta splits it into up to 4 parts
+and gives each to the agent it suits; each agent searches the web for
+their part (Gemini with Google Search, your `GEMINI_API_KEY`); only leads
+the search results back are kept, each with its source link, and leads
+two agents found are posted once. Results go to #command, Theta sums up,
+and your phone gets a push. Each day Theta's round reruns active projects
+and posts only new leads, until the order expires (`ORDER_DAYS`) or
+`/stopproject <n>`. "Here" / "near me" uses `HOME_LOCATION` (like
+`Denver, CO`). Searches are counted against `SEARCH_MONTHLY_CAP` (4000;
+Gemini's free tier includes 5,000 a month); `GEMINI_SEARCH_MODEL` picks
+the model.
+
+**Sound check** (Settings → Voices) plays one line in the chosen style and
+shows what the phone reports: the style, whether replies are read aloud,
+the sound engine's state, phone voices, the silent-switch override, and
+the last voice error.
+
 **Morning digest time.** The tick sends Mistral's digest at `DIGEST_TIME`
 (default `07:00`, hub time), so it no longer waits for a round. Without
 the tick job, it goes out with the first round after that time.
