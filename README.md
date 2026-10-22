@@ -1,9 +1,44 @@
-# Bot hub — Vercel edition
+# Theta — the bot hub, Vercel edition
 
-Interim build while Railway is down. Same hub as `../bot-hub` (tiers,
+Theta is the app (named after the crew's High Brain, whose θ is the app
+icon). Interim build while Railway is down. Same hub as `../bot-hub` (tiers,
 report / escalate / commandeer, dashboard widgets), reworked for
 Vercel's serverless model: `api/index.py` is one Python function,
 `vercel.json` routes every path to it.
+
+## The app
+
+Five tabs (a sidebar on wide screens, a tab bar on phones): **Home**,
+**Chat**, **Calendar** (Remi), **Money** (Glass) and **Settings**, plus
+a profile page per agent (`/agent/<id>`) with its latest window,
+persona, abilities, model and recent posts.
+
+**Home** shows today at a glance (budget ring, today's events, crew
+online, breaking news), then a **window** per agent: its latest output
+squeezed to a short title, with a picture. Pictures are real where they
+exist: each story's own photo from its outlet's feed, TMDB stills, Apple
+Music album art, Charter's charts, and generated tiles for dates and
+budgets. Then the top stories and what's trending, as windows too.
+
+Titles are condensed once per round: one small miner-model call turns
+up to 30 new headlines into widget titles of 6 words or fewer and names
+each one's main subject. Windows with no picture of their own get the
+subject's free-licensed photo from Wikipedia (a few lookups per round,
+remembered for a week; a failed lookup is retried, not remembered).
+The dashboard itself never calls a model: before a round has condensed
+a title, it trims it (drops the outlet's name and "BREAKING:", cuts at a
+word).
+
+**Look.** Settings has 12 color schemes (Theta, Midnight, Nebula,
+Aurora Glass, Graphite, Lobby, Forest, Ember, Ocean, Paper, Sakura,
+Terminal). Each has a light and a dark version, and follows the phone's
+setting unless you pick Light or Dark. Four Home layouts: **Grid**
+(tiles), **Feed** (one big card at a time), **Magazine** (the newest
+photo window as a headline, then rows you swipe) and **Compact** (a
+list with thumbnails). The choice is saved in a `theta_ui` cookie on
+that device, so pages render in it with no flash. Every scheme was
+checked for contrast: body text 7:1 or better, secondary text, links
+and buttons 4.5:1 or better, in both modes.
 
 ## Why it differs from the Railway build
 
@@ -105,8 +140,10 @@ key), `GET|POST /api/allchat` (dashboard key or bot key), `GET /api/bots`,
 `GET /calendar` (Remi's tab), `GET /api/glass`, `POST /api/glass/expense`
 (dashboard or bot key), `POST /api/glass/import` (`{"csv": ...}`),
 `GET /chart/<id>.svg`, `GET /api/push/key`, `GET /api/push/new-keys`,
-`POST /api/push/subscribe`, `POST /api/push/test`, plus the Home Screen
-app files `/manifest.webmanifest`, `/sw.js` and icons. Every page
+`POST /api/push/subscribe`, `POST /api/push/test`, the pages `/chat`
+(`?ch=<channel>&to=<agent>`), `/money`, `/settings` and `/agent/<id>`,
+plus `/ui.css`, `/ui.js`, `/chat.js`, `/avatar/<id>.svg` and the Home
+Screen app files `/manifest.webmanifest`, `/sw.js` and icons. Every page
 accepts the dashboard key once as `?key=` and then remembers it in a
 cookie.
 
@@ -153,12 +190,31 @@ curl -X POST https://<project>.vercel.app/api/status -H "x-bot-key: $KEY" \
 
 ## Chat
 
-**All Agents** (first in the chat picker) is one shared, saved thread
-(the last 200 messages). You post with the dashboard key; bots post with
+Chat works like a Discord server: channels on the left, members and
+their status on the right (a sheet on phones), avatars, and messages
+grouped by sender. **#all-agents** (the default) is one shared, saved
+thread (the last 200 messages); the other channels are views of it:
+
+| Channel | Who's in it | Without an @mention |
+|---|---|---|
+| #all-agents | everyone | Mistral picks who answers |
+| #news | Red, Blue, Gray | all three answer |
+| #money | Glass, Charter | Mistral picks between them |
+| #family | Remi | Remi |
+| #watch-and-listen | Lenz | Lenz |
+| #gym | James | James |
+| #command | Theta, Mistral, round reports | Mistral picks between them |
+
+A channel shows what was said in it plus its members' own posts (round
+jobs post to their home channel); #all-agents shows everything, tagged
+with its channel. An @mention works in any channel. There's no separate
+one-on-one chat any more: an agent's page has **Message**, which opens
+their channel with the @mention typed. With `GET|POST /api/allchat`,
+`channel` picks the channel. You post with the dashboard key; bots post with
 their own key (`POST /api/allchat {"bot_id", "text"}`, `x-bot-key`) and
 read it with `GET /api/allchat?bot_id=…`. @mention agents (`@remi`,
 `@james`) and each one named answers once (up to 3 per message), with
-the recent thread as context. With no @mention, Mistral picks the 1–2
+the recent thread (of that channel) as context. With no @mention in #all-agents, Mistral picks the 1–2
 agents whose job fits best (just herself for small talk), so every
 message gets an answer; the status line says who she picked.
 `ALLCHAT_AUTO=off` turns this off, `ALLCHAT_AUTO_MAX` (2)
@@ -189,20 +245,20 @@ an agent says so instead of inventing work.
 news, Remi's birthday reminders, Glass's budget alerts, wiring problems,
 escalations to Theta and Theta's decisions. On iPhone (iOS 16.4+):
 open the dashboard in Safari, Share → Add to Home Screen, open it from
-the Home Screen, and tap **Turn on** under Agents. Needs the VAPID keys.
+the Home Screen, and tap **Turn on** in Settings. Needs the VAPID keys.
 The hub trims pasted spaces, line breaks and quotes from the keys, and
 tells you if they're missing, swapped, malformed or not a pair, or if
 the push library didn't install. `GET /api/push/health` (public) reports
 just the status code and device count, never key material.
 
-**Remi's calendar** is its own tab (`/calendar`): a month grid and a
-day-by-day list from your Google Calendar, plus `BIRTHDAYS`. Remi's chat
+**Remi's calendar** is its own tab (`/calendar`): a month grid (dots on
+phones) and a day-by-day list from your Google Calendar, plus `BIRTHDAYS`. Remi's chat
 answers from the same calendar.
 
 **Glass's budget.** Log spending with "@glass $42 groceries" (in his
 chat or All Agents; confirmed with exact numbers, no model call),
-`POST /api/glass/expense`, or import a Rocket Money export on the Budget
-card. Rocket Money has no public API: export CSV from Transactions on a
+`POST /api/glass/expense`, or import a Rocket Money export on the Money
+tab. Rocket Money has no public API: export CSV from Transactions on a
 computer. The importer finds the columns by header, works out whether
 expenses are positive or negative, skips income, transfers, card
 payments, refunds and ignored rows, and is safe to re-run.
@@ -213,13 +269,13 @@ coverage by side, and All Agents activity. Ask "@charter chart my
 spending".
 
 A failed job doesn't count as run, so it's retried next round. Run one
-from the dashboard (**Run a round now**, under Agents) or on a schedule:
+from Home (**Run a round**) or Settings, or on a schedule:
 set `CRON_SECRET` in Vercel, then run `supabase/cron.sql.example` in the
 Supabase SQL editor (3 times a day by default). `ROUND_MIN_GAP_MINUTES`
 (120) stops a job from running twice too close together.
 
 **Slash commands and mentions.** In the chat box, `@` lists the agents
-(All Agents only) and `/` at the start lists commands, like Discord:
+and `/` at the start lists commands, like Discord:
 type to filter, arrows and Enter/Tab to pick, Esc to close, or tap.
 Commands run on demand and post into All Agents:
 `/commandeer [@agent ...] <order>`, `/orders`, `/done <number>`, `/round`,
@@ -238,14 +294,13 @@ alerts, agendas, charts) don't change. Every agent's prompt also lists
 what it can actually do, so they don't promise what they can't. Bots
 get their own and crew-wide orders from `/api/orders`.
 
-**Wiring**, under the chat, shows for each agent whether its key is set
+**Wiring**, in Settings, shows for each agent whether its key is set
 and can use its model (James: whether Garage Gym answers). **Test** sends
 a tiny message and shows the reply time.
 
 
-The dashboard has a chat box: pick an agent and talk to it.
-History lives in the page (reload clears it). The same thing over
-the API:
+Talking to one agent outside the shared thread (Wiring's **Test** uses
+this) goes over the API; history is whatever you send:
 
 ```sh
 curl -X POST https://<project>.vercel.app/api/chat \
