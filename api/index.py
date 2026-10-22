@@ -54,16 +54,16 @@ PROVIDERS = {
     "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
                "GEMINI_API_KEY"),
 }
-# Extra request fields per provider. Gemini 2.5 Flash thinks by default,
-# which eats into max_tokens; "none" turns that off. Set
-# GEMINI_REASONING_EFFORT to "" for models that can't turn it off.
-_GEMINI_EFFORT = os.environ.get("GEMINI_REASONING_EFFORT", "none")
-PROVIDER_EXTRA = {"gemini": {"reasoning_effort": _GEMINI_EFFORT} if _GEMINI_EFFORT else {}}
+# Thinking models count their reasoning against max_tokens, so ask for
+# little of it. Gemini 3 can't turn thinking off ("none" was 2.5 only);
+# on Groq only the gpt-oss models take reasoning_effort. "" sends nothing.
+GEMINI_REASONING_EFFORT = os.environ.get("GEMINI_REASONING_EFFORT", "low")
+GROQ_REASONING_EFFORT = os.environ.get("GROQ_REASONING_EFFORT", "low")
 # tier -> (provider, model id); *_MODEL env vars override the model id
 TIER_LLM = {
-    "miner": ("groq", os.environ.get("MINER_MODEL", "llama-3.1-8b-instant")),
-    "manager": ("groq", os.environ.get("MANAGER_MODEL", "llama-3.3-70b-versatile")),
-    "low_brain": ("gemini", os.environ.get("LOW_BRAIN_MODEL", "gemini-2.5-flash")),
+    "miner": ("groq", os.environ.get("MINER_MODEL", "openai/gpt-oss-20b")),
+    "manager": ("groq", os.environ.get("MANAGER_MODEL", "openai/gpt-oss-120b")),
+    "low_brain": ("gemini", os.environ.get("LOW_BRAIN_MODEL", "gemini-3.8-flash")),
 }
 # The paid master model isn't wired yet; the low brain answers for it.
 MASTER_MODEL = os.environ.get("MASTER_MODEL", "Opus 5.5")
@@ -687,6 +687,36 @@ def system_prompt(agent_id):
             f"Stay in character{brevity}.")
 
 
+def provider_extra(provider, model):
+    """Extra request fields for this provider and model (see *_REASONING_EFFORT)."""
+    if provider == "gemini" and GEMINI_REASONING_EFFORT:
+        return {"reasoning_effort": GEMINI_REASONING_EFFORT}
+    if provider == "groq" and GROQ_REASONING_EFFORT and model.startswith("openai/gpt-oss"):
+        return {"reasoning_effort": GROQ_REASONING_EFFORT}
+    return {}
+
+
+def list_models(provider):
+    """Model ids this provider's key can use, or {"error": ...}. Providers
+    retire models, so /api/models shows what to put in *_MODEL."""
+    url, key_var = PROVIDERS[provider]
+    key = os.environ.get(key_var, "")
+    if not key:
+        return {"error": f"{key_var} is not set"}
+    req = urllib.request.Request(
+        url.rsplit("/chat/completions", 1)[0] + "/models",
+        headers={"Authorization": f"Bearer {key}", "User-Agent": "bot-hub/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read()).get("data", [])
+    except urllib.error.HTTPError as e:
+        return {"error": f"{provider} returned {e.code}"}
+    except (urllib.error.URLError, TimeoutError, ValueError, AttributeError) as e:
+        return {"error": f"{provider} call failed: {e!r}"}
+    ids = (m.get("id", "") for m in data if isinstance(m, dict))
+    return {"models": sorted(i.removeprefix("models/") for i in ids if i)}
+
+
 def llm_chat(tier, messages, max_tokens=800):
     """One chat-completion call for `tier`; returns the reply text.
     Master is answered by the low brain until the paid model is wired."""
@@ -696,7 +726,7 @@ def llm_chat(tier, messages, max_tokens=800):
     if not key:
         raise LLMError(f"{key_var} is not set in the project's env vars")
     payload = {"model": model, "messages": messages, "max_tokens": max_tokens,
-               **PROVIDER_EXTRA.get(provider, {})}
+               **provider_extra(provider, model)}
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode(),
         headers={"Authorization": f"Bearer {key}",
@@ -705,12 +735,16 @@ def llm_chat(tier, messages, max_tokens=800):
     try:
         with urllib.request.urlopen(req, timeout=LLM_TIMEOUT) as resp:
             out = json.loads(resp.read())
-        return out["choices"][0]["message"]["content"]
+        text = out["choices"][0]["message"].get("content") or ""
     except urllib.error.HTTPError as e:
         detail = e.read()[:300].decode("utf-8", "replace")
         raise LLMError(f"{provider} returned {e.code}: {detail}")
-    except (urllib.error.URLError, TimeoutError, ValueError, KeyError, IndexError) as e:
+    except (urllib.error.URLError, TimeoutError, ValueError, KeyError, IndexError, AttributeError) as e:
         raise LLMError(f"{provider} call failed: {e!r}")
+    if not text.strip():
+        raise LLMError(f"{model} returned an empty reply (it may have spent its "
+                       "token budget thinking)")
+    return text
 
 
 def summarize(unprocessed):
@@ -1113,6 +1147,14 @@ def handle(method, path, query, headers, body):
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
         return _json(200, agent_statuses())
+
+    if path == "/api/models":
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        return _json(200, {
+            "in_use": {t: f"{p}: {m}" for t, (p, m) in TIER_LLM.items()},
+            **{p: list_models(p) for p in PROVIDERS},
+        })
 
     if path == "/api/tiers":
         return _json(200, {

@@ -41,11 +41,14 @@ Vercel's serverless model: `api/index.py` is one Python function,
      `master_work()`
    - `GROQ_API_KEY` — managers and miners (from console.groq.com)
    - Optional model overrides: `MINER_MODEL` (default
-     `llama-3.1-8b-instant`), `MANAGER_MODEL` (`llama-3.3-70b-versatile`),
-     `LOW_BRAIN_MODEL` (`gemini-2.5-flash`), `GEMINI_REASONING_EFFORT`
-     (`none`; set it empty for Gemini models that can't turn thinking
-     off). An agent whose key is missing answers chat with
-     "…_API_KEY is not set" instead of failing
+     `openai/gpt-oss-20b`), `MANAGER_MODEL` (`openai/gpt-oss-120b`),
+     `LOW_BRAIN_MODEL` (`gemini-3.8-flash`). Providers retire models:
+     when chat says a model doesn't exist, open `/api/models` (dashboard
+     key) to see what your keys can use and set the override.
+     `GEMINI_REASONING_EFFORT` and `GROQ_REASONING_EFFORT` (both `low`;
+     Groq sends it to gpt-oss models only; empty sends nothing) keep
+     thinking from using up the reply. An agent whose key is missing
+     answers chat with "…_API_KEY is not set" instead of failing
    - `NEWS_FEEDS` — comma-separated RSS URLs; the default is 10 outlets
      across the spectrum. `NEWS_TOP` (8), `NEWS_BREAKING_MAX` (2) and
      `NEWS_BREAKING_MINUTES` (90) shape the News section
@@ -81,7 +84,8 @@ Same as the Railway build: `POST /api/report`, `POST /api/escalate`,
 `POST /api/chat` (dashboard key), `POST /api/status`, `GET /`
 (dashboard), `GET /api/feed`, `GET /api/orders`, `GET /api/escalations`,
 `GET /api/widgets`, `GET /api/fitness`, `GET /api/agents` (dashboard
-key), `GET /api/bots`, `GET /api/tiers`.
+key), `GET /api/models` (dashboard key), `GET /api/bots`,
+`GET /api/tiers`.
 
 ## Agents
 
