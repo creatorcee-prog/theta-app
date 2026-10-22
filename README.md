@@ -385,6 +385,37 @@ search says when it'll be back, and Settings → Wiring shows
 which quota ran out. Picking who answers an un-mentioned message runs on
 Groq's miner (`ROUTER_TIER`), so it doesn't spend Gemini's daily quota.
 
+**James's workouts.** Tell James sets in plain words ("@james bench 185
+4x8", or `/log squat 225 3x5` from any channel) and Garage Gym's own `/log`
+runs for the linked account: its Confirm, "which lift?", Same again and
+Undo come back as buttons in chat (each message's buttons work once, like
+Discord). "@james done", "undo", "skip" and "today" work too. When James
+says he doesn't know something, the crew searches the web and James
+answers again with what they found, with the sources listed. Needs
+Garage Gym with the hub commands (its `/api/hub` accepting
+`{command}`/`{component}`).
+
+**Lenz's channels.** `LENZ_YOUTUBE` (channel ids `UC...`, or `@handles`
+with `YOUTUBE_API_KEY` to look them up once), `LENZ_SUBREDDITS` and
+`LENZ_TWITCH` (logins; needs a Twitch app's `TWITCH_CLIENT_ID` and
+`TWITCH_CLIENT_SECRET` from dev.twitch.tv). The 5-minute tick checks them
+every `LENZ_FEEDS_MINUTES` (10): new uploads and channels going live are
+posted in #screen and pushed (with "drops on" when the stream is tagged
+for drops); subreddit posts that name something on your list are pushed;
+the rest of each subreddit comes as a daily top-posts digest. The first
+check only starts watching, so you don't get a backlog. Reddit sometimes
+refuses servers; Wiring shows when it last checked.
+
+**Voice commands (Siri).** `POST /api/ask {text}` runs a message through
+chat and returns `speech`, the replies cleaned up for reading aloud.
+Settings → Voice commands has the Shortcut steps (Dictate Text → Get
+Contents of URL → Get Dictionary Value `speech` → Speak Text). Use
+`ASK_KEY` in the Shortcut: it can only ask. Starting with a name ("Remi,
+...") asks that agent.
+
+**Round updates.** Settings → Round updates (off by default): one push
+when a round finishes, naming the agents that did something.
+
 **Today's check** (Home). A short list of daily habits, "Read the news"
 and "Read a book or comic" to start; Edit adds or removes them. Ticks
 reset each day, the streak counts days with everything done, and the

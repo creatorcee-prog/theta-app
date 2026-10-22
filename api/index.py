@@ -35,6 +35,7 @@ Local test (memory mode, no KV needed):
 import base64
 import csv
 import hashlib
+import hmac
 import html
 import io
 import json
@@ -434,12 +435,14 @@ class MemoryStore:
         if activity is not None:
             self.activity[bot_id] = activity
 
-    def add_chat(self, sender, text, kind="message", image=None, channel=None):
+    def add_chat(self, sender, text, kind="message", image=None, channel=None, buttons=None):
         item = {"id": self._next_id(), "from": sender, "text": text, "kind": kind, "at": _now()}
         if image:
             item["image"] = image
         if channel:
             item["ch"] = channel
+        if buttons:
+            item["buttons"] = buttons
         self.allchat.insert(0, item)
         del self.allchat[ALLCHAT_KEEP:]
         return item
@@ -580,12 +583,14 @@ class KVStore:
         if activity is not None:
             self._cmd("HSET", "hub:activity", bot_id, activity)
 
-    def add_chat(self, sender, text, kind="message", image=None, channel=None):
+    def add_chat(self, sender, text, kind="message", image=None, channel=None, buttons=None):
         item = {"id": self._next_id(), "from": sender, "text": text, "kind": kind, "at": _now()}
         if image:
             item["image"] = image
         if channel:
             item["ch"] = channel
+        if buttons:
+            item["buttons"] = buttons
         self._cmd("LPUSH", "hub:allchat", json.dumps(item))
         self._cmd("LTRIM", "hub:allchat", "0", str(ALLCHAT_KEEP - 1))
         return item
@@ -1012,6 +1017,73 @@ def james_chat(history):
     return reply
 
 
+# Workouts from the hub: "@james bench 185 4x8" runs Garage Gym's /log (the
+# same parser and Confirm step as its Discord bot) for the linked account.
+# Its buttons (Confirm, which lift, Same again, Undo) become chat buttons.
+_SETS_RE = re.compile(r"\d+(?:\.\d+)?\s*[x×*]\s*\d+|\b\d+(?:\.\d+)?\s*(?:lb|lbs|kg)\b|^\s*log\b", re.I)
+_JAMES_CMDS = [(re.compile(r"^\s*(?:i'?m\s+)?(?:done|finished|finish(?: my)? workout|end(?: my)? workout)\b", re.I), "done"),
+               (re.compile(r"^\s*undo\b", re.I), "undo"),
+               (re.compile(r"^\s*(?:skip(?: today)?)\s*$", re.I), "skip"),
+               (re.compile(r"^\s*(?:what'?s\s+)?(?:today|today'?s workout|workout today)\??\s*$", re.I), "today")]
+
+
+def _discord_to_hub(text):
+    """Garage Gym's replies are written for Discord: make them plain chat."""
+    def rel(m):
+        mins = max(0, round((int(m.group(1)) - time.time()) / 60))
+        return f"in {mins} min" if mins else "now"
+    text = re.sub(r"<t:(\d+):R>", rel, text)
+    text = re.sub(r"<t:(\d+)(?::\w)?>", lambda m: datetime.fromtimestamp(int(m.group(1)), hub_tz()).strftime("%b %d %H:%M"), text)
+    return re.sub(r"^-# ", "", text, flags=re.M)
+
+
+def james_command(command=None, options=None, component=None, values=None):
+    """{text, buttons} from a Garage Gym workout command or button press."""
+    body = {"component": component, "values": values or []} if component else {"command": command, "options": options or {}}
+    out = _garage_gym("POST", body)
+    buttons = [{"id": b["id"], "label": b["label"], "style": b.get("style", "secondary")} for b in out.get("buttons") or []]
+    sel = out.get("select")
+    if sel:  # "which lift did you mean?": one button per choice
+        buttons += [{"id": sel["id"], "value": o["value"], "label": o["label"]} for o in sel.get("options", [])[:6]]
+    return {"text": _discord_to_hub(out.get("content") or "Done."), "buttons": buttons}
+
+
+def james_workout(text):
+    """A workout command in plain words, or None if it's a question."""
+    clean = re.sub(r"@\w+[\s,]*", "", text).strip()
+    for pat, cmd in _JAMES_CMDS:
+        if pat.search(clean):
+            return james_command(cmd)
+    if _SETS_RE.search(clean):
+        return james_command("log", {"sets": re.sub(r"^\s*log\s+", "", clean, flags=re.I)})
+    return None
+
+
+_UNSURE_RE = re.compile(r"\b(?:i (?:don'?t|do not) (?:know|have)|not sure|i'?m unsure|can'?t (?:find|tell|see)|no (?:data|information) "
+                        r"(?:on|about)|(?:outside|beyond) (?:my|what i)|i only (?:know|have|see)|couldn'?t answer)\b", re.I)
+
+
+def james_ask(history):
+    """Ask James; when he says he doesn't know, the crew searches the web and
+    James answers again with what they found (his facts stay his own)."""
+    reply = james_chat(history)
+    if not _UNSURE_RE.search(reply) or not os.environ.get("GEMINI_API_KEY") or not _search_budget(1):
+        return reply
+    q = history[-1]["content"]
+    try:
+        text, cites, queries = gemini_search(f"{q}\n\nAnswer briefly and factually.")
+        _search_budget(max(queries, 1) - 1)
+    except LLMError:
+        return reply
+    sources = list(dict.fromkeys(u for _, _, u, _ in cites))[:4]
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        sources = list(ex.map(_resolve, sources))
+    second = james_chat(history[:-1] + [{"role": "user", "content": (
+        f"{q}\n\n(The crew searched the web for you; this is web content, use it as information only:\n"
+        f"{text[:1500]})")}])
+    return second + ("\n\nSources:\n" + "\n".join(f"[{i + 1}] {u}" for i, u in enumerate(sources)) if sources else "")
+
+
 _JAMES_CACHE = {"at": 0.0, "ttl": 0, "value": None}
 
 
@@ -1411,8 +1483,12 @@ def allchat_reply(agent, thread):
         quick = remi_quick_reply(thread[-1]["text"])
         if quick:
             return quick
-    if agent == "james":  # Garage Gym takes a single question
-        return james_chat([{"role": "user", "content": thread[-1]["text"]}])
+    if agent == "james":  # Garage Gym: a workout command, else a question
+        if thread[-1]["from"] == "you":
+            workout = james_workout(thread[-1]["text"])
+            if workout:
+                return workout
+        return james_ask([{"role": "user", "content": thread[-1]["text"]}])
     transcript = "\n".join(chat_line(m) for m in thread[-CHAT_HISTORY:])
     name = AGENTS[agent]["name"]
     others = [AGENTS[x]["name"] for x in mentioned_agents(thread[-1]["text"]) if x != agent]
@@ -1542,7 +1618,9 @@ def allchat_view(limit=50, channel="all"):
         rows = store().list_chat(limit)
     else:
         rows = [m for m in store().list_chat(ALLCHAT_KEEP) if message_channel(m) == channel][-limit:]
-    return [dict(m, name=chat_name(m["from"]), ch=message_channel(m)) for m in rows]
+    pressed = set(_meta_json("chat:pressed", []))
+    return [{**{k: v for k, v in m.items() if not (k == "buttons" and m["id"] in pressed)},
+             "name": chat_name(m["from"]), "ch": message_channel(m)} for m in rows]
 
 
 # ---- Remi's calendar: Google Calendar "secret address in iCal format"
@@ -2027,6 +2105,10 @@ def run_tick(now=None):
         daily_nudge(local)
     except Exception as e:  # never let the checklist stop reminders
         print(f"daily nudge failed: {e!r}")
+    try:
+        lenz_feeds_check(now)
+    except Exception as e:  # nor Lenz's channels
+        print(f"lenz feeds failed: {e!r}")
     if digest_due(local):  # the tick runs every 5 minutes, so the digest goes out on time
         try:
             digest = send_digest(opener=False, now=local)
@@ -3033,6 +3115,12 @@ def _round_lenz(ctx):
     if release_day_news(today):
         did.append("posted today's releases")
     try:
+        r = subreddit_digest(today)
+        if r:
+            did.append(r)
+    except Exception as e:
+        did.append(f"subreddit digest failed ({str(e)[:60]})")
+    try:
         n = enrich_library(deadline=time.time() + 12)
         if n:
             did.append(f"found posters for {n}")
@@ -3852,6 +3940,10 @@ def run_round(force=False, now=None, only=None):
             parts.append(f"Windows: {note}")
     if results:
         post_event("hub", "Round: " + "; ".join(parts) + ".")
+        try:
+            round_push(results)
+        except Exception as e:  # a notification never sinks a round
+            print(f"round push failed: {e!r}")
     return {"ok": True, "ran": results,
             "skipped": [a for a in ROUND_JOBS if a not in due], "no_job": idle}
 
@@ -4323,9 +4415,14 @@ def enrich_library(limit=6, deadline=None):
 
 
 def _follow_keys(it):
-    """Ways a headline might name this title: whole, or before a colon."""
+    """Ways a headline might name this title: whole, before a colon, or a
+    distinctive subtitle after it ("Hollow Knight: Silksong" -> "silksong")."""
     base = re.sub(r"\s+(?:S\d+|Season \d+|\d+(?:-\d+)?|Series|Trilogy|Movies)$", "", it["title"], flags=re.I)
-    keys = {_norm_title(base), _norm_title(re.split(r"[:(]| - ", base)[0])}
+    parts = re.split(r"[:(]| - ", base)
+    keys = {_norm_title(base), _norm_title(parts[0])}
+    sub = _norm_title(parts[1]) if len(parts) > 1 else ""
+    if len(sub) >= 6 and not re.match(r"(part|season|chapter|volume|vol|book|episode|the movie|the series)\b", sub):
+        keys.add(sub)
     return {k for k in keys if len(k) >= 5}
 
 
@@ -5640,6 +5737,14 @@ def rerun_projects(deadline):
     return did
 
 
+def _cmd_log(arg):
+    if not arg:
+        raise CommandError("Usage: /log bench 185 4x8")
+    r = james_command("log", {"sets": arg})
+    store().add_chat("james", r["text"][:4000], channel=home_channel("james"), buttons=r["buttons"])
+    return f"James: {r['text'].splitlines()[0][:120]} (see #{CHANNEL_IDS[home_channel('james')]['name']})"
+
+
 def _cmd_project(arg):
     if not arg:
         raise CommandError("Usage: /project <what you want found>, e.g. /project find me a job in Denver")
@@ -5671,6 +5776,7 @@ COMMANDS = [  # shown in the "/" menu in this order
     {"name": "remind", "args": "<when> <what> [every day] [until done]", "about": "Remi reminds you on your phone", "run": _cmd_remind},
     {"name": "reminders", "args": "", "about": "Remi lists your reminders", "run": _cmd_reminders},
     {"name": "forget", "args": "<number>", "about": "Remove a reminder", "run": _cmd_forget},
+    {"name": "log", "args": "<sets>, like bench 185 4x8", "about": "James logs it in Garage Gym", "run": _cmd_log},
     {"name": "spend", "args": "$42 groceries", "about": "Glass logs an expense", "run": _cmd_spend},
     {"name": "budget", "args": "", "about": "Glass posts this month's budget", "run": _cmd_budget},
     {"name": "chart", "args": "spending|daily|calendar|coverage|activity", "about": "Charter draws a chart", "run": _cmd_chart},
@@ -5824,6 +5930,14 @@ def wiring():
                                         + ("" if HOME_LOCATION else "; set HOME_LOCATION so \"here\" works")}
                                        if os.environ.get("GEMINI_API_KEY") else
                                        {"state": "off", "note": "Needs GEMINI_API_KEY"})})
+    srcs = [f"{len(LENZ_YOUTUBE)} YouTube" if LENZ_YOUTUBE else "", f"{len(LENZ_SUBREDDITS)} subreddits" if LENZ_SUBREDDITS else "",
+            (f"{len(LENZ_TWITCH)} Twitch" if TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET else "Twitch needs TWITCH_CLIENT_ID/SECRET")
+            if LENZ_TWITCH else ""]
+    last = float(store().get_meta("lenz:feeds:at") or 0)
+    rows.append({"agent": "lenz-feeds", "name": "Lenz's channels", "tier": "", "model": "YouTube, Reddit, Twitch", "testable": False,
+                 **({"state": "ok" if last else "off", "note": ", ".join(x for x in srcs if x)
+                     + (f"; checked {_ago(last)} ago" if last else "; checked from the 5-minute tick")} if lenz_feeds_on() or any(srcs) else
+                    {"state": "off", "note": "Not set: LENZ_YOUTUBE, LENZ_SUBREDDITS, LENZ_TWITCH (+ TWITCH_CLIENT_ID/SECRET)"})})
     boards = [n for n, on in (("Adzuna", ADZUNA_APP_ID and ADZUNA_APP_KEY), ("USAJOBS", USAJOBS_API_KEY and USAJOBS_EMAIL)) if on]
     rows.append({"agent": "jobs", "name": "Job boards (projects)", "tier": "", "model": "Adzuna, USAJOBS", "testable": False,
                  **({"state": "ok", "note": f"{' and '.join(boards)} linked; job projects use them before web search"} if boards else
@@ -5890,6 +6004,18 @@ def _cookie(headers, name):
     except Exception:
         return None
     return c[name].value if name in c else None
+
+
+ASK_KEY = os.environ.get("ASK_KEY", "")  # a key that can only ask (for the Siri Shortcut)
+
+
+def speakable(text):
+    """Chat text as something Siri can read: no links, markup or emoji clutter."""
+    t = re.sub(r"https?://\S+", "", str(text))
+    t = re.sub(r"^\s*\|?[\s:|-]+\|[\s:|-]*$", "", t, flags=re.M)  # table rules
+    t = re.sub(r"\[\d+\]|[*_`#>]|^\s*[-•]\s+|\|", " ", t, flags=re.M)
+    t = re.sub(r"Sources:\s*$", "", re.sub(r"\s+", " ", t)).strip()
+    return t
 
 
 def _auth_dashboard(query, headers):
@@ -6287,6 +6413,7 @@ body.typing .chat{height:100dvh}
 .meta .tier{font-size:10px;font-weight:750;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);border:1px solid var(--border);border-radius:5px;padding:0 4px}
 .meta time{font-size:11.5px;color:var(--muted)}
 .text{white-space:pre-wrap;overflow-wrap:anywhere}
+.msg-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .rcal{margin-top:16px}.rstrip{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x proximity;padding:8px 6px 10px;scroll-padding-left:6px;scrollbar-width:none}
 .rel{flex:none;width:112px;scroll-snap-align:start;color:inherit;text-decoration:none;text-align:center}
 .rel .rpic{position:relative;aspect-ratio:2/3;border-radius:10px;overflow:hidden;background:var(--surface2);border:1px solid var(--border)}
@@ -6906,6 +7033,25 @@ _CHAT_JS = r'''
         const img = document.createElement("img");
         img.src = m.image; img.alt = m.text.split("\n")[0]; img.className = "att"; img.loading = "lazy";
         body.append(img);
+      }
+      if (m.buttons && m.buttons.length) {
+        const acts = document.createElement("div");
+        acts.className = "msg-acts";
+        for (const bt of m.buttons) {
+          const x = document.createElement("button");
+          x.type = "button"; x.className = "btn small" + (bt.style === "primary" ? "" : " ghost"); x.textContent = bt.label;
+          x.onclick = async () => {
+            acts.querySelectorAll("button").forEach(y => y.disabled = true);
+            try {
+              const r = await fetch("/api/chat/press", {method: "POST", headers: H, body: JSON.stringify({msg: m.id, id: bt.id, value: bt.value, channel: C.channel})});
+              const d = await r.json();
+              if (!d.ok) throw new Error(d.error);
+              thread = d.messages; render();
+            } catch (err) { status.textContent = err.message; acts.querySelectorAll("button").forEach(y => y.disabled = false); }
+          };
+          acts.append(x);
+        }
+        body.append(acts);
       }
       row.append(avcol, body);
       out.push(row); prev = m;
@@ -8391,6 +8537,49 @@ def gmail_card(headers):
 GEMINI_NATIVE = "https://generativelanguage.googleapis.com/v1beta"  # Gemini's own API (web search)
 
 
+_QUIET = re.compile(r"^(nothing new|agenda unchanged|budgets on track(, stocks quiet)?|no chart due|no calendar linked|"
+                    r"no new headlines|nothing new to summarize|inbox unchanged|no budgets or expenses yet)$", re.I)
+
+
+def round_push(results):
+    """Settings → Round updates: one push when a round finishes, naming who
+    did something (quiet jobs are left out). Off by default."""
+    if store().get_meta("notify:rounds") != "on":
+        return None
+    busy = [f"{AGENTS[a]['name']}: {r['did'].split(';')[0][:60]}" for a, r in results.items()
+            if r["ok"] and not _QUIET.match(r["did"].strip())]
+    failed = [AGENTS[a]["name"] for a, r in results.items() if not r["ok"]]
+    if not busy and not failed:
+        return None
+    body = "; ".join(busy[:4]) + (f" (+{len(busy) - 4} more)" if len(busy) > 4 else "") + (
+        f"{'. ' if busy else ''}Failed: {', '.join(failed)}" if failed else "")
+    notify("Theta", "Round done. " + body, "/chat")
+    return body
+
+
+def siri_card(headers):
+    rp_id, origin = _rp(headers)
+    on = store().get_meta("notify:rounds") == "on"
+    return ('<section class="card stack" id="siri"><h2>Voice commands (Siri)</h2><p class="muted small">Ask the crew '
+            'hands-free: "Hey Siri, Ask Theta", then say it. Start with a name to ask someone ("Remi, remind me at 6 to '
+            'call Mom"); otherwise Mistral picks who answers. Siri reads the reply aloud.</p><ol class="small" style="margin:0;padding-left:1.2em;line-height:1.6">'
+            '<li>In Vercel, set <code>ASK_KEY</code> to a long random string (a key that can only ask), and redeploy.</li>'
+            '<li>Shortcuts app → <b>+</b> → name it <b>Ask Theta</b>.</li>'
+            '<li>Add <b>Dictate Text</b>.</li>'
+            f'<li>Add <b>Get Contents of URL</b>: <code>{html.escape(origin)}/api/ask</code>, Method <b>POST</b>, Header '
+            '<code>x-ask-key</code> = your ASK_KEY, Request Body <b>JSON</b> with <code>text</code> = <i>Dictated Text</i>.</li>'
+            '<li>Add <b>Get Dictionary Value</b>: key <code>speech</code>.</li>'
+            '<li>Add <b>Speak Text</b>: <i>Dictionary Value</i>.</li></ol>'
+            '<h3 style="margin-top:6px">Round updates</h3><p class="muted small">One notification when a round finishes, '
+            'saying which agents did something (quiet ones are left out).</p>'
+            '<div class="seg" role="group" aria-label="Round updates">'
+            f'<button type="button" data-roundnotify="on" class="{"on" if on else ""}">On</button>'
+            f'<button type="button" data-roundnotify="off" class="{"" if on else "on"}">Off</button></div>'
+            '<script>document.querySelectorAll("[data-roundnotify]").forEach(b=>b.onclick=async()=>{'
+            'const r=await fetch("/api/settings/notify",{method:"POST",headers:window.THETA_H,body:JSON.stringify({rounds:b.dataset.roundnotify==="on"})});'
+            'if((await r.json()).ok)document.querySelectorAll("[data-roundnotify]").forEach(x=>x.classList.toggle("on",x===b));});</script></section>')
+
+
 def settings_page(headers):
     theme, mode, layout = ui_prefs(headers)
     st = store()
@@ -8436,7 +8625,7 @@ def settings_page(headers):
         'type="button">Send a test</button></p><p class="note" id="push-status"></p></section>'
         f'<section class="card stack" id="security"><div class="hero" style="gap:12px">{avatar_img("qwerty", 40)}<div><h2>Security and health</h2>'
         '<p class="muted small">QWERTY checks this every round and tells you in #dev-and-security when it changes.</p></div></div>'
-        f'<ul class="list">{security_rows()}</ul></section>' + passkeys_card() + gmail_card(headers) +
+        f'<ul class="list">{security_rows()}</ul></section>' + passkeys_card() + gmail_card(headers) + siri_card(headers) +
         '<section class="card stack"><div class="brow"><h2>Rounds</h2></div><p class="muted small">Every agent does its '
         'job three times a day (Supabase Cron). Run one now to refresh the windows.</p>'
         f'<p><button class="btn" type="button" data-run-round="round-status-s">{ui_icon("play")}Run a round now</button></p>'
@@ -8866,6 +9055,203 @@ def release_strip():
             f'<script>{_RELEASE_JS}</script></section>')
 
 
+# ---- Lenz's channels: YouTube uploads, subreddits and Twitch, checked from
+# the 5-minute tick (every LENZ_FEEDS_MINUTES) so news lands quickly.
+# YouTube channels and Twitch going live are pushed; subreddits get a daily
+# digest of their top posts, and any post naming something you follow is
+# pushed right away.
+LENZ_YOUTUBE = [c.strip() for c in os.environ.get("LENZ_YOUTUBE", "").split(",") if c.strip()]  # UC... ids or @handles
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")  # only to turn @handles into channel ids
+LENZ_SUBREDDITS = [c.strip().removeprefix("r/") for c in os.environ.get("LENZ_SUBREDDITS", "").split(",") if c.strip()]
+LENZ_TWITCH = [c.strip().lower() for c in os.environ.get("LENZ_TWITCH", "").split(",") if c.strip()]
+TWITCH_CLIENT_ID = os.environ.get("TWITCH_CLIENT_ID", "")
+TWITCH_CLIENT_SECRET = os.environ.get("TWITCH_CLIENT_SECRET", "")
+LENZ_FEEDS_MINUTES = int(os.environ.get("LENZ_FEEDS_MINUTES", "10"))
+YOUTUBE_FEED = "https://www.youtube.com/feeds/videos.xml?channel_id="
+REDDIT_BASE = "https://www.reddit.com"
+TWITCH_API = "https://api.twitch.tv/helix"
+TWITCH_TOKEN_URL = "https://id.twitch.tv/oauth2/token"
+
+
+def lenz_feeds_on():
+    return bool(LENZ_YOUTUBE or LENZ_SUBREDDITS or (LENZ_TWITCH and TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET))
+
+
+def youtube_channel_ids():
+    """UC... ids for LENZ_YOUTUBE; @handles are looked up once (YOUTUBE_API_KEY)."""
+    known = _meta_json("lenz:yt:ids", {})
+    out, changed = [], False
+    for c in LENZ_YOUTUBE:
+        if c.startswith("UC"):
+            out.append(c)
+        elif c in known:
+            out.append(known[c])
+        elif YOUTUBE_API_KEY:
+            try:
+                items = _get_json("https://www.googleapis.com/youtube/v3/channels?" + urlencode(
+                    {"part": "id", "forHandle": c if c.startswith("@") else "@" + c, "key": YOUTUBE_API_KEY})).get("items") or []
+            except Exception:
+                items = []
+            if items:
+                known[c] = items[0]["id"]
+                out.append(items[0]["id"])
+                changed = True
+    if changed:
+        store().set_meta("lenz:yt:ids", json.dumps(known))
+    return out
+
+
+def youtube_uploads():
+    ids = youtube_channel_ids()
+    out = []
+    for cid, items in zip(ids, _fetch_feeds_with(lambda c: _feed_now(YOUTUBE_FEED + c), ids)):
+        for it in items[:5]:
+            vid = re.search(r"[?&]v=([\w-]{6,})", it["url"])
+            out.append(dict(it, kind="youtube", channel=it.get("source") or cid,
+                            image=it.get("image") or (f"https://i.ytimg.com/vi/{vid.group(1)}/hqdefault.jpg" if vid else None)))
+    return out
+
+
+def _feed_now(url, ua=None):
+    """A feed fetched fresh (no widget cache): these drive pushes."""
+    try:
+        if ua:
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": ua}), timeout=6) as resp:
+                return _parse_rss(resp.read())
+        return _parse_rss(_fetch_url(url))
+    except Exception:
+        return []
+
+
+def subreddit_top(sub, limit=3):
+    items = _feed_now(f"{REDDIT_BASE}/r/{quote(sub)}/top/.rss?t=day&limit={limit}", ua=WIKI_UA)  # Reddit wants a descriptive agent
+    return [dict(it, kind="reddit", sub=sub) for it in items[:limit]]
+
+
+def _twitch_token():
+    tok = _meta_json("lenz:twitch:token", {})
+    if tok.get("exp", 0) > time.time() + 60:
+        return tok["token"]
+    req = urllib.request.Request(TWITCH_TOKEN_URL, data=urlencode({"client_id": TWITCH_CLIENT_ID, "client_secret": TWITCH_CLIENT_SECRET,
+                                                                  "grant_type": "client_credentials"}).encode())
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            d = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        raise LLMError(f"Twitch sign-in returned {e.code}: check TWITCH_CLIENT_ID / TWITCH_CLIENT_SECRET")
+    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+        raise LLMError(f"Twitch unreachable: {e!r}")
+    store().set_meta("lenz:twitch:token", json.dumps({"token": d["access_token"], "exp": time.time() + int(d.get("expires_in", 3600))}))
+    return d["access_token"]
+
+
+def twitch_live():
+    """Which LENZ_TWITCH channels are live now: {login: stream}."""
+    if not (LENZ_TWITCH and TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET):
+        return {}
+    url = TWITCH_API + "/streams?" + urlencode([("user_login", c) for c in LENZ_TWITCH[:100]] + [("first", "100")])
+    try:
+        d = _get_json(url, {"Client-Id": TWITCH_CLIENT_ID, "Authorization": f"Bearer {_twitch_token()}"})
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            store().set_meta("lenz:twitch:token", "{}")
+        raise LLMError(f"Twitch returned {e.code}")
+    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+        raise LLMError(f"Twitch unreachable: {e!r}")
+    out = {}
+    for st in d.get("data", []):
+        tags = [str(t).lower() for t in st.get("tags") or []]
+        out[st["user_login"].lower()] = {
+            "name": st.get("user_name") or st["user_login"], "title": st.get("title", ""), "game": st.get("game_name", ""),
+            "viewers": st.get("viewer_count", 0), "url": f"https://www.twitch.tv/{st['user_login']}",
+            "drops": any("drops" in t for t in tags),
+            "image": (st.get("thumbnail_url") or "").replace("{width}", "640").replace("{height}", "360") or None}
+    return out
+
+
+def _mentions_followed(title):
+    t = _norm_title(title)
+    for it in library():
+        if it["status"] in ("current", "waiting", "paused", "queue") or it.get("beloved"):
+            if any(k and k in t for k in _follow_keys(it)):
+                return it["title"]
+    return None
+
+
+def lenz_feeds_check(now=None, force=False):
+    """From the tick: new uploads, streams going live, and subreddit posts
+    about what you follow. Posts in #screen and pushes; returns what it did."""
+    now = now or time.time()
+    st = store()
+    if not lenz_feeds_on() or (not force and now - float(st.get_meta("lenz:feeds:at") or 0) < LENZ_FEEDS_MINUTES * 60):
+        return []
+    st.set_meta("lenz:feeds:at", str(now))
+    did = []
+    first_run = st.get_meta("lenz:feeds:primed") != "1"  # don't announce a backlog the first time
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        f_yt = ex.submit(youtube_uploads) if LENZ_YOUTUBE else None
+        f_tw = ex.submit(twitch_live)
+        f_rd = ex.submit(lambda: [x for sub in LENZ_SUBREDDITS for x in subreddit_top(sub, 5)]) if LENZ_SUBREDDITS else None
+        uploads = f_yt.result(timeout=20) if f_yt else []
+        try:
+            live, tw_err = f_tw.result(timeout=20), None
+        except LLMError as e:
+            live, tw_err = None, str(e)
+        posts = f_rd.result(timeout=20) if f_rd else []
+    seen = _seen("lenz:yt")
+    fresh = [u for u in uploads if u["url"] not in seen and (not u.get("published") or now - u["published"] < 3 * 86400)]
+    for u in fresh:
+        _mark_seen("lenz:yt", u["url"])
+    if fresh and not first_run:
+        st.add_chat("lenz", "New on YouTube:\n" + "\n".join(f"- **{u['channel']}**: {u['title']}\n  {u['url']}" for u in fresh[:5]),
+                    channel="screen")
+        save_card("lenz", fresh[0]["title"], f"New from {fresh[0]['channel']}", fresh[0].get("image"), fresh[0]["url"], "YouTube")
+        notify("Lenz", f"{fresh[0]['channel']} posted: {fresh[0]['title']}" + (f" (+{len(fresh) - 1} more)" if len(fresh) > 1 else ""),
+               fresh[0]["url"])
+        did.append(f"{len(fresh)} new video{'s' if len(fresh) != 1 else ''}")
+    if live is not None:
+        was = set(_meta_json("lenz:twitch:live", []))
+        went = [s for login, s in live.items() if login not in was]
+        st.set_meta("lenz:twitch:live", json.dumps(sorted(live)))
+        if went and not first_run:
+            st.add_chat("lenz", "Live on Twitch:\n" + "\n".join(
+                f"- **{s['name']}**: {s['title']}" + (f" ({s['game']})" if s["game"] else "") + (" · drops on" if s["drops"] else "")
+                + f"\n  {s['url']}" for s in went), channel="screen")
+            s0 = went[0]
+            notify("Lenz", f"{s0['name']} is live" + (f" playing {s0['game']}" if s0["game"] else "") + (" (drops on)" if s0["drops"] else ""),
+                   s0["url"])
+            did.append(f"{len(went)} went live")
+    elif tw_err:
+        did.append(f"Twitch: {tw_err[:60]}")
+    seen_r = _seen("lenz:reddit")
+    hot = [(p, _mentions_followed(p["title"])) for p in posts if p["url"] not in seen_r]
+    hot = [(p, f) for p, f in hot if f]
+    for p, _ in hot:
+        _mark_seen("lenz:reddit", p["url"])
+    if hot and not first_run:
+        st.add_chat("lenz", "On Reddit about what you follow:\n" + "\n".join(
+            f"- **{f}** (r/{p['sub']}): {p['title']}\n  {p['url']}" for p, f in hot[:5]), channel="screen")
+        notify("Lenz", f"r/{hot[0][0]['sub']} on {hot[0][1]}: {hot[0][0]['title']}", hot[0][0]["url"])
+        did.append(f"{len(hot)} Reddit post{'s' if len(hot) != 1 else ''} about your list")
+    if first_run:
+        st.set_meta("lenz:feeds:primed", "1")
+        did.append("started watching your channels")
+    return did
+
+
+def subreddit_digest(today):
+    """Lenz's round, once a day: the top posts from each of your subreddits."""
+    if not LENZ_SUBREDDITS or store().get_meta("lenz:reddit:day") == today.isoformat():
+        return None
+    store().set_meta("lenz:reddit:day", today.isoformat())
+    groups = [(sub, subreddit_top(sub)) for sub in LENZ_SUBREDDITS]
+    lines = [f"**r/{sub}**\n" + "\n".join(f"- {p['title']}\n  {p['url']}" for p in posts) for sub, posts in groups if posts]
+    if not lines:
+        return "Reddit gave nothing back (it sometimes blocks servers)"
+    store().add_chat("lenz", "Today's top on your subreddits:\n\n" + "\n\n".join(lines), channel="screen")
+    return f"posted the subreddit digest ({len(lines)} subs)"
+
+
 def lenz_page(headers):
     lib = library()
     taste = taste_profile(lib)
@@ -9244,6 +9630,8 @@ def handle(method, path, query, headers, body):
                     for a, reply, err in ex.map(answer, agents):
                         if isinstance(reply, tuple):  # Charter's (caption, chart url)
                             st.add_chat(a, reply[0], image=reply[1], channel=ch)
+                        elif isinstance(reply, dict):  # James's workout reply, with buttons
+                            st.add_chat(a, reply["text"][:4000], channel=ch, buttons=reply["buttons"])
                         elif reply:
                             st.add_chat(a, reply.strip()[:4000], channel=ch)
                         else:
@@ -9314,6 +9702,62 @@ def handle(method, path, query, headers, body):
             if before != activity.strip()[:80]:
                 post_event(bot_id, f"{display_name(bot_id)} is now {activity.strip()[:80]}")
             return _json(200, {"ok": True})
+
+        if path == "/api/ask":  # Siri Shortcut: say it, the crew answers, Siri reads it out
+            ask_ok = ASK_KEY and hmac.compare_digest(str(headers.get("x-ask-key") or ""), ASK_KEY)
+            if not (ask_ok or _auth_dashboard(query, headers)):
+                return _json(401, {"ok": False, "error": "key required"})
+            text = str(data.get("text") or "").strip()[:2000]
+            if not text:
+                return _json(400, {"ok": False, "speech": "I didn't catch that."})
+            names = {v["name"].lower(): v["name"] for v in AGENTS.values()}
+            lead = re.match(r"^\s*(?:hey\s+|ok\s+)?([A-Za-z]+)[,.:!]?\s+", text)  # "Remi, remind me..." from dictation
+            if lead and lead.group(1).lower() in names:
+                text = f"@{names[lead.group(1).lower()]} " + text[lead.end():]
+            inner = {**headers, "x-dashboard-key": DASHBOARD_KEY} if DASHBOARD_KEY else headers
+            before = max([m["id"] for m in store().list_chat(ALLCHAT_KEEP)] + [0])
+            status, _, out, *_ = handle("POST", "/api/allchat", {}, inner, json.dumps(
+                {"text": text, "channel": str(data.get("channel") or "all")}).encode())
+            d = json.loads(out)
+            if d.get("command"):
+                return _json(200, {"ok": d.get("ok", False), "speech": speakable(d.get("result") or d.get("error") or "Done.")})
+            replies = [m for m in store().list_chat(ALLCHAT_KEEP) if m["id"] > before and m["from"] not in ("you", "hub")
+                       and m.get("kind") != "event"]
+            if not replies:
+                why = "; ".join(f"{k}: {v}" for k, v in (d.get("errors") or {}).items()) or d.get("error") or "Nobody answered."
+                return _json(200, {"ok": False, "speech": speakable(why)})
+            speech = " ".join(f"{chat_name(m['from'])} says: {speakable(m['text'])}" if len(replies) > 1 else speakable(m["text"])
+                              for m in replies)
+            return _json(200, {"ok": True, "speech": speech[:1500],
+                               "replies": [{"from": chat_name(m["from"]), "text": m["text"]} for m in replies]})
+
+        if path == "/api/settings/notify":
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            store().set_meta("notify:rounds", "on" if data.get("rounds") else "off")
+            return _json(200, {"ok": True})
+
+        if path == "/api/chat/press":  # a button on an agent's message (James's workout buttons)
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            mid, bid = data.get("msg"), str(data.get("id") or "")
+            m = next((x for x in store().list_chat(ALLCHAT_KEEP) if x["id"] == mid), None)
+            b = next((x for x in (m or {}).get("buttons") or [] if x["id"] == bid and x.get("value") == data.get("value")), None)
+            pressed = _meta_json("chat:pressed", [])
+            if not m or not b or m["from"] != "james":
+                return _json(400, {"ok": False, "error": "That button is gone."})
+            if mid in pressed:
+                return _json(409, {"ok": False, "error": "Already done."})
+            store().set_meta("chat:pressed", json.dumps((pressed + [mid])[-300:]))  # one press per message, like Discord
+            try:
+                r = james_command(component=bid, values=[b["value"]] if b.get("value") else [])
+            except LLMError as e:
+                store().set_meta("chat:pressed", json.dumps([x for x in _meta_json("chat:pressed", []) if x != mid]))
+                return _json(502, {"ok": False, "error": str(e)})
+            ch = message_channel(m)
+            store().add_chat("james", r["text"][:4000], channel=ch, buttons=r["buttons"])
+            return _json(200, {"ok": True, "messages": allchat_view(channel=str(data.get("channel") or ch)),
+                               "latest": latest_by_channel()})
 
         if path.startswith("/api/daily/"):
             if not _auth_dashboard(query, headers):
