@@ -382,6 +382,15 @@ stand-in. A refusal first falls back server-side to another Claude model
 Wiring shows the month's spend. Also set a spend limit in the Anthropic
 Console as a backstop: the hub's count is an estimate.
 
+**Free-quota limits (429s).** When a model says its quota is used up, the
+hub leaves it alone until it resets instead of retrying: for the delay it
+names (Gemini's `retryDelay`, Groq's "try again in 7.66s"), or for a daily
+quota until just after midnight Pacific, when Google resets free-tier
+daily quotas. Meanwhile the tier's fallback answers straight away, Gemini
+search and AI voices say when they'll be back, and Settings → Wiring shows
+which quota ran out. Picking who answers an un-mentioned message runs on
+Groq's miner (`ROUTER_TIER`), so it doesn't spend Gemini's daily quota.
+
 **Chat formatting.** Messages render a safe subset of markdown: tables,
 bullet, numbered and checklist items, code blocks, headings, **bold**,
 *italic*, `code` and https images. Everything is built as page elements,

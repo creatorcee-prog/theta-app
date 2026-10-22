@@ -103,6 +103,9 @@ ALLCHAT_MENTIONS = 3  # agents that may answer one message of yours
 # ("off" in ALLCHAT_AUTO keeps un-mentioned messages unanswered).
 ALLCHAT_AUTO = os.environ.get("ALLCHAT_AUTO", "on").lower() != "off"
 ALLCHAT_AUTO_MAX = int(os.environ.get("ALLCHAT_AUTO_MAX", "2"))
+# Who answers an un-mentioned message: a quick pick, so it runs on Groq's
+# miner by default and leaves Gemini's free daily quota for real replies.
+ROUTER_TIER = os.environ.get("ROUTER_TIER", "miner")
 # Rounds: Supabase Cron calls /api/round (Bearer CRON_SECRET) a few times a
 # day; an agent's job is skipped if it ran less than ROUND_MIN_GAP_MINUTES ago.
 CRON_SECRET = os.environ.get("CRON_SECRET", "")
@@ -1098,6 +1101,43 @@ def list_models(provider):
     return {"models": sorted(i.removeprefix("models/") for i in ids if i)}
 
 
+# A provider that says its quota is used up (429) is left alone until it
+# resets: the per-minute kind for the delay it gives, the per-day kind
+# until midnight Pacific (when Google resets free-tier daily quotas).
+# Meanwhile calls go straight to the fallback instead of retrying.
+def _quota_wait(raw):
+    """Seconds to leave a model alone after a 429, from its error body."""
+    if re.search(r"PerDay|per day|daily", raw, re.I):
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("America/Los_Angeles"))
+        midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time(), now.tzinfo)
+        return max(60, (midnight - now).total_seconds() + 60)
+    m = re.search(r'retryDelay"?\s*:\s*"?(\d+(?:\.\d+)?)s|(?:retry|try again) in (?:(\d+)m)?(\d+(?:\.\d+)?)\s*s', raw, re.I)
+    if not m:
+        return 30
+    secs = float(m.group(1)) if m.group(1) else 60 * int(m.group(2) or 0) + float(m.group(3))
+    return min(3600, max(5, secs + 1))
+
+
+def cool_down(provider, model, raw):
+    until = time.time() + _quota_wait(raw)
+    try:
+        cool = {k: v for k, v in _meta_json("llm:cooldown", {}).items() if v["until"] > time.time()}
+        cool[f"{provider}:{model}"] = {"until": until, "daily": bool(re.search(r"PerDay|per day|daily", raw, re.I))}
+        store().set_meta("llm:cooldown", json.dumps(cool))
+    except Exception:
+        pass  # never let bookkeeping cost a reply
+
+
+def cooling(provider, model):
+    """{until, daily} while this model is out of quota, else None."""
+    try:
+        c = _meta_json("llm:cooldown", {}).get(f"{provider}:{model}")
+    except Exception:
+        return None
+    return c if c and c["until"] > time.time() else None
+
+
 def _llm_error_text(provider, code, raw):
     """A readable error: the provider's own message instead of its JSON."""
     try:
@@ -1238,6 +1278,10 @@ def claude_chat(messages, max_tokens):
 
 
 def _llm_call(provider, model, messages, max_tokens):
+    c = cooling(provider, model)
+    if c:
+        until = datetime.fromtimestamp(c["until"], hub_tz())
+        raise LLMError(f"{provider} {model} is out of free quota until {_clock(until)}", retryable=True, timed_out=True)
     url, key_var = PROVIDERS[provider]
     key = os.environ.get(key_var, "")
     if not key:
@@ -1254,8 +1298,11 @@ def _llm_call(provider, model, messages, max_tokens):
             out = json.loads(resp.read())
         text = out["choices"][0]["message"].get("content") or ""
     except urllib.error.HTTPError as e:
-        raise LLMError(_llm_error_text(provider, e.code, e.read()[:2000].decode("utf-8", "replace")),
-                       retryable=e.code in _RETRYABLE)
+        raw = e.read()[:4000].decode("utf-8", "replace")
+        if e.code == 429:
+            cool_down(provider, model, raw)
+        raise LLMError(_llm_error_text(provider, e.code, raw), retryable=e.code in _RETRYABLE,
+                       timed_out=e.code == 429)  # no same-model retry into a quota wall
     except (urllib.error.URLError, TimeoutError) as e:
         timed_out = isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError)
         raise LLMError(f"{provider} call failed: {e!r}", retryable=True, timed_out=timed_out)
@@ -1428,7 +1475,7 @@ def pick_responders(thread, candidates=None):
     roster = "\n".join(f"- {a}: {AGENTS[a]['name']} ({TIER_LABELS[AGENTS[a]['tier']]}). "
                        f"{AGENTS[a]['role']}" for a in candidates)
     transcript = "\n".join(chat_line(m) for m in thread[-10:])
-    reply = llm_chat("low_brain", [
+    reply = llm_chat(ROUTER_TIER, [
         {"role": "system", "content": system_prompt("mistral")},
         {"role": "user", "content": "You route messages in the All Agents chat. Agents:\n"
          f"{roster}\n\nThe chat so far:\n{transcript}\n\nWhich agents should answer the "
@@ -5142,6 +5189,9 @@ def gemini_search(prompt, timeout=30):
     key = os.environ.get("GEMINI_API_KEY", "")
     if not key:
         raise LLMError("Web search needs GEMINI_API_KEY.")
+    c = cooling("gemini", GEMINI_SEARCH_MODEL)
+    if c:
+        raise LLMError(f"Gemini search is out of free quota until {_clock(datetime.fromtimestamp(c['until'], hub_tz()))}")
     body = {"model": GEMINI_SEARCH_MODEL, "tools": [{"type": "google_search"}],
             "input": [{"type": "user_input", "content": [{"type": "text", "text": prompt}]}]}
     req = urllib.request.Request(GEMINI_NATIVE + "/interactions", data=json.dumps(body).encode(), headers={
@@ -5150,7 +5200,10 @@ def gemini_search(prompt, timeout=30):
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        raise LLMError(f"Gemini search returned {e.code}: {e.read()[:200].decode('utf-8', 'replace')}")
+        raw = e.read()[:4000].decode("utf-8", "replace")
+        if e.code == 429:
+            cool_down("gemini", GEMINI_SEARCH_MODEL, raw)
+        raise LLMError(f"Gemini search returned {e.code}: {_llm_error_text('gemini', e.code, raw).split(': ', 1)[-1]}")
     except (urllib.error.URLError, TimeoutError, ValueError) as e:
         raise LLMError(f"Gemini search unreachable: {e!r}")
     text, cites, queries = "", [], 0
@@ -5646,6 +5699,12 @@ def wiring():
                                f"the low brain answered. {used}")
                 else:
                     row.update(state="ok", note=f"{MASTER_MODEL} connected, effort {MASTER_EFFORT}; {used}")
+            c = cooling(provider, model) if not (a["tier"] == "master" and master_ready()) else None
+            if c:
+                fb_p, fb_m = FALLBACK_LLM.get("low_brain" if a["tier"] == "master" else a["tier"], (None, "off"))
+                row.update(state="bad", note=f"{model}'s free {'daily' if c['daily'] else 'per-minute'} quota is used up until "
+                           f"{_clock(datetime.fromtimestamp(c['until'], hub_tz()))}"
+                           + (f"; {fb_m} answers meanwhile" if fb_m != "off" else ""))
             fb = recent_fallback(a["tier"])
             if fb and row["state"] == "ok":
                 row["note"] += (f". Busy {fb['ago']} ago, so {fb['model']} answered instead "
@@ -8290,6 +8349,9 @@ def agent_voice(agent, text):
     sha = hashlib.sha256(f"{GEMINI_TTS_MODEL}|{voice}|{style}|{clean}".encode()).hexdigest()
     if sha in _VOICE_CACHE:
         return _VOICE_CACHE[sha]
+    c = cooling("gemini", GEMINI_TTS_MODEL)
+    if c:
+        raise LLMError(f"AI voices are out of free quota until {_clock(datetime.fromtimestamp(c['until'], hub_tz()))}")
     body = {"model": GEMINI_TTS_MODEL,
             "input": [{"type": "user_input", "content": [{"type": "text", "text": clean, "annotations": [
                 {"type": "speech_metadata", "style": style}]}]}],
@@ -8301,7 +8363,10 @@ def agent_voice(agent, text):
         with urllib.request.urlopen(req, timeout=25) as resp:
             data = json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        raise LLMError(f"Gemini voices returned {e.code}: {e.read()[:200].decode('utf-8', 'replace')}")
+        raw = e.read()[:4000].decode("utf-8", "replace")
+        if e.code == 429:
+            cool_down("gemini", GEMINI_TTS_MODEL, raw)
+        raise LLMError(f"Gemini voices returned {e.code}: {_llm_error_text('gemini', e.code, raw).split(': ', 1)[-1]}")
     except (urllib.error.URLError, TimeoutError, ValueError) as e:
         raise LLMError(f"Gemini voices unreachable: {e!r}")
     audio = [c for st in data.get("steps", []) if st.get("type") == "model_output"
