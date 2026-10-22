@@ -32,6 +32,14 @@ Vercel's serverless model: `api/index.py` is one Python function,
    - `BOT_NAMES` — `bot-id:@name,...` (rename bots here any time)
    - `DASHBOARD_KEY` — recommended: the dashboard is public on the
      Vercel domain without it
+   - `MISTRAL_API_KEY` — the low brain (Mistral, from
+     console.mistral.ai). Until the paid master model is wired, it
+     also answers for master: chat, `/api/summary` and `master_work()`
+   - `GROQ_API_KEY` — miner and manager (from console.groq.com)
+   - Optional model overrides: `MINER_MODEL` (default
+     `llama-3.1-8b-instant`), `MANAGER_MODEL` (`llama-3.3-70b-versatile`),
+     `LOW_BRAIN_MODEL` (`mistral-small-latest`). A tier whose key is
+     missing answers chat with "…_API_KEY is not set" instead of failing
    - `NEWS_FEEDS`, `ENTERTAINMENT_FEEDS` — comma-separated feed URLs
      (defaults already work); `FITNESS_APP_URL` defaults to the
      deployed fitness app
@@ -55,6 +63,23 @@ test against a real Redis store.
 
 Same as the Railway build: `POST /api/report`, `POST /api/escalate`,
 `POST /api/commandeer`, `POST /api/orders/<id>/ack`,
-`POST /api/fitness`, `POST /api/summary` (dashboard key), `GET /` (dashboard), `GET /api/feed`,
+`POST /api/fitness`, `POST /api/summary` (dashboard key),
+`POST /api/chat` (dashboard key), `GET /` (dashboard), `GET /api/feed`,
 `GET /api/orders`, `GET /api/escalations`, `GET /api/widgets`,
 `GET /api/fitness`, `GET /api/bots`, `GET /api/tiers`.
+
+## Chat
+
+The dashboard has a chat box: pick a tier and talk to its model.
+History lives in the page (reload clears it). The same thing over
+the API:
+
+```sh
+curl -X POST https://<project>.vercel.app/api/chat \
+  -H "x-dashboard-key: $DASHBOARD_KEY" -H "Content-Type: application/json" \
+  -d '{"tier": "low_brain", "messages": [{"role": "user", "content": "hi"}]}'
+```
+
+`POST /api/summary` now asks the master tier (Mistral standing in)
+to summarize unprocessed reports, and marks them processed only when
+the call succeeds.
