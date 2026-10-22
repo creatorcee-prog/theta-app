@@ -1874,15 +1874,87 @@ def _mark_seen(key, url):
     store().set_meta(key, json.dumps(([url] + [u for u in _seen(key) if u != url])[:50]))
 
 
+def _theta_decisions(did):
+    """Decide escalations that reached the High Brain; an ORDER: reply also
+    issues a commandeer order."""
+    st = store()
+    done = set(json.loads(st.get_meta("theta:decided") or "[]"))
+    for e in [e for e in st.list_escalations(50, open_only=True)
+              if e["to_role"] == "master" and e["id"] not in done][:3]:
+        reply = llm_chat("master", [
+            {"role": "system", "content": system_prompt("theta")},
+            {"role": "user", "content": f"Escalation #{e['id']} from {display_name(e['from_bot'])}: "
+             f"{e['issue']}\nContext: {json.dumps(e.get('context') or {})[:600]}\nDecide in 2-3 "
+             "sentences. If the crew must act on it, start your reply with ORDER: and the order."}]).strip()
+        if reply.upper().startswith("ORDER:"):
+            order = reply[6:].strip()
+            oid = st.add_order(order[:500], "theta")
+            post_event("theta", f"Theta issued order #{oid}: {order[:200]}")
+            st.add_chat("theta", f"On #{e['id']}: {order}")
+            did.append(f"ordered on #{e['id']}")
+        else:
+            st.add_chat("theta", f"On #{e['id']}: {reply}")
+            did.append(f"decided #{e['id']}")
+        notify("Mistral", f"Theta decided #{e['id']}: {reply[:140]}")
+        done.add(e["id"])
+    st.set_meta("theta:decided", json.dumps(sorted(done)[-500:]))
+
+
+def week_facts(today):
+    """The week's real numbers for Theta's review."""
+    st = store()
+    since = datetime.combine(today - timedelta(days=6), datetime.min.time())
+    recent = [m for m in st.list_chat(ALLCHAT_KEEP)
+              if datetime.strptime(m["at"], "%Y-%m-%d %H:%M:%S") >= since]
+    talk = {}
+    for m in recent:
+        if m.get("kind") != "event" and m["from"] in AGENTS:
+            talk[AGENTS[m["from"]]["name"]] = talk.get(AGENTS[m["from"]]["name"], 0) + 1
+    escs = st.list_escalations(50)
+    facts = [f"All Agents posts this week: {sum(talk.values())} "
+             f"({', '.join(f'{k} {v}' for k, v in sorted(talk.items(), key=lambda x: -x[1])) or 'none'})",
+             f"Open escalations: {sum(1 for e in escs if e['status'] != 'resolved')}"]
+    week_spend = sum(e["amount"] for mth in {today.strftime("%Y-%m"), (today - timedelta(days=6)).strftime("%Y-%m")}
+                     for e in st.list_expenses(mth) if e["date"] >= (today - timedelta(days=6)).isoformat())
+    if GLASS_BUDGETS or week_spend:
+        over = [c for c, v in month_status().items() if v["budget"] and v["spent"] > v["budget"]]
+        facts.append(f"Spending this week: ${week_spend:,.2f}; over budget this month: {', '.join(over) or 'none'}")
+    if calendar_linked():
+        nxt = [o for o in calendar_events(today + timedelta(days=1), today + timedelta(days=7)) if not o["birthday"]]
+        bdays = [o["title"] for o in calendar_events(today + timedelta(days=1), today + timedelta(days=7)) if o["birthday"]]
+        facts.append(f"Next 7 days: {len(nxt)} calendar events" + (f"; birthdays: {', '.join(bdays)}" if bdays else ""))
+    last = st.get_meta("round:news:last")
+    if last:
+        facts.append(f"Latest story the news miners covered: {json.loads(last)['title']}")
+    return facts
+
+
 def _round_theta(ctx):
-    unprocessed = store().unprocessed_reports(50)
-    if not unprocessed:
-        return "nothing new to summarize"
-    r = summarize(unprocessed)
-    if not r["ok"]:
-        raise LLMError(r["error"])
-    n = r["unprocessed_count"]
-    return f"summarized {n} report{'s' if n != 1 else ''}"
+    """Summarize new reports, decide escalations that reached him, and post a
+    weekly review on Sundays."""
+    st = store()
+    did = []
+    unprocessed = st.unprocessed_reports(50)
+    if unprocessed:
+        r = summarize(unprocessed)
+        if not r["ok"]:
+            raise LLMError(r["error"])
+        n = r["unprocessed_count"]
+        did.append(f"summarized {n} report{'s' if n != 1 else ''}")
+    _theta_decisions(did)
+    today = datetime.now(hub_tz()).date()
+    if today.weekday() == 6 and st.get_meta("round:theta:week") != today.isoformat():
+        facts = week_facts(today)
+        review = llm_chat("master", [
+            {"role": "system", "content": system_prompt("theta")},
+            {"role": "user", "content": "Write this week's review for the crew in 4-6 sentences, then "
+             "'Priorities for next week:' with 2-3 bullets. Use only these facts; don't invent "
+             "numbers or events:\n" + "\n".join(f"- {f}" for f in facts)}], max_tokens=900)
+        st.add_chat("theta", f"Weekly review ({today:%b %d}):\n{review.strip()}")
+        st.set_meta("round:theta:week", today.isoformat())
+        notify("Mistral", "Theta's weekly review is in.")
+        did.append("posted the weekly review")
+    return ", ".join(did) or "nothing new to summarize"
 
 
 def _round_mistral(ctx):
