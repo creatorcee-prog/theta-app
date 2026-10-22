@@ -1905,23 +1905,32 @@ _PUSH_JS = """
       : "On iPhone: Share, then Add to Home Screen. Open Bot Hub from the Home Screen and tap Turn on here.";
     return;
   }
-  let key = null, problem = "";
+  let key = null, problem = "", devices = 0;
   try {
     const r = await fetch("/api/push/key", {headers: PH});
     if (r.status === 401) problem = "This app isn't signed in: open it once with ?key=YOUR_KEY, then add it to the Home Screen again.";
-    else { const d = await r.json(); key = d.publicKey; problem = d.problem || ""; }
+    else { const d = await r.json(); key = d.publicKey; problem = d.problem || ""; devices = d.devices || 0; }
   } catch (_) { problem = "Couldn't reach the hub to check notifications."; }
   const sub = await reg.pushManager.getSubscription();
-  status.textContent = sub ? "Notifications are on for this device." : problem;
+  // The phone's own copy can outlive the server's (or predate new keys), so trust the server's count.
+  status.textContent = problem || (sub && devices ? "Notifications are on for this device."
+    : "Tap Turn on to get notifications on this device.");
   document.getElementById("push-on").onclick = async () => {
     const perm = await Notification.requestPermission();  // first: iOS needs the tap's user gesture
     if (perm !== "granted") { status.textContent = "Notifications were not allowed. To retry on iPhone, remove the Home Screen app and add it again."; return; }
     if (!key) { status.textContent = problem || "Phone notifications aren't set up on the server yet."; return; }
-    const raw = atob(key.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - key.length % 4) % 4));
-    const s = await reg.pushManager.subscribe({userVisibleOnly: true,
-      applicationServerKey: Uint8Array.from(raw, c => c.charCodeAt(0))});
-    const d = await (await fetch("/api/push/subscribe", {method: "POST", headers: PH, body: JSON.stringify({subscription: s})})).json();
-    status.textContent = d.ok ? "Notifications are on for this device." : "Couldn't turn on: " + d.error;
+    try {
+      // A sign-up made under older keys blocks a new one, so always start fresh.
+      const old = await reg.pushManager.getSubscription();
+      if (old) await old.unsubscribe();
+      const raw = atob(key.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - key.length % 4) % 4));
+      const s = await reg.pushManager.subscribe({userVisibleOnly: true,
+        applicationServerKey: Uint8Array.from(raw, c => c.charCodeAt(0))});
+      const d = await (await fetch("/api/push/subscribe", {method: "POST", headers: PH, body: JSON.stringify({subscription: s})})).json();
+      status.textContent = d.ok ? "Notifications are on for this device." : "Couldn't turn on: " + d.error;
+    } catch (e) {
+      status.textContent = "Couldn't turn on: " + (e && e.message || e) + ". Try removing the Home Screen app and adding it again.";
+    }
   };
   document.getElementById("push-test").onclick = async () => {
     const d = await (await fetch("/api/push/test", {method: "POST", headers: PH, body: "{}"})).json();
@@ -3349,7 +3358,7 @@ def handle(method, path, query, headers, body):
             return _json(401, {"ok": False, "error": "dashboard key required"})
         problem = push_problem()
         return _json(200, {"ok": True, "publicKey": None if problem else VAPID_PUBLIC_KEY,
-                           "problem": problem[1] if problem else None})
+                           "problem": problem[1] if problem else None, "devices": len(push_subs())})
     if path == "/api/push/health":
         # Public on purpose: says whether push is configured, never with what.
         problem = push_problem()
