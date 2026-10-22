@@ -112,7 +112,9 @@ ABILITIES = {
             "phone reminders (\"remind me at 8am every day to take my meds until done\"). "
             "You can't add or change calendar events or text anyone, and Discord moderation "
             "isn't built yet",
-    "lenz": "recommend from TMDB's trending list and the entertainment feeds",
+    "lenz": "recommend from TMDB's trending list and the entertainment feeds, keep the user's library "
+            "(what they watch, play and read, their ratings and rankings), log what they finish "
+            "(\"I finished Frieren, 9/10\"), post news about titles they follow, and a weekly taste report",
     "red": "read your outlets' headlines and give your take on the top story. You can't search "
            "beyond those feeds", "blue": "read your outlets' headlines and give your take on the "
            "top story. You can't search beyond those feeds", "gray": "read your outlets' "
@@ -1024,6 +1026,7 @@ def system_prompt(agent_id):
             extra = ("\n\nWhat's current (only these facts; say so rather than guess):"
                      + "".join(f"\n- Trending: {tmdb_fact_line(i)}" for i in trending)
                      + "".join(f"\n- In the feeds: {t}" for t in charts))
+        extra += lenz_context()
     if agent_id in SIDE_FEEDS:
         latest = side_headlines(agent_id)
         if latest:
@@ -1233,6 +1236,10 @@ def allchat_reply(agent, thread):
         chart = charter_reply(thread[-1]["text"])
         if chart:
             return chart  # (caption, image url): the caller posts it with the image
+    if agent == "lenz" and thread[-1]["from"] == "you":
+        quick = lenz_quick_reply(thread[-1]["text"])
+        if quick:
+            return quick
     if agent == "remi" and thread[-1]["from"] == "you":
         quick = remi_quick_reply(thread[-1]["text"])
         if quick:
@@ -2635,6 +2642,51 @@ def _round_news(agent):
 
 
 def _round_lenz(ctx):
+    """Keep your library current (doc and MyAnimeList syncs once a day,
+    posters and genres), post news about what you follow, Sunday's taste
+    report, then pitch one new trending title."""
+    st = store()
+    did = []
+    today = datetime.now(hub_tz()).date()
+    if st.get_meta("round:lenz:sync_day") != today.isoformat():
+        for label, fn in (("your doc", sync_library_doc), ("MyAnimeList", sync_mal)):
+            try:
+                r = fn()
+                if r:
+                    did.append(f"synced {label} ({r['added']} new)")
+            except LLMError as e:
+                did.append(f"couldn't sync {label}: {str(e)[:80]}")
+        st.set_meta("round:lenz:sync_day", today.isoformat())
+    try:
+        n = enrich_library(deadline=time.time() + 12)
+        if n:
+            did.append(f"found posters for {n}")
+    except Exception as e:  # cosmetic: never sink the round
+        did.append(f"poster lookup failed ({str(e)[:60]})")
+    seen = _seen("round:lenz:news")
+    fresh = [n for n in followed_news() if n["url"] not in seen][:3]
+    if fresh:
+        st.add_chat("lenz", "News on what you follow:\n" + "\n".join(
+            f"- {n['about']}: {n['title']} ({n['source']})\n  {n['url']}" for n in fresh), channel="screen")
+        for n in fresh:
+            _mark_seen("round:lenz:news", n["url"])
+            if n["waiting"]:
+                notify("Lenz", f"{n['about']}: {n['title']}", n["url"])
+        did.append(f"posted {len(fresh)} news item{'s' if len(fresh) != 1 else ''} on what you follow")
+    if today.weekday() == 6 and st.get_meta("round:lenz:week") != today.isoformat() and library():
+        st.add_chat("lenz", lenz_week_report(today), channel="screen")
+        st.set_meta("round:lenz:week", today.isoformat())
+        did.append("posted your weekly taste report")
+    try:
+        did.append(_lenz_pitch())
+    except LLMError as e:
+        if not did:
+            raise
+        did.append(f"no pitch ({str(e)[:60]})")
+    return ", ".join(did)
+
+
+def _lenz_pitch():
     """Pitch one new trending title (TMDB facts when linked, else the feeds)."""
     trending = tmdb_trending()
     item = next((i for i in trending if i["url"] not in _seen("round:lenz:seen")), None)
@@ -2828,6 +2880,556 @@ def run_round(force=False, now=None, only=None):
         post_event("hub", "Round: " + "; ".join(parts) + ".")
     return {"ok": True, "ran": results,
             "skipped": [a for a in ROUND_JOBS if a not in due], "no_job": idle}
+
+
+# ---- Lenz's library: everything you watch, play and read, with your
+# progress, ratings and rankings. Imported from your log (a Google Doc's
+# text, pasted or synced from LENZ_DOC_URL) and kept here after that.
+# MyAnimeList (MAL_CLIENT_ID + MAL_USERNAME) syncs your anime list in.
+KINDS = {"G": "game", "AN": "anime", "S": "show", "M": "movie", "MW": "manhwa", "WN": "web novel",
+         "B": "book", "C": "comic", "P": "musical", "MANGA": "manga"}
+KIND_LABELS = {"game": "Game", "anime": "Anime", "show": "TV", "movie": "Movie", "manhwa": "Manhwa",
+               "web novel": "Web novel", "book": "Book", "comic": "Comic", "musical": "Musical", "manga": "Manga"}
+STATUSES = {"current": "Now", "queue": "Up next", "waiting": "Waiting", "done": "Finished",
+            "paused": "Paused", "dropped": "Dropped"}
+LENZ_DOC_URL = os.environ.get("LENZ_DOC_URL", "")
+_LIB_LOCK = threading.Lock()
+_CODE = r"(?:AN|MW|WN|MANGA|G|S|M|B|C|P)"
+_NOTE_START = re.compile(
+    r"^(waiting|updates|stopped|cannot|multiple|manga only|ongoing|light novel|obscure|limited|too vague|"
+    r"does not|children|experimental|chinese|high fan|adult swim|\d{4} |early|read |rewatch)", re.I)
+_PROGRESS = re.compile(r"^(?:ep|eps|episode|ch|chapter|vol|volume|season|s\d+)\b", re.I)
+
+
+def _norm_title(title):
+    t = re.sub(r"^(the|a|an) ", "", title.lower().replace("’", "'"))
+    return re.sub(r"[^a-z0-9]", "", t)
+
+
+def parse_media_line(line):
+    """One line of the log -> {title, kind, progress, with, note, times,
+    scores, eps, hours, price, paused}. Unknown bits stay in the title."""
+    s = " " + line.replace("’", "'").strip() + " "
+    out = {"kind": None, "progress": "", "with": "", "notes": [], "times": 0, "scores": {}, "eps": None,
+           "hours": None, "price": "", "paused": False}
+
+    def cut(pattern, flags=re.I):
+        nonlocal s
+        found = list(re.finditer(pattern, s, flags))
+        for m in reversed(found):
+            s = s[:m.start()] + " " + s[m.end():]
+        return found
+    for m in cut(r"\(\s*w/\s*([^)]*)\)"):
+        inner = m.group(1)
+        p = re.search(r"(?:S\d+\s*)?Ep\s*\d+", inner, re.I)
+        if p:
+            out["progress"] = p.group(0)
+            inner = inner.replace(p.group(0), "")
+        out["with"] = " ".join(inner.split()).strip(" ,")
+    codes = cut(r"\(\s*(" + _CODE + r"(?:\s*[+/]\s*" + _CODE + r")?)\s*\??\s*\)")
+    codes += cut(r"(?<=\s)-\s*(" + _CODE + r"(?:\s*[+/]\s*" + _CODE + r")?)(?=[\s\dx+]*$)")
+    if codes:
+        out["kind"] = KINDS.get(re.split(r"[+/]", codes[-1].group(1))[0].strip().upper())
+    times = [int(m.group(1)) for m in cut(r"\b(\d{1,2})x\+?(?=\s|$)")]
+    out["times"] = max(times) if times else 0
+    for m in cut(r"\$(\d+)"):
+        out["price"] = f"${m.group(1)}"
+    for m in cut(r"\b(IMDB|MAL)\s*(\d{1,2}(?:\.\d)?)(?:\s*[/,])?", flags=0):
+        out["scores"][m.group(1)] = float(m.group(2))
+    for m in cut(r"\(\s*(Movie|~?\d+\+?\s*eps)\b([^)]*)\)"):
+        if m.group(1).lower() == "movie":
+            out["kind"] = out["kind"] or "movie"
+        else:
+            out["eps"] = int(re.sub(r"\D", "", m.group(1)))
+        h = re.search(r"([\d.]+)\s*hrs", m.group(0))
+        out["hours"] = float(h.group(1)) if h else None
+    for m in cut(r"\(\s*([\d.]+)\s*hrs\)"):
+        out["hours"] = float(m.group(1))
+    for m in cut(r"\(?\bstopped at ([^)\-]*?)\)?(?=\s-|\s*$)"):
+        out["notes"].append(f"Stopped at {m.group(1).strip()}")
+        out["paused"] = True
+    for m in cut(r"\((rewatch|read [^)]*|sub|dub|netflix|youtube|adult swim|as of [^)]*|ongoing [^)]*|"
+                 r"unknown[^)]*|\d{4}s)\)"):
+        out["notes"].append(m.group(1).strip().capitalize())
+    segs = [x.strip(" -") for x in re.split(r"\s+-\s*|\s*-\s+", s.strip())]
+    segs = [x for x in segs if x]
+    title = segs[0] if segs else ""
+    for seg in segs[1:]:
+        if _PROGRESS.match(seg) and not out["progress"]:
+            out["progress"] = seg
+        elif _NOTE_START.match(seg):
+            out["notes"].append(seg.rstrip("."))
+        else:
+            title += " - " + seg
+    title = re.sub(r"^watching\s+", "", title, flags=re.I)
+    m = re.search(r"\s((?:S\d+\s*)?Ep\s*\d+\??)$", title, re.I)  # "Old Country Bumpkin ... Ep 5"
+    if m and not out["progress"]:
+        out["progress"], title = m.group(1), title[:m.start()]
+    out["title"] = " ".join(title.split()).strip(" -:,")
+    out["note"] = "; ".join(out.pop("notes"))
+    return out
+
+
+_HEADINGS = [
+    (r"^key\b", {"section": "key"}),
+    (r"^waiting for new", {"section": "waiting"}),
+    (r"^current\b", {"section": "current"}),
+    (r"^in queue\b", {"section": "queue"}),
+    (r"^overall rankings\b", {"section": "ranked"}),
+    (r"^rankings\b", {"section": "done"}),
+    (r"^most beloved\b", {"section": "beloved"}),
+    (r"^games?$", {"medium": "game"}),
+    (r"^video$", {"medium": "video"}),
+    (r"^text$", {"medium": "text"}),
+    (r"^([sabcd])-tier\b", {"tier": 1}),
+    (r"^anime$", {"kind": "anime"}),
+    (r"^tv series", {"kind": "show"}),
+    (r"^movies\b", {"kind": "movie"}),
+    (r"^(family|main|other)$", {"group": 1}),
+]
+
+
+def parse_media_log(text):
+    """A log like your Google Doc ("Current", "In Queue", "Rankings",
+    "Overall Rankings", type codes like (AN)) -> list of entries."""
+    state = {"section": None, "medium": None, "tier": None, "kind": None, "group": None}
+    out, parent_indent, last = [], None, None
+    for raw in text.replace("﻿", "").splitlines():
+        if not raw.strip() or re.match(r"^\s*[_\-=]{4,}\s*$", raw) or "end list" in raw:
+            continue
+        indent = len(raw) - len(raw.lstrip())
+        m = re.match(r"^\s*(?:[*•●○■-]|\d+\.)\s+(.*)$", raw)
+        item = m is not None
+        content = (m.group(1) if m else raw).strip().lstrip("#").strip()
+        bare = re.sub(r"\s*\(.*$", "", content).strip(" :").lower()
+        head = next(((pat, upd) for pat, upd in _HEADINGS if re.match(pat, bare)), None)
+        if head and (not item or bare in ("family", "main", "other", "tv series")):
+            hm = re.match(head[0], bare)
+            for k, v in head[1].items():
+                state[k] = hm.group(1).upper() if (v == 1 and k == "tier") else (
+                    hm.group(1).title() if v == 1 else v)
+            if "section" in head[1]:
+                state.update(medium=None, tier=None, kind=None, group=None)
+            if "medium" in head[1]:
+                state.update(kind=None, group=None)
+            if "tier" in head[1]:
+                state["kind"] = None
+            parent_indent = indent if "group" in head[1] else None
+            last = None
+            continue
+        sec = state["section"]
+        if sec in (None, "key") or (not item and sec != "beloved"):
+            continue  # descriptions like "Highest quality shows - worth prioritizing"
+        if last is not None and item and indent > (last["_indent"]):
+            last["note"] = "; ".join(x for x in (last["note"], content.strip()) if x)  # a nested detail
+            continue
+        e = parse_media_line(content)
+        if not e["title"]:
+            continue
+        e["kind"] = e["kind"] or state["kind"] or {"game": "game"}.get(state["medium"]) or (
+            ("anime" if "MAL" in e["scores"] else "show") if e["eps"] else None)
+        e.update(status={"waiting": "waiting", "current": "current", "queue": "queue", "done": "done",
+                         "ranked": "done", "beloved": "done"}[sec], tier=state["tier"] if sec == "queue" else None,
+                 group=state["group"] if sec == "current" else None, rank=None, beloved=sec == "beloved",
+                 _indent=indent)
+        if e["paused"] and e["status"] == "done":
+            e["status"] = "paused"
+        if sec == "ranked":
+            e["rank"] = sum(1 for x in out if x.get("rank")) + 1
+        out.append(e)
+        last = e
+    for e in out:
+        e.pop("_indent", None)
+        e.pop("paused", None)
+    return out
+
+
+def library():
+    return _meta_json("lenz:lib", [])
+
+
+def _save_library(lib):
+    store().set_meta("lenz:lib", json.dumps(lib))
+
+
+_STATUS_RANK = {"current": 5, "waiting": 4, "paused": 3, "queue": 2, "done": 1, "dropped": 0}
+
+
+def merge_into_library(entries, source="import"):
+    """Add or update entries by title. Your ratings and finish dates are
+    never overwritten; a title in several sections keeps its liveliest
+    status (watching beats waiting beats up next beats finished)."""
+    with _LIB_LOCK:
+        lib = library()
+        by_key = {_norm_title(x["title"]): x for x in lib}
+        added = updated = 0
+        for e in entries:
+            key = _norm_title(e["title"])
+            if not key:
+                continue
+            cur = by_key.get(key)
+            if not cur:
+                cur = {"id": max([x["id"] for x in lib] + [0]) + 1, "title": e["title"], "kind": e.get("kind"),
+                       "status": e.get("status", "queue"), "progress": "", "with": "", "note": "", "times": 0,
+                       "rank": None, "tier": None, "group": None, "rating": None, "beloved": False, "scores": {},
+                       "eps": None, "hours": None, "price": "", "added": time.time(), "updated": time.time(),
+                       "done_at": None, "source": source}
+                lib.append(cur)
+                by_key[key] = cur
+                added += 1
+            else:
+                updated += 1
+                # What you set here (finished, started...) beats an older log.
+                if not cur.get("pinned") and _STATUS_RANK.get(e.get("status"), 0) > _STATUS_RANK.get(cur["status"], 0):
+                    cur["status"] = e["status"]
+            for k in ("kind", "progress", "with", "note", "tier", "group", "price", "eps", "hours"):
+                if e.get(k) and not cur.get(k):
+                    cur[k] = e[k]
+            for k in ("progress", "with", "note", "group") if e.get("status") == "current" and not cur.get("pinned") else ():
+                if e.get(k):
+                    cur[k] = e[k]
+            cur["times"] = max(cur.get("times") or 0, e.get("times") or 0)
+            cur["scores"] = {**(cur.get("scores") or {}), **(e.get("scores") or {})}
+            if e.get("rank"):
+                cur["rank"] = e["rank"]
+            if e.get("beloved"):
+                cur["beloved"] = True
+            if e.get("rating") and not cur.get("rating"):
+                cur["rating"] = e["rating"]
+            for k in ("mal_id", "image", "genres"):
+                if e.get(k) and not cur.get(k):
+                    cur[k] = e[k]
+        _save_library(lib)
+    return {"added": added, "updated": updated, "total": len(lib)}
+
+
+def update_library_item(iid, action, value=None):
+    """watched (value: rating or None), start, next (+1 episode/chapter),
+    rate, status, delete. Returns the item (or None) and a note for chat."""
+    with _LIB_LOCK:
+        lib = library()
+        it = next((x for x in lib if x["id"] == iid), None)
+        if not it:
+            return None
+        it["updated"] = time.time()
+        if action in ("watched", "start", "status", "next"):
+            it["pinned"] = True  # set here, so a re-imported log won't undo it
+        if action == "delete":
+            lib.remove(it)
+        elif action == "watched":
+            it.update(status="done", done_at=time.time(), times=(it.get("times") or 0) + (1 if it["status"] == "done" else 0))
+            if value is not None:
+                it["rating"] = max(1, min(10, int(value)))
+        elif action == "rate":
+            it["rating"] = max(1, min(10, int(value)))
+        elif action == "start":
+            it["status"] = "current"
+        elif action == "status" and value in STATUSES:
+            it["status"] = value
+        elif action == "next":
+            m = re.search(r"(\d+)(?!.*\d)", it.get("progress") or "")
+            unit = "Ch" if it.get("kind") in ("manhwa", "manga", "comic", "web novel", "book") else "Ep"
+            if m:
+                it["progress"] = it["progress"][:m.start()] + str(int(m.group(1)) + 1) + it["progress"][m.end():]
+            else:
+                it["progress"] = f"{unit} 1"
+        _save_library(lib)
+    return it
+
+
+def add_library_item(title, kind=None, status="queue"):
+    r = merge_into_library([{"title": title.strip()[:160], "kind": kind if kind in KIND_LABELS else None,
+                             "status": status if status in STATUSES else "queue"}], source="added")
+    return next((x for x in library() if _norm_title(x["title"]) == _norm_title(title)), None), r
+
+
+def taste_profile(lib=None, since=None):
+    """What your log says about your taste: counts and average rating per
+    kind, top-rated, and (with `since`) what you finished after it."""
+    lib = library() if lib is None else lib
+    done = [x for x in lib if x["status"] == "done"]
+    kinds = {}
+    for x in done:
+        k = kinds.setdefault(x.get("kind") or "other", {"n": 0, "rated": []})
+        k["n"] += 1
+        if x.get("rating"):
+            k["rated"].append(x["rating"])
+    genres = {}
+    for x in done:
+        for g in x.get("genres") or []:
+            genres[g] = genres.get(g, 0) + (x.get("rating") or 6)
+    recent = [x for x in done if since and (x.get("done_at") or 0) >= since]
+    return {"finished": len(done), "rated": sum(1 for x in done if x.get("rating")),
+            "kinds": {k: {"n": v["n"], "avg": round(sum(v["rated"]) / len(v["rated"]), 1) if v["rated"] else None}
+                      for k, v in sorted(kinds.items(), key=lambda kv: -kv[1]["n"])},
+            "genres": [g for g, _ in sorted(genres.items(), key=lambda kv: -kv[1])[:6]],
+            "top": [x["title"] for x in sorted(done, key=lambda x: (-(x.get("rating") or 0), x.get("rank") or 999))[:5]],
+            "recent": [{"title": x["title"], "rating": x.get("rating"), "kind": x.get("kind")} for x in recent]}
+
+
+def sync_library_doc():
+    """Re-import LENZ_DOC_URL (a Google Doc shared "anyone with the link")."""
+    if not LENZ_DOC_URL:
+        return None
+    m = re.search(r"/document/d/([\w-]+)", LENZ_DOC_URL)
+    url = f"https://docs.google.com/document/d/{m.group(1)}/export?format=txt" if m else LENZ_DOC_URL
+    try:
+        text = _fetch_url(url, timeout=10).decode("utf-8", "replace")
+    except Exception as e:
+        raise LLMError(f"couldn't read LENZ_DOC_URL ({str(e)[:80]}); is the doc shared 'anyone with the link'?")
+    if "<html" in text[:500].lower():
+        raise LLMError("LENZ_DOC_URL gave a web page, not the doc's text; share it 'anyone with the link'")
+    return merge_into_library(parse_media_log(text), source="doc")
+
+
+MAL_CLIENT_ID = os.environ.get("MAL_CLIENT_ID", "")
+MAL_USERNAME = os.environ.get("MAL_USERNAME", "")
+LENZ_NEWS_FEEDS = [u.strip() for u in os.environ.get(
+    "LENZ_NEWS_FEEDS",
+    "https://myanimelist.net/rss/news.xml,https://feeds.feedburner.com/ign/games-all,"
+    "https://www.gamespot.com/feeds/game-news,https://www.polygon.com/rss/index.xml").split(",") if u.strip()]
+_MAL_STATUS = {"watching": "current", "reading": "current", "completed": "done", "on_hold": "paused",
+               "dropped": "dropped", "plan_to_watch": "queue", "plan_to_read": "queue"}
+
+
+def lenz_context():
+    """The user's library, for Lenz's prompt: what they're on, waiting for,
+    their favorites and ratings, so his picks fit their taste."""
+    lib = library()
+    if not lib:
+        return ""
+    by = lambda st: [x for x in lib if x["status"] == st]
+    fmt = lambda x: x["title"] + (f" ({KIND_LABELS.get(x.get('kind'), '')}, {x['progress']})" if x.get("progress") else
+                                  f" ({KIND_LABELS.get(x.get('kind'), '')})" if x.get("kind") else "")
+    ranked = sorted((x for x in lib if x.get("rank")), key=lambda x: x["rank"])[:15]
+    rated = sorted((x for x in lib if x.get("rating")), key=lambda x: -x["rating"])[:10]
+    prof = taste_profile(lib)
+    parts = ["\n\nThe user's library (exact; it's theirs, so use it to fit picks to their taste):",
+             "Watching/playing/reading now: " + "; ".join(fmt(x) for x in by("current")[:20]),
+             "Waiting on new seasons: " + "; ".join(x["title"] for x in by("waiting")[:15]),
+             "Their all-time favorites, in order: " + "; ".join(x["title"] for x in ranked)]
+    if rated:
+        parts.append("Their ratings: " + "; ".join(f"{x['title']} {x['rating']}/10" for x in rated))
+    if prof["genres"]:
+        parts.append("Genres they rate highest: " + ", ".join(prof["genres"]))
+    parts.append(f"Up next: {len(by('queue'))} titles. Finished: {prof['finished']}, {prof['rated']} rated.")
+    return "\n".join(p for p in parts if not p.endswith(": "))
+
+
+def mal_entries():
+    """Your MyAnimeList anime and manga lists (public lists, read with
+    MAL_CLIENT_ID; no password needed)."""
+    if not (MAL_CLIENT_ID and MAL_USERNAME):
+        return []
+    out = []
+    for kind, path in (("anime", "animelist"), ("manga", "mangalist")):
+        fields = "list_status,genres,mean,media_type," + ("num_episodes" if kind == "anime" else "num_chapters")
+        url = (f"https://api.myanimelist.net/v2/users/{quote(MAL_USERNAME)}/{path}?"
+               + urlencode({"fields": fields, "limit": "1000", "nsfw": "true"}))
+        req = urllib.request.Request(url, headers={"X-MAL-CLIENT-ID": MAL_CLIENT_ID, "User-Agent": WIKI_UA})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read()).get("data", [])
+        except urllib.error.HTTPError as e:
+            raise LLMError(f"MyAnimeList returned {e.code}: check MAL_CLIENT_ID, and that "
+                           f"{MAL_USERNAME}'s list is public")
+        except (urllib.error.URLError, TimeoutError, ValueError) as e:
+            raise LLMError(f"MyAnimeList unreachable: {e!r}")
+        for row in data:
+            node, ls = row.get("node", {}), row.get("list_status", {})
+            done_n = ls.get("num_episodes_watched") or ls.get("num_chapters_read") or 0
+            mt = node.get("media_type") or ""
+            out.append({"title": node.get("title", ""), "status": _MAL_STATUS.get(ls.get("status"), "queue"),
+                        "kind": "anime" if kind == "anime" else ("manhwa" if mt == "manhwa" else
+                                                                  "web novel" if mt in ("novel", "light_novel") else "manga"),
+                        "progress": (f"{'Ep' if kind == 'anime' else 'Ch'} {done_n}" if done_n else ""),
+                        "rating": ls.get("score") or None, "mal_id": node.get("id"),
+                        "image": (node.get("main_picture") or {}).get("large"),
+                        "genres": [g["name"] for g in node.get("genres", [])],
+                        "scores": {"MAL": node["mean"]} if node.get("mean") else {}})
+    return out
+
+
+_READING = ("manga", "manhwa", "web novel", "comic", "book")
+
+
+def sync_mal():
+    rows = mal_entries()
+    if not rows:
+        return None
+    # The same title on your anime and manga lists stays two entries.
+    watch_keys = {_norm_title(x["title"]) for x in library() if x.get("kind") not in _READING}
+    watch_keys |= {_norm_title(r["title"]) for r in rows if r["kind"] == "anime"}
+    for r in rows:
+        if r["kind"] in _READING and _norm_title(r["title"]) in watch_keys:
+            r["title"] += " (manga)"
+    with _LIB_LOCK:  # MAL is newer than the doc for anime: its status wins
+        lib = library()
+        by_key = {_norm_title(x["title"]): x for x in lib}
+        for r in rows:
+            cur = by_key.get(_norm_title(r["title"]))
+            if cur and r["status"] != cur["status"]:
+                cur["status"] = r["status"]
+                if r["status"] == "done" and not cur.get("done_at"):
+                    cur["done_at"] = time.time()
+            if cur and r["progress"]:
+                cur["progress"] = r["progress"]
+        _save_library(lib)
+    return merge_into_library(rows, source="mal")
+
+
+def _jikan(kind, title):
+    """Anime or manga facts from Jikan (a free MyAnimeList mirror)."""
+    url = f"https://api.jikan.moe/v4/{kind}?" + urlencode({"q": title, "limit": "1", "sfw": "true"})
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": WIKI_UA}), timeout=8) as resp:
+            hit = (json.loads(resp.read()).get("data") or [None])[0]
+    except (urllib.error.URLError, TimeoutError, ValueError):
+        return None
+    if not hit:
+        return {}
+    return {"mal_id": hit.get("mal_id"), "image": ((hit.get("images") or {}).get("jpg") or {}).get("large_image_url"),
+            "genres": [g["name"] for g in (hit.get("genres") or []) + (hit.get("themes") or [])][:6],
+            "mal_score": hit.get("score")}
+
+
+def _tmdb_search(title):
+    if not TMDB_API_KEY:
+        return None
+    bearer = TMDB_API_KEY.startswith("eyJ")
+    url = TMDB_BASE + "/search/multi?" + urlencode({"query": title, **({} if bearer else {"api_key": TMDB_API_KEY})})
+    headers = {"User-Agent": WIKI_UA, "Accept": "application/json"}
+    if bearer:
+        headers["Authorization"] = f"Bearer {TMDB_API_KEY}"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=8) as resp:
+            hit = next((r for r in json.loads(resp.read()).get("results", []) if r.get("poster_path")), None)
+    except (urllib.error.URLError, TimeoutError, ValueError):
+        return None
+    return {"image": f"https://image.tmdb.org/t/p/w500{hit['poster_path']}"} if hit else {}
+
+
+def enrich_library(limit=6, deadline=None):
+    """Posters and genres for a few titles that have none (current first)."""
+    order = {"current": 0, "waiting": 1, "queue": 2, "paused": 3, "done": 4, "dropped": 5}
+    todo = sorted((x for x in library() if not x.get("looked_up")), key=lambda x: (order.get(x["status"], 9), x.get("rank") or 999))
+    found = {}
+    for it in todo[:limit]:
+        if deadline and time.time() > deadline:
+            break
+        kind = it.get("kind")
+        if kind in ("anime",):
+            facts = _jikan("anime", it["title"])
+        elif kind in ("manga", "manhwa", "web novel", "comic"):
+            facts = _jikan("manga", it["title"])
+        elif kind in ("movie", "show"):
+            facts = _tmdb_search(it["title"])
+        else:
+            facts = None
+        if facts is None and kind not in ("movie", "show", "anime", "manga", "manhwa", "web novel"):
+            answered, img = wiki_image(it["title"] + (" video game" if kind == "game" else ""))
+            facts = {"image": img} if answered else None
+        if facts is not None:
+            found[it["id"]] = facts
+        time.sleep(0.4)  # Jikan allows about 3 a second
+    if found:
+        with _LIB_LOCK:
+            lib = library()
+            for x in lib:
+                if x["id"] in found:
+                    f = found[x["id"]]
+                    x["looked_up"] = True
+                    for k in ("image", "genres", "mal_id"):
+                        if f.get(k) and not x.get(k):
+                            x[k] = f[k]
+                    if f.get("mal_score"):
+                        x.setdefault("scores", {})["MAL"] = f["mal_score"]
+            _save_library(lib)
+    return len(found)
+
+
+def _follow_keys(it):
+    """Ways a headline might name this title: whole, or before a colon."""
+    base = re.sub(r"\s+(?:S\d+|Season \d+|\d+(?:-\d+)?|Series|Trilogy|Movies)$", "", it["title"], flags=re.I)
+    keys = {_norm_title(base), _norm_title(re.split(r"[:(]| - ", base)[0])}
+    return {k for k in keys if len(k) >= 5}
+
+
+def followed_news(limit=12):
+    """Anime, manga and game news that names something you follow
+    (what you're on, waiting for, have paused, games up next, favorites)."""
+    follows = [x for x in library() if x["status"] in ("current", "waiting", "paused")
+               or (x["status"] == "queue" and x.get("kind") == "game") or x.get("beloved")]
+    keyed = [(k, x) for x in follows for k in _follow_keys(x)]
+    out, seen = [], set()
+    for it in outlet_items(LENZ_NEWS_FEEDS):
+        t = _norm_title(it["title"])
+        hit = next((x for k, x in keyed if k in t), None)
+        if hit and it["url"] not in seen:
+            seen.add(it["url"])
+            out.append(dict(it, about=hit["title"], waiting=hit["status"] == "waiting"))
+    out.sort(key=lambda i: -(i.get("published") or 0))
+    return out[:limit]
+
+
+def lenz_week_report(today):
+    """Sunday's taste report: what you finished, how you rated it, and how
+    your taste file moved since last week. Facts only; no model call."""
+    st = store()
+    since = time.time() - 7 * 86400
+    prof = taste_profile(since=since)
+    last = json.loads(st.get_meta("lenz:taste:last") or "null")
+    lines = [f"Your week in media (to {today:%b} {today.day}):"]
+    if prof["recent"]:
+        lines.append("Finished: " + ", ".join(f"{r['title']}" + (f" ({r['rating']}/10)" if r["rating"] else " (unrated)")
+                                                for r in prof["recent"]) + ".")
+    else:
+        lines.append("Nothing marked finished this week. Tap \"Watched it\" on my page when you finish something.")
+    for k, v in list(prof["kinds"].items())[:4]:
+        was = (last or {}).get("kinds", {}).get(k, {})
+        if v["avg"] is not None and was.get("avg") is not None and abs(v["avg"] - was["avg"]) >= 0.2:
+            lines.append(f"{KIND_LABELS.get(k, k.title())} average {'up' if v['avg'] > was['avg'] else 'down'} "
+                         f"to {v['avg']} (was {was['avg']}).")
+    if prof["genres"] and last and prof["genres"][:3] != last.get("genres", [])[:3]:
+        lines.append("Your top genres now: " + ", ".join(prof["genres"][:3]) + ".")
+    unrated = prof["finished"] - prof["rated"]
+    if unrated:
+        lines.append(f"{unrated} finished title{'s' if unrated != 1 else ''} still unrated; every rating sharpens your taste file.")
+    st.set_meta("lenz:taste:last", json.dumps(prof))
+    return "\n".join(lines)
+
+
+_WATCHED_RE = re.compile(r"\b(?:i )?(?:just )?(?:watched|finished|beat|read|completed)\s+(.+?)"
+                         r"(?:[\s,:-]+(\d{1,2})\s*(?:/\s*10|out of 10)?)?\s*[.!]?$", re.I)
+
+
+def lenz_quick_reply(text):
+    """'@lenz I finished Frieren, 9/10' logs it, no model call."""
+    m = _WATCHED_RE.search(re.sub(r"@\w+", "", text).strip())
+    if not m:
+        return None
+    title, rating = m.group(1).strip(" ,.!"), m.group(2)
+    rating = int(rating) if rating and 1 <= int(rating) <= 10 else None
+    key = _norm_title(title)
+    it = next((x for x in library() if _norm_title(x["title"]) == key), None) or next(
+        (x for x in library() if key and key in _norm_title(x["title"])), None)
+    if not it:
+        it, _ = add_library_item(title, status="done")
+    it = update_library_item(it["id"], "watched", rating)
+    return lenz_logged_line(it)
+
+
+def lenz_logged_line(it):
+    """Lenz's note when you finish something: the facts, and a nudge to rate."""
+    if not it.get("rating"):
+        return (f"Logged {it['title']} as finished. What would you give it out of 10? "
+                "Rating it teaches your taste file what you love.")
+    same = [x for x in library() if x["status"] == "done" and x.get("rating") and x.get("kind") == it.get("kind")]
+    better = sum(1 for x in same if x["rating"] < it["rating"])
+    plural = {"game": "games", "show": "shows", "movie": "movies", "web novel": "web novels", "book": "books",
+              "comic": "comics", "musical": "musicals"}.get(it.get("kind"), it.get("kind") or "titles")
+    rank = (f" That's above {better} of the {len(same) - 1} other {plural} you've rated." if len(same) > 1 else "")
+    return f"Logged {it['title']}: {it['rating']}/10.{rank}"
 
 
 # ---- Agent windows: each agent's latest output as a small card with a
@@ -3140,6 +3742,11 @@ def agent_windows(chat=None, cards=None):
     else:
         out["james"] = _win("james", "", "Link Garage Gym to see your training" if not GARAGE_GYM_SECRET
                             else "Garage Gym hasn't answered yet", james_img, title="Training")
+    if "lenz" in out:  # Lenz's window opens his library
+        now_on = [x for x in library() if x["status"] == "current"]
+        out["lenz"].update(href="/lenz", external=False, nosheet=True,
+                           sub=(f"On the go: {now_on[0]['title']}" + (f" (+{len(now_on) - 1} more)" if len(now_on) > 1 else ""))
+                           if now_on else out["lenz"]["sub"])
     return [out[a] for a in AGENTS if a in out]
 
 
@@ -4005,6 +4612,30 @@ body.typing .chat{height:100dvh}
 .bar i.bad{background:var(--bad)}
 .brow{display:flex;justify-content:space-between;gap:10px;font-weight:620}
 
+/* Lenz's library */
+.ltabs{display:flex;flex-wrap:nowrap;overflow-x:auto;max-width:100%;scrollbar-width:none}
+.ltabs::-webkit-scrollbar{display:none}
+.ltabs button{white-space:nowrap}
+.ltabs i{font-style:normal;font-size:11px;opacity:.7;margin-left:3px}
+.llist{list-style:none;margin:0 0 6px;padding:0;display:grid;gap:8px}
+@media (min-width:1000px){.llist{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.lrow{display:flex;gap:12px;align-items:flex-start;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:10px;min-width:0}
+.lpic{position:relative;flex:none;width:54px;height:76px;border-radius:10px;overflow:hidden;display:grid;place-items:center;
+ background:linear-gradient(135deg,var(--c1),var(--c2));color:#fff;font-weight:800;font-size:22px}
+.lpic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.lbody{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.ltitle{font-weight:700;line-height:1.25}
+.lchips{display:flex;flex-wrap:wrap;gap:4px}
+.lchips .chip{padding:2px 8px;font-size:11.5px}
+.chip.rated{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,var(--border))}
+.lacts{display:flex;gap:6px;flex-wrap:wrap}
+.lrank{flex:none;width:28px;text-align:right;font-weight:800;font-size:18px;color:var(--muted);padding-top:24px}
+.lgroup{margin:14px 0 8px}
+.rategrid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.rategrid .btn{font-size:18px;padding:12px 0}
+.field{width:100%;border:1px solid var(--border);background:var(--surface2);color:var(--text);border-radius:12px;padding:10px 12px;font:inherit}
+select.field{width:auto;flex:1;min-width:120px}
+
 /* Agent profile */
 .hero{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
 .hero .av{width:76px;height:76px}
@@ -4161,6 +4792,10 @@ _UI_JS_SRC = r'''
       if (/^https?:/.test(url)) { a.target = "_blank"; a.rel = "noopener"; a.textContent = "Read at " + label + " \u2197"; }
       acts.append(a);
     });
+    if (d.agent === "lenz") {
+      const w2 = el("a", "btn", "I've watched it"); w2.href = "/lenz?log=" + encodeURIComponent(d.title);
+      acts.append(w2);
+    }
     if (d.page) {
       const ask = el("a", "btn ghost", "Ask " + d.name); ask.href = "/chat?to=" + d.agent;
       const pg = el("a", "btn ghost", d.name + "'s page"); pg.href = d.page;
@@ -4625,7 +5260,8 @@ def win_html(w):
              "coverage": w.get("coverage"), "agent": w["agent"],
              "name": display_name(w["agent"]) if w["agent"] else "", "source": w.get("source") or "",
              "page": f"/agent/{w['agent']}" if w["agent"] in AGENTS else ""}
-    return (f'<a class="win" href="{html.escape(w["href"])}"{ext} data-sheet="{html.escape(json.dumps(sheet))}">'
+    sheet_attr = "" if w.get("nosheet") else f' data-sheet="{html.escape(json.dumps(sheet))}"'
+    return (f'<a class="win" href="{html.escape(w["href"])}"{ext}{sheet_attr}>'
             f'<div class="pic">{ph}{img}{tag}</div>'
             f'<div class="body"><div class="who">{who}<span class="t">{when}</span></div>'
             f'<div class="title">{html.escape(w["title"] or "")}</div>{sub}{coverage_html(w.get("coverage"))}</div></a>')
@@ -4940,6 +5576,254 @@ def money_page(headers):
         '<p><input id="csv-file" type="file" accept=".csv,text/csv"> <button class="btn" id="csv-import" type="button">Import</button></p>'
         f'<p class="note" id="csv-status"></p></section><script>{_BUDGET_JS}</script>')
     return page(headers, "Money", "/money", body)
+
+
+_LENZ_JS = r"""
+(() => {
+  // Lenz's library page: one JSON (window.LENZ), lists built per tab.
+  const L = window.LENZ, H = window.THETA_H;
+  const $ = s => document.querySelector(s);
+  const el = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text != null) x.textContent = text; return x; };
+  let tab = (location.hash || "#now").slice(1), kind = "all", sort = "rating";
+  const KIND_GROUP = {anime: "anime", show: "tv", movie: "movies", game: "games", manga: "reading", manhwa: "reading",
+                      "web novel": "reading", book: "reading", comic: "reading", musical: "movies"};
+  const byStatus = s => L.items.filter(x => x.status === s && (kind === "all" || KIND_GROUP[x.kind] === kind));
+  async function act(id, action, value) {
+    const d = await (await fetch("/api/lenz/items/" + id, {method: "POST", headers: H, body: JSON.stringify({action, value})})).json();
+    if (!d.ok) throw new Error(d.error);
+    const i = L.items.findIndex(x => x.id === id);
+    if (action === "delete") L.items.splice(i, 1); else L.items[i] = d.item;
+    return d;
+  }
+  function toast(t) { const n = $("#lenz-note"); n.textContent = t; }
+  function poster(x) {
+    const p = el("div", "lpic");
+    p.style.setProperty("--c1", L.colors[x.kind] ? L.colors[x.kind][0] : "#64748b");
+    p.style.setProperty("--c2", L.colors[x.kind] ? L.colors[x.kind][1] : "#334155");
+    p.append(el("span", "", (x.title.match(/[A-Za-z0-9]/) || ["?"])[0].toUpperCase()));
+    if (x.image) { const i = el("img"); i.src = x.image; i.alt = ""; i.loading = "lazy"; i.referrerPolicy = "no-referrer"; i.onerror = () => i.remove(); p.append(i); }
+    return p;
+  }
+  function row(x, opts) {
+    const li = el("li", "lrow"), body = el("div", "lbody"), chips = el("div", "lchips");
+    if (opts && opts.rank) li.append(el("span", "lrank", String(x.rank)));
+    li.append(poster(x));
+    body.append(el("div", "ltitle", x.title));
+    const add = (t, cls) => { if (t) chips.append(el("span", "chip" + (cls ? " " + cls : ""), t)); };
+    add(L.kinds[x.kind]); add(x.progress); add(x.with ? "with " + x.with : ""); add(x.tier ? x.tier + "-tier" : "");
+    add(x.rating ? "★ " + x.rating + "/10" : "", "rated"); add(x.times > 1 ? x.times + "x" : ""); add(x.beloved ? "♥ beloved" : "");
+    if (x.note) add(x.note);
+    body.append(chips);
+    const btns = el("div", "lacts");
+    const b = (label, fn, ghost) => { const k = el("button", "btn small" + (ghost ? " ghost" : ""), label); k.type = "button"; k.onclick = fn; btns.append(k); };
+    if (x.status === "current") {
+      if (x.kind !== "game" && x.kind !== "movie")
+        b("+1", async () => { const d = await act(x.id, "next"); toast(x.title + ": " + d.item.progress); render(); }, true);
+      b("Finished", () => rate(x));
+    } else if (x.status === "queue" || x.status === "waiting" || x.status === "paused") {
+      b("Start", async () => { await act(x.id, "start"); toast("Started " + x.title); render(); }, true);
+      b("Watched it", () => rate(x));
+    } else if (!x.rating) {
+      b("Rate", () => rate(x, true));
+    }
+    body.append(btns);
+    li.append(body);
+    return li;
+  }
+  // Rating sheet: 1-10, or skip
+  const dlg = el("dialog", "sheet");
+  document.body.append(dlg);
+  dlg.addEventListener("click", e => { if (e.target === dlg) dlg.close(); });
+  function rate(x, onlyRate) {
+    const box = el("div", "in");
+    box.append(el("h2", "", onlyRate ? "Rate " + x.title : "Finished " + x.title + "?"),
+               el("p", "muted small", "Out of 10. Lenz uses every rating to learn your taste."));
+    const grid = el("div", "rategrid");
+    for (let n = 1; n <= 10; n++) {
+      const k = el("button", "btn ghost", String(n)); k.type = "button";
+      k.onclick = async () => { dlg.close(); const d = await act(x.id, onlyRate ? "rate" : "watched", n); toast(d.line || ("Rated " + n + "/10")); render(); };
+      grid.append(k);
+    }
+    box.append(grid);
+    if (!onlyRate) {
+      const skip = el("button", "btn ghost small", "Finished, rate later"); skip.type = "button";
+      skip.onclick = async () => { dlg.close(); const d = await act(x.id, "watched", null); toast(d.line); render(); };
+      box.append(skip);
+    }
+    dlg.replaceChildren(el("div", "grab"), box);
+    dlg.showModal();
+  }
+  function list(items, opts) {
+    const ul = el("ul", "llist");
+    if (!items.length) ul.append(el("li", "empty", opts && opts.empty || "Nothing here yet."));
+    items.slice(0, opts && opts.limit || 400).forEach(x => ul.append(row(x, opts)));
+    return ul;
+  }
+  const VIEWS = {
+    now: () => {
+      const items = byStatus("current"), groups = {};
+      const gname = x => x.group || L.plural[x.kind] || "Other";
+      items.forEach(x => (groups[gname(x)] = groups[gname(x)] || []).push(x));
+      const f = document.createDocumentFragment();
+      if (!items.length) f.append(list([], {empty: "Nothing on the go. Start something from Up next."}));
+      for (const [g, xs] of Object.entries(groups)) { f.append(el("h3", "lgroup", g)); f.append(list(xs)); }
+      return f;
+    },
+    next: () => {
+      const items = byStatus("queue"), f = document.createDocumentFragment();
+      const tiers = [...new Set(items.map(x => x.tier || "Other"))].sort();
+      tiers.forEach(t => { f.append(el("h3", "lgroup", t === "Other" ? "Up next" : t + "-tier")); f.append(list(items.filter(x => (x.tier || "Other") === t))); });
+      if (!items.length) f.append(list([], {empty: "Your queue is empty."}));
+      return f;
+    },
+    waiting: () => list(byStatus("waiting").concat(byStatus("paused")), {empty: "Not waiting on anything."}),
+    done: () => {
+      const items = byStatus("done").slice();
+      const keyf = {rating: x => -(x.rating || 0) * 1000 + (x.rank || 999), recent: x => -(x.done_at || 0),
+                    rank: x => x.rank || 9999, az: x => x.title.toLowerCase()}[sort];
+      items.sort((a, b) => { const ka = keyf(a), kb = keyf(b); return ka < kb ? -1 : ka > kb ? 1 : 0; });
+      const f = document.createDocumentFragment(), bar = el("div", "chips lsort");
+      [["rating", "Your rating"], ["rank", "Ranking"], ["recent", "Recent"], ["az", "A–Z"]].forEach(([k, label]) => {
+        const c = el("button", "chip" + (sort === k ? " on" : ""), label); c.type = "button";
+        c.onclick = () => { sort = k; render(); }; bar.append(c);
+      });
+      const unrated = items.filter(x => !x.rating).length;
+      f.append(bar);
+      if (unrated) f.append(el("p", "muted small", unrated + " finished titles aren't rated yet. Tap Rate on any of them; it takes a second."));
+      f.append(list(items));
+      return f;
+    },
+    top: () => list(L.items.filter(x => x.rank && (kind === "all" || KIND_GROUP[x.kind] === kind)).sort((a, b) => a.rank - b.rank), {rank: true, empty: "No rankings yet."}),
+    taste: () => {
+      const f = document.createDocumentFragment(), t = L.taste;
+      const card = el("div", "card stack");
+      card.append(el("h3", "", "Your taste file"));
+      const tbl = el("table", "tbl"); tbl.style.minWidth = "0";
+      tbl.innerHTML = "<thead><tr><th>Kind</th><th>Finished</th><th>Avg rating</th></tr></thead>";
+      const tb = el("tbody");
+      Object.entries(t.kinds).forEach(([k, v]) => { const tr = el("tr"); tr.append(el("td", "", L.kinds[k] || k), el("td", "", String(v.n)), el("td", "", v.avg == null ? "–" : String(v.avg))); tb.append(tr); });
+      tbl.append(tb); card.append(tbl);
+      if (t.genres.length) card.append(el("p", "", "Genres you rate highest: " + t.genres.join(", ")));
+      if (t.top.length) card.append(el("p", "", "Your top rated: " + t.top.join(", ")));
+      card.append(el("p", "muted small", t.rated + " of " + t.finished + " finished titles rated."));
+      f.append(card);
+      if (L.report) { const r = el("div", "card stack"); r.style.marginTop = "12px"; r.append(el("h3", "", "Lenz's latest weekly report"), el("div", "text", L.report)); f.append(r); }
+      return f;
+    },
+    news: () => {
+      const ul = el("ul", "list");
+      if (!L.news.length) ul.append(el("li", "empty", "No news on what you follow right now. Lenz checks MyAnimeList, IGN, GameSpot and Polygon every round."));
+      L.news.forEach(n => {
+        const li = el("li"), a = el("a", "", n.title);
+        a.href = n.url; a.target = "_blank"; a.rel = "noopener";
+        li.append(a, el("div", "muted small", n.about + " · " + n.source));
+        ul.append(li);
+      });
+      return ul;
+    },
+  };
+  function render() {
+    document.querySelectorAll("[data-tab]").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
+    document.querySelectorAll("[data-kind]").forEach(b => b.classList.toggle("on", b.dataset.kind === kind));
+    const v = $("#lenz-view");
+    v.replaceChildren((VIEWS[tab] || VIEWS.now)());
+    const counts = {now: "current", next: "queue", waiting: "waiting", done: "done"};
+    document.querySelectorAll("[data-tab]").forEach(b => {
+      const s = counts[b.dataset.tab], n = b.querySelector("i");
+      if (s && n) n.textContent = byStatus(s).length + (s === "waiting" ? byStatus("paused").length : 0);
+    });
+  }
+  document.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { tab = b.dataset.tab; history.replaceState(null, "", "#" + tab); render(); });
+  document.querySelectorAll("[data-kind]").forEach(b => b.onclick = () => { kind = b.dataset.kind; render(); });
+  // Log something new
+  $("#lenz-add").onsubmit = async e => {
+    e.preventDefault();
+    const title = $("#lenz-title").value.trim(), k = $("#lenz-kind").value, st = $("#lenz-status").value;
+    if (!title) return;
+    const d = await (await fetch("/api/lenz/items", {method: "POST", headers: H, body: JSON.stringify({title, kind: k, status: st})})).json();
+    if (!d.ok) { toast(d.error); return; }
+    $("#lenz-title").value = "";
+    const i = L.items.findIndex(x => x.id === d.item.id);
+    if (i >= 0) L.items[i] = d.item; else L.items.push(d.item);
+    toast("Added " + d.item.title + ".");
+    if (st === "done") rate(d.item, false); else { tab = {current: "now", queue: "next", waiting: "waiting"}[st] || "next"; render(); }
+  };
+  // Import your log
+  $("#lenz-import").onclick = async () => {
+    const text = $("#lenz-paste").value;
+    if (!text.trim()) { $("#lenz-import-note").textContent = "Paste your log's text first."; return; }
+    $("#lenz-import-note").textContent = "Reading it...";
+    const d = await (await fetch("/api/lenz/import", {method: "POST", headers: H, body: JSON.stringify({text})})).json();
+    $("#lenz-import-note").textContent = d.ok ? "Added " + d.added + ", updated " + d.updated + ". Reloading..." : d.error;
+    if (d.ok) setTimeout(() => location.reload(), 900);
+  };
+  // Coming from a window's "I've watched it": open the rating for that title
+  const log = new URLSearchParams(location.search).get("log");
+  if (log) {
+    fetch("/api/lenz/items", {method: "POST", headers: H, body: JSON.stringify({title: log, status: "queue"})})
+      .then(r => r.json()).then(d => { if (d.ok) { const i = L.items.findIndex(x => x.id === d.item.id); if (i < 0) L.items.push(d.item); rate(d.item, false); } });
+  }
+  render();
+})();
+"""
+
+
+def lenz_page(headers):
+    lib = library()
+    taste = taste_profile(lib)
+    report = next((m["text"] for m in reversed(store().list_chat(ALLCHAT_KEEP))
+                   if m["from"] == "lenz" and m["text"].startswith("Your week in media")), "")
+    try:
+        news = [{k: n[k] for k in ("title", "url", "source", "about")} for n in followed_news()]
+    except Exception:
+        news = []
+    keep = ("id", "title", "kind", "status", "progress", "with", "note", "times", "rank", "tier", "group",
+            "rating", "beloved", "image", "done_at")
+    data = {"items": [{k: x.get(k) for k in keep} for x in lib], "kinds": KIND_LABELS, "taste": taste,
+            "plural": {"game": "Games", "anime": "Anime", "show": "TV", "movie": "Movies", "manhwa": "Manhwa",
+                       "web novel": "Web novels", "book": "Books", "comic": "Comics", "musical": "Musicals", "manga": "Manga"},
+            "report": report, "news": news,
+            "colors": {"anime": ("#f472b6", "#7c3aed"), "show": ("#38bdf8", "#1d4ed8"), "movie": ("#fbbf24", "#ea580c"),
+                       "game": ("#34d399", "#0f766e"), "manga": ("#f87171", "#9f1239"), "manhwa": ("#fb7185", "#be123c"),
+                       "web novel": ("#a78bfa", "#4c1d95"), "book": ("#a3a3a3", "#44403c"), "comic": ("#facc15", "#b45309"),
+                       "musical": ("#f0abfc", "#a21caf")}}
+    n = {s: sum(1 for x in lib if x["status"] == s) for s in STATUSES}
+    rated = sum(1 for x in lib if x["status"] == "done" and x.get("rating"))
+    tabs = [("now", "Now", True), ("next", "Up next", True), ("waiting", "Waiting", True), ("done", "Finished", True),
+            ("top", "Top", False), ("taste", "Taste", False), ("news", "News", False)]
+    kinds = [("all", "All"), ("anime", "Anime"), ("tv", "TV"), ("movies", "Movies"), ("games", "Games"), ("reading", "Reading")]
+    opts = "".join(f'<option value="{k}">{v}</option>' for k, v in KIND_LABELS.items())
+    sts = "".join(f'<option value="{k}">{v}</option>' for k, v in (("queue", "Up next"), ("current", "On it now"),
+                                                                    ("done", "Finished"), ("waiting", "Waiting")))
+    body = (
+        f'<header class="top"><div class="hero">{avatar_img("lenz", 56)}<div><p class="eyebrow">Lenz · your library</p>'
+        f'<h1>Entertainment</h1></div></div><a class="btn ghost" href="/chat?ch=screen&amp;to=lenz">{ui_icon("chat")}Ask Lenz</a></header>'
+        '<div class="kpis">'
+        + kpi_html(str(n["current"]), "On the go", "watching, playing, reading", icon="play")
+        + kpi_html(str(n["queue"]), "Up next", f"{n['waiting']} waiting on new seasons", icon="calendar")
+        + kpi_html(f"{rated}/{n['done']}" if n["done"] else "0", "Finished, rated", "rate the rest", rated / n["done"] if n["done"] else 0)
+        + kpi_html(str(sum(1 for x in lib if x.get('beloved'))), "Most beloved",
+                   next((x["title"] for x in lib if x.get("beloved")), "mark favorites in your log"), icon="bolt")
+        + '</div>'
+        + '<div class="chips" style="margin:16px 0 8px">' + "".join(f'<button type="button" class="chip" data-kind="{k}">{v}</button>' for k, v in kinds) + "</div>"
+        + '<div class="seg ltabs" role="tablist">' + "".join(
+            f'<button type="button" role="tab" data-tab="{k}">{v}{" <i></i>" if c else ""}</button>' for k, v, c in tabs) + "</div>"
+        + '<p class="note" id="lenz-note"></p><div id="lenz-view"></div>'
+        + '<section class="card stack" style="margin-top:18px"><h2>Log something</h2>'
+          f'<form id="lenz-add" class="stack"><input id="lenz-title" class="field" placeholder="Title" aria-label="Title">'
+          f'<div style="display:flex;gap:8px;flex-wrap:wrap"><select id="lenz-kind" class="field" aria-label="Kind">{opts}</select>'
+          f'<select id="lenz-status" class="field" aria-label="Status">{sts}</select>'
+          '<button class="btn" type="submit">Add</button></div></form></section>'
+        + '<section class="card stack" style="margin-top:14px"><h2>Bring in your log</h2>'
+          '<p class="muted small">Paste the text of your entertainment log (in Google Docs: select all, copy) and Lenz '
+          'sorts it: Current, In Queue, Waiting, Rankings and type codes like (AN) or (G). Run it again any time; your '
+          'ratings stay. Or have Lenz re-read it every day: share the doc "anyone with the link can view" and set '
+          '<code>LENZ_DOC_URL</code> in Vercel. For MyAnimeList, set <code>MAL_CLIENT_ID</code> (myanimelist.net/apiconfig) '
+          'and <code>MAL_USERNAME</code>; your list must be public.</p>'
+          '<textarea id="lenz-paste" class="field" rows="5" placeholder="Paste your log here"></textarea>'
+          '<p><button class="btn" type="button" id="lenz-import">Import</button> <span class="note" id="lenz-import-note"></span></p></section>'
+        + _json_script("LENZ", data) + f"<script>{_LENZ_JS}</script>")
+    return page(headers, "Lenz", "", body)
 
 
 def agent_page(headers, agent):
@@ -5328,6 +6212,39 @@ def handle(method, path, query, headers, body):
                 post_event(bot_id, f"{display_name(bot_id)} is now {activity.strip()[:80]}")
             return _json(200, {"ok": True})
 
+        if path.startswith("/api/lenz/"):
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            if path == "/api/lenz/import":
+                entries = parse_media_log(str(data.get("text") or ""))
+                if not entries:
+                    return _json(400, {"ok": False, "error": "Lenz couldn't find any titles in that. Paste the "
+                                       "whole log, headings included (Current, In Queue, Rankings...)."})
+                r = merge_into_library(entries)
+                post_event("lenz", f"Lenz imported your log: {r['added']} new, {r['updated']} updated, {r['total']} in all")
+                return _json(200, {"ok": True, **r})
+            if path == "/api/lenz/items":
+                title = str(data.get("title") or "").strip()
+                if not title:
+                    return _json(400, {"ok": False, "error": "title required"})
+                it, _ = add_library_item(title, data.get("kind"), data.get("status") or "queue")
+                return _json(200, {"ok": True, "item": it})
+            iid = path[len("/api/lenz/items/"):] if path.startswith("/api/lenz/items/") else ""
+            action = data.get("action")
+            if not iid.isdigit() or action not in ("watched", "rate", "start", "next", "status", "delete"):
+                return _json(400, {"ok": False, "error": "unknown item or action"})
+            value = data.get("value")
+            if action in ("rate",) and not (isinstance(value, int) and 1 <= value <= 10):
+                return _json(400, {"ok": False, "error": "rating must be 1-10"})
+            it = update_library_item(int(iid), action, value)
+            if not it:
+                return _json(404, {"ok": False, "error": "no such item"})
+            line = ""
+            if action == "watched":
+                line = lenz_logged_line(it)
+                store().add_chat("lenz", line, channel="screen")
+            return _json(200, {"ok": True, "item": it, "line": line})
+
         if path == "/api/tick":  # Supabase Cron, every few minutes: reminders that are due
             cron = bool(CRON_SECRET) and headers.get("authorization") == f"Bearer {CRON_SECRET}"
             if not (cron or (DASHBOARD_KEY and _auth_dashboard(query, headers))):
@@ -5411,6 +6328,7 @@ def handle(method, path, query, headers, body):
         return 200, "text/html; charset=utf-8", home_page(headers).encode(), _login_cookie(query)
 
     pages = {"/chat": lambda: chat_page(headers, query), "/calendar": lambda: calendar_page(headers, query),
+             "/lenz": lambda: lenz_page(headers),
              "/money": lambda: money_page(headers), "/settings": lambda: settings_page(headers)}
     agent_path = path.startswith("/agent/") and path[len("/agent/"):] in AGENTS
     if path in pages or agent_path:
@@ -5493,6 +6411,11 @@ def handle(method, path, query, headers, body):
         month = query.get("month", [datetime.now(hub_tz()).strftime("%Y-%m")])[0]
         return _json(200, {"ok": True, "month": month, "status": month_status(month),
                            "expenses": sorted(store().list_expenses(month), key=lambda e: e["date"])})
+
+    if path == "/api/lenz":
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        return _json(200, {"ok": True, "items": library(), "taste": taste_profile()})
 
     if path == "/api/reminders":
         if not _auth_dashboard(query, headers):

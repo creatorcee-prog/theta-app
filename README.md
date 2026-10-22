@@ -255,6 +255,36 @@ just the status code and device count, never key material.
 phones) and a day-by-day list from your Google Calendar, plus `BIRTHDAYS`. Remi's chat
 answers from the same calendar.
 
+**Remi's reminders.** `/remind 8am every day take my meds until done`,
+`in 20 min check the oven`, `fri 6pm pay rent weekly`, or tell Remi "remind
+me ...". Daily, weekday and weekly repeats in `HUB_TIMEZONE`. "Until done"
+ones re-send every `REMINDER_NAG_MINUTES` (15), up to `REMINDER_NAG_MAX`
+(4) times, until you tap Done on the Calendar tab or tell Remi "done" or
+"took them". `POST /api/tick` sends what's due; run it every 5 minutes with
+the `bot-hub-tick` job in `supabase/cron.sql.example`. No model calls.
+
+**Lenz's library** (`/lenz`; his Home window opens it): what you're on,
+up next (by tier), waiting on new seasons, finished (with your 1-10
+ratings), your rankings, a taste file and news about what you follow.
+- Import your log by pasting its text, or set `LENZ_DOC_URL` (a Google
+  Doc shared "anyone with the link can view") and Lenz re-reads it daily.
+  It understands Current / In Queue / Waiting / Rankings / Overall
+  Rankings / Most beloved, type codes like (AN) (G) (MW), "w/" names,
+  episode and chapter progress, tiers and "2x" rewatches. What you change
+  in the hub (finished, started, ratings) is never undone by a re-import.
+- MyAnimeList: set `MAL_CLIENT_ID` (create one at myanimelist.net/apiconfig)
+  and `MAL_USERNAME`; your anime and manga lists sync in daily (the list
+  must be public). Updating MAL from here would need MAL's sign-in flow;
+  not built yet.
+- Each round Lenz finds posters and genres for a few titles (Jikan for
+  anime and manga, TMDB for film and TV, Wikipedia for the rest), posts
+  news from `LENZ_NEWS_FEEDS` (MyAnimeList, IGN, GameSpot, Polygon) that
+  names something you follow (a push for titles you're waiting on), and
+  on Sundays a taste report: what you finished, how you rated it, and how
+  your averages and top genres moved.
+- "I finished Frieren, 9/10" to Lenz logs it; "Watched it" on any of his
+  windows does the same.
+
 **Glass's budget.** Log spending with "@glass $42 groceries" (in his
 chat or All Agents; confirmed with exact numbers, no model call),
 `POST /api/glass/expense`, or import a Rocket Money export on the Money
