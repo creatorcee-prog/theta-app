@@ -27,22 +27,32 @@ Vercel's serverless model: `api/index.py` is one Python function,
    `Storage: upstash-redis` once it's live.
 4. Settings → Environment Variables — set:
    - `BOT_KEYS` — `bot-id:key,...` (one key per bot; bots never hold
-     the paid-model key)
-   - `BOT_ROLES` — `bot-id:miner|manager|low_brain|master,...`
-   - `BOT_NAMES` — `bot-id:@name,...` (rename bots here any time)
+     model keys). Use an agent's id (`theta`, `mistral`, `glass`,
+     `remi`, `lenz`, `red`, `blue`, `gray`, `charter`) as its bot-id and
+     it gets that agent's tier and name automatically
+   - `BOT_ROLES` — `bot-id:miner|manager|low_brain|master,...` (only
+     needed for bots that aren't agents, or to override one)
+   - `BOT_NAMES` — `bot-id:@name,...` (override a display name)
    - `DASHBOARD_KEY` — recommended: the dashboard is public on the
      Vercel domain without it
-   - `MISTRAL_API_KEY` — the low brain (Mistral, from
-     console.mistral.ai). Until the paid master model is wired, it
-     also answers for master: chat, `/api/summary` and `master_work()`
-   - `GROQ_API_KEY` — miner and manager (from console.groq.com)
+   - `GEMINI_API_KEY` — the low brain's model, Gemini (from
+     aistudio.google.com → Get API key). Until the paid high-brain
+     model is wired, it also runs Theta: chat, `/api/summary` and
+     `master_work()`
+   - `GROQ_API_KEY` — managers and miners (from console.groq.com)
    - Optional model overrides: `MINER_MODEL` (default
      `llama-3.1-8b-instant`), `MANAGER_MODEL` (`llama-3.3-70b-versatile`),
-     `LOW_BRAIN_MODEL` (`mistral-small-latest`). A tier whose key is
-     missing answers chat with "…_API_KEY is not set" instead of failing
-   - `NEWS_FEEDS`, `ENTERTAINMENT_FEEDS` — comma-separated feed URLs
-     (defaults already work); `FITNESS_APP_URL` defaults to the
-     deployed fitness app
+     `LOW_BRAIN_MODEL` (`gemini-2.5-flash`), `GEMINI_REASONING_EFFORT`
+     (`none`; set it empty for Gemini models that can't turn thinking
+     off). An agent whose key is missing answers chat with
+     "…_API_KEY is not set" instead of failing
+   - `NEWS_FEEDS` — comma-separated RSS URLs; the default is 10 outlets
+     across the spectrum. `NEWS_TOP` (8), `NEWS_BREAKING_MAX` (2) and
+     `NEWS_BREAKING_MINUTES` (90) shape the News section
+   - `ENTERTAINMENT_FEEDS` — comma-separated feed URLs; `FITNESS_APP_URL`
+     defaults to the deployed fitness app
+   - `AGENT_ONLINE_SECONDS` (600) — how recently a bot must have called
+     the hub to show as online
 5. Deploy. The dashboard is at `https://<project>.vercel.app`, and
    bots point at `https://<project>.vercel.app/api/report`.
 
@@ -64,22 +74,52 @@ test against a real Redis store.
 Same as the Railway build: `POST /api/report`, `POST /api/escalate`,
 `POST /api/commandeer`, `POST /api/orders/<id>/ack`,
 `POST /api/fitness`, `POST /api/summary` (dashboard key),
-`POST /api/chat` (dashboard key), `GET /` (dashboard), `GET /api/feed`,
-`GET /api/orders`, `GET /api/escalations`, `GET /api/widgets`,
-`GET /api/fitness`, `GET /api/bots`, `GET /api/tiers`.
+`POST /api/chat` (dashboard key), `POST /api/status`, `GET /`
+(dashboard), `GET /api/feed`, `GET /api/orders`, `GET /api/escalations`,
+`GET /api/widgets`, `GET /api/fitness`, `GET /api/agents` (dashboard
+key), `GET /api/bots`, `GET /api/tiers`.
+
+## Agents
+
+Named personas, like James in Garage Gym: the name is the persona,
+the model comes from the agent's tier. Edit `AGENTS` in
+`api/index.py` to change a name or role.
+
+| Agent | Tier | Role |
+|---|---|---|
+| Theta | High Brain (master) | Final say, planning, commandeer orders |
+| Mistral | Low Brain | Triages escalations, summarizes reports |
+| Glass | Manager | Accountant and general manager |
+| Remi | Manager | Family reminders, calendar, Discord auto-mod |
+| Lenz | Miner | Entertainment |
+| Red / Blue / Gray | Miner | News: Republican / Democratic / independent take |
+| Charter | Miner | Makes charts on request |
+
+So far each agent is a chat persona plus a status line. Their jobs
+(Remi's calendar and moderation, Charter's charts, the news miners'
+searches) need their own bots or tools and aren't built yet.
+
+**Status.** A bot is online when it has called the hub in the last
+`AGENT_ONLINE_SECONDS`. Any authenticated call counts; to say what it
+is doing:
+
+```sh
+curl -X POST https://<project>.vercel.app/api/status -H "x-bot-key: $KEY" \
+  -d '{"bot_id": "remi", "activity": "checking the calendar"}'
+```
 
 ## Chat
 
-The dashboard has a chat box: pick a tier and talk to its model.
+The dashboard has a chat box: pick an agent and talk to it.
 History lives in the page (reload clears it). The same thing over
 the API:
 
 ```sh
 curl -X POST https://<project>.vercel.app/api/chat \
   -H "x-dashboard-key: $DASHBOARD_KEY" -H "Content-Type: application/json" \
-  -d '{"tier": "low_brain", "messages": [{"role": "user", "content": "hi"}]}'
+  -d '{"agent": "mistral", "messages": [{"role": "user", "content": "hi"}]}'
 ```
 
-`POST /api/summary` now asks the master tier (Mistral standing in)
+`POST /api/summary` asks Theta (on the low brain's model for now)
 to summarize unprocessed reports, and marks them processed only when
 the call succeeds.
