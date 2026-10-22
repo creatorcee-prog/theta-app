@@ -66,14 +66,25 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
 
 ### 8. Projects
 - [ ] `HOME_LOCATION` (like `Denver, CO`) so "find me a job here" knows
-      where "here" is.
+      where "here" is. Or just tell any agent "remember my home is
+      Saint George, UT" (look for the ✓).
 - [ ] Free Adzuna key: developer.adzuna.com → register (for "website", use
       your hub's address, `https://<project>.vercel.app`) → `ADZUNA_APP_ID`
       and `ADZUNA_APP_KEY` (`ADZUNA_COUNTRY` if not `us`).
 - [ ] Optional, government jobs: developer.usajobs.gov → request an API key
       → `USAJOBS_API_KEY` and `USAJOBS_EMAIL` (the email you used).
 
-### 9. High brain (Theta on Claude)
+### 9. Lenz's channels, Siri and James
+- [ ] `LENZ_YOUTUBE` (channel ids, or `@handles` plus `YOUTUBE_API_KEY`),
+      `LENZ_SUBREDDITS` (like `Silksong,anime`), `LENZ_TWITCH` (logins) with
+      `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` (dev.twitch.tv → Your
+      Console → Register Your Application; any OAuth redirect, category
+      Website Integration).
+- [ ] `ASK_KEY` (a long random string), then build the "Ask Theta" Shortcut
+      from Settings → Voice commands.
+- [ ] Merge and deploy Garage Gym's hub-commands change so James can log.
+
+### 10. High brain (Theta on Claude)
 - [ ] console.anthropic.com → API keys → create one → Vercel
       `ANTHROPIC_API_KEY` (Sensitive), redeploy.
 - [ ] Console → Limits → set a $15 monthly spend limit (the hub also
@@ -97,6 +108,10 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
       sign-in flow, not just the client ID).
 
 ## Ideas (not built yet)
+
+- [ ] Video and image rippers: grab a page's main image for reference.
+      Downloading videos breaks most sites' terms and is too heavy for
+      Vercel, so links only for now.
 
 - [ ] Charter's charts in the current color scheme (they're always light now).
 - [ ] Quick actions on Home: log an expense, ask Remi, start a round.

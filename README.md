@@ -188,6 +188,52 @@ curl -X POST https://<project>.vercel.app/api/status -H "x-bot-key: $KEY" \
   -d '{"bot_id": "remi", "activity": "checking the calendar"}'
 ```
 
+## Tools: agents do things for real
+
+In chat, an agent changes something only by ending its message with a line
+like `ACTION: remind | 6pm call Mom`. The hub runs it and puts a receipt in
+its place: ✓ with what was saved, or ✗ with why not. At most three per
+reply. The tools (`TOOLS` in `api/index.py`):
+
+| Tool | Does |
+|---|---|
+| `remember \| Home: Saint George, UT` | a fact every agent sees in its prompt |
+| `forget \| saint george` | drops remembered facts with those words |
+| `remind \| tomorrow 9am dentist` | a real Remi reminder |
+| `check \| Stretch` | adds to Today's check |
+| `note \| title :: text` | saves a note (lists, tables, snippets) |
+| `spend \| $42 groceries` | logs to Glass's ledger |
+| `watched \| Frieren, 9` | logs to Lenz's library |
+| `project \| barista jobs here` | Theta and Mistral only: starts a project |
+
+Every agent's prompt also has the current date and time (in
+`HUB_TIMEZONE`) and the remembered facts. If a reply claims it saved,
+logged or set something with no ACTION line, the hub adds "Nothing was
+actually saved: no tool was used." Tools are only offered in chat (All
+Agents and an agent's window), not in rounds or digests, and not to James,
+who runs in Garage Gym. Settings → **Memory and notes** lists both, each
+with a remove button (`POST /api/memory/remove`, `/api/notes/remove`
+`{"id"}`).
+
+## Images in chat
+
+The photo button in the chat box (or pasting an image) attaches a picture.
+The browser shrinks it first (longest side 1600px, JPEG), so a phone photo
+uploads as a few hundred KB; Vercel caps a request at 4.5 MB. The hub keeps
+the last 30 (`UPLOAD_KEEP`) and serves them, key required, at
+`/upload/<id>.jpeg`. `POST /api/allchat` takes `{"text", "image": "data:image/…;base64,…"}`;
+text is optional with an image.
+
+Who sees what: Theta on Claude gets the image itself. Groq's models can't
+take images, so for everyone else the vision model (`VISION_MODEL`, default
+the low brain's Gemini model, on `GEMINI_API_KEY`) describes it once —
+text, numbers and prices copied out — and the agents answer from that
+description. It's kept, so later questions about the same picture don't
+re-run it. If Gemini can't look (out of quota, say), the agent is told to
+say it can't see the image rather than guess. A receipt photo plus
+"@glass log this" works: Glass reads the total from the description and
+logs it with the `spend` tool.
+
 ## Chat
 
 Chat works like a Discord server: channels on the left, members and
@@ -348,7 +394,7 @@ two agents found are posted once. Results go to #command, Theta sums up,
 and your phone gets a push. Each day Theta's round reruns active projects
 and posts only new leads, until the order expires (`ORDER_DAYS`) or
 `/stopproject <n>`. "Here" / "near me" uses `HOME_LOCATION` (like
-`Denver, CO`).
+`Denver, CO`), or else a remembered "Home: …" fact (see Tools).
 
 Job hunts (a goal that mentions a job, role, position, hiring...) go to
 the job boards first: Adzuna (`ADZUNA_APP_ID`, `ADZUNA_APP_KEY`,
@@ -384,6 +430,37 @@ daily quotas. Meanwhile the tier's fallback answers straight away, Gemini
 search says when it'll be back, and Settings → Wiring shows
 which quota ran out. Picking who answers an un-mentioned message runs on
 Groq's miner (`ROUTER_TIER`), so it doesn't spend Gemini's daily quota.
+
+**James's workouts.** Tell James sets in plain words ("@james bench 185
+4x8", or `/log squat 225 3x5` from any channel) and Garage Gym's own `/log`
+runs for the linked account: its Confirm, "which lift?", Same again and
+Undo come back as buttons in chat (each message's buttons work once, like
+Discord). "@james done", "undo", "skip" and "today" work too. When James
+says he doesn't know something, the crew searches the web and James
+answers again with what they found, with the sources listed. Needs
+Garage Gym with the hub commands (its `/api/hub` accepting
+`{command}`/`{component}`).
+
+**Lenz's channels.** `LENZ_YOUTUBE` (channel ids `UC...`, or `@handles`
+with `YOUTUBE_API_KEY` to look them up once), `LENZ_SUBREDDITS` and
+`LENZ_TWITCH` (logins; needs a Twitch app's `TWITCH_CLIENT_ID` and
+`TWITCH_CLIENT_SECRET` from dev.twitch.tv). The 5-minute tick checks them
+every `LENZ_FEEDS_MINUTES` (10): new uploads and channels going live are
+posted in #screen and pushed (with "drops on" when the stream is tagged
+for drops); subreddit posts that name something on your list are pushed;
+the rest of each subreddit comes as a daily top-posts digest. The first
+check only starts watching, so you don't get a backlog. Reddit sometimes
+refuses servers; Wiring shows when it last checked.
+
+**Voice commands (Siri).** `POST /api/ask {text}` runs a message through
+chat and returns `speech`, the replies cleaned up for reading aloud.
+Settings → Voice commands has the Shortcut steps (Dictate Text → Get
+Contents of URL → Get Dictionary Value `speech` → Speak Text). Use
+`ASK_KEY` in the Shortcut: it can only ask. Starting with a name ("Remi,
+...") asks that agent.
+
+**Round updates.** Settings → Round updates (off by default): one push
+when a round finishes, naming the agents that did something.
 
 **Today's check** (Home). A short list of daily habits, "Read the news"
 and "Read a book or comic" to start; Edit adds or removes them. Ticks
