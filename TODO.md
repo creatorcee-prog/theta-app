@@ -29,8 +29,6 @@ The dashboard's **Wiring** panel shows which of these are done.
 
 - [ ] Intuitive UI.
 - [ ] Scriptable widgets: Home Screen and Lock Screen.
-- [ ] `/commandeer` follow-through: agents read and acknowledge orders,
-      and orders can be closed.
 - [ ] Discord: webhook mirror, then slash commands, then Remi's
       auto-moderation (needs an always-on host, not Vercel).
 - [ ] Paid model for Theta.
