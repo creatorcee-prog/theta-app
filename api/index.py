@@ -8,10 +8,11 @@ for Vercel's serverless model:
     (`api/index.py`), a plain WSGI app. `vercel.json` rewrites every
     path to it, so the dashboard lives at / and the API at /api/*.
   * No local SQLite: serverless filesystems don't persist between
-    requests. Storage is Vercel KV over its REST API (urllib, no SDK
-    needed). Create a KV store in Vercel's dashboard and link it to
-    the project — KV_REST_API_URL and KV_REST_API_TOKEN are added to
-    the project's env vars automatically.
+    requests. Storage is Upstash Redis (what Vercel KV became) over
+    its REST API (urllib, no SDK needed). Add the Upstash Redis
+    integration from the Vercel Marketplace and connect it to the
+    project; either KV_REST_API_URL/KV_REST_API_TOKEN or
+    UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN are read.
   * Without KV vars the app still runs, but on an in-memory store:
     data is lost between requests. The dashboard says so in a footer
     banner. Don't rely on memory mode for real bot traffic.
@@ -63,20 +64,24 @@ NEWS_FEEDS = [u.strip() for u in os.environ.get(
     "NEWS_FEEDS", "https://feeds.bbci.co.uk/news/rss.xml").split(",") if u.strip()]
 ENTERTAINMENT_FEEDS = [u.strip() for u in os.environ.get(
     "ENTERTAINMENT_FEEDS",
-    "https://rss.applemarketingtools.com/api/v2/us/music/most-played/10/songs.json,"
+    "https://rss.marketingtools.apple.com/api/v2/us/music/most-played/10/songs.json,"
     "http://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml").split(",") if u.strip()]
 FITNESS_APP_URL = os.environ.get(
     "FITNESS_APP_URL", "https://fitness-tracker-snowy-seven-83.vercel.app/")
 FITNESS_REPO_URL = "https://github.com/creatorcee-prog/fitness-tracker"
 WIDGET_CACHE_SECONDS = int(os.environ.get("WIDGET_CACHE_SECONDS", "900"))
 
-KV_URL = os.environ.get("KV_REST_API_URL", "").rstrip("/")
-KV_TOKEN = os.environ.get("KV_REST_API_TOKEN", "")
-STORAGE_MODE = "vercel-kv" if (KV_URL and KV_TOKEN) else "memory (not persistent)"
+# Vercel KV stores moved to Upstash, which may inject either naming.
+KV_URL = (os.environ.get("KV_REST_API_URL")
+          or os.environ.get("UPSTASH_REDIS_REST_URL", "")).rstrip("/")
+KV_TOKEN = (os.environ.get("KV_REST_API_TOKEN")
+            or os.environ.get("UPSTASH_REDIS_REST_TOKEN", ""))
+STORAGE_MODE = "upstash-redis" if (KV_URL and KV_TOKEN) else "memory (not persistent)"
 
 
 def role_of(bot_id):
-    return BOT_ROLES.get(bot_id, "miner")
+    role = BOT_ROLES.get(bot_id, "miner")
+    return role if role in TIERS else "miner"
 
 
 def display_name(bot_id):
@@ -381,6 +386,15 @@ def _auth_dashboard(query, headers):
             or query.get("key", [None])[0] == DASHBOARD_KEY)
 
 
+def _limit(query, default):
+    """Parse ?limit=; None means invalid (not an int in 1..100)."""
+    try:
+        n = int(query.get("limit", [str(default)])[0])
+    except ValueError:
+        return None
+    return n if 1 <= n <= 100 else None
+
+
 def handle(method, path, query, headers, body):
     """Returns (status, content_type, body_bytes). `query` maps names
     to lists of values; `headers` maps lowercased names to values."""
@@ -442,6 +456,8 @@ def handle(method, path, query, headers, body):
             return _json(200, {"ok": True})
 
         if path == "/api/summary":
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
             return _json(200, summarize(store().unprocessed_reports(50)))
 
         return _json(404, {"ok": False, "error": "unknown route"})
@@ -503,8 +519,8 @@ def handle(method, path, query, headers, body):
         )
         if STORAGE_MODE.startswith("memory"):
             storage_note = ("<p><i>Storage: memory (not persistent) — data will not "
-                            "persist between requests. Connect a KV store in Vercel's "
-                            "dashboard to fix this.</i></p>")
+                            "persist between requests. Connect Upstash Redis to the "
+                            "project in Vercel and redeploy to fix this.</i></p>")
         else:
             storage_note = f"<p><i>Storage: {html.escape(STORAGE_MODE)}.</i></p>"
         body = (
@@ -517,12 +533,14 @@ def handle(method, path, query, headers, body):
             f"<h2>Commandeer orders</h2><ul>{ord_items}</ul>"
             f"{storage_note}"
         ).encode()
-        return 200, "text/html", body
+        return 200, "text/html; charset=utf-8", body
 
     if path == "/api/feed":
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
-        limit = int(query.get("limit", ["20"])[0])
+        limit = _limit(query, 20)
+        if limit is None:
+            return _json(400, {"ok": False, "error": "limit must be 1-100"})
         return _json(200, store().list_reports(limit))
 
     if path == "/api/orders":
@@ -549,7 +567,9 @@ def handle(method, path, query, headers, body):
     if path == "/api/fitness":
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
-        limit = int(query.get("limit", ["10"])[0])
+        limit = _limit(query, 10)
+        if limit is None:
+            return _json(400, {"ok": False, "error": "limit must be 1-100"})
         return _json(200, store().list_fitness(limit))
 
     if path == "/api/bots":
@@ -570,7 +590,7 @@ def handle(method, path, query, headers, body):
 
 # ---- WSGI entry point (what Vercel calls) ----
 _REASONS = {200: "OK", 400: "Bad Request", 401: "Unauthorized",
-            403: "Forbidden", 404: "Not Found"}
+            403: "Forbidden", 404: "Not Found", 500: "Internal Server Error"}
 
 
 def app(environ, start_response):
@@ -584,7 +604,11 @@ def app(environ, start_response):
     except ValueError:
         length = 0
     body = environ["wsgi.input"].read(length) if length > 0 else b""
-    status, ctype, out = handle(method, path, query, headers, body)
+    try:
+        status, ctype, out = handle(method, path, query, headers, body)
+    except Exception as exc:  # e.g. storage down: answer, don't crash
+        print(f"handle error on {method} {path}: {exc!r}")
+        status, ctype, out = _json(500, {"ok": False, "error": "internal error"})
     start_response(f"{status} {_REASONS.get(status, '')}",
                    [("Content-Type", ctype), ("Content-Length", str(len(out)))])
     return [out]
