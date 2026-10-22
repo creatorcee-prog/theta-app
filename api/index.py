@@ -73,6 +73,10 @@ LLM_TIMEOUT = int(os.environ.get("LLM_TIMEOUT_SECONDS", "25"))
 CHAT_HISTORY = 20  # most recent messages sent per chat request
 ALLCHAT_KEEP = 200  # All Agents chat: messages kept
 ALLCHAT_MENTIONS = 3  # agents that may answer one message of yours
+# With no @mention, Mistral picks up to this many agents to answer
+# ("off" in ALLCHAT_AUTO keeps un-mentioned messages unanswered).
+ALLCHAT_AUTO = os.environ.get("ALLCHAT_AUTO", "on").lower() != "off"
+ALLCHAT_AUTO_MAX = int(os.environ.get("ALLCHAT_AUTO_MAX", "2"))
 
 # ---- Agents: the hub's named personas. The name is the persona, not
 # the model (like James in Garage Gym); each runs on its tier's model.
@@ -836,6 +840,30 @@ def allchat_reply(agent, thread):
          f"message as {name}. Write only your message, without your name in front."}])
 
 
+def pick_responders(thread):
+    """Mistral triages a message nobody was @mentioned in: which agents
+    should answer it. Always at least one (Mistral herself when nothing
+    fits), at most ALLCHAT_AUTO_MAX, never James: each of his answers
+    uses one of his daily questions, so he waits for an @mention."""
+    candidates = [a for a, v in AGENTS.items() if not v.get("home")]
+    roster = "\n".join(f"- {a}: {AGENTS[a]['name']} ({TIER_LABELS[AGENTS[a]['tier']]}). "
+                       f"{AGENTS[a]['role']}" for a in candidates)
+    transcript = "\n".join(f"{chat_name(m['from'])}: {m['text']}" for m in thread[-10:])
+    reply = llm_chat("low_brain", [
+        {"role": "system", "content": system_prompt("mistral")},
+        {"role": "user", "content": "You route messages in the All Agents chat. Agents:\n"
+         f"{roster}\n\nThe chat so far:\n{transcript}\n\nWhich agents should answer the "
+         f"latest message? Pick 1 to {ALLCHAT_AUTO_MAX} whose job fits it best; for small "
+         "talk pick just yourself (mistral). Answer with agent ids separated by commas, "
+         "nothing else."}], max_tokens=300)
+    words = "".join(c if c.isalpha() else " " for c in reply.lower()).split()
+    picks = []
+    for w in words:
+        if w in candidates and w not in picks:
+            picks.append(w)
+    return picks[:ALLCHAT_AUTO_MAX] or ["mistral"]
+
+
 def allchat_view(limit=50):
     return [dict(m, name=chat_name(m["from"])) for m in store().list_chat(limit)]
 
@@ -971,7 +999,7 @@ document.getElementById("chat-form").onsubmit = async e => {
   if (!text) return;
   msg.value = ""; btn.disabled = true;
   if (agent === ALL) {
-    status.textContent = /@\\w/.test(text) ? "Waiting for replies..." : "Sending...";
+    status.textContent = "Waiting for replies...";
     thread = [...thread, {name: "You", text}];
     show();
     try {
@@ -979,7 +1007,8 @@ document.getElementById("chat-form").onsubmit = async e => {
       if (!d.ok) throw new Error(d.error);
       thread = d.messages;
       const errs = Object.entries(d.errors || {}).map(([n, m]) => n + " couldn't reply: " + m);
-      status.textContent = errs.join(" | ");
+      const routed = (d.routed || []).length ? "Mistral passed this to " + d.routed.join(" and ") + "." : "";
+      status.textContent = [routed, ...errs].filter(Boolean).join(" | ");
     } catch (err) {
       thread = thread.slice(0, -1); msg.value = text;
       status.textContent = "Error: " + err.message;
@@ -1205,7 +1234,12 @@ def handle(method, path, query, headers, body):
             st.add_chat("you", text.strip()[:2000])
             thread = st.list_chat(CHAT_HISTORY)
             agents = mentioned_agents(text)
-            errors = {}
+            errors, routed = {}, []
+            if not agents and ALLCHAT_AUTO:
+                try:
+                    agents = routed = pick_responders(thread)
+                except LLMError as e:
+                    errors["Mistral (picking who answers)"] = str(e)
 
             def answer(a):
                 try:
@@ -1219,7 +1253,8 @@ def handle(method, path, query, headers, body):
                             st.add_chat(a, reply.strip()[:4000])
                         else:
                             errors[AGENTS[a]["name"]] = err
-            return _json(200, {"ok": True, "messages": allchat_view(), "errors": errors})
+            return _json(200, {"ok": True, "messages": allchat_view(), "errors": errors,
+                               "routed": [AGENTS[a]["name"] for a in routed]})
 
         if path == "/api/status":
             bot_id, activity = data.get("bot_id"), data.get("activity")

@@ -136,8 +136,13 @@ curl -X POST https://<project>.vercel.app/api/status -H "x-bot-key: $KEY" \
 their own key (`POST /api/allchat {"bot_id", "text"}`, `x-bot-key`) and
 read it with `GET /api/allchat?bot_id=…`. @mention agents (`@remi`,
 `@james`) and each one named answers once (up to 3 per message), with
-the recent thread as context. Replies and bot posts never trigger more
-replies, so agents can't loop and run up the API limits.
+the recent thread as context. With no @mention, Mistral picks the 1–2
+agents whose job fits best (just herself for small talk), so every
+message gets an answer; the status line says who she picked. She never
+picks James, since each of his answers uses a daily question: @mention
+him instead. `ALLCHAT_AUTO=off` turns this off, `ALLCHAT_AUTO_MAX` (2)
+caps it. Replies and bot posts never trigger more replies, so agents
+can't loop and run up the API limits.
 
 **Wiring**, under the chat, shows for each agent whether its key is set
 and can use its model (James: whether Garage Gym answers). **Test** sends
