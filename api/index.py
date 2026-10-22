@@ -134,7 +134,9 @@ ABILITIES = {
             "framing, byline), and give your take. You can't search beyond those feeds",
     "gray": "read the top story's article and brief it neutrally (summary, exact quotes, how it's framed, "
             "who wrote it), read your outlets' headlines, and give your take. You can't search beyond those feeds",
-    "qwerty": "check every agent's wiring, failed jobs, busy models, dead feeds and storage; lock out "
+    "qwerty": "list every device connected to the hub (signed-in browsers with their type, rough location, "
+              "IP and times; Face ID passkeys; phones getting notifications; anything using the key directly; "
+              "/devices posts it); check every agent's wiring, failed jobs, busy models, dead feeds and storage; lock out "
               "addresses guessing the dashboard key; hide secrets pasted into chat; check the installed "
               "libraries for known vulnerabilities weekly; answer code questions about the hub; and write "
               "GitHub issues with suggested fixes (/issue; filed when GITHUB_TOKEN is set). You can't change "
@@ -4000,6 +4002,14 @@ def watchdog_findings():
         out.append(("high", "Storage is in memory: everything is lost between requests. Connect Upstash Redis."))
     if DASHBOARD_KEY and not passkeys():
         out.append(("info", "Add Face ID sign-in (Settings) so the key stays out of your links."))
+    try:
+        fresh = [d for d in sessions().values() if time.time() - d["made"] < 86400]
+    except Exception:
+        fresh = []
+    if fresh:
+        out.append(("warn", "New sign-in in the last day: " + "; ".join(
+            f"{d['label']} near {d.get('place') or 'unknown'} ({d['how']})" for d in fresh[:4])
+            + ". If one isn't yours, sign it out in Settings → Devices and change DASHBOARD_KEY."))
     for r in wiring():
         if r["state"] == "bad" or (r["state"] == "off" and r.get("testable", True)):
             out.append(("warn", f"{r['name']}: {r['note']}"))
@@ -4083,8 +4093,13 @@ HUB_MAP = (
 
 def qwerty_context():
     findings = watchdog_findings()
+    try:
+        devs = devices_text()
+    except Exception as e:
+        devs = f"(couldn't read the device list: {e!r})"
     return ("\n\n" + HUB_MAP + "\n\nWhat you see right now (exact):\n"
-            + ("\n".join(f"- [{s}] {t}" for s, t in findings) if findings else "- all clear"))
+            + ("\n".join(f"- [{s}] {t}" for s, t in findings) if findings else "- all clear")
+            + "\n\nWhat's connected (exact; this is all the hub can know):\n" + devs)
 
 
 def file_issue(title, details=""):
@@ -6024,6 +6039,13 @@ def _cmd_stopproject(arg):
     return f"Project #{pid} stopped."
 
 
+def _cmd_devices(arg):
+    text = devices_text()
+    store().add_chat("qwerty", text[:4000], channel="dev")
+    n = len(sessions())
+    return f"QWERTY listed {n} signed-in device{'s' if n != 1 else ''} in #dev (also Settings → Devices)."
+
+
 COMMANDS = [  # shown in the "/" menu in this order
     {"name": "commandeer", "args": "[@agent] <order or task>", "about": "A standing order, or a task (\"find me...\") the whole crew works on", "run": _cmd_commandeer},
     {"name": "project", "args": "<what to find>", "about": "The crew searches the web for it, with links", "run": _cmd_project},
@@ -6046,6 +6068,7 @@ COMMANDS = [  # shown in the "/" menu in this order
     {"name": "status", "args": "", "about": "Mistral posts what's wired and what isn't", "run": _cmd_status},
     {"name": "issue", "args": "<title> - <details>", "about": "QWERTY writes up a GitHub issue with a fix", "run": _cmd_issue},
     {"name": "security", "args": "", "about": "QWERTY posts what he sees right now", "run": _cmd_security},
+    {"name": "devices", "args": "", "about": "QWERTY lists every device connected, with details", "run": _cmd_devices},
     {"name": "help", "args": "", "about": "List these commands", "run": _cmd_help},
 ]
 
@@ -6278,21 +6301,183 @@ def speakable(text):
     return t
 
 
+# ---- Devices: each browser that signs in (key link or Face ID) gets its
+# own random session cookie, so the hub knows every device and you can
+# sign one out. The old login cookie held the key itself; a device still
+# carrying it is moved to a session the next time it opens Theta (and
+# listed then). Only a hash of each session token is stored.
+SESSION_KEEP = 40
+SESSION_IDLE_DAYS = 180
+SESSION_SEEN_EVERY = 300  # seconds between "last seen" writes per device
+_SESS_LOCK = threading.Lock()
+_REQ = threading.local()  # per request: cookies to set, session made
+
+
+def _same(a, b):
+    return bool(a) and bool(b) and hmac.compare_digest(str(a), str(b))
+
+
+def _tok_hash(tok):
+    return hashlib.sha256(str(tok).encode()).hexdigest()[:40]
+
+
+def sessions():
+    """{token hash: device} for every signed-in browser."""
+    return _meta_json("sessions", {})
+
+
+def device_label(ua):
+    """'iPhone · Home Screen app', 'Mac · Chrome' and so on, from a user agent."""
+    ua = ua or ""
+    if not ua:
+        return "Unknown device"
+    if re.search(r"curl|python|wget|go-http|node-fetch|axios|okhttp", ua, re.I):
+        return f"Script ({ua.split('/')[0][:30]})"
+    dev = ("iPhone" if "iPhone" in ua else "iPad" if "iPad" in ua else "Android" if "Android" in ua else
+           "Mac" if "Macintosh" in ua else "Windows PC" if "Windows" in ua else "Chromebook" if "CrOS" in ua else
+           "Linux" if "Linux" in ua else "Device")
+    if dev == "Android":
+        m = re.search(r"Android [\d.]+; ([^;)]+?)(?: Build|\))", ua)
+        if m and m.group(1).strip() not in ("K", "wv"):
+            dev += f" ({m.group(1).strip()[:30]})"
+    app = ("Edge" if re.search(r"Edg[AiOS]*/", ua) else "Opera" if re.search(r"OPR/|OPX/|Opera", ua) else
+           "Chrome" if re.search(r"CriOS/|Chrome/", ua) else "Firefox" if re.search(r"FxiOS/|Firefox/", ua) else
+           "Shortcuts" if re.search(r"Shortcuts|CFNetwork|Siri", ua) else "Safari" if "Safari/" in ua else
+           "Home Screen app" if dev in ("iPhone", "iPad") and "Mobile/" in ua else "browser")
+    return f"{dev} · {app}"
+
+
+def _place(headers):
+    """Rough location from Vercel's IP headers (city, region, country), or ''."""
+    from urllib.parse import unquote
+    parts = [unquote(headers.get(h) or "").strip() for h in
+             ("x-vercel-ip-city", "x-vercel-ip-country-region", "x-vercel-ip-country")]
+    return ", ".join(p for p in parts if p)[:80]
+
+
+def _ip(headers):
+    fwd = headers.get("x-forwarded-for") or headers.get("x-real-ip") or ""
+    return fwd.split(",")[0].strip()[:64]
+
+
+def _set_cookie(name, value, max_age=31536000):
+    _cookies().append(("Set-Cookie", f"{name}={value}; Path=/; Max-Age={max_age}; HttpOnly; Secure; SameSite=Lax"))
+
+
+def _cookies():
+    if not hasattr(_REQ, "cookies"):
+        _REQ.cookies = []
+    return _REQ.cookies
+
+
+def new_session(headers, how):
+    """Sign this browser in: a fresh session cookie, recorded as a device.
+    Tells you (phone push and a QWERTY note) about every new sign-in."""
+    if getattr(_REQ, "session", None):
+        return _REQ.session
+    tok = _b64u(os.urandom(32))
+    now = time.time()
+    dev = {"id": hashlib.sha256(tok.encode() + b"id").hexdigest()[:10], "how": how, "made": now, "seen": now,
+           "ua": (headers.get("user-agent") or "")[:300], "ip": _ip(headers), "place": _place(headers)}
+    dev["label"] = device_label(dev["ua"])
+    with _SESS_LOCK:
+        live = {k: v for k, v in sessions().items() if now - v["seen"] < SESSION_IDLE_DAYS * 86400}
+        live[_tok_hash(tok)] = dev
+        keep = dict(sorted(live.items(), key=lambda kv: kv[1]["seen"])[-SESSION_KEEP:])
+        store().set_meta("sessions", json.dumps(keep))
+    _set_cookie("hub_key", "", 0)  # the old cookie held the key itself; drop it
+    _set_cookie("hub_sess", tok)
+    _REQ.session = dev
+    where = f" near {dev['place']}" if dev["place"] else ""
+    line = f"New sign-in: {dev['label']}{where} ({how})"
+    try:
+        store().add_chat("qwerty", "QWERTY: " + line, kind="event", channel="dev")
+        notify("QWERTY", line + ". Not you? Settings → Devices.", "/settings#devices")
+    except Exception as e:
+        print(f"couldn't announce a sign-in: {e!r}")
+    return dev
+
+
+def current_session(headers):
+    """The signed-in device for this request's hub_sess cookie, or None.
+    Refreshes its last-seen time (at most every few minutes)."""
+    tok = _cookie(headers, "hub_sess")
+    if not tok:
+        return None
+    key = _tok_hash(tok)
+    dev = sessions().get(key)
+    if not dev:
+        return None
+    now = time.time()
+    if now - dev["seen"] > SESSION_SEEN_EVERY:
+        with _SESS_LOCK:
+            live = sessions()
+            if key in live:
+                live[key].update(seen=now, ip=_ip(headers) or live[key].get("ip", ""),
+                                 place=_place(headers) or live[key].get("place", ""))
+                store().set_meta("sessions", json.dumps(live))
+    return dev
+
+
+def sign_out_device(dev_id, keep=None):
+    """Remove one device's session (or all but `keep` when dev_id is '*')."""
+    with _SESS_LOCK:
+        live = sessions()
+        out = {k: v for k, v in live.items()
+               if (v["id"] != dev_id if dev_id != "*" else v["id"] == keep)}
+        store().set_meta("sessions", json.dumps(out))
+    return len(live) - len(out)
+
+
+def note_key_use(headers, via):
+    """Remember callers that use the key directly (scripts, Siri), per
+    device and address, so QWERTY can list them too."""
+    if getattr(_REQ, "quiet", False):
+        return
+    ua, ip = (headers.get("user-agent") or "")[:300], _ip(headers)
+    key = hashlib.sha256(f"{via}|{ua}|{ip}".encode()).hexdigest()[:16]
+    now = time.time()
+    seen = _meta_json("key:users", {})
+    if key in seen and now - seen[key]["seen"] < SESSION_SEEN_EVERY:
+        return
+    seen.setdefault(key, {"made": now, "via": via, "ua": ua, "ip": ip, "label": device_label(ua), "uses": 0})
+    seen[key].update(seen=now, place=_place(headers) or seen[key].get("place", ""))
+    seen[key]["uses"] += 1
+    store().set_meta("key:users", json.dumps(dict(sorted(seen.items(), key=lambda kv: kv[1]["seen"])[-30:])))
+
+
 def _auth_dashboard(query, headers):
-    """Dashboard key as a header, ?key= or the hub_key cookie (set the first
-    time you open the dashboard with ?key=, so links and the Home Screen app
-    don't need it)."""
+    """Signed in: this browser's session cookie, or the dashboard key as a
+    header or ?key= (a key link signs the browser in with its own session).
+    The old key-holding hub_key cookie still works once and is swapped for
+    a session."""
     if not DASHBOARD_KEY:
         return True
-    return DASHBOARD_KEY in (headers.get("x-dashboard-key"), query.get("key", [None])[0],
-                             _cookie(headers, "hub_key"))
+    if getattr(_REQ, "session", None) or current_session(headers):
+        return True
+    if _same(query.get("key", [None])[0], DASHBOARD_KEY):
+        if getattr(_REQ, "page", False):  # a page opened from a key link signs the browser in
+            new_session(headers, "key link")
+        else:  # an API call with ?key= (a script): noted, no session
+            try:
+                note_key_use(headers, "?key= on the API")
+            except Exception:
+                pass
+        return True
+    if _same(_cookie(headers, "hub_key"), DASHBOARD_KEY):
+        new_session(headers, "moved from the old sign-in")
+        return True
+    if _same(headers.get("x-dashboard-key"), DASHBOARD_KEY):
+        try:
+            note_key_use(headers, "key header")
+        except Exception:
+            pass  # bookkeeping never blocks a request
+        return True
+    return False
 
 
 def _login_cookie(query):
-    """Set-Cookie header when the page was opened with the right ?key=."""
-    if DASHBOARD_KEY and query.get("key", [None])[0] == DASHBOARD_KEY:
-        return [("Set-Cookie", f"hub_key={DASHBOARD_KEY}; Path=/; Max-Age=31536000; "
-                               "HttpOnly; Secure; SameSite=Lax")]
+    """Cookies are set by new_session now; kept for the page routes."""
     return []
 
 
@@ -8145,7 +8330,7 @@ def register_passkey(data, rp_id, origin, name="This device"):
     ec.EllipticCurvePublicNumbers(int.from_bytes(cose[-2], "big"), int.from_bytes(cose[-3], "big"),
                                   ec.SECP256R1()).public_key()  # a real point on the curve, or this raises
     pk = {"id": _b64u(cred_id), "x": _b64u(cose[-2]), "y": _b64u(cose[-3]), "count": count,
-          "name": str(name)[:60] or "This device", "created": time.time(), "used": None}
+          "name": str(name)[:60] or "This device", "created": time.time(), "used": None, "site": rp_id}
     with _PK_LOCK:
         keys = [k for k in passkeys() if k["id"] != pk["id"]] + [pk]
         store().set_meta("passkeys", json.dumps(keys[-10:]))
@@ -8179,7 +8364,18 @@ def verify_passkey(data, rp_id, origin):
             if k["id"] == key["id"]:
                 k.update(count=count, used=time.time())
         store().set_meta("passkeys", json.dumps(keys))
-    return True
+    return key
+
+
+def passkey_fail(headers, stage, error, site):
+    """Keep the last few Face ID failures with their reasons (for QWERTY)."""
+    try:
+        fails = _meta_json("pk:fails", [])
+        fails.append({"at": time.time(), "stage": stage, "error": error[:200], "site": site,
+                      "device": device_label(headers.get("user-agent")), "place": _place(headers)})
+        store().set_meta("pk:fails", json.dumps(fails[-15:]))
+    except Exception:
+        pass
 
 
 def _rp(headers):
@@ -8193,18 +8389,38 @@ _SIGNIN_JS = r"""
 (() => {
   const out = document.getElementById("si-status"), b64 = s => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - s.length % 4) % 4)), c => c.charCodeAt(0));
   const u = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  // Safari only shows Face ID when the request starts right from a tap, so
+  // the challenge is fetched ahead of time (and refreshed before it expires).
+  const why = (e, stage) => {
+    const msg = (e && (e.name ? e.name + ": " : "") + (e.message || e)) || "unknown";
+    fetch("/api/passkey/fail", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({stage, error: msg})}).catch(() => {});
+    if (e && e.name === "NotAllowedError") return "Face ID was cancelled or timed out, or this device has no Theta passkey for " +
+      location.hostname + " (a passkey only works on the address it was added on).";
+    if (e && e.name === "InvalidStateError") return "This device is already added.";
+    if (e && e.name === "SecurityError") return "This address can't use passkeys (" + location.hostname + ").";
+    return e.message || String(e);
+  };
+  const ready = (url, h) => {
+    let o = null, at = 0;
+    const load = async () => { try { const d = await (await fetch(url, {headers: h || {}})).json(); if (d.ok) { o = d; at = Date.now(); } } catch (e) {} };
+    load();
+    document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - at > 120000) load(); });
+    return async () => { if (!o || Date.now() - at > 240000) await load(); const x = o; o = null; load(); if (!x) throw new Error("Couldn't reach Theta. Check your connection."); return x; };
+  };
+  const opts = window.PublicKeyCredential && !document.getElementById("si-face").hidden ? ready("/api/passkey/options?type=login") : null;
   document.getElementById("si-face").onclick = async () => {
     if (!window.PublicKeyCredential) { out.textContent = "This browser can't use passkeys. Use your key below."; return; }
     out.textContent = "Waiting for Face ID...";
     try {
-      const o = await (await fetch("/api/passkey/options?type=login")).json();
+      const o = await opts();
       const cred = await navigator.credentials.get({publicKey: {challenge: b64(o.challenge), rpId: o.rpId, userVerification: "required", timeout: 60000}});
       const r = cred.response;
       const d = await (await fetch("/api/passkey/login", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(
         {id: cred.id, clientDataJSON: u(r.clientDataJSON), authenticatorData: u(r.authenticatorData), signature: u(r.signature)})})).json();
       if (!d.ok) throw new Error(d.error);
       out.textContent = "Signed in."; location.reload();
-    } catch (e) { out.textContent = "Couldn't sign in: " + (e.message || e); }
+    } catch (e) { out.textContent = "Couldn't sign in: " + why(e, "sign-in"); }
   };
   document.getElementById("si-key").onsubmit = e => { e.preventDefault(); const k = document.getElementById("si-keyin").value.trim(); if (k) location.href = location.pathname + "?key=" + encodeURIComponent(k); };
 })();
@@ -8216,12 +8432,31 @@ _PASSKEY_JS = r"""
   const b64 = s => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - s.length % 4) % 4)), c => c.charCodeAt(0));
   const u = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   const add = document.getElementById("pk-add");
+  // Safari only shows Face ID when the request starts right from a tap, so
+  // the challenge is fetched ahead of time (and refreshed before it expires).
+  const why = (e, stage) => {
+    const msg = (e && (e.name ? e.name + ": " : "") + (e.message || e)) || "unknown";
+    fetch("/api/passkey/fail", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({stage, error: msg})}).catch(() => {});
+    if (e && e.name === "NotAllowedError") return "Face ID was cancelled or timed out, or this device has no Theta passkey for " +
+      location.hostname + " (a passkey only works on the address it was added on).";
+    if (e && e.name === "InvalidStateError") return "This device is already added.";
+    if (e && e.name === "SecurityError") return "This address can't use passkeys (" + location.hostname + ").";
+    return e.message || String(e);
+  };
+  const ready = (url, h) => {
+    let o = null, at = 0;
+    const load = async () => { try { const d = await (await fetch(url, {headers: h || {}})).json(); if (d.ok) { o = d; at = Date.now(); } } catch (e) {} };
+    load();
+    document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - at > 120000) load(); });
+    return async () => { if (!o || Date.now() - at > 240000) await load(); const x = o; o = null; load(); if (!x) throw new Error("Couldn't reach Theta. Check your connection."); return x; };
+  };
   if (!window.PublicKeyCredential) { add.disabled = true; out.textContent = "This browser can't make passkeys."; }
+  const opts = window.PublicKeyCredential ? ready("/api/passkey/options?type=register", H) : null;
   add.onclick = async () => {
     out.textContent = "Follow your device's prompt...";
     try {
-      const o = await (await fetch("/api/passkey/options?type=register", {headers: H})).json();
-      if (!o.ok) throw new Error(o.error);
+      const o = await opts();
       const cred = await navigator.credentials.create({publicKey: {
         challenge: b64(o.challenge), rp: {name: "Theta", id: o.rpId},
         user: {id: b64(o.userId), name: "theta-owner", displayName: "Theta"},
@@ -8233,7 +8468,7 @@ _PASSKEY_JS = r"""
         clientDataJSON: u(cred.response.clientDataJSON), attestationObject: u(cred.response.attestationObject)})})).json();
       if (!d.ok) throw new Error(d.error);
       out.textContent = "Added. You can sign in with Face ID on this device now."; setTimeout(() => location.reload(), 900);
-    } catch (e) { out.textContent = "Couldn't add it: " + (e.message || e); }
+    } catch (e) { out.textContent = "Couldn't add it: " + why(e, "adding"); }
   };
   document.querySelectorAll("[data-pk-remove]").forEach(b => b.onclick = async () => {
     const d = await (await fetch("/api/passkey/remove", {method: "POST", headers: H, body: JSON.stringify({id: b.dataset.pkRemove})})).json();
@@ -8266,12 +8501,118 @@ def signin_page(headers):
             f'<body><main class="main">{body}</main></body></html>')
 
 
-def passkeys_card():
+_PUSH_HOSTS = (("push.apple.com", "Apple (iPhone, iPad or Mac)"), ("fcm.googleapis.com", "Chrome or Android"),
+               ("mozilla.com", "Firefox"), ("notify.windows.com", "Edge on Windows"))
+
+
+def _when(t):
+    if not t:
+        return "unknown"
+    d = datetime.fromtimestamp(t, hub_tz())
+    return f"{d:%b} {d.day}, {_clock(d)}"
+
+
+def devices_report():
+    """Everything the hub knows about what's connected to it."""
+    from urllib.parse import urlparse
+    push = []
+    for x in push_subs():
+        host = urlparse(x.get("endpoint", "")).hostname or "?"
+        push.append({"service": next((n for h, n in _PUSH_HOSTS if host.endswith(h)), host),
+                     "device": x.get("device") or "added before devices were tracked",
+                     "place": x.get("place", ""), "made": x.get("made")})
+    return {"sessions": sorted(sessions().values(), key=lambda d: -d["seen"]),
+            "passkeys": passkeys(), "push": push,
+            "key_users": sorted(_meta_json("key:users", {}).values(), key=lambda d: -d["seen"]),
+            "bots": list(BOT_KEYS),
+            "pk_fails": _meta_json("pk:fails", [])[-5:]}
+
+
+def devices_text():
+    """The device list as plain lines, for QWERTY and /devices."""
+    r = devices_report()
+    out = [f"Signed-in devices ({len(r['sessions'])}):"]
+    out += [f"- {d['label']} · {d['how']} · {d.get('place') or 'place unknown'} · IP {d.get('ip') or '?'} · "
+            f"signed in {_when(d['made'])}, last seen {_when(d['seen'])}" for d in r["sessions"]] or ["- none yet"]
+    out.append(f"Face ID passkeys ({len(r['passkeys'])}):")
+    out += [f"- {k['name']} (for {k.get('site') or 'site not recorded'}), added {_when(k['created'])}, "
+            f"last used {_when(k.get('used'))}" for k in r["passkeys"]] or ["- none"]
+    out.append(f"Getting notifications ({len(r['push'])}):")
+    out += [f"- {x['service']}: {x['device']}" + (f" near {x['place']}" if x["place"] else "") for x in r["push"]] or ["- none"]
+    if r["key_users"]:
+        out.append("Used the key directly:")
+        out += [f"- {k['label']} via {k['via']} · {k.get('place') or '?'} · IP {k.get('ip') or '?'} · "
+                f"{k['uses']} times, last {_when(k['seen'])}" for k in r["key_users"]]
+    if BOT_KEYS:
+        out.append("Bots with their own keys: " + ", ".join(display_name(b) for b in BOT_KEYS))
+    if r["pk_fails"]:
+        out.append("Recent Face ID failures:")
+        out += [f"- {_when(f['at'])} {f['stage']} on {f['device']} at {f['site']}: {f['error']}" for f in r["pk_fails"]]
+    out.append("Devices still on the old sign-in appear once they next open Theta; changing DASHBOARD_KEY "
+               "cuts off any device not listed.")
+    return "\n".join(out)
+
+
+_DEVICES_JS = """
+(() => {
+  const box = document.getElementById("devices"); if (!box) return;
+  box.addEventListener("click", async e => {
+    const b = e.target.closest("[data-signout]"); if (!b) return;
+    const all = b.dataset.signout === "*";
+    if (all && !confirm("Sign out every other device? They'll need the key or Face ID again.")) return;
+    const d = await (await fetch("/api/devices/signout", {method: "POST", headers: window.THETA_H,
+      body: JSON.stringify({id: b.dataset.signout})})).json();
+    const note = box.querySelector(".note");
+    if (!d.ok) { note.textContent = d.error; return; }
+    if (all) location.reload(); else b.closest("li").remove();
+  });
+})();
+"""
+
+
+def devices_card(headers):
+    r, me = devices_report(), current_session(headers) or getattr(_REQ, "session", None) or {}
+    esc = html.escape
+    rows = "".join(
+        f'<li><div class="brow" style="align-items:center"><span><b>{esc(d["label"])}</b>'
+        + (' <span class="chip">This device</span>' if d["id"] == me.get("id") else "")
+        + '</span>' + ('' if d["id"] == me.get("id") else
+                       f'<button class="btn ghost small" type="button" data-signout="{esc(d["id"])}">Sign out</button>')
+        + f'</div><div class="muted small">{esc(d["how"])} · {esc(d.get("place") or "place unknown")} · IP {esc(d.get("ip") or "?")}'
+          f'<br>Signed in {_when(d["made"])} · last seen {_when(d["seen"])}</div></li>'
+        for d in r["sessions"])
+    push = "".join(f'<li>{esc(x["service"])}<div class="muted small">{esc(x["device"])}'
+                   + (f' · {esc(x["place"])}' if x["place"] else "") + (f' · added {_when(x["made"])}' if x["made"] else "")
+                   + '</div></li>' for x in r["push"])
+    keys = "".join(f'<li>{esc(k["label"])} <span class="muted small">via {esc(k["via"])}</span><div class="muted small">'
+                   f'{esc(k.get("place") or "?")} · IP {esc(k.get("ip") or "?")} · {k["uses"]}× · last {_when(k["seen"])}</div></li>'
+                   for k in r["key_users"])
+    fails = "".join(f'<li class="small">{_when(f["at"])} · {esc(f["stage"])} on {esc(f["device"])} at {esc(f["site"])}: '
+                    f'{esc(f["error"])}</li>' for f in reversed(r["pk_fails"]))
+    return ('<section class="card stack" id="devices" aria-label="Devices"><div class="brow"><h2>Devices</h2>'
+            + (f'<button class="btn ghost small" type="button" data-signout="*">Sign out all others</button>'
+               if len(r["sessions"]) > 1 else "") + '</div>'
+            '<p class="muted small">Every browser signed in to Theta, with where it signed in from (roughly, by '
+            'internet address). A new sign-in also pings your phone. Devices on the old sign-in show up the next time '
+            'they open Theta; to cut off anything you can\'t see here, change <code>DASHBOARD_KEY</code> in Vercel and '
+            'redeploy.</p>'
+            f'<h3>Signed in ({len(r["sessions"])})</h3><ul class="list">{rows or "<li class=empty>None yet.</li>"}</ul>'
+            f'<h3>Getting notifications ({len(r["push"])})</h3><ul class="list">{push or "<li class=empty>None.</li>"}</ul>'
+            + (f'<h3>Used the key directly</h3><ul class="list">{keys}</ul>' if keys else "")
+            + (f'<h3>Recent Face ID failures</h3><ul class="list">{fails}</ul>' if fails else "")
+            + f'<p class="note"></p><script>{_DEVICES_JS}</script></section>')
+
+
+def passkeys_card(headers=None):
     rows = "".join(
         f'<li><div class="brow" style="align-items:center"><span>{html.escape(k["name"])}</span>'
         f'<button class="btn ghost small" type="button" data-pk-remove="{html.escape(k["id"])}">Remove</button></div>'
         f'<div class="muted small">Added {datetime.fromtimestamp(k["created"], hub_tz()):%b %d}'
         + (f', last used {datetime.fromtimestamp(k["used"], hub_tz()):%b %d %H:%M}' if k.get("used") else "")
+        + (f' · for {html.escape(k["site"])}' if k.get("site") else "")
+        + (f'<br><b style="color:var(--warn)">Made for {html.escape(k["site"])}, so it won\'t work at this address '
+           f'({html.escape(_rp(headers)[0])}). Open Theta at {html.escape(k["site"])}, or add this device again here.</b>'
+           if headers and k.get("site") and k["site"] != _rp(headers)[0] else "")
         + "</div></li>" for k in passkeys())
     return ('<section class="card stack" id="faceid"><div><h2>Sign in with Face ID</h2><p class="muted small">Add this '
             'device and Theta opens with Face ID (or Touch ID, or your passcode) instead of the key in a link. Your face '
@@ -8961,7 +9302,7 @@ def settings_page(headers):
         'type="button">Send a test</button></p><p class="note" id="push-status"></p></section>'
         f'<section class="card stack" id="security"><div class="hero" style="gap:12px">{avatar_img("qwerty", 40)}<div><h2>Security and health</h2>'
         '<p class="muted small">QWERTY checks this every round and tells you in #dev-and-security when it changes.</p></div></div>'
-        f'<ul class="list">{security_rows()}</ul></section>' + passkeys_card() + gmail_card(headers) + memory_card() + siri_card(headers) +
+        f'<ul class="list">{security_rows()}</ul></section>' + passkeys_card(headers) + devices_card(headers) + gmail_card(headers) + memory_card() + siri_card(headers) +
         '<section class="card stack"><div class="brow"><h2>Rounds</h2></div><p class="muted small">Every agent does its '
         'job three times a day (Supabase Cron). Run one now to refresh the windows.</p>'
         f'<p><button class="btn" type="button" data-run-round="round-status-s">{ui_icon("play")}Run a round now</button></p>'
@@ -10018,7 +10359,8 @@ def handle(method, path, query, headers, body):
                     and isinstance(sub.get("keys"), dict) and sub["keys"].get("p256dh") and sub["keys"].get("auth")):
                 return _json(400, {"ok": False, "error": "not a push subscription"})
             subs = [x for x in push_subs() if x.get("endpoint") != sub["endpoint"]]
-            subs.append({"endpoint": sub["endpoint"], "keys": {"p256dh": sub["keys"]["p256dh"], "auth": sub["keys"]["auth"]}})
+            subs.append({"endpoint": sub["endpoint"], "keys": {"p256dh": sub["keys"]["p256dh"], "auth": sub["keys"]["auth"]},
+                         "made": time.time(), "device": device_label(headers.get("user-agent")), "place": _place(headers)})
             store().set_meta("push:subs", json.dumps(subs[-10:]))
             store().set_meta("push:last_error", "")
             post_event("mistral", "Mistral will now send phone notifications to a new device")
@@ -10050,6 +10392,12 @@ def handle(method, path, query, headers, body):
             ask_ok = ASK_KEY and hmac.compare_digest(str(headers.get("x-ask-key") or ""), ASK_KEY)
             if not (ask_ok or _auth_dashboard(query, headers)):
                 return _json(401, {"ok": False, "error": "key required"})
+            if ask_ok:
+                try:
+                    note_key_use(headers, "Siri ask key")
+                except Exception:
+                    pass
+            _REQ.quiet = True
             text = str(data.get("text") or "").strip()[:2000]
             if not text:
                 return _json(400, {"ok": False, "speech": "I didn't catch that."})
@@ -10101,6 +10449,17 @@ def handle(method, path, query, headers, body):
             store().add_chat("james", r["text"][:4000], channel=ch, buttons=r["buttons"])
             return _json(200, {"ok": True, "messages": allchat_view(channel=str(data.get("channel") or ch)),
                                "latest": latest_by_channel()})
+
+        if path == "/api/devices/signout":
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            me = current_session(headers) or _REQ.session or {}
+            target = str(data.get("id") or "")
+            if not target or target == me.get("id"):
+                return _json(400, {"ok": False, "error": "Pick another device (this one stays signed in)."})
+            gone = sign_out_device(target, keep=me.get("id"))
+            post_event("qwerty", f"QWERTY signed out {gone} device{'s' if gone != 1 else ''}")
+            return _json(200, {"ok": True, "signed_out": gone})
 
         if path in ("/api/memory/remove", "/api/notes/remove"):
             if not _auth_dashboard(query, headers):
@@ -10194,17 +10553,22 @@ def handle(method, path, query, headers, body):
             rp_id, origin = _rp(headers)
             if path == "/api/passkey/login":
                 try:
-                    verify_passkey(data, rp_id, origin)
+                    pk = verify_passkey(data, rp_id, origin)
                 except (ValueError, KeyError, TypeError) as e:
+                    passkey_fail(headers, "sign-in", str(e), rp_id)
                     return _json(401, {"ok": False, "error": str(e)[:160]})
-                return (*_json(200, {"ok": True}), [("Set-Cookie", f"hub_key={DASHBOARD_KEY}; Path=/; Max-Age=31536000; "
-                                                                  "HttpOnly; Secure; SameSite=Lax")])
+                new_session(headers, f"Face ID: {pk['name']}")
+                return _json(200, {"ok": True})
+            if path == "/api/passkey/fail":  # the browser's own error, so QWERTY can see why Face ID failed
+                passkey_fail(headers, str(data.get("stage") or "?")[:20], str(data.get("error") or "?"), rp_id)
+                return _json(200, {"ok": True})
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
             if path == "/api/passkey/register":
                 try:
                     pk = register_passkey(data, rp_id, origin, data.get("name") or "This device")
                 except (ValueError, KeyError, TypeError, IndexError) as e:
+                    passkey_fail(headers, "adding", str(e), rp_id)
                     return _json(400, {"ok": False, "error": str(e)[:160]})
                 return _json(200, {"ok": True, "name": pk["name"]})
             if path == "/api/passkey/remove":
@@ -10468,13 +10832,19 @@ def app(environ, start_response):
         length = 0
     body = environ["wsgi.input"].read(length) if length > 0 else b""
     ip = client_ip(environ)
+    _REQ.cookies, _REQ.session, _REQ.quiet = [], None, False
+    _REQ.page = method == "GET" and not path.startswith("/api/")
     try:
         if sec_locked(ip, path):  # QWERTY locked this address out for guessing keys
             status, ctype, out, *extra = _json(429, {"ok": False, "error": "Too many wrong keys from this "
                                                      "address. Try again later."})
         else:
             status, ctype, out, *extra = handle(method, path, query, headers, body)
-            if status == 401:
+            tried = (query.get("key") or headers.get("x-dashboard-key") or headers.get("x-ask-key")
+                     or headers.get("x-bot-key") or _cookie(headers, "hub_key") or path == "/api/passkey/login")
+            if status == 401 and _cookie(headers, "hub_sess") and not _REQ.session:
+                _set_cookie("hub_sess", "", 0)  # signed out (or unknown): clear it
+            if status == 401 and tried:  # only a wrong key counts, not a signed-out visit
                 try:
                     sec_record_fail(ip, path)
                 except Exception as exc:
@@ -10484,7 +10854,7 @@ def app(environ, start_response):
         (status, ctype, out), extra = _json(500, {"ok": False, "error": "internal error"}), []
     start_response(f"{status} {_REASONS.get(status, '')}",
                    [("Content-Type", ctype), ("Content-Length", str(len(out)))]
-                   + SECURITY_HEADERS + (extra[0] if extra else []))
+                   + SECURITY_HEADERS + (extra[0] if extra else []) + _REQ.cookies)
     return [out]
 
 

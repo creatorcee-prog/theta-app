@@ -215,6 +215,30 @@ who runs in Garage Gym. Settings → **Memory and notes** lists both, each
 with a remove button (`POST /api/memory/remove`, `/api/notes/remove`
 `{"id"}`).
 
+## Devices and sign-in
+
+Each browser that signs in (a key link or Face ID) gets its own random
+session cookie (`hub_sess`); the hub stores only a hash of it, with the
+device type from its user agent, a rough location from Vercel's IP headers
+(city, region, country), the IP, and when it signed in and was last seen.
+Settings → **Devices** lists every one with **Sign out** (and **Sign out
+all others**), plus the phones getting notifications, anything using the
+key directly (scripts, `?key=` on the API, Siri's ask key) and recent Face
+ID failures with the browser's own reason. Every new sign-in pings your
+phone and posts in #dev. QWERTY sees the same list in his prompt, and
+`/devices` posts it.
+
+The old login cookie (`hub_key`) held the dashboard key itself. A device
+still carrying it is moved to a session the next time it opens Theta, so it
+appears in the list then. Anything you can't see is cut off by changing
+`DASHBOARD_KEY` in Vercel and redeploying. Only a request that presents a
+key counts toward QWERTY's wrong-key lockout; a signed-out visit doesn't.
+
+Face ID: the sign-in page fetches its challenge before you tap, because
+Safari only shows Face ID when the request starts right from the tap. A
+passkey works only on the address it was added on; Settings flags one made
+for another address.
+
 ## Images in chat
 
 The photo button in the chat box (or pasting an image) attaches a picture.
