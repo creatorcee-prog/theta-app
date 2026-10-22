@@ -1,3 +1,5 @@
+> **Status (applied):** applied in `api/index.py`; see `docs/markdown-chat-render.md` for what changed from this draft.
+
 # Fix: Safe markdown rendering in chat (`richText`)
 
 **Status:** The live `richText` in `api/index.py` still only handles links + @mentions.

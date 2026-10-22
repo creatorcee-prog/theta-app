@@ -369,6 +369,19 @@ for projects that aren't job hunts. Searches are counted against `SEARCH_MONTHLY
 Gemini's free tier includes 5,000 a month); `GEMINI_SEARCH_MODEL` picks
 the model.
 
+**Chat formatting.** Messages render a safe subset of markdown: tables,
+bullet, numbered and checklist items, code blocks, headings, **bold**,
+*italic*, `code` and https images. Everything is built as page elements,
+never as HTML, so nothing in a message can run.
+
+**Agents can search.** When a chat reply needs current facts, an agent
+may ask for one web search (Gemini with Google, counted against
+`SEARCH_MONTHLY_CAP`) and answers from it with numbered sources. Only the
+search's own sources can appear as links; anything else the model writes
+as a link is removed, and an agent can't open pages it chooses, so a web
+page can't steer it into leaking what it knows. When you @mention several
+agents in one message, each answers only its own part.
+
 **Sound check** (Settings → Voices) plays one line in the chosen style and
 shows what the phone reports: the style, whether replies are read aloud,
 the sound engine's state, phone voices, the silent-switch override, and
