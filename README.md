@@ -255,6 +255,27 @@ just the status code and device count, never key material.
 phones) and a day-by-day list from your Google Calendar, plus `BIRTHDAYS`. Remi's chat
 answers from the same calendar.
 
+**QWERTY, the watchdog** (#dev-and-security; Settings → Security and health).
+Each round he checks every agent's wiring, failed round jobs, busy models
+that fell back, dead feeds, push errors, storage, the dashboard key's
+strength and `CRON_SECRET`, and posts only when what he sees changes
+(pushing new "fix now" findings). Weekly he checks every installed Python
+package against Google's OSV vulnerability database.
+- Wrong keys are counted per address; `SEC_MAX_FAILS` (10) in 15 minutes
+  locks that address out for `SEC_LOCK_MINUTES` (30), even with the right
+  key, and pushes you an alert.
+- Every response carries security headers (no framing, no MIME sniffing,
+  a strict referrer policy), and the key is wiped from the address bar
+  once the login cookie is set.
+- API keys, tokens, private keys and your own secrets pasted into chat are
+  hidden before they're saved or sent to any model, and he tells you to
+  rotate them.
+- Code help: ask him in his channel (he knows how the hub is built), or
+  `/issue <title> - <details>` and he writes up a GitHub issue with a
+  suggested fix, filed when `GITHUB_TOKEN` (fine-grained, Issues: read and
+  write on this repo only) is set; `GITHUB_REPO` picks the repo. He never
+  changes or deploys code himself. `/security` posts what he sees now.
+
 **Article briefs.** Before Red, Blue and Gray take the round's story, the
 hub reads the article itself and one small model call writes a neutral
 brief: 2-3 sentences, at most two exact quotes, and one line on how the

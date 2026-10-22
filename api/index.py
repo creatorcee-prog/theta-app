@@ -105,7 +105,7 @@ ABILITIES = {
     "theta": "summarize the bots' reports, decide escalations that reach you, issue commandeer "
              "orders, and write the weekly review",
     "mistral": "post the morning digest, flag breaking news, send phone notifications, triage "
-               "escalations, check what's wired, and decide who answers in All Agents",
+               "escalations, and decide who answers in All Agents",
     "glass": "log expenses, report budgets and send budget alerts, review weekly spending, and "
              "import Rocket Money CSVs. You can't see bank accounts or block spending",
     "remi": "read the family calendar (read-only), post agendas, remind people of birthdays, and set "
@@ -121,6 +121,11 @@ ABILITIES = {
             "framing, byline), and give your take. You can't search beyond those feeds",
     "gray": "read the top story's article and brief it neutrally (summary, exact quotes, how it's framed, "
             "who wrote it), read your outlets' headlines, and give your take. You can't search beyond those feeds",
+    "qwerty": "check every agent's wiring, failed jobs, busy models, dead feeds and storage; lock out "
+              "addresses guessing the dashboard key; hide secrets pasted into chat; check the installed "
+              "libraries for known vulnerabilities weekly; answer code questions about the hub; and write "
+              "GitHub issues with suggested fixes (/issue; filed when GITHUB_TOKEN is set). You can't change "
+              "or deploy code yourself",
     "charter": "draw charts of spending, daily spending, calendar busyness, news coverage and "
                "All Agents activity, and nothing else yet",
 }
@@ -160,6 +165,11 @@ AGENTS = {
                 "role": "You make charts from the user's and other bots' "
                         "requests and hand them back: say the chart type, axes "
                         "and data plainly."},
+    "qwerty": {"name": "QWERTY", "tier": "manager",
+               "role": "You are the watchdog and security guard: you check what's wired and what's "
+                       "failing, guard the dashboard (wrong-key lockouts, leaked secrets, vulnerable "
+                       "libraries) and help with code by explaining fixes and writing GitHub issues. "
+                       "You never claim to have changed code."},
     # James lives in Garage Gym: chat goes to his own prompt and your
     # training data there (see james_chat), not to a role prompt here.
     "james": {"name": "James", "tier": "manager", "home": "Garage Gym",
@@ -188,6 +198,8 @@ PERSONAS = {
              "labels it partisan", "fact-first", "concise"],
     "gray": ["independent", "skeptical of both parties", "news reporter", "fact-first",
              "concise"],
+    "qwerty": ["vigilant", "terse", "precise", "security-minded", "pragmatic", "dry wit",
+               "explains fixes plainly", "never guesses", "concise"],
     "charter": ["precise", "visual", "clear", "data-driven", "concise", "labels everything",
                 "color-savvy", "annotation-heavy", "asks clarifying questions", "storyteller"],
 }
@@ -1017,7 +1029,8 @@ def system_prompt(agent_id):
     traits = [k for k in persona if k != "concise"]
     personality = f" Your personality: {', '.join(traits)}." if traits else ""
     brevity = " and be concise" if "concise" in persona else ""
-    extra = {"remi": remi_context, "glass": glass_context, "charter": charter_context}.get(agent_id, str)()
+    extra = {"remi": remi_context, "glass": glass_context, "charter": charter_context,
+             "qwerty": qwerty_context}.get(agent_id, str)()
     if agent_id == "lenz":
         try:
             trending = tmdb_trending()[:10]
@@ -1298,6 +1311,8 @@ CHANNELS = [
     {"id": "gym", "name": "gym", "members": ["james"], "about": "James, from Garage Gym."},
     {"id": "command", "name": "command", "members": ["theta", "mistral"],
      "about": "Theta and Mistral: orders, reviews, digests and rounds."},
+    {"id": "dev", "name": "dev-and-security", "members": ["qwerty"],
+     "about": "QWERTY: what's wired, what's failing, security, and code help."},
 ]
 CHANNEL_IDS = {c["id"]: c for c in CHANNELS}
 
@@ -2256,6 +2271,8 @@ AGENT_LOOKS = {
              '<path d="M19 7l-2.5 6a2.5 2.5 0 0 0 5 0z"/>'),
     "charter": ("#8b5cf6", "#4f46e5", '<path d="M4 20h16"/><path d="M7 16v-5M12 16V6M17 16v-8"/>'),
     "james": ("#fb923c", "#dc2626", '<path d="M6.5 7v10M17.5 7v10M3.5 9.5v5M20.5 9.5v5M6.5 12h11"/>'),
+    "qwerty": ("#84cc16", "#3f6212", '<rect x="2.5" y="6" width="19" height="12" rx="2.5"/>'
+               '<path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M7.5 14h9"/>'),
     "hub": ("#64748b", "#334155", '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><circle cx="12" cy="12" r="2.5"/>'),
     "you": ("#a1a1aa", "#52525b", '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>'),
 }
@@ -2562,8 +2579,8 @@ def _round_theta(ctx):
 
 
 def _round_mistral(ctx):
-    """Morning digest (once a day), breaking-news alerts, escalation triage,
-    and the wiring check (posted on the first run and when it changes)."""
+    """Morning digest (once a day), breaking-news alerts and escalation
+    triage. (QWERTY does the wiring check.)"""
     st = store()
     did = []
     today = datetime.now(hub_tz()).date().isoformat()
@@ -2599,20 +2616,7 @@ def _round_mistral(ctx):
         _mark_seen("push:breaking", b["url"])
         did.append("flagged breaking news")
     _triage_escalations(did)
-    # Optional links (testable False, e.g. the calendar) only count once set up and failing.
-    problems = sorted(f"{r['name']}: {r['note']}" for r in wiring()
-                      if r["state"] == "bad" or (r["state"] == "off" and r.get("testable", True)))
-    sig = "|".join(problems)
-    if sig == st.get_meta("round:mistral:wiring"):  # None on the first check: report it
-        did.append("wiring unchanged")
-    else:
-        st.set_meta("round:mistral:wiring", sig)
-        st.add_chat("mistral", "Wiring check: everyone is wired." if not problems else
-                    "Wiring check found problems:\n" + "\n".join(f"- {x}" for x in problems))
-        if problems:
-            notify("Mistral", f"Wiring problem: {problems[0]}" + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else ""))
-        did.append("posted a wiring check")
-    return ", ".join(did)
+    return ", ".join(did) or "nothing new"
 
 
 def _round_news(agent):
@@ -2842,10 +2846,271 @@ def _round_charter(ctx):
     return "posted the spending chart"
 
 
+# ---- QWERTY: the watchdog. He checks what's wired and what's failing,
+# guards the dashboard (wrong-key lockouts, secrets pasted into chat,
+# known holes in the installed libraries) and helps with code: answers in
+# #dev-and-security and drafts GitHub issues with a suggested fix (filed
+# when GITHUB_TOKEN is set). He never changes code himself.
+SEC_MAX_FAILS = int(os.environ.get("SEC_MAX_FAILS", "10"))  # wrong keys per address...
+SEC_WINDOW = 15 * 60  # ...in this many seconds...
+SEC_LOCK = int(os.environ.get("SEC_LOCK_MINUTES", "30")) * 60  # ...locks it out this long
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_REPO = os.environ.get("GITHUB_REPO", "creatorcee-prog/dashboard-app")
+_SEC_CACHE = {"at": 0.0, "data": None}
+_SEC_LOCK = threading.Lock()
+_PUBLIC_PATHS = ("/ui.css", "/ui.js", "/chat.js", "/sw.js", "/manifest.webmanifest", "/favicon.ico",
+                 "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/api/push/health")
+SECURITY_HEADERS = [
+    ("X-Content-Type-Options", "nosniff"),
+    ("Referrer-Policy", "strict-origin-when-cross-origin"),
+    ("X-Frame-Options", "DENY"),
+    ("Content-Security-Policy", "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"),
+    ("Permissions-Policy", "camera=(), geolocation=(), payment=(), usb=()"),
+]
+
+
+def client_ip(environ):
+    fwd = environ.get("HTTP_X_FORWARDED_FOR", "")
+    return (fwd.split(",")[0].strip() if fwd else environ.get("HTTP_X_REAL_IP") or environ.get("REMOTE_ADDR") or "?")[:64]
+
+
+def _sec_state(fresh=False):
+    """{ip: {"fails": [times], "locked_until": t}}, cached 30 s per process."""
+    if fresh or time.time() - _SEC_CACHE["at"] > 30 or _SEC_CACHE["data"] is None:
+        try:
+            _SEC_CACHE.update(at=time.time(), data=_meta_json("sec:fails", {}))
+        except Exception:
+            _SEC_CACHE.update(at=time.time(), data={})
+    return _SEC_CACHE["data"]
+
+
+def sec_locked(ip, path):
+    if path in _PUBLIC_PATHS or path.startswith("/avatar/"):
+        return False
+    return _sec_state().get(ip, {}).get("locked_until", 0) > time.time()
+
+
+def sec_record_fail(ip, path):
+    """Count a wrong key from this address; lock it out at SEC_MAX_FAILS."""
+    now = time.time()
+    with _SEC_LOCK:
+        state = _sec_state(fresh=True)
+        rec = state.setdefault(ip, {"fails": [], "locked_until": 0})
+        rec["fails"] = [t for t in rec["fails"] if now - t < SEC_WINDOW] + [now]
+        newly = len(rec["fails"]) >= SEC_MAX_FAILS and rec.get("locked_until", 0) <= now
+        if newly:
+            rec["locked_until"] = now + SEC_LOCK
+            rec["lockouts"] = rec.get("lockouts", 0) + 1
+        for k in [k for k, v in state.items() if not v["fails"] and v.get("locked_until", 0) < now - 86400]:
+            del state[k]
+        store().set_meta("sec:fails", json.dumps(dict(list(state.items())[-200:])))
+    if newly:
+        msg = (f"{len(rec['fails'])} wrong keys from {ip} in {SEC_WINDOW // 60} minutes (last on {path}). "
+               f"Locked out for {SEC_LOCK // 60} minutes. If that was you, wait it out; if not, consider a new "
+               "DASHBOARD_KEY.")
+        store().add_chat("qwerty", f"Security: {msg}", channel="dev")
+        notify("QWERTY", f"Someone's guessing your dashboard key: {msg}", "/settings#security")
+
+
+_SECRET_PATTERNS = [
+    ("an Anthropic API key", r"\bsk-ant-[A-Za-z0-9_-]{20,}"),
+    ("an OpenAI API key", r"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}"),
+    ("a Groq API key", r"\bgsk_[A-Za-z0-9]{20,}"),
+    ("a Google API key", r"\bAIza[0-9A-Za-z_-]{30,}"),
+    ("a GitHub token", r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}|\bgithub_pat_[A-Za-z0-9_]{40,}"),
+    ("a Slack token", r"\bxox[abposr]-[A-Za-z0-9-]{10,}"),
+    ("an AWS access key", r"\bAKIA[0-9A-Z]{16}\b"),
+    ("a private key", r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)"),
+    ("a token (JWT)", r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),
+]
+
+
+def redact_secrets(text):
+    """Hide API keys and tokens pasted into chat before they're stored or
+    sent to any model. Returns (text, [what was hidden])."""
+    found = []
+    own = [("your dashboard key", DASHBOARD_KEY), ("your cron secret", CRON_SECRET),
+           ("your VAPID private key", VAPID_PRIVATE_KEY), ("your Garage Gym secret", GARAGE_GYM_SECRET)]
+    for label, value in own:
+        if value and len(value) >= 8 and value in text:
+            text = text.replace(value, "[hidden by QWERTY]")
+            found.append(label)
+    for label, pattern in _SECRET_PATTERNS:
+        text, n = re.subn(pattern, "[hidden by QWERTY]", text)
+        if n:
+            found.append(label)
+    return text, found
+
+
+def warn_secrets(found):
+    if not found:
+        return
+    what = ", ".join(dict.fromkeys(found))
+    store().add_chat("qwerty", f"You pasted {what} into chat. I hid it before it was saved or sent to any "
+                     "model. If it was real, treat it as leaked and rotate it where it came from.", channel="dev")
+    notify("QWERTY", f"Hid {what} you pasted into chat. Rotate it if it was real.", "/chat?ch=dev")
+
+
+def dependency_vulns():
+    """Known vulnerabilities in the installed Python packages, from Google's
+    OSV database. [(name, version, [ids])]; raises LLMError if unreachable."""
+    import importlib.metadata as md
+    pkgs = sorted({(d.metadata["Name"].lower(), d.version) for d in md.distributions()
+                   if d.metadata and d.metadata["Name"]})[:300]
+    body = json.dumps({"queries": [{"package": {"name": n, "ecosystem": "PyPI"}, "version": v} for n, v in pkgs]})
+    req = urllib.request.Request("https://api.osv.dev/v1/querybatch", data=body.encode(), method="POST",
+                                 headers={"Content-Type": "application/json", "User-Agent": WIKI_UA})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            results = json.loads(resp.read()).get("results", [])
+    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+        raise LLMError(f"OSV unreachable: {e!r}")
+    return [(n, v, [x["id"] for x in r.get("vulns", [])]) for (n, v), r in zip(pkgs, results) if r.get("vulns")]
+
+
+def watchdog_findings():
+    """What QWERTY sees: [(severity, text)], worst first. No model calls."""
+    out = []
+    if not DASHBOARD_KEY:
+        out.append(("high", "DASHBOARD_KEY isn't set: anyone with the link can open the dashboard and use your keys."))
+    elif len(DASHBOARD_KEY) < 20:
+        out.append(("warn", f"DASHBOARD_KEY is only {len(DASHBOARD_KEY)} characters; use 32+ random ones."))
+    if STORAGE_MODE.startswith("memory"):
+        out.append(("high", "Storage is in memory: everything is lost between requests. Connect Upstash Redis."))
+    for r in wiring():
+        if r["state"] == "bad" or (r["state"] == "off" and r.get("testable", True)):
+            out.append(("warn", f"{r['name']}: {r['note']}"))
+    for t in ("low_brain", "manager", "miner"):
+        fb = recent_fallback(t)
+        if fb:
+            out.append(("info", f"{TIER_LABELS[t]} model was busy {fb['ago']} ago; {fb['model']} answered instead."))
+    failures = _meta_json("round:failures", {})
+    for a, err in failures.items():
+        out.append(("warn", f"{display_name(a)}'s last round job failed: {err}"))
+    dead = [NEWS_SOURCE_NAMES.get(urlparse(u).netloc, urlparse(u).netloc) for u in NEWS_FEEDS + ENTERTAINMENT_FEEDS
+            if u in _FEED_CACHE and not _FEED_CACHE[u][1]]
+    if dead:
+        out.append(("info", "Feeds giving nothing right now: " + ", ".join(dead)))
+    if not CRON_SECRET:
+        out.append(("info", "CRON_SECRET isn't set, so rounds and reminders can't run on a schedule."))
+    now = time.time()
+    sec = _sec_state(fresh=True)
+    locked = [ip for ip, v in sec.items() if v.get("locked_until", 0) > now]
+    recent = sum(1 for v in sec.values() for t in v["fails"] if now - t < 86400)
+    if locked:
+        out.append(("high", f"Locked out for guessing keys: {', '.join(locked)}."))
+    elif recent >= 3:
+        out.append(("warn", f"{recent} wrong-key attempts in the last 15 minutes."))
+    for name, ver, ids in json.loads(store().get_meta("sec:osv") or "[]"):
+        out.append(("high", f"{name} {ver} has known vulnerabilities ({', '.join(ids[:3])}). Update requirements.txt."))
+    order = {"high": 0, "warn": 1, "info": 2}
+    return sorted(out, key=lambda f: order[f[0]])
+
+
+def _round_qwerty(ctx):
+    """The watchdog report (posted when what he sees changes; pushes for new
+    high-severity findings) and a weekly check of the installed libraries."""
+    st = store()
+    did = []
+    last_osv = float(st.get_meta("sec:osv_at") or 0)
+    if time.time() - last_osv > 7 * 86400:
+        try:
+            vulns = dependency_vulns()
+            st.set_meta("sec:osv", json.dumps(vulns))
+            st.set_meta("sec:osv_at", str(time.time()))
+            did.append(f"checked the libraries ({len(vulns)} with known holes)")
+        except LLMError as e:
+            did.append(f"couldn't check the libraries ({str(e)[:60]})")
+    findings = watchdog_findings()
+    sig = "|".join(f"{s}:{t}" for s, t in findings if not t.startswith(("Feeds giving", "Low Brain model", "Manager model", "Miner model")))
+    before = st.get_meta("round:qwerty:sig")
+    if sig == before:
+        did.append("all quiet" if not findings else "nothing new")
+    else:
+        st.set_meta("round:qwerty:sig", sig)
+        icon = {"high": "[!]", "warn": "[~]", "info": "[i]"}
+        st.add_chat("qwerty", ("Watchdog: all clear. Everything's wired, nothing's failing." if not findings else
+                               "Watchdog report:\n" + "\n".join(f"{icon[s]} {t}" for s, t in findings)
+                               + "\nAsk me in #dev-and-security, or /issue to write one up."), channel="dev")
+        old_high = {t for t in (before or "").split("|") if t.startswith("high:")}
+        new_high = [t for s, t in findings if s == "high" and f"high:{t}" not in old_high]
+        if new_high:
+            notify("QWERTY", " | ".join(new_high[:2]) + (f" (+{len(new_high) - 2} more)" if len(new_high) > 2 else ""),
+                   "/settings#security")
+        did.append(f"posted a watchdog report ({len(findings)} finding{'s' if len(findings) != 1 else ''})")
+    return ", ".join(did)
+
+
+HUB_MAP = (
+    "How the hub is built (for code questions): one Python file, api/index.py, deployed on Vercel as a "
+    "WSGI app (app() -> handle(method, path, query, headers, body)); vercel.json sends every path to it, "
+    "60 s max per request. Storage: Upstash Redis over REST (KVStore._cmd), with key/values in the hash "
+    "hub:meta (get_meta/set_meta, _meta_json); MemoryStore when no KV vars. Models: llm_chat(tier, messages) "
+    "over OpenAI-compatible APIs (Groq for miners/managers, Gemini for the low brain), with retry and a "
+    "fallback model. Agents: the AGENTS dict, PERSONAS, ABILITIES, system_prompt(). Rounds: run_round() runs "
+    "ROUND_JOBS in parallel (POST /api/round from Supabase Cron, 3x a day); reminders: run_tick() via POST "
+    "/api/tick every 5 min. Chat: add_chat()/allchat_view() with channels (CHANNELS). Pages are server-rendered "
+    "strings (page(), home_page(), chat_page(), lenz_page()...) with CSS in _BASE_CSS and themes in THEMES; "
+    "scripts in _UI_JS_SRC, _CHAT_JS. Push: notify() with pywebpush and VAPID keys. Tests are standalone "
+    "scripts that call app() with fake providers.")
+
+
+def qwerty_context():
+    findings = watchdog_findings()
+    return ("\n\n" + HUB_MAP + "\n\nWhat you see right now (exact):\n"
+            + ("\n".join(f"- [{s}] {t}" for s, t in findings) if findings else "- all clear"))
+
+
+def file_issue(title, details=""):
+    """QWERTY writes up an issue with a suggested fix; files it on GitHub
+    when GITHUB_TOKEN is set. Returns (url or None, body)."""
+    body = llm_chat("manager", [
+        {"role": "system", "content": system_prompt("qwerty")},
+        {"role": "user", "content": f"Write a GitHub issue for: {title}\n{details}\n\nUse these headings: "
+         "## What's wrong, ## Where (functions in api/index.py, if you can tell), ## Suggested fix "
+         "(concrete steps or a short code sketch), ## How to check it's fixed. Say plainly what you're unsure of. "
+         "No secrets, keys or personal data."}], max_tokens=1400).strip()
+    body, _ = redact_secrets(body)
+    body += "\n\n_Written by QWERTY, the hub's watchdog._"
+    if not GITHUB_TOKEN:
+        return None, body
+    req = urllib.request.Request(f"https://api.github.com/repos/{GITHUB_REPO}/issues",
+                                 data=json.dumps({"title": title[:200], "body": body}).encode(), method="POST",
+                                 headers={"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github+json",
+                                          "User-Agent": WIKI_UA, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read()).get("html_url"), body
+    except urllib.error.HTTPError as e:
+        raise LLMError(f"GitHub returned {e.code}: check GITHUB_TOKEN can write issues on {GITHUB_REPO}")
+    except (urllib.error.URLError, TimeoutError) as e:
+        raise LLMError(f"GitHub unreachable: {e!r}")
+
+
+def _cmd_issue(arg):
+    if not arg.strip():
+        raise CommandError("Try /issue Lenz's posters are missing - what you saw and where")
+    title, _, details = arg.partition(" - ")
+    url, body = file_issue(title.strip(), details.strip())
+    if url:
+        store().add_chat("qwerty", f"Filed it: {url}", channel="dev")
+        return f"QWERTY filed the issue: {url}"
+    store().add_chat("qwerty", f"Here's the write-up (set GITHUB_TOKEN and I'll file these for you):\n\n# {title.strip()}\n{body}",
+                     channel="dev")
+    return "QWERTY wrote it up in #dev-and-security."
+
+
+def _cmd_security(arg):
+    findings = watchdog_findings()
+    store().add_chat("qwerty", "Security and health right now:\n" + (
+        "\n".join(f"- [{s}] {t}" for s, t in findings) if findings else "- all clear"), channel="dev")
+    return f"{len(findings)} finding{'s' if len(findings) != 1 else ''}."
+
+
 ROUND_JOBS = {
     "theta": _round_theta, "remi": _round_remi, "glass": _round_glass, "charter": _round_charter, "mistral": _round_mistral, "james": _round_james,
     "lenz": _round_lenz, "red": _round_news("red"), "blue": _round_news("blue"),
-    "gray": _round_news("gray"),
+    "gray": _round_news("gray"), "qwerty": _round_qwerty,
 }
 _NEWS_AGENTS = {"red", "blue", "gray"}
 
@@ -2883,6 +3148,13 @@ def run_round(force=False, now=None, only=None):
                 last[a] = now
                 st.touch(a, done[:80])
     st.set_meta("round:last", json.dumps(last))
+    failures = _meta_json("round:failures", {})
+    for a, r in results.items():
+        if r["ok"]:
+            failures.pop(a, None)
+        else:
+            failures[a] = r["did"]
+    st.set_meta("round:failures", json.dumps(failures))
     if ctx.get("story") and any(results.get(a, {}).get("ok") for a in _NEWS_AGENTS):
         _mark_seen("round:news:seen", ctx["story"]["url"])
         st.set_meta("round:news:last", json.dumps({"title": ctx["story"]["title"], "coverage": {
@@ -3948,6 +4220,22 @@ def agent_windows(chat=None, cards=None):
     else:
         out["james"] = _win("james", "", "Link Garage Gym to see your training" if not GARAGE_GYM_SECRET
                             else "Garage Gym hasn't answered yet", james_img, title="Training")
+    try:
+        findings = watchdog_findings()
+    except Exception:
+        findings = None
+    q1, q2 = AGENT_LOOKS["qwerty"][:2]
+    if findings is None:
+        out["qwerty"] = _win("qwerty", "", "Couldn't check just now", href="/settings#security", title="Watchdog")
+    else:
+        worst = [t for sv, t in findings if sv == "high"] or [t for sv, t in findings if sv == "warn"]
+        out["qwerty"] = _win("qwerty", "", worst[0] if worst else "Everything's wired, nothing's failing",
+                             _tile_svg(q1, q2, "OK" if not worst else str(len(worst)),
+                                       "all clear" if not worst else ("thing to fix" if len(worst) == 1 else "things to fix"),
+                                       "Watchdog"), "/settings#security",
+                             title="All clear" if not worst else f"{len(worst)} thing{'s' if len(worst) != 1 else ''} to look at",
+                             text="\n".join(f"[{sv}] {t}" for sv, t in findings) or "All clear.",
+                             links=[["Open Security", "/settings#security"]])
     if "lenz" in out:  # Lenz's window opens his library
         now_on = [x for x in library() if x["status"] == "current"]
         out["lenz"].update(href="/lenz", external=False, nosheet=True,
@@ -4229,6 +4517,8 @@ COMMANDS = [  # shown in the "/" menu in this order
     {"name": "trending", "args": "", "about": "Lenz pitches the next trending title", "run": _cmd_trending},
     {"name": "summary", "args": "", "about": "Theta summarizes new reports", "run": _cmd_summary},
     {"name": "status", "args": "", "about": "Mistral posts what's wired and what isn't", "run": _cmd_status},
+    {"name": "issue", "args": "<title> - <details>", "about": "QWERTY writes up a GitHub issue with a fix", "run": _cmd_issue},
+    {"name": "security", "args": "", "about": "QWERTY posts what he sees right now", "run": _cmd_security},
     {"name": "help", "args": "", "about": "List these commands", "run": _cmd_help},
 ]
 
@@ -4884,6 +5174,13 @@ _UI_JS_SRC = r'''
   const root = document.documentElement;
   const KEY = new URLSearchParams(location.search).get("key") || "";
   window.THETA_H = {"Content-Type": "application/json", "x-dashboard-key": KEY};
+  // The server set the login cookie with this response, so take the key out
+  // of the address bar (and so out of screenshots, history and shared links).
+  if (KEY) {
+    const u = new URL(location.href);
+    u.searchParams.delete("key");
+    history.replaceState(null, "", u.pathname + u.search + u.hash);
+  }
   const dark = matchMedia("(prefers-color-scheme: dark)");
   function metaColors() {
     const t = T[root.dataset.theme] || T.theta, m = root.dataset.mode;
@@ -5680,6 +5977,17 @@ _WIRING_JS = r"""
 """
 
 
+def security_rows():
+    try:
+        findings = watchdog_findings()
+    except Exception as e:
+        return f'<li class="empty">QWERTY couldn\'t check right now: {html.escape(str(e)[:120])}</li>'
+    label = {"high": ("Fix now", "var(--bad)"), "warn": ("Look at", "var(--warn)"), "info": ("FYI", "var(--muted)")}
+    return "".join(
+        f'<li><span class="chip" style="color:{label[sv][1]};border-color:currentColor">{label[sv][0]}</span> {html.escape(t)}</li>'
+        for sv, t in findings) or '<li>All clear: everything\'s wired, nothing\'s failing, no wrong-key attempts.</li>'
+
+
 def settings_page(headers):
     theme, mode, layout = ui_prefs(headers)
     st = store()
@@ -5719,6 +6027,9 @@ def settings_page(headers):
         'the morning digest, breaking news, budget alerts and birthdays. On iPhone, open Theta from its Home Screen icon.</p></div>'
         '<p><button class="btn" id="push-on" type="button">Turn on</button> <button class="btn ghost" id="push-test" '
         'type="button">Send a test</button></p><p class="note" id="push-status"></p></section>'
+        f'<section class="card stack" id="security"><div class="hero" style="gap:12px">{avatar_img("qwerty", 40)}<div><h2>Security and health</h2>'
+        '<p class="muted small">QWERTY checks this every round and tells you in #dev-and-security when it changes.</p></div></div>'
+        f'<ul class="list">{security_rows()}</ul></section>'
         '<section class="card stack"><div class="brow"><h2>Rounds</h2></div><p class="muted small">Every agent does its '
         'job three times a day (Supabase Cron). Run one now to refresh the windows.</p>'
         f'<p><button class="btn" type="button" data-run-round="round-status-s">{ui_icon("play")}Run a round now</button></p>'
@@ -6309,10 +6620,14 @@ def handle(method, path, query, headers, body):
             if bot_id:  # a bot posting: no replies, so agents can't loop
                 if not _auth_bot(bot_id, headers):
                     return _json(401, {"ok": False, "error": "bad bot_id or key"})
+                text, leaked = redact_secrets(text)
+                warn_secrets(leaked)
                 store().add_chat(bot_id, text.strip()[:2000], channel=data.get("channel") if ch != "all" else None)
                 return _json(200, {"ok": True, "messages": allchat_view(channel=ch), "latest": latest_by_channel()})
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
+            text, leaked = redact_secrets(text)  # before it's saved or sent to any model
+            warn_secrets(leaked)
             if text.strip().startswith("/"):
                 try:
                     result = run_command(text)
@@ -6654,7 +6969,7 @@ def handle(method, path, query, headers, body):
 
 # ---- WSGI entry point (what Vercel calls) ----
 _REASONS = {200: "OK", 400: "Bad Request", 401: "Unauthorized",
-            403: "Forbidden", 404: "Not Found", 500: "Internal Server Error",
+            403: "Forbidden", 404: "Not Found", 429: "Too Many Requests", 500: "Internal Server Error",
             502: "Bad Gateway"}
 
 
@@ -6669,14 +6984,24 @@ def app(environ, start_response):
     except ValueError:
         length = 0
     body = environ["wsgi.input"].read(length) if length > 0 else b""
+    ip = client_ip(environ)
     try:
-        status, ctype, out, *extra = handle(method, path, query, headers, body)
+        if sec_locked(ip, path):  # QWERTY locked this address out for guessing keys
+            status, ctype, out, *extra = _json(429, {"ok": False, "error": "Too many wrong keys from this "
+                                                     "address. Try again later."})
+        else:
+            status, ctype, out, *extra = handle(method, path, query, headers, body)
+            if status == 401:
+                try:
+                    sec_record_fail(ip, path)
+                except Exception as exc:
+                    print(f"couldn't record a wrong key: {exc!r}")
     except Exception as exc:  # e.g. storage down: answer, don't crash
         print(f"handle error on {method} {path}: {exc!r}")
         (status, ctype, out), extra = _json(500, {"ok": False, "error": "internal error"}), []
     start_response(f"{status} {_REASONS.get(status, '')}",
                    [("Content-Type", ctype), ("Content-Length", str(len(out)))]
-                   + (extra[0] if extra else []))
+                   + SECURITY_HEADERS + (extra[0] if extra else []))
     return [out]
 
 
