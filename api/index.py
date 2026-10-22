@@ -188,7 +188,25 @@ NEWS_SOURCE_NAMES = {
     "rss.nytimes.com": "New York Times", "thehill.com": "The Hill",
     "moxie.foxnews.com": "Fox News", "nypost.com": "New York Post",
     "feeds.bbci.co.uk": "BBC News",
+    "www.dailywire.com": "Daily Wire", "www.washingtonexaminer.com": "Washington Examiner",
+    "www.nationalreview.com": "National Review", "www.theguardian.com": "Guardian US",
+    "www.vox.com": "Vox", "www.motherjones.com": "Mother Jones",
+    "www.newsnationnow.com": "NewsNation", "reason.com": "Reason",
 }
+# Each news miner's own outlets ({RED,BLUE,GRAY}_FEEDS override), so the
+# three takes come from three different slices of the press.
+SIDE_FEEDS = {
+    "red": os.environ.get("RED_FEEDS", "https://moxie.foxnews.com/google-publisher/politics.xml,"
+                          "https://nypost.com/news/feed/,https://www.dailywire.com/feeds/rss.xml,"
+                          "https://www.washingtonexaminer.com/feed,https://www.nationalreview.com/feed/"),
+    "blue": os.environ.get("BLUE_FEEDS", "https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml,"
+                           "https://feeds.npr.org/1014/rss.xml,https://www.theguardian.com/us-news/rss,"
+                           "https://www.vox.com/rss/index.xml,https://www.motherjones.com/feed/"),
+    "gray": os.environ.get("GRAY_FEEDS", "https://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml,"
+                           "https://thehill.com/homenews/feed/,https://www.pbs.org/newshour/feeds/rss/politics,"
+                           "https://www.newsnationnow.com/feed/,https://reason.com/feed/"),
+}
+SIDE_FEEDS = {k: [u.strip() for u in v.split(",") if u.strip()] for k, v in SIDE_FEEDS.items()}
 NEWS_TOP = int(os.environ.get("NEWS_TOP", "8"))
 NEWS_BREAKING_MAX = int(os.environ.get("NEWS_BREAKING_MAX", "2"))
 NEWS_BREAKING_MINUTES = int(os.environ.get("NEWS_BREAKING_MINUTES", "90"))
@@ -582,6 +600,44 @@ def _names(title):
     return {w.lower() for w in words if w[:1].isupper() and len(w) >= 3} - _STOP
 
 
+def story_key(title):
+    return _keywords(title), _names(title)
+
+
+def _same_story(a, b):
+    """Two story_key()s describe the same story: 3+ shared keywords, 2 of them names."""
+    return len(a[0] & b[0]) >= 3 and len(a[1] & b[1]) >= 2
+
+
+def outlet_items(urls):
+    """Every item from these feeds, each with a readable outlet name."""
+    out = []
+    for url, items in zip(urls, _fetch_feeds(urls)):
+        host = urlparse(url).netloc
+        out += [dict(it, source=NEWS_SOURCE_NAMES.get(host) or it.get("source") or host) for it in items]
+    return out
+
+
+def side_coverage(agent, title, limit=3):
+    """How this news miner's own outlets covered a story (matching headlines)."""
+    key = story_key(title)
+    return [it for it in outlet_items(SIDE_FEEDS.get(agent, []))
+            if _same_story(key, story_key(it["title"]))][:limit]
+
+
+def side_headlines(agent, limit=8):
+    """Each of the miner's outlets' latest headlines, in turn."""
+    by_outlet = {}
+    for it in outlet_items(SIDE_FEEDS.get(agent, [])):
+        by_outlet.setdefault(it["source"], []).append(it)
+    out = []
+    for rank in range(10):
+        for items in by_outlet.values():
+            if len(out) < limit and rank < len(items):
+                out.append(items[rank])
+    return out
+
+
 def news_items(now=None):
     """(breaking, top) from NEWS_FEEDS.
 
@@ -599,8 +655,7 @@ def news_items(now=None):
     keyed = [(it, (_keywords(it["title"]), _names(it["title"])))
              for items in feeds for it in items]
 
-    def same_story(a, b):
-        return len(a[0] & b[0]) >= 3 and len(a[1] & b[1]) >= 2
+    same_story = _same_story
 
     def outlets_carrying(kw):
         return {o["source"] for o, okw in keyed if same_story(kw, okw)}
@@ -732,6 +787,12 @@ def system_prompt(agent_id):
     personality = f" Your personality: {', '.join(traits)}." if traits else ""
     brevity = " and be concise" if "concise" in persona else ""
     extra = remi_context() if agent_id == "remi" else ""
+    if agent_id in SIDE_FEEDS:
+        latest = side_headlines(agent_id)
+        if latest:
+            extra = ("\n\nLatest headlines from your outlets (you only know these headlines; "
+                     "say so rather than guess details):\n"
+                     + "\n".join(f"- {it['source']}: {it['title']}" for it in latest))
     return (f"You are {a['name']}, the {TIER_LABELS[a['tier']]} of a personal bot "
             f"hub. {a['role']}{stand_in}{personality} The team: {team}. "
             f"Stay in character{brevity}.{extra}")
@@ -1197,18 +1258,28 @@ def _round_mistral(ctx):
 
 
 def _round_news(agent):
+    """Red, Blue and Gray take the same top story, each grounded in how their
+    own outlets covered it (or noting that they haven't)."""
     def job(ctx):
         story = ctx.get("story")
         if not story:
             return "no new headlines"
+        seen = side_coverage(agent, story["title"])
+        if seen:
+            coverage = "How your outlets covered it:\n" + "\n".join(
+                f"- {it['source']}: {it['title']}" for it in seen)
+        else:
+            coverage = "None of your outlets have covered it yet; say so, that's worth knowing."
         take = llm_chat(AGENTS[agent]["tier"], [
             {"role": "system", "content": system_prompt(agent) + " You're posting in the All "
              "Agents group chat."},
             {"role": "user", "content": f"Today's top story ({story['source']}): {story['title']}\n"
-             "Give your take in 2-3 sentences. You only have the headline: say so instead of "
-             "guessing details."}])
-        store().add_chat(agent, f"{take.strip()}\n{story['url']}")
-        return f"posted a take on \"{story['title'][:60]}\""
+             f"{coverage}\nGive your take in 2-3 sentences. You only have these headlines: "
+             "say so instead of guessing details."}])
+        links = [story["url"]] + [it["url"] for it in seen if it["url"] != story["url"]][:1]
+        store().add_chat(agent, take.strip() + "\n" + "\n".join(links))
+        return (f"posted a take on \"{story['title'][:60]}\""
+                + (f" ({len(seen)} of their outlets covered it)" if seen else " (their outlets haven't covered it)"))
     return job
 
 
