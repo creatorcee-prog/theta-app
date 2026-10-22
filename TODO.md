@@ -1,7 +1,5 @@
 # To-do
 
-**Settings → Wiring** shows which of these are done.
-
 ## Setup checklist
 
 **Settings → Wiring** shows which of these are working. All keys go in
