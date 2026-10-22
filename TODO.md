@@ -10,6 +10,15 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
 - [ ] Merge the open pull request, then wait for (or trigger) the Vercel
       production deploy.
 
+### 1b. Devices (after this deploy)
+- [ ] Open Theta on each of your devices once, then check Settings →
+      **Devices**: every one should be yours. Sign out anything that isn't.
+- [ ] Then change `DASHBOARD_KEY` in Vercel (a new long random string) and
+      redeploy. That cuts off anything still on the old sign-in. Sign back
+      in with Face ID, or a link with the new key.
+- [ ] Face ID still failing? Settings → Devices → Recent Face ID failures
+      shows the reason; a passkey made on another address needs adding again.
+
 ### 2. Schedules (Supabase SQL editor; any Supabase project)
 - [ ] `CRON_SECRET` in Vercel (any long random string), redeploy.
 - [ ] Run `supabase/cron.sql.example` with your hub address and secret
