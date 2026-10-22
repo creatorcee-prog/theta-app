@@ -20,8 +20,11 @@ for Vercel's serverless model:
 Everything else is env config, same as the Railway build:
   BOT_KEYS, BOT_ROLES, BOT_NAMES, DASHBOARD_KEY,
   NEWS_FEEDS, ENTERTAINMENT_FEEDS, FITNESS_APP_URL.
-Bots never hold the paid-model key; Opus 5.5 is still a stub here
-(`summarize()` / `master_work()`), called only on batched work.
+Bots never hold the model keys; the hub does (GROQ_API_KEY,
+MISTRAL_API_KEY). Every tier can be chatted with from the dashboard
+(POST /api/chat). The paid master model isn't wired yet, so the low
+brain (Mistral) stands in for it in chat, `summarize()` and
+`master_work()`.
 
 Local test (memory mode, no KV needed):
   BOT_KEYS="miner-1:key1,master-1:mkey" BOT_ROLES="miner-1:miner,master-1:master" \
@@ -31,6 +34,7 @@ import html
 import json
 import os
 import time
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -38,12 +42,23 @@ from urllib.parse import parse_qs, urlparse
 
 # ---- Bot config (same env vars as the Railway build) ----
 TIERS = ["miner", "manager", "low_brain", "master"]
-MODELS = {
-    "miner": os.environ.get("MINER_MODEL", "llama-3.1-8b-instant (Groq)"),
-    "manager": os.environ.get("MANAGER_MODEL", "llama-3.3-70b-versatile (Groq)"),
-    "low_brain": os.environ.get("LOW_BRAIN_MODEL", "Gemini 2.5 Flash (Google AI Studio)"),
-    "master": os.environ.get("MASTER_MODEL", "Opus 5.5"),
+# Chat APIs (both OpenAI-compatible): provider -> (endpoint, key env var)
+PROVIDERS = {
+    "groq": ("https://api.groq.com/openai/v1/chat/completions", "GROQ_API_KEY"),
+    "mistral": ("https://api.mistral.ai/v1/chat/completions", "MISTRAL_API_KEY"),
 }
+# tier -> (provider, model id); *_MODEL env vars override the model id
+TIER_LLM = {
+    "miner": ("groq", os.environ.get("MINER_MODEL", "llama-3.1-8b-instant")),
+    "manager": ("groq", os.environ.get("MANAGER_MODEL", "llama-3.3-70b-versatile")),
+    "low_brain": ("mistral", os.environ.get("LOW_BRAIN_MODEL", "mistral-small-latest")),
+}
+# The paid master model isn't wired yet; the low brain answers for it.
+MASTER_MODEL = os.environ.get("MASTER_MODEL", "Opus 5.5")
+MODELS = {t: f"{m} ({p.title()})" for t, (p, m) in TIER_LLM.items()}
+MODELS["master"] = f"{MASTER_MODEL} (not connected; {TIER_LLM['low_brain'][1]} standing in)"
+LLM_TIMEOUT = int(os.environ.get("LLM_TIMEOUT_SECONDS", "25"))
+CHAT_HISTORY = 20  # most recent messages sent per chat request
 BOT_KEYS = dict(
     pair.split(":", 1)
     for pair in os.environ.get("BOT_KEYS", "").split(",")
@@ -163,6 +178,9 @@ class MemoryStore:
     def unprocessed_reports(self, limit):
         return [r for r in self.reports if r["id"] not in self.processed][:limit]
 
+    def mark_processed(self, ids):
+        self.processed.update(ids)
+
 
 class KVStore:
     """Vercel KV over its REST API (Upstash-compatible). One POST per
@@ -252,6 +270,10 @@ class KVStore:
     def unprocessed_reports(self, limit):
         done = set(self._cmd("SMEMBERS", "hub:processed") or [])
         return [r for r in self.list_reports(50) if str(r["id"]) not in done][:limit]
+
+    def mark_processed(self, ids):
+        if ids:
+            self._cmd("SADD", "hub:processed", *[str(i) for i in ids])
 
 
 def get_store():
@@ -347,25 +369,77 @@ def pushed_items(event_type, limit=10):
     return out
 
 
+# ---- Models ----
+class LLMError(Exception):
+    """A model call failed: missing key, API error or timeout."""
+
+
+def system_prompt(tier):
+    if tier == "master":
+        return (f"You are standing in for the master tier ({MASTER_MODEL}) of a "
+                "personal bot hub with tiers miner -> manager -> low_brain -> "
+                "master, until the paid model is connected. Be concise.")
+    return (f"You are the {tier} tier of a personal bot hub with tiers "
+            "miner -> manager -> low_brain -> master. Be concise.")
+
+
+def llm_chat(tier, messages, max_tokens=800):
+    """One chat-completion call for `tier`; returns the reply text.
+    Master is answered by the low brain until the paid model is wired."""
+    provider, model = TIER_LLM["low_brain" if tier == "master" else tier]
+    url, key_var = PROVIDERS[provider]
+    key = os.environ.get(key_var, "")
+    if not key:
+        raise LLMError(f"{key_var} is not set in the project's env vars")
+    req = urllib.request.Request(
+        url, data=json.dumps({"model": model, "messages": messages,
+                              "max_tokens": max_tokens}).encode(),
+        headers={"Authorization": f"Bearer {key}",
+                 "Content-Type": "application/json",
+                 "User-Agent": "bot-hub/1.0"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=LLM_TIMEOUT) as resp:
+            out = json.loads(resp.read())
+        return out["choices"][0]["message"]["content"]
+    except urllib.error.HTTPError as e:
+        detail = e.read()[:300].decode("utf-8", "replace")
+        raise LLMError(f"{provider} returned {e.code}: {detail}")
+    except (urllib.error.URLError, TimeoutError, ValueError, KeyError, IndexError) as e:
+        raise LLMError(f"{provider} call failed: {e!r}")
+
+
 def summarize(unprocessed):
-    """TODO: one batched paid-model call over `unprocessed`. Until then
-    this returns the batch itself, so the dashboard works with no key."""
-    return {
-        "note": "Stub summary — no model call made yet. "
-        "Wire the paid-model API call in summarize() in api/index.py.",
-        "unprocessed_count": len(unprocessed),
-        "reports": unprocessed,
-    }
+    """One batched master-tier call over `unprocessed` (the low brain
+    stands in for now). The batch is marked processed only on success."""
+    if not unprocessed:
+        return {"ok": True, "summary": "No new reports.", "unprocessed_count": 0}
+    lines = "\n".join(
+        f"- {display_name(r['bot_id'])} {r['event_type']}: {json.dumps(r['payload'])[:500]}"
+        for r in unprocessed)
+    try:
+        text = llm_chat("master", [
+            {"role": "system", "content": system_prompt("master")},
+            {"role": "user", "content": "Summarize these bot reports; flag anything "
+             "that needs action:\n" + lines}])
+    except LLMError as e:
+        return {"ok": False, "error": str(e), "unprocessed_count": len(unprocessed)}
+    store().mark_processed([r["id"] for r in unprocessed])
+    return {"ok": True, "summary": text, "model": MODELS["master"],
+            "unprocessed_count": len(unprocessed)}
 
 
 def master_work(escalation):
-    """TODO: the Master's work queue hook — where the low brain
-    requests Opus 5.5 to work on an escalation that reached master."""
-    return {
-        "note": "Awaiting Master — no model call made yet. "
-        "Wire the paid-model API call in master_work() in api/index.py.",
-        "escalation": escalation,
-    }
+    """The Master's work queue hook: work an escalation that reached
+    master (the low brain stands in until the paid model is wired)."""
+    try:
+        text = llm_chat("master", [
+            {"role": "system", "content": system_prompt("master")},
+            {"role": "user", "content": "Work this escalation and say what to do:\n"
+             + json.dumps(escalation)}])
+    except LLMError as e:
+        return {"ok": False, "error": str(e), "escalation": escalation}
+    return {"ok": True, "result": text, "model": MODELS["master"],
+            "escalation": escalation}
 
 
 # ---- Core request handling (framework-free, so Vercel and the local
@@ -384,6 +458,61 @@ def _auth_dashboard(query, headers):
         return True
     return (headers.get("x-dashboard-key") == DASHBOARD_KEY
             or query.get("key", [None])[0] == DASHBOARD_KEY)
+
+
+# Dashboard chat box. History lives in the page only; each send posts
+# the tier's recent messages to /api/chat with the dashboard key.
+_CHAT_JS = """
+const key = new URLSearchParams(location.search).get("key") || "";
+const hist = {};
+const tierSel = document.getElementById("chat-tier"), log = document.getElementById("chat-log");
+const msg = document.getElementById("chat-msg"), btn = document.getElementById("chat-send");
+const status = document.getElementById("chat-status");
+function show() {
+  log.replaceChildren(...(hist[tierSel.value] || []).map(m => {
+    const p = document.createElement("p"), b = document.createElement("b");
+    b.textContent = m.role === "user" ? "You: " : tierSel.value + ": ";
+    p.style.whiteSpace = "pre-wrap";
+    p.append(b, m.content);
+    return p;
+  }));
+}
+tierSel.onchange = () => { status.textContent = ""; show(); };
+document.getElementById("chat-form").onsubmit = async e => {
+  e.preventDefault();
+  const text = msg.value.trim(), tier = tierSel.value;
+  if (!text) return;
+  const h = hist[tier] = hist[tier] || [];
+  h.push({role: "user", content: text});
+  msg.value = ""; btn.disabled = true; status.textContent = "Thinking...";
+  show();
+  try {
+    const r = await fetch("/api/chat", {method: "POST",
+      headers: {"Content-Type": "application/json", "x-dashboard-key": key},
+      body: JSON.stringify({tier, messages: h})});
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error);
+    h.push({role: "assistant", content: d.reply});
+    status.textContent = "";
+  } catch (err) {
+    h.pop(); msg.value = text;
+    status.textContent = "Error: " + err.message;
+  }
+  btn.disabled = false;
+  show();
+};
+"""
+
+
+def _chat_html():
+    opts = "".join(f"<option value=\"{t}\">{html.escape(t)} — {html.escape(MODELS[t])}</option>"
+                   for t in TIERS)
+    return (f"<p><select id=\"chat-tier\" style=\"max-width:100%\">{opts}</select></p>"
+            "<div id=\"chat-log\"></div>"
+            "<form id=\"chat-form\"><textarea id=\"chat-msg\" rows=\"3\" "
+            "style=\"width:100%\"></textarea><br><button id=\"chat-send\">Send</button> "
+            "<i id=\"chat-status\"></i></form>"
+            f"<script>{_CHAT_JS}</script>")
 
 
 def _limit(query, default):
@@ -458,7 +587,32 @@ def handle(method, path, query, headers, body):
         if path == "/api/summary":
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
-            return _json(200, summarize(store().unprocessed_reports(50)))
+            result = summarize(store().unprocessed_reports(50))
+            return _json(200 if result["ok"] else 502, result)
+
+        if path == "/api/chat":
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            tier, msgs = data.get("tier"), data.get("messages")
+            if tier not in TIERS:
+                return _json(400, {"ok": False, "error": "unknown tier"})
+            if not isinstance(msgs, list) or not msgs:
+                return _json(400, {"ok": False, "error": "messages must be a non-empty list"})
+            history = []
+            for m in msgs[-CHAT_HISTORY:]:
+                if (not isinstance(m, dict) or m.get("role") not in ("user", "assistant")
+                        or not isinstance(m.get("content"), str)):
+                    return _json(400, {"ok": False, "error": "bad message"})
+                history.append({"role": m["role"], "content": m["content"][:4000]})
+            if history[-1]["role"] != "user":
+                return _json(400, {"ok": False, "error": "last message must be from user"})
+            try:
+                reply = llm_chat(tier, [{"role": "system", "content": system_prompt(tier)}]
+                                 + history)
+            except LLMError as e:
+                return _json(502, {"ok": False, "error": str(e)})
+            return _json(200, {"ok": True, "tier": tier, "model": MODELS[tier],
+                               "reply": reply})
 
         return _json(404, {"ok": False, "error": "unknown route"})
 
@@ -525,6 +679,7 @@ def handle(method, path, query, headers, body):
             storage_note = f"<p><i>Storage: {html.escape(STORAGE_MODE)}.</i></p>"
         body = (
             f"<h1>Bot hub</h1>"
+            f"<h2>Chat</h2>{_chat_html()}"
             f"<h2>Entertainment</h2><ul>{ent_items}</ul>"
             f"<h2>News</h2><ul>{news_items}</ul>"
             f"<h2>Fitness — overall health</h2>{fit_html}{app_link}"
@@ -590,7 +745,8 @@ def handle(method, path, query, headers, body):
 
 # ---- WSGI entry point (what Vercel calls) ----
 _REASONS = {200: "OK", 400: "Bad Request", 401: "Unauthorized",
-            403: "Forbidden", 404: "Not Found", 500: "Internal Server Error"}
+            403: "Forbidden", 404: "Not Found", 500: "Internal Server Error",
+            502: "Bad Gateway"}
 
 
 def app(environ, start_response):
