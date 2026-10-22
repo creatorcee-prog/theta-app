@@ -1894,47 +1894,64 @@ self.addEventListener("notificationclick", e => {
 
 
 _PUSH_JS = """
-(async () => {
+(() => {
+  // Buttons are wired first and every step is time-limited and reported, so the
+  // page can never fail silently (iPhone gives no console to look at).
   const status = document.getElementById("push-status");
+  const say = t => { status.textContent = t; };
   const PH = {"Content-Type": "application/json", "x-dashboard-key": new URLSearchParams(location.search).get("key") || ""};
-  if (!("serviceWorker" in navigator)) { status.textContent = "This browser can't show notifications."; return; }
-  const reg = await navigator.serviceWorker.register("/sw.js");
-  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
-  if (!("PushManager" in window) || !("Notification" in window)) {
-    status.textContent = standalone ? "Notifications need iOS 16.4 or later."
-      : "On iPhone: Share, then Add to Home Screen. Open Bot Hub from the Home Screen and tap Turn on here.";
-    return;
-  }
-  let key = null, problem = "", devices = 0;
-  try {
-    const r = await fetch("/api/push/key", {headers: PH});
-    if (r.status === 401) problem = "This app isn't signed in: open it once with ?key=YOUR_KEY, then add it to the Home Screen again.";
-    else { const d = await r.json(); key = d.publicKey; problem = d.problem || ""; devices = d.devices || 0; }
-  } catch (_) { problem = "Couldn't reach the hub to check notifications."; }
-  const sub = await reg.pushManager.getSubscription();
-  // The phone's own copy can outlive the server's (or predate new keys), so trust the server's count.
-  status.textContent = problem || (sub && devices ? "Notifications are on for this device."
-    : "Tap Turn on to get notifications on this device.");
+  const limit = (p, what) => Promise.race([p, new Promise((_, no) =>
+    setTimeout(() => no(new Error(what + " took too long")), 10000))]);
+  const why = e => (e && e.message) || String(e);
+  say("Checking notifications...");
+  const setup = (async () => {
+    if (!("serviceWorker" in navigator)) throw new Error("This browser can't show notifications.");
+    const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+    if (!("PushManager" in window) || !("Notification" in window))
+      throw new Error(standalone ? "Notifications need iOS 16.4 or later."
+        : "On iPhone: Share, then Add to Home Screen. Open Bot Hub from the Home Screen and tap Turn on here.");
+    await limit(navigator.serviceWorker.register("/sw.js"), "Starting the notification helper");
+    const reg = await limit(navigator.serviceWorker.ready, "Starting the notification helper");
+    const r = await limit(fetch("/api/push/key", {headers: PH}), "Reaching the hub");
+    if (r.status === 401) throw new Error("This app isn't signed in: open it once with ?key=YOUR_KEY, then add it to the Home Screen again.");
+    const d = await r.json();
+    return {reg, key: d.publicKey, problem: d.problem || "", devices: d.devices || 0};
+  })();
+  setup.then(async ({reg, problem, devices}) => {
+    const sub = await reg.pushManager.getSubscription().catch(() => null);
+    // The phone's own copy can outlive the server's (or predate new keys), so trust the server's count.
+    say(problem || (sub && devices ? "Notifications are on for this device."
+      : "Tap Turn on to get notifications on this device."));
+  }, e => say(why(e)));
   document.getElementById("push-on").onclick = async () => {
-    const perm = await Notification.requestPermission();  // first: iOS needs the tap's user gesture
-    if (perm !== "granted") { status.textContent = "Notifications were not allowed. To retry on iPhone, remove the Home Screen app and add it again."; return; }
-    if (!key) { status.textContent = problem || "Phone notifications aren't set up on the server yet."; return; }
+    say("Turning on...");
     try {
+      const perm = await Notification.requestPermission();  // before any other await: iOS needs the tap's user gesture
+      if (perm !== "granted") { say("Notifications were not allowed. To retry on iPhone, remove the Home Screen app and add it again."); return; }
+      const {reg, key, problem} = await setup;
+      if (!key) { say(problem || "Phone notifications aren't set up on the server yet."); return; }
       // A sign-up made under older keys blocks a new one, so always start fresh.
       const old = await reg.pushManager.getSubscription();
       if (old) await old.unsubscribe();
       const raw = atob(key.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - key.length % 4) % 4));
-      const s = await reg.pushManager.subscribe({userVisibleOnly: true,
-        applicationServerKey: Uint8Array.from(raw, c => c.charCodeAt(0))});
+      const s = await limit(reg.pushManager.subscribe({userVisibleOnly: true,
+        applicationServerKey: Uint8Array.from(raw, c => c.charCodeAt(0))}), "Signing up with Apple");
       const d = await (await fetch("/api/push/subscribe", {method: "POST", headers: PH, body: JSON.stringify({subscription: s})})).json();
-      status.textContent = d.ok ? "Notifications are on for this device." : "Couldn't turn on: " + d.error;
+      say(d.ok ? "Notifications are on for this device." : "Couldn't turn on: " + d.error);
     } catch (e) {
-      status.textContent = "Couldn't turn on: " + (e && e.message || e) + ". Try removing the Home Screen app and adding it again.";
+      say("Couldn't turn on: " + why(e));
     }
   };
   document.getElementById("push-test").onclick = async () => {
-    const d = await (await fetch("/api/push/test", {method: "POST", headers: PH, body: "{}"})).json();
-    status.textContent = d.ok ? (d.sent ? "Sent to " + d.sent + " device(s)." : "Nothing sent: " + (d.error || "no device subscribed")) : d.error;
+    say("Sending...");
+    try {
+      const r = await fetch("/api/push/test", {method: "POST", headers: PH, body: "{}"});
+      if (r.status === 401) { say("This app isn't signed in: open it once with ?key=YOUR_KEY, then add it to the Home Screen again."); return; }
+      const d = await r.json();
+      say(d.ok ? (d.sent ? "Sent to " + d.sent + " device(s)." : "Nothing sent: " + (d.error || "no device subscribed")) : d.error);
+    } catch (e) {
+      say("Couldn't send: " + why(e));
+    }
   };
 })();
 """
