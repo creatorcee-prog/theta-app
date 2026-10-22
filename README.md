@@ -354,7 +354,18 @@ two agents found are posted once. Results go to #command, Theta sums up,
 and your phone gets a push. Each day Theta's round reruns active projects
 and posts only new leads, until the order expires (`ORDER_DAYS`) or
 `/stopproject <n>`. "Here" / "near me" uses `HOME_LOCATION` (like
-`Denver, CO`). Searches are counted against `SEARCH_MONTHLY_CAP` (4000;
+`Denver, CO`).
+
+Job hunts (a goal that mentions a job, role, position, hiring...) go to
+the job boards first: Adzuna (`ADZUNA_APP_ID`, `ADZUNA_APP_KEY`,
+`ADZUNA_COUNTRY`, default `us`; free at developer.adzuna.com) and USAJOBS
+(`USAJOBS_API_KEY` and the `USAJOBS_EMAIL` you registered with; free at
+developer.usajobs.gov), with pay, company, place and dates. Every link,
+from the boards or the web, is opened first: a 404/410, a site that
+doesn't exist, or a "no longer accepting applications" page is dropped;
+sites that refuse robots are kept (we can't tell). The web search only
+runs when fewer than `JOB_MIN_LEADS` (8) live board leads turn up, or
+for projects that aren't job hunts. Searches are counted against `SEARCH_MONTHLY_CAP` (4000;
 Gemini's free tier includes 5,000 a month); `GEMINI_SEARCH_MODEL` picks
 the model.
 
