@@ -86,7 +86,7 @@ Same as the Railway build: `POST /api/report`, `POST /api/escalate`,
 `GET /api/widgets`, `GET /api/fitness`, `GET /api/agents` (dashboard
 key), `GET /api/models` (dashboard key), `GET /api/wiring` (dashboard
 key), `GET|POST /api/allchat` (dashboard key or bot key), `GET /api/bots`,
-`GET /api/tiers`.
+`GET /api/tiers`, `POST /api/round` (CRON_SECRET or dashboard key).
 
 ## Agents
 
@@ -142,6 +142,29 @@ message gets an answer; the status line says who she picked.
 `ALLCHAT_AUTO=off` turns this off, `ALLCHAT_AUTO_MAX` (2)
 caps it. Replies and bot posts never trigger more replies, so agents
 can't loop and run up the API limits.
+
+**Events.** What agents do shows up in All Agents as gray, templated
+lines (no tokens): reports, escalations, commandeer orders and acks,
+fitness summaries, and status changes. Agents see them as `[event]`
+lines in their context.
+
+**Rounds.** `POST /api/round` runs each agent's own job and posts what
+it did; agents whose job needs a data source they don't have yet (Glass,
+Remi, Charter) say "no job yet" instead of inventing work.
+
+| Agent | Each round | Tokens |
+|---|---|---|
+| Theta | Summarizes new bot reports into the thread | only when there are reports |
+| Mistral | Wiring check; posts only the first time and when it changes | none |
+| Red, Blue, Gray | A 2-3 sentence take on the same new top headline, with its link | 3 small calls |
+| Lenz | A short pitch for a new entertainment-feed item | 1 small call |
+| James | Refreshes your Garage Gym summary; notes when it changed | none |
+
+A failed job doesn't count as run, so it's retried next round. Run one
+from the dashboard (**Run a round now**, under Agents) or on a schedule:
+set `CRON_SECRET` in Vercel, then run `supabase/cron.sql.example` in the
+Supabase SQL editor (3 times a day by default). `ROUND_MIN_GAP_MINUTES`
+(120) stops a job from running twice too close together.
 
 **Wiring**, under the chat, shows for each agent whether its key is set
 and can use its model (James: whether Garage Gym answers). **Test** sends

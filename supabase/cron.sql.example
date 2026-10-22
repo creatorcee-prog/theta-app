@@ -1,0 +1,30 @@
+-- Runs the hub's agent rounds (/api/round) on a schedule. Run ONCE in the
+-- Supabase SQL editor (any Supabase project works, e.g. Garage Gym's) after:
+--   1. CRON_SECRET is set in the hub's Vercel project (any long random string)
+--      and the hub is redeployed
+-- Replace YOUR-HUB and YOUR-CRON-SECRET below before running.
+-- (This file is an example, not a migration, because it contains your secret.)
+
+create extension if not exists pg_cron;
+create extension if not exists pg_net;
+
+-- 3 times a day, in UTC: 00:00, 12:00 and 18:00 UTC are 6 pm, 6 am and noon
+-- at UTC-6. Change the hours to suit; each agent skips its job if it ran less
+-- than ROUND_MIN_GAP_MINUTES (default 120) ago, so extra calls are harmless.
+select cron.schedule(
+  'bot-hub-rounds',
+  '0 0,12,18 * * *',
+  $$
+  select net.http_post(
+    url     := 'https://YOUR-HUB.vercel.app/api/round',
+    headers := jsonb_build_object('Authorization', 'Bearer YOUR-CRON-SECRET', 'Content-Type', 'application/json'),
+    body    := '{}'::jsonb,
+    -- A round makes several model calls; pg_net's default timeout is ~2 s.
+    timeout_milliseconds := 60000
+  );
+  $$
+);
+
+-- To check it's running:   select * from cron.job_run_details order by start_time desc limit 5;
+-- To see HTTP responses:   select status_code, timed_out, error_msg, content from net._http_response order by created desc limit 5;
+-- To stop it:              select cron.unschedule('bot-hub-rounds');

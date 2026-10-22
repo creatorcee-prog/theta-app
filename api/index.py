@@ -32,6 +32,7 @@ Local test (memory mode, no KV needed):
   BOT_KEYS="miner-1:key1,master-1:mkey" BOT_ROLES="miner-1:miner,master-1:master" \
   PORT=8770 python3 api/index.py
 """
+import hashlib
 import html
 import json
 import os
@@ -77,6 +78,10 @@ ALLCHAT_MENTIONS = 3  # agents that may answer one message of yours
 # ("off" in ALLCHAT_AUTO keeps un-mentioned messages unanswered).
 ALLCHAT_AUTO = os.environ.get("ALLCHAT_AUTO", "on").lower() != "off"
 ALLCHAT_AUTO_MAX = int(os.environ.get("ALLCHAT_AUTO_MAX", "2"))
+# Rounds: Supabase Cron calls /api/round (Bearer CRON_SECRET) a few times a
+# day; an agent's job is skipped if it ran less than ROUND_MIN_GAP_MINUTES ago.
+CRON_SECRET = os.environ.get("CRON_SECRET", "")
+ROUND_MIN_GAP = int(os.environ.get("ROUND_MIN_GAP_MINUTES", "120")) * 60
 
 # ---- Agents: the hub's named personas. The name is the persona, not
 # the model (like James in Garage Gym); each runs on its tier's model.
@@ -236,6 +241,7 @@ class MemoryStore:
         self.order_ids, self.fitness, self.processed, self.seq = [], [], set(), 0
         self.seen, self.activity = {}, {}
         self.allchat = []  # newest first
+        self.meta = {}
 
     def _next_id(self):
         self.seq += 1
@@ -301,11 +307,17 @@ class MemoryStore:
         if activity is not None:
             self.activity[bot_id] = activity
 
-    def add_chat(self, sender, text):
-        item = {"id": self._next_id(), "from": sender, "text": text, "at": _now()}
+    def add_chat(self, sender, text, kind="message"):
+        item = {"id": self._next_id(), "from": sender, "text": text, "kind": kind, "at": _now()}
         self.allchat.insert(0, item)
         del self.allchat[ALLCHAT_KEEP:]
         return item
+
+    def get_meta(self, key):
+        return self.meta.get(key)
+
+    def set_meta(self, key, value):
+        self.meta[key] = value
 
     def list_chat(self, limit):
         return list(reversed(self.allchat[:limit]))  # oldest first
@@ -413,11 +425,17 @@ class KVStore:
         if activity is not None:
             self._cmd("HSET", "hub:activity", bot_id, activity)
 
-    def add_chat(self, sender, text):
-        item = {"id": self._next_id(), "from": sender, "text": text, "at": _now()}
+    def add_chat(self, sender, text, kind="message"):
+        item = {"id": self._next_id(), "from": sender, "text": text, "kind": kind, "at": _now()}
         self._cmd("LPUSH", "hub:allchat", json.dumps(item))
         self._cmd("LTRIM", "hub:allchat", "0", str(ALLCHAT_KEEP - 1))
         return item
+
+    def get_meta(self, key):
+        return self._cmd("HGET", "hub:meta", key)
+
+    def set_meta(self, key, value):
+        self._cmd("HSET", "hub:meta", key, value)
 
     def list_chat(self, limit):
         rows = self._cmd("LRANGE", "hub:allchat", "0", str(limit - 1))
@@ -789,6 +807,8 @@ def summarize(unprocessed):
     except LLMError as e:
         return {"ok": False, "error": str(e), "unprocessed_count": len(unprocessed)}
     store().mark_processed([r["id"] for r in unprocessed])
+    n = len(unprocessed)
+    store().add_chat("theta", f"Summary of {n} new report{'s' if n != 1 else ''}:\n{text}")
     return {"ok": True, "summary": text, "model": MODELS["master"],
             "unprocessed_count": len(unprocessed)}
 
@@ -812,7 +832,26 @@ def master_work(escalation):
 # (up to ALLCHAT_MENTIONS). Replies never trigger further replies, so
 # agents can't run up each other's API limits in a loop.
 def chat_name(sender):
-    return "You" if sender == "you" else display_name(sender)
+    return {"you": "You", "hub": "Hub"}.get(sender) or display_name(sender)
+
+
+def chat_line(m):
+    """One thread entry as plain text, for model context."""
+    if m.get("kind") == "event":
+        return f"[event] {m['text']}"
+    return f"{chat_name(m['from'])}: {m['text']}"
+
+
+def post_event(sender, text):
+    """A templated All Agents line for something an agent did. No tokens."""
+    store().add_chat(sender, text[:500], kind="event")
+
+
+def _gist(payload):
+    if isinstance(payload, dict) and payload.get("title"):
+        return str(payload["title"])[:120]
+    text = json.dumps(payload)
+    return text if len(text) <= 120 else text[:117] + "..."
 
 
 def mentioned_agents(text):
@@ -831,7 +870,7 @@ def allchat_reply(agent, thread):
     """One agent's reply to the latest message, with the thread as context."""
     if agent == "james":  # Garage Gym takes a single question
         return james_chat([{"role": "user", "content": thread[-1]["text"]}])
-    transcript = "\n".join(f"{chat_name(m['from'])}: {m['text']}" for m in thread[-CHAT_HISTORY:])
+    transcript = "\n".join(chat_line(m) for m in thread[-CHAT_HISTORY:])
     name = AGENTS[agent]["name"]
     return llm_chat(AGENTS[agent]["tier"], [
         {"role": "system", "content": system_prompt(agent) + " You're in the All Agents "
@@ -847,7 +886,7 @@ def pick_responders(thread):
     candidates = list(AGENTS)
     roster = "\n".join(f"- {a}: {AGENTS[a]['name']} ({TIER_LABELS[AGENTS[a]['tier']]}). "
                        f"{AGENTS[a]['role']}" for a in candidates)
-    transcript = "\n".join(f"{chat_name(m['from'])}: {m['text']}" for m in thread[-10:])
+    transcript = "\n".join(chat_line(m) for m in thread[-10:])
     reply = llm_chat("low_brain", [
         {"role": "system", "content": system_prompt("mistral")},
         {"role": "user", "content": "You route messages in the All Agents chat. Agents:\n"
@@ -865,6 +904,132 @@ def pick_responders(thread):
 
 def allchat_view(limit=50):
     return [dict(m, name=chat_name(m["from"])) for m in store().list_chat(limit)]
+
+
+# ---- Rounds: each agent's own job, run on a schedule (Supabase Cron ->
+# /api/round). Jobs post real results to All Agents; agents without a data
+# source yet say so instead of inventing work.
+def _seen(key):
+    return json.loads(store().get_meta(key) or "[]")
+
+
+def _mark_seen(key, url):
+    store().set_meta(key, json.dumps(([url] + [u for u in _seen(key) if u != url])[:50]))
+
+
+def _round_theta(ctx):
+    unprocessed = store().unprocessed_reports(50)
+    if not unprocessed:
+        return "nothing new to summarize"
+    r = summarize(unprocessed)
+    if not r["ok"]:
+        raise LLMError(r["error"])
+    n = r["unprocessed_count"]
+    return f"summarized {n} report{'s' if n != 1 else ''}"
+
+
+def _round_mistral(ctx):
+    problems = sorted(f"{r['name']}: {r['note']}" for r in wiring() if r["state"] != "ok")
+    sig = "|".join(problems)
+    if sig == store().get_meta("round:mistral:wiring"):  # None on the first check: report it
+        return "wiring unchanged"
+    store().set_meta("round:mistral:wiring", sig)
+    store().add_chat("mistral", "Wiring check: everyone is wired." if not problems else
+                     "Wiring check found problems:\n" + "\n".join(f"- {x}" for x in problems))
+    return "posted a wiring check"
+
+
+def _round_news(agent):
+    def job(ctx):
+        story = ctx.get("story")
+        if not story:
+            return "no new headlines"
+        take = llm_chat(AGENTS[agent]["tier"], [
+            {"role": "system", "content": system_prompt(agent) + " You're posting in the All "
+             "Agents group chat."},
+            {"role": "user", "content": f"Today's top story ({story['source']}): {story['title']}\n"
+             "Give your take in 2-3 sentences. You only have the headline: say so instead of "
+             "guessing details."}])
+        store().add_chat(agent, f"{take.strip()}\n{story['url']}")
+        return f"posted a take on \"{story['title'][:60]}\""
+    return job
+
+
+def _round_lenz(ctx):
+    item = next((i for i in widget_items(ENTERTAINMENT_FEEDS)
+                 if i["url"] not in _seen("round:lenz:seen")), None)
+    if not item:
+        return "nothing new in the feeds"
+    pitch = llm_chat("miner", [
+        {"role": "system", "content": system_prompt("lenz") + " You're posting in the All "
+         "Agents group chat."},
+        {"role": "user", "content": f"New in the feeds ({item['source']}): {item['title']}\n"
+         "In 1-2 sentences, say why it might be worth a look. You only have the title: "
+         "don't invent details."}])
+    store().add_chat("lenz", f"{pitch.strip()}\n{item['url']}")
+    _mark_seen("round:lenz:seen", item["url"])
+    return f"pitched \"{item['title'][:60]}\""
+
+
+def _round_james(ctx):
+    if not GARAGE_GYM_SECRET:
+        return "not linked to Garage Gym"
+    _JAMES_CACHE.update(ttl=0)  # a round always asks for fresh numbers
+    summary = james_summary()
+    if not summary:
+        raise LLMError("Garage Gym didn't answer")
+    digest = hashlib.sha256((summary.get("summary") or "").encode()).hexdigest()
+    if digest == store().get_meta("round:james:summary"):
+        return "training unchanged"
+    store().set_meta("round:james:summary", digest)
+    post_event("james", "James checked your training: new numbers on the Fitness card.")
+    return "updated your training summary"
+
+
+ROUND_JOBS = {
+    "theta": _round_theta, "mistral": _round_mistral, "james": _round_james,
+    "lenz": _round_lenz, "red": _round_news("red"), "blue": _round_news("blue"),
+    "gray": _round_news("gray"),
+}
+_NEWS_AGENTS = {"red", "blue", "gray"}
+
+
+def run_round(force=False, now=None):
+    """Run every agent's job that is due (or all, with force), in parallel,
+    and post one Hub line saying what each did."""
+    now = now or time.time()
+    st = store()
+    last = json.loads(st.get_meta("round:last") or "{}")
+    due = [a for a in ROUND_JOBS if force or now - last.get(a, 0) >= ROUND_MIN_GAP]
+    ctx = {}
+    if _NEWS_AGENTS & set(due):  # the news miners all take the same new story
+        breaking, top = news_items()
+        ctx["story"] = next((i for i in breaking + top if i["url"] not in _seen("round:news:seen")), None)
+
+    def run(a):
+        try:
+            return a, ROUND_JOBS[a](ctx), None
+        except (LLMError, ValueError, KeyError) as e:
+            return a, None, str(e)[:160]
+    results = {}
+    with ThreadPoolExecutor(max_workers=max(1, len(due))) as ex:
+        for a, done, err in ex.map(run, due):
+            results[a] = {"ok": err is None, "did": done or err}
+            if err is None:
+                last[a] = now
+                st.touch(a, done[:80])
+    st.set_meta("round:last", json.dumps(last))
+    if ctx.get("story") and any(results.get(a, {}).get("ok") for a in _NEWS_AGENTS):
+        _mark_seen("round:news:seen", ctx["story"]["url"])
+    parts = [f"{AGENTS[a]['name']}: {r['did']}" if r["ok"] else f"{AGENTS[a]['name']}: failed ({r['did']})"
+             for a, r in results.items()]
+    idle = [AGENTS[a]["name"] for a in AGENTS if a not in ROUND_JOBS]
+    if idle:
+        parts.append(f"{', '.join(idle)}: no job yet")
+    if results:
+        post_event("hub", "Round: " + "; ".join(parts) + ".")
+    return {"ok": True, "ran": results,
+            "skipped": [a for a in ROUND_JOBS if a not in due], "no_job": idle}
 
 
 # ---- Wiring: is each agent's model actually reachable?
@@ -930,7 +1095,9 @@ def agent_statuses(now=None):
             "bot_id": bot_id, "name": display_name(bot_id), "role": tier,
             "tier": TIER_LABELS[tier], "online": online,
             "model": agent_model(bot_id) if bot_id in AGENTS else MODELS[tier],
-            "activity": (st["activity"] or "online") if online else "offline",
+            "activity": ((st["activity"] or "online") if online else
+                         f"idle, last active {datetime.fromtimestamp(st['seen'], timezone.utc):%b %d %H:%M} UTC"
+                         if st else "offline"),
             "last_seen": (datetime.fromtimestamp(st["seen"], timezone.utc)
                           .strftime("%Y-%m-%d %H:%M:%S") if st else None),
         })
@@ -965,9 +1132,15 @@ function line(who, text) {
   p.append(b, text);
   return p;
 }
+function eventLine(text) {
+  const p = document.createElement("p");
+  p.style.cssText = "white-space:pre-wrap;color:#666;font-style:italic;font-size:0.9em";
+  p.textContent = "\u2022 " + text;
+  return p;
+}
 function show() {
   if (agentSel.value === ALL) {
-    log.replaceChildren(...thread.map(m => line(m.name, m.text)));
+    log.replaceChildren(...thread.map(m => m.kind === "event" ? eventLine(m.text) : line(m.name, m.text)));
     return;
   }
   const name = agentSel.selectedOptions[0].dataset.name;
@@ -1084,6 +1257,20 @@ async function testAgent(agent, out, b) {
   b.disabled = false;
 }
 document.getElementById("wiring-recheck").onclick = loadWiring;
+const roundBtn = document.getElementById("run-round");
+if (roundBtn) roundBtn.onclick = async () => {
+  const out = document.getElementById("round-status");
+  roundBtn.disabled = true; out.textContent = "Running every agent's job...";
+  try {
+    const d = await (await fetch("/api/round", {method: "POST", headers: H, body: JSON.stringify({force: true})})).json();
+    if (!d.ok) throw new Error(d.error);
+    out.textContent = "Done. See All Agents for what each did.";
+    loadThread();
+  } catch (err) {
+    out.textContent = "Round failed: " + err.message;
+  }
+  roundBtn.disabled = false;
+};
 loadWiring();
 """
 
@@ -1135,6 +1322,8 @@ def handle(method, path, query, headers, body):
             if not bot_id or not event_type or not _auth_bot(bot_id, headers):
                 return _json(401, {"ok": False, "error": "bad bot_id or key"})
             store().add_report(bot_id, event_type, data.get("payload", {}))
+            post_event(bot_id, f"{display_name(bot_id)} reported {event_type}: "
+                               f"{_gist(data.get('payload', {}))}")
             return _json(200, {"ok": True})
 
         if path == "/api/escalate":
@@ -1148,6 +1337,8 @@ def handle(method, path, query, headers, body):
             status = "awaiting_master" if to_role == "master" else "open"
             esc_id = store().add_escalation(
                 bot_id, from_role, to_role, issue, data.get("context", {}), status)
+            post_event(bot_id, f"{display_name(bot_id)} escalated #{esc_id} to the "
+                               f"{TIER_LABELS[to_role]}: {str(issue)[:200]}")
             return _json(200, {"ok": True, "escalation_id": esc_id,
                                "from_role": from_role, "to_role": to_role,
                                "status": status})
@@ -1159,6 +1350,7 @@ def handle(method, path, query, headers, body):
             if role_of(bot_id) != "master":
                 return _json(403, {"ok": False, "error": "only master may commandeer"})
             order_id = store().add_order(request, bot_id)
+            post_event(bot_id, f"{display_name(bot_id)} issued order #{order_id}: {str(request)[:200]}")
             return _json(200, {"ok": True, "order_id": order_id, "status": "active"})
 
         if path.startswith("/api/orders/") and path.endswith("/ack"):
@@ -1172,6 +1364,7 @@ def handle(method, path, query, headers, body):
             acked = store().ack_order(order_id, bot_id)
             if acked is None:
                 return _json(404, {"ok": False, "error": "no such order"})
+            post_event(bot_id, f"{display_name(bot_id)} acknowledged order #{order_id}")
             return _json(200, {"ok": True, "order_id": order_id, "acked_by": acked})
 
         if path == "/api/fitness":
@@ -1179,6 +1372,7 @@ def handle(method, path, query, headers, body):
             if not bot_id or not isinstance(summary, dict) or not _auth_bot(bot_id, headers):
                 return _json(401, {"ok": False, "error": "bad bot_id, key or summary"})
             store().add_fitness(bot_id, summary)
+            post_event(bot_id, f"{display_name(bot_id)} posted a fitness summary")
             return _json(200, {"ok": True})
 
         if path == "/api/summary":
@@ -1257,8 +1451,18 @@ def handle(method, path, query, headers, body):
                 return _json(400, {"ok": False, "error": "activity required, e.g. \"researching\""})
             if not bot_id or not _auth_bot(bot_id, headers):
                 return _json(401, {"ok": False, "error": "bad bot_id or key"})
-            store().touch(bot_id, activity.strip()[:80])
+            st = store()
+            before = st.list_status().get(bot_id, {}).get("activity")
+            st.touch(bot_id, activity.strip()[:80])
+            if before != activity.strip()[:80]:
+                post_event(bot_id, f"{display_name(bot_id)} is now {activity.strip()[:80]}")
             return _json(200, {"ok": True})
+
+        if path == "/api/round":
+            cron = bool(CRON_SECRET) and headers.get("authorization") == f"Bearer {CRON_SECRET}"
+            if not (cron or (DASHBOARD_KEY and _auth_dashboard(query, headers))):
+                return _json(401, {"ok": False, "error": "CRON_SECRET or dashboard key required"})
+            return _json(200, run_round(force=bool(data.get("force"))))
 
         return _json(404, {"ok": False, "error": "unknown route"})
 
@@ -1309,6 +1513,8 @@ def handle(method, path, query, headers, body):
         from_bots = _render_list(pushed_items("news"))
         if from_bots:
             news_html += f"<h3>From your bots</h3><ul>{from_bots}</ul>"
+        round_btn = ("<p><button id=\"run-round\" type=\"button\">Run a round now</button> "
+                     "<i id=\"round-status\"></i></p>")
         agent_items = "".join(
             f"<li><span style=\"color:{'#1a7f37' if a['online'] else '#888'}\">●</span> "
             f"<b>{html.escape(a['name'])}</b> — {a['tier']} · {html.escape(a['activity'])}</li>"
@@ -1344,7 +1550,7 @@ def handle(method, path, query, headers, body):
             storage_note = f"<p><i>Storage: {html.escape(STORAGE_MODE)}.</i></p>"
         body = (
             f"<h1>Bot hub</h1>"
-            f"<h2>Agents</h2><ul style=\"list-style:none;padding-left:0\">{agent_items}</ul>"
+            f"<h2>Agents</h2><ul style=\"list-style:none;padding-left:0\">{agent_items}</ul>{round_btn}"
             f"<h2>Chat</h2>{_chat_html()}"
             f"<h2>News</h2>{news_html}"
             f"<h2>Entertainment</h2><ul>{ent_items}</ul>"
