@@ -1068,7 +1068,10 @@ def system_prompt(agent_id):
                       f"- #{o['id']}: {o['request']}" for o in mine))
     return (f"You are {a['name']}, the {TIER_LABELS[a['tier']]} of a personal bot "
             f"hub. {a['role']}{stand_in}{personality}{can} The team: {team}. "
-            f"Stay in character{brevity}.{extra}")
+            f"Stay in character{brevity}. The chat shows markdown: when it helps, use a table for things compared "
+            "across columns (a header row, then |---| ), bullet or numbered lists for several items, - [ ] for "
+            "to-dos, and **bold** sparingly; show an image only with ![alt](https link) for a link you were given."
+            f"{extra}")
 
 
 def provider_extra(provider, model):
@@ -2020,6 +2023,10 @@ def run_tick(now=None):
         post_event("remi", f"Remi reminded you: {what}")
     digest = False
     local = datetime.fromtimestamp(now, hub_tz())
+    try:
+        daily_nudge(local)
+    except Exception as e:  # never let the checklist stop reminders
+        print(f"daily nudge failed: {e!r}")
     if digest_due(local):  # the tick runs every 5 minutes, so the digest goes out on time
         try:
             digest = send_digest(opener=False, now=local)
@@ -3001,6 +3008,13 @@ def _round_lenz(ctx):
             except LLMError as e:
                 did.append(f"couldn't sync {label}: {str(e)[:80]}")
         st.set_meta("round:lenz:sync_day", today.isoformat())
+    if st.get_meta("round:lenz:releases") != today.isoformat():
+        by, errs = refresh_releases(today)
+        st.set_meta("round:lenz:releases", today.isoformat())
+        did.append(f"release calendar: {sum(len(v) for v in by.values())} upcoming"
+                   + (f" ({', '.join(errs)} failed)" if errs else ""))
+    if release_day_news(today):
+        did.append("posted today's releases")
     try:
         n = enrich_library(deadline=time.time() + 12)
         if n:
@@ -6086,6 +6100,11 @@ a.kpi:hover{text-decoration:none;border-color:color-mix(in srgb,var(--accent) 50
 .win:active{transform:scale(.985)}
 .pic{position:relative;aspect-ratio:16/10;overflow:hidden;background:var(--surface2);flex:none}
 .pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
+/* Glass: a soft shine that follows the cursor (or the phone's tilt) over a darkened edge */
+.pic::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;transition:background-position .2s;
+ background:radial-gradient(90% 75% at var(--gx,28%) var(--gy,18%),rgba(255,255,255,.26),rgba(255,255,255,.06) 38%,transparent 62%),
+ radial-gradient(140% 120% at 50% 45%,transparent 58%,rgba(0,0,0,.34))}
+@media (prefers-reduced-motion:reduce){.pic::after{background:radial-gradient(140% 120% at 50% 45%,transparent 58%,rgba(0,0,0,.3))}}
 .ph{position:absolute;inset:0;display:grid;place-items:center;background:linear-gradient(135deg,var(--c1),var(--c2))}
 .ph svg{width:34%;max-width:72px;height:auto;opacity:.92}
 .ph::after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 85% 10%,rgba(255,255,255,.22),transparent 45%)}
@@ -6251,6 +6270,24 @@ body.typing .chat{height:100dvh}
 .meta .tier{font-size:10px;font-weight:750;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);border:1px solid var(--border);border-radius:5px;padding:0 4px}
 .meta time{font-size:11.5px;color:var(--muted)}
 .text{white-space:pre-wrap;overflow-wrap:anywhere}
+.rcal{margin-top:16px}.rstrip{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x proximity;padding:8px 6px 10px;scroll-padding-left:6px;scrollbar-width:none}
+.rel{flex:none;width:112px;scroll-snap-align:start;color:inherit;text-decoration:none;text-align:center}
+.rel .rpic{position:relative;aspect-ratio:2/3;border-radius:10px;overflow:hidden;background:var(--surface2);border:1px solid var(--border)}
+.rel img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.rel .rdate{display:flex;justify-content:center;align-items:baseline;gap:6px;margin-top:6px;font-variant-numeric:tabular-nums}
+.rel .rdate b{font-size:20px;font-weight:800}.rel .rdate span{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;border-left:1px solid var(--border);padding-left:6px}
+.rel .rname{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px}
+.rel .rplat{font-size:10.5px;color:var(--muted);opacity:.8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rel.next{width:150px}.rel.next .rpic{border:2px solid var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent)}
+.rel.mine .rpic{border-color:var(--accent)}.rel .rtag{position:absolute;right:0;top:8px;background:var(--accent);color:var(--on);font-size:9.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:2px 6px;border-radius:6px 0 0 6px}
+.daily{margin:14px 0 4px}.dlist{list-style:none;margin:0;padding:0;display:grid;gap:2px}
+.dlist li{display:flex;align-items:center;gap:10px;min-height:40px}.dcheck{display:flex;align-items:center;gap:10px;flex:1;cursor:pointer;min-width:0}
+.dcheck input{width:22px;height:22px;accent-color:var(--accent);flex:none}
+.dcheck input:checked+span{color:var(--muted);text-decoration:line-through}
+.daily .dx{display:none;border:0;background:none;color:var(--muted);font-size:20px;cursor:pointer;padding:4px 8px}
+.daily.editing .dx{display:block}.daily .dadd{display:none;padding:5px 5px 5px 14px}.daily.editing .dadd{display:flex}
+.daily .dadd input{flex:1;min-width:0;border:0;background:transparent;outline:none;padding:8px 0;font:inherit}
+.linkbtn{border:0;background:none;color:var(--accent);font:inherit;cursor:pointer;padding:0}
 /* Phones: iOS zooms the page when a field's text is under 16px, and the page then drifts. Keep fields at 16px and
    stop the page itself from sliding sideways (scrolling strips inside it still scroll). */
 @media (pointer:coarse){input:not([type=checkbox]):not([type=radio]),textarea,select{font-size:16px!important}}
@@ -6476,6 +6513,60 @@ _UI_JS_SRC = r'''
     document.querySelectorAll("[data-haptics]").forEach(b => b.classList.toggle("on", (b.dataset.haptics === "on") === haptics));
   }
   markHaptics();
+
+  // Glass shine on window pictures: follows the cursor over a picture, or
+  // the phone's tilt when that's switched on (iPhone asks once, on a tap).
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let shineFrame = 0;
+  function shine(el, x, y) {
+    cancelAnimationFrame(shineFrame);
+    shineFrame = requestAnimationFrame(() => { el.style.setProperty("--gx", x + "%"); el.style.setProperty("--gy", y + "%"); });
+  }
+  if (!still) {
+    document.addEventListener("pointermove", e => {
+      if (e.pointerType !== "mouse") return;
+      const pic = e.target.closest && e.target.closest(".pic");
+      if (!pic) return;
+      const r = pic.getBoundingClientRect();
+      shine(pic, Math.round((e.clientX - r.left) / r.width * 100), Math.round((e.clientY - r.top) / r.height * 100));
+    });
+    document.addEventListener("pointerout", e => {
+      const pic = e.target.closest && e.target.closest(".pic");
+      if (pic && !pic.contains(e.relatedTarget)) { pic.style.removeProperty("--gx"); pic.style.removeProperty("--gy"); }
+    });
+  }
+  let tilt = false;
+  try { tilt = localStorage.getItem("theta_tilt") === "on"; } catch (_) {}
+  function onTilt(e) {
+    if (e.gamma == null) return;
+    const x = Math.max(0, Math.min(100, 50 + e.gamma * 1.6)), y = Math.max(0, Math.min(100, 50 + (e.beta - 45) * 1.2));
+    shine(document.documentElement, Math.round(x), Math.round(y));
+  }
+  async function startTilt() {
+    const D = window.DeviceOrientationEvent;
+    if (!D || still) return false;
+    if (typeof D.requestPermission === "function") {
+      try { if ((await D.requestPermission()) !== "granted") return false; } catch (_) { return false; }
+    }
+    addEventListener("deviceorientation", onTilt);
+    return true;
+  }
+  if (tilt && !(window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === "function")) startTilt();
+  else if (tilt) addEventListener("pointerdown", () => startTilt(), {once: true});  // iPhone: permission needs a tap
+  function markTilt() { document.querySelectorAll("[data-tilt]").forEach(b => b.classList.toggle("on", (b.dataset.tilt === "on") === tilt)); }
+  markTilt();
+  document.addEventListener("click", async e => {
+    const b = e.target.closest("[data-tilt]");
+    if (!b) return;
+    tilt = b.dataset.tilt === "on";
+    if (tilt && !(await startTilt())) {
+      tilt = false;
+      const n = document.getElementById("tilt-note"); if (n) n.textContent = "Motion access wasn't allowed, so the shine follows taps only.";
+    }
+    if (!tilt) { removeEventListener("deviceorientation", onTilt); document.documentElement.style.removeProperty("--gx"); document.documentElement.style.removeProperty("--gy"); }
+    try { localStorage.setItem("theta_tilt", tilt ? "on" : "off"); } catch (_) {}
+    markTilt();
+  });
 
   // A bar runs across the top while the next page loads.
   const bar = document.createElement("div");
@@ -6843,6 +6934,11 @@ _CHAT_JS = r'''
     if (m) return {kind: "@", q: m[2].toLowerCase(), start: before.length - m[2].length - 1};
     m = before.match(/^\/(\w*)$/);
     if (m) return {kind: "/", q: m[1].toLowerCase(), start: 0};
+    // A bare name ("rem", "theta") offers the @mention too; only a tap or Tab takes it, so
+    // "I like red" still sends as typed.
+    m = before.match(/(^|\s)([A-Za-z]{3,})$/);
+    if (m && HUB_MENU.agents.some(a => a.name.toLowerCase().startsWith(m[2].toLowerCase())))
+      return {kind: "@", q: m[2].toLowerCase(), start: before.length - m[2].length, bare: true};
     return null;
   }
   function closeMenu() { menu.hidden = true; items = []; range = null; msg.removeAttribute("aria-activedescendant"); }
@@ -6851,7 +6947,8 @@ _CHAT_JS = r'''
     if (!q) return closeMenu();
     const src = q.kind === "@" ? HUB_MENU.agents : HUB_MENU.commands;
     const key = x => x.name.toLowerCase();
-    items = src.filter(x => key(x).startsWith(q.q) || (q.kind === "@" && x.id.startsWith(q.q)))
+    items = q.bare ? src.filter(x => key(x).startsWith(q.q)).slice(0, 4) :
+      src.filter(x => key(x).startsWith(q.q) || (q.kind === "@" && x.id.startsWith(q.q)))
       .concat(src.filter(x => !key(x).startsWith(q.q) && key(x).includes(q.q) && q.q)).slice(0, 12);
     if (!items.length) return closeMenu();
     range = q; active = Math.min(active, items.length - 1);
@@ -6901,6 +6998,9 @@ _CHAT_JS = r'''
         e.preventDefault();
         active = (active + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length;
         renderMenu();
+      } else if (e.key === "Enter" && range && range.bare) {
+        closeMenu();  // a suggestion, not a choice: Enter sends as typed
+        if (!e.shiftKey && !touch) { e.preventDefault(); form.requestSubmit(); }
       } else if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault(); pick(active);
       } else if (e.key === "Escape") {
@@ -7151,6 +7251,140 @@ def kpi_html(value, label, sub="", frac=None, color="var(--accent)", icon="bolt"
             f'<div class="l">{html.escape(label)}</div>{sub_html}</div></{tag}>')
 
 
+# ---- Today's check: a short list of daily habits on Home (read the news,
+# read a book or comic...). Ticks reset each day; a streak counts days with
+# everything done; Remi nudges once in the evening if anything's left.
+DAILY_DEFAULT = [{"id": "news", "text": "Read the news", "link": "/#news"},
+                 {"id": "read", "text": "Read a book or comic", "link": "/lenz"}]
+DAILY_NUDGE_TIME = os.environ.get("DAILY_NUDGE_TIME", "20:00")
+_DAILY_LOCK = threading.Lock()
+
+
+def daily_items():
+    items = _meta_json("daily:items", None)
+    return DAILY_DEFAULT if items is None else items
+
+
+def daily_done(day=None):
+    day = day or datetime.now(hub_tz()).date().isoformat()
+    return set(_meta_json(f"daily:done:{day}", []))
+
+
+def daily_streak(today=None):
+    """Days in a row with everything ticked (today counts once it's done)."""
+    today = today or datetime.now(hub_tz()).date()
+    hist = _meta_json("daily:history", {})
+    n, d = 0, today
+    if hist.get(d.isoformat()) != "all":
+        d -= timedelta(days=1)
+    while hist.get(d.isoformat()) == "all":
+        n += 1
+        d -= timedelta(days=1)
+    return n
+
+
+def daily_toggle(item_id):
+    today = datetime.now(hub_tz()).date().isoformat()
+    with _DAILY_LOCK:
+        done = daily_done(today)
+        done.symmetric_difference_update({item_id})
+        store().set_meta(f"daily:done:{today}", json.dumps(sorted(done)))
+        ids = {i["id"] for i in daily_items()}
+        hist = _meta_json("daily:history", {})
+        hist[today] = "all" if ids and ids <= done else "some"
+        store().set_meta("daily:history", json.dumps(dict(sorted(hist.items())[-400:])))
+    return item_id in done
+
+
+def daily_add(text):
+    text = " ".join(str(text).split())[:80]
+    if not text:
+        raise ValueError("What's the habit?")
+    with _DAILY_LOCK:
+        items = list(daily_items())
+        if len(items) >= 12:
+            raise ValueError("Twelve is plenty for one day.")
+        items.append({"id": f"d{int(time.time() * 1000) % 10**9}", "text": text})
+        store().set_meta("daily:items", json.dumps(items))
+    return items[-1]
+
+
+def daily_remove(item_id):
+    with _DAILY_LOCK:
+        store().set_meta("daily:items", json.dumps([i for i in daily_items() if i["id"] != item_id]))
+
+
+def daily_nudge(now=None):
+    """From the tick: once a day after DAILY_NUDGE_TIME, Remi pushes what's left."""
+    now = now or datetime.now(hub_tz())
+    try:
+        h, m = (int(x) for x in DAILY_NUDGE_TIME.split(":"))
+    except ValueError:
+        h, m = 20, 0
+    today = now.date().isoformat()
+    if (now.hour, now.minute) < (h, m) or store().get_meta("daily:nudged") == today:
+        return None
+    left = [i["text"] for i in daily_items() if i["id"] not in daily_done(today)]
+    store().set_meta("daily:nudged", today)
+    if not left:
+        return None
+    notify("Remi", "Still on today's check: " + ", ".join(left).lower() + ".", "/#today")
+    return left
+
+
+_DAILY_JS = r"""
+(() => {
+  const box = document.getElementById("today"); if (!box) return;
+  const H = window.THETA_H, note = box.querySelector(".note");
+  async function post(url, body) {
+    const d = await (await fetch(url, {method: "POST", headers: H, body: JSON.stringify(body || {})})).json();
+    if (!d.ok) throw new Error(d.error); return d;
+  }
+  box.addEventListener("change", async e => {
+    const cb = e.target.closest("input[data-daily]"); if (!cb) return;
+    try { const d = await post("/api/daily/toggle", {id: cb.dataset.daily}); box.querySelector(".streak").textContent = d.label; }
+    catch (err) { cb.checked = !cb.checked; note.textContent = err.message; }
+  });
+  box.addEventListener("click", async e => {
+    const x = e.target.closest("[data-daily-remove]"); if (!x) return;
+    try { await post("/api/daily/remove", {id: x.dataset.dailyRemove}); x.closest("li").remove(); } catch (err) { note.textContent = err.message; }
+  });
+  const edit = box.querySelector("[data-daily-edit]");
+  edit.onclick = () => { const on = box.classList.toggle("editing"); edit.textContent = on ? "Done" : "Edit"; };
+  box.querySelector("form").onsubmit = async e => {
+    e.preventDefault(); const inp = e.target.querySelector("input"), t = inp.value.trim(); if (!t) return;
+    try { await post("/api/daily/add", {text: t}); location.reload(); } catch (err) { note.textContent = err.message; }
+  };
+})();
+"""
+
+
+def streak_label(n, all_done):
+    if all_done and n:
+        return f"All done · {n}-day streak"
+    if all_done:
+        return "All done today"
+    return f"{n}-day streak" if n else "Start a streak"
+
+
+def daily_card():
+    items, done = daily_items(), daily_done()
+    all_done = bool(items) and all(i["id"] in done for i in items)
+    rows = "".join(
+        f'<li><label class="dcheck"><input type="checkbox" data-daily="{html.escape(i["id"])}"{" checked" if i["id"] in done else ""}>'
+        f'<span>{html.escape(i["text"])}</span></label>'
+        + (f'<a class="muted small" href="{html.escape(i["link"])}">Open</a>' if i.get("link") else "")
+        + f'<button type="button" class="dx" data-daily-remove="{html.escape(i["id"])}" aria-label="Remove {html.escape(i["text"])}">×</button></li>'
+        for i in items)
+    return (f'<section class="card stack daily" id="today" aria-label="Today\'s check"><div class="brow"><h2>Today\'s check</h2>'
+            f'<span class="muted small"><span class="streak">{streak_label(daily_streak(), all_done)}</span> · '
+            '<button type="button" class="linkbtn" data-daily-edit>Edit</button></span></div>'
+            f'<ul class="dlist">{rows or "<li class=empty>Add a habit to check off each day.</li>"}</ul>'
+            '<form class="dadd box"><input placeholder="Add a daily habit, like Stretch" aria-label="New daily habit" maxlength="80">'
+            '<button class="btn small" type="submit">Add</button></form><p class="note"></p>'
+            f'<script>{_DAILY_JS}</script></section>')
+
+
 def home_page(headers):
     st = store()
     _fetch_feeds(list(dict.fromkeys(NEWS_FEEDS + ENTERTAINMENT_FEEDS + [u for us in SIDE_FEEDS.values() for u in us])))
@@ -7198,9 +7432,10 @@ def home_page(headers):
         f'<button class="btn rr" type="button" data-run-round="round-status" aria-label="Run a round">{ui_icon("play")}'
         f'<span>Run a round</span></button></header><p class="note" id="round-status" style="margin:-8px 0 14px"></p>'
         f'<section class="kpis" aria-label="Today at a glance">{k_money}{k_cal}{k_crew}{k_news}</section>'
+        + daily_card() +
         f'<div class="sect"><h2>Your crew</h2><a href="/chat">Open chat →</a></div>'
         f'<section class="wins" aria-label="Agent windows">{"".join(win_html(w) for w in crew)}</section>'
-        f'<div class="sect"><h2>Top stories</h2><span class="muted small">{len(NEWS_FEEDS)} outlets, {NEWS_TOP} top + up to {NEWS_BREAKING_MAX} breaking</span></div>'
+        f'<div class="sect" id="news"><h2>Top stories</h2><span class="muted small">{len(NEWS_FEEDS)} outlets, {NEWS_TOP} top + up to {NEWS_BREAKING_MAX} breaking</span></div>'
         + (f'<section class="wins swipe" aria-label="Top stories">{swipe(news)}</section>' if news else
            '<p class="empty">No headlines right now.</p>')
         + '<div class="sect"><h2>Watch &amp; listen</h2><a href="/agent/lenz">Lenz →</a></div>'
@@ -8173,6 +8408,10 @@ def settings_page(headers):
         '<div><h3>Haptics</h3><p class="muted small">A light tap when you press things. iPhone needs iOS 18 or later.</p>'
         '<div class="seg" role="group" aria-label="Haptics"><button type="button" data-haptics="on">On</button>'
         '<button type="button" data-haptics="off">Off</button></div></div>'
+        '<div><h3>Glass shine</h3><p class="muted small">Pictures have a glassy shine that follows your cursor. On a '
+        'phone it can follow how you tilt it (your phone asks once for motion access).</p>'
+        '<div class="seg" role="group" aria-label="Shine follows tilt"><button type="button" data-tilt="on">Follow tilt</button>'
+        '<button type="button" data-tilt="off">Off</button></div><p class="note small" id="tilt-note"></p></div>'
         f'<div><h3>Home layout</h3><p class="muted small">How the windows on Home are arranged.</p><div class="layouts">{layouts}</div></div></section>'
         '<section class="card stack"><div><h2>Phone notifications</h2><p class="muted small">Mistral sends these: '
         'the morning digest, breaking news, budget alerts and birthdays. On iPhone, open Theta from its Home Screen icon.</p></div>'
@@ -8439,6 +8678,177 @@ _LENZ_JS = r"""
 """
 
 
+# ---- Lenz's release calendar: what's coming out (movies and shows from
+# TMDB, anime from Jikan, games from RAWG with RAWG_API_KEY), soonest
+# first, with anything you follow flagged. Refreshed once a day; on
+# release day Lenz posts and pushes what you follow.
+RAWG_API_KEY = os.environ.get("RAWG_API_KEY", "")
+RAWG_BASE = "https://api.rawg.io/api"
+JIKAN_BASE = "https://api.jikan.moe/v4"
+TMDB_REGION = os.environ.get("TMDB_REGION", "US")
+RELEASE_DAYS = 120  # how far ahead the calendar looks
+RELEASE_KINDS = {"movie": "Movies", "tv": "TV", "anime": "Anime", "game": "Games"}
+
+
+def _get_json(url, headers=None, timeout=8):
+    req = urllib.request.Request(url, headers={"User-Agent": WIKI_UA, "Accept": "application/json", **(headers or {})})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read())
+
+
+def _tmdb_get(path, **params):
+    bearer = TMDB_API_KEY.startswith("eyJ")
+    if not bearer:
+        params["api_key"] = TMDB_API_KEY
+    return _get_json(TMDB_BASE + path + "?" + urlencode(params),
+                     {"Authorization": f"Bearer {TMDB_API_KEY}"} if bearer else None)
+
+
+def _releases_tmdb(today):
+    if not TMDB_API_KEY:
+        return []
+    end = today + timedelta(days=RELEASE_DAYS)
+    out = []
+    for path, kind, params in (
+            ("/movie/upcoming", "movie", {"region": TMDB_REGION}),
+            ("/discover/tv", "tv", {"first_air_date.gte": today.isoformat(), "first_air_date.lte": end.isoformat(),
+                                    "sort_by": "popularity.desc", "with_type": "2|4"})):
+        for page in (1, 2):
+            for r in _tmdb_get(path, page=page, **params).get("results", []):
+                d = r.get("release_date") or r.get("first_air_date") or ""
+                if not r.get("poster_path") or not d or not (today.isoformat() <= d <= end.isoformat()):
+                    continue
+                out.append({"title": r.get("title") or r.get("name"), "kind": kind, "date": d,
+                            "image": f"https://image.tmdb.org/t/p/w342{r['poster_path']}", "pop": r.get("popularity") or 0,
+                            "url": f"https://www.themoviedb.org/{'movie' if kind == 'movie' else 'tv'}/{r['id']}"})
+    return out
+
+
+def _releases_anime(today):
+    end = today + timedelta(days=RELEASE_DAYS)
+    out = []
+    for r in _get_json(JIKAN_BASE + "/seasons/upcoming?limit=25&sfw=true").get("data", []):
+        d = str(((r.get("aired") or {}).get("from") or ""))[:10]
+        if not d or not (today.isoformat() <= d <= end.isoformat()):
+            continue
+        out.append({"title": r.get("title_english") or r.get("title"), "kind": "anime", "date": d,
+                    "image": ((r.get("images") or {}).get("jpg") or {}).get("large_image_url"), "pop": r.get("members") or 0,
+                    "url": r.get("url") or ""})
+    return out
+
+
+def _releases_games(today):
+    if not RAWG_API_KEY:
+        return []
+    end = today + timedelta(days=RELEASE_DAYS)
+    data = _get_json(RAWG_BASE + "/games?" + urlencode({"key": RAWG_API_KEY, "dates": f"{today},{end}",
+                                                         "ordering": "-added", "page_size": "40"}))
+    out = []
+    for r in data.get("results", []):
+        if not r.get("released") or not r.get("background_image"):
+            continue
+        plats = sorted({p["platform"]["name"] for p in r.get("parent_platforms") or [] if p.get("platform")})
+        out.append({"title": r.get("name"), "kind": "game", "date": r["released"], "image": r["background_image"],
+                    "pop": r.get("added") or 0, "url": f"https://rawg.io/games/{r.get('slug', '')}", "platforms": plats})
+    return out
+
+
+def refresh_releases(today=None):
+    """Fetch every source in parallel; a source that fails keeps its last list."""
+    today = today or datetime.now(hub_tz()).date()
+    old = _meta_json("releases", {}).get("by", {})
+    by, errors = {}, {}
+    srcs = {"tmdb": _releases_tmdb, "anime": _releases_anime, "games": _releases_games}
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        futs = {name: ex.submit(fn, today) for name, fn in srcs.items()}
+        for name, f in futs.items():
+            try:
+                by[name] = f.result(timeout=15)
+            except Exception as e:
+                errors[name] = str(e)[:120]
+                by[name] = [x for x in old.get(name, []) if x["date"] >= today.isoformat()]
+    store().set_meta("releases", json.dumps({"at": time.time(), "day": today.isoformat(), "by": by, "errors": errors}))
+    return by, errors
+
+
+def releases(today=None):
+    """Upcoming releases, soonest first, with `followed` set for titles in
+    your library you haven't finished (or marked beloved)."""
+    today = today or datetime.now(hub_tz()).date()
+    data = _meta_json("releases", {})
+    items = [x for xs in (data.get("by") or {}).values() for x in xs if x["date"] >= today.isoformat()]
+    follow = {}
+    for it in library():
+        if it["status"] != "done" or it.get("beloved"):
+            for k in _follow_keys(it) | {_norm_title(it["title"])}:
+                follow[k] = it["title"]
+    for x in items:
+        t = _norm_title(x["title"])
+        x["followed"] = next((v for k, v in follow.items() if k and (k == t or (len(k) >= 6 and k in t))), None)
+    seen, out = set(), []
+    for x in sorted(items, key=lambda x: (x["date"], -(x.get("followed") is not None), -x.get("pop", 0))):
+        key = (_norm_title(x["title"]), x["kind"])
+        if key not in seen:
+            seen.add(key)
+            out.append(x)
+    return out
+
+
+def release_day_news(today):
+    """Lenz posts and pushes followed titles that come out today, once each."""
+    told = _seen("lenz:released")
+    due = [x for x in releases(today) if x["date"] == today.isoformat() and x["followed"] and x["url"] not in told]
+    if due:
+        store().add_chat("lenz", "Out today, from your list:\n" + "\n".join(
+            f"- **{x['title']}** ({RELEASE_KINDS[x['kind']].rstrip('s')})\n  {x['url']}" for x in due), channel="screen")
+        notify("Lenz", "Out today: " + ", ".join(x["title"] for x in due[:3]), "/lenz#releases")
+        for x in due:
+            _mark_seen("lenz:released", x["url"])
+    return due
+
+
+_RELEASE_JS = r"""
+(() => {
+  const box = document.getElementById("releases"); if (!box) return;
+  const strip = box.querySelector(".rstrip");
+  box.addEventListener("click", e => {
+    const b = e.target.closest("[data-rkind]"); if (!b) return;
+    box.querySelectorAll("[data-rkind]").forEach(x => x.classList.toggle("on", x === b));
+    strip.querySelectorAll(".rel").forEach(t => { t.hidden = b.dataset.rkind !== "all" && t.dataset.kind !== b.dataset.rkind; });
+    const first = strip.querySelector(".rel:not([hidden])"); if (first) strip.scrollTo({left: first.offsetLeft - 8, behavior: "smooth"});
+  });
+})();
+"""
+
+
+def release_strip():
+    rel = releases()[:60]
+    data = _meta_json("releases", {})
+    if not rel:
+        why = ("Lenz needs <code>TMDB_API_KEY</code> for movies and TV; anime comes from Jikan, games need "
+               "<code>RAWG_API_KEY</code> (free at rawg.io/apidocs).") if not TMDB_API_KEY else "The calendar fills in on Lenz's next round."
+        return (f'<section class="card stack rcal" id="releases"><h2>Release calendar</h2><p class="muted small">{why}</p></section>')
+    kinds = [k for k in RELEASE_KINDS if any(x["kind"] == k for x in rel)]
+    tiles = "".join(
+        f'<a class="rel{" next" if i == 0 else ""}{" mine" if x.get("followed") else ""}" data-kind="{x["kind"]}" href="{html.escape(x["url"])}" '
+        f'target="_blank" rel="noopener" title="{html.escape(x["title"])}"><div class="rpic">'
+        f'<img src="{html.escape(x["image"] or "")}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">'
+        + ('<span class="rtag">Following</span>' if x.get("followed") else "")
+        + f'</div><div class="rdate"><b>{x["date"][8:10]}</b><span>{datetime.strptime(x["date"], "%Y-%m-%d"):%b}</span></div>'
+        f'<div class="rname">{html.escape(x["title"])}</div>'
+        + (f'<div class="rplat">{html.escape(", ".join(x["platforms"][:3]))}</div>' if x.get("platforms") else "")
+        + "</a>" for i, x in enumerate(rel))
+    chips = '<button type="button" class="chip on" data-rkind="all">All</button>' + "".join(
+        f'<button type="button" class="chip" data-rkind="{k}">{RELEASE_KINDS[k]}</button>' for k in kinds)
+    missing = [] if RAWG_API_KEY else ["games: set <code>RAWG_API_KEY</code>"]
+    return (f'<section class="card stack rcal" id="releases"><div class="brow"><h2>Release calendar</h2>'
+            f'<span class="muted small">next {RELEASE_DAYS} days</span></div><div class="chips">{chips}</div>'
+            f'<div class="rstrip">{tiles}</div>'
+            + (f'<p class="muted small">{"; ".join(missing)}. ' if missing else '<p class="muted small">')
+            + 'From TMDB, Jikan (MyAnimeList) and RAWG. "Following" means it\'s on your list.</p>'
+            f'<script>{_RELEASE_JS}</script></section>')
+
+
 def lenz_page(headers):
     lib = library()
     taste = taste_profile(lib)
@@ -8475,7 +8885,7 @@ def lenz_page(headers):
         + kpi_html(f"{rated}/{n['done']}" if n["done"] else "0", "Finished, rated", "rate the rest", rated / n["done"] if n["done"] else 0)
         + kpi_html(str(sum(1 for x in lib if x.get('beloved'))), "Most beloved",
                    next((x["title"] for x in lib if x.get("beloved")), "mark favorites in your log"), icon="bolt")
-        + '</div>'
+        + '</div>' + release_strip()
         + '<div class="chips" style="margin:16px 0 8px">' + "".join(f'<button type="button" class="chip" data-kind="{k}">{v}</button>' for k, v in kinds) + "</div>"
         + '<div class="seg ltabs" role="tablist">' + "".join(
             f'<button type="button" role="tab" data-tab="{k}">{v}{" <i></i>" if c else ""}</button>' for k, v, c in tabs) + "</div>"
@@ -8887,6 +9297,24 @@ def handle(method, path, query, headers, body):
             if before != activity.strip()[:80]:
                 post_event(bot_id, f"{display_name(bot_id)} is now {activity.strip()[:80]}")
             return _json(200, {"ok": True})
+
+        if path.startswith("/api/daily/"):
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            try:
+                if path == "/api/daily/toggle":
+                    on = daily_toggle(str(data.get("id") or ""))
+                    items, done = daily_items(), daily_done()
+                    all_done = bool(items) and all(i["id"] in done for i in items)
+                    return _json(200, {"ok": True, "done": on, "label": streak_label(daily_streak(), all_done)})
+                if path == "/api/daily/add":
+                    return _json(200, {"ok": True, "item": daily_add(data.get("text") or "")})
+                if path == "/api/daily/remove":
+                    daily_remove(str(data.get("id") or ""))
+                    return _json(200, {"ok": True})
+            except ValueError as e:
+                return _json(400, {"ok": False, "error": str(e)})
+            return _json(404, {"ok": False, "error": "unknown route"})
 
         if path.startswith(("/api/mail/", "/api/gmail/")):
             if not _auth_dashboard(query, headers):

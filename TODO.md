@@ -51,6 +51,9 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
 - [ ] `MAL_CLIENT_ID` (myanimelist.net → API → create an app) and
       `MAL_USERNAME`; your MAL list must be public.
 
+- [ ] Optional, games in the release calendar: free key at rawg.io/apidocs →
+      `RAWG_API_KEY`.
+
 ### 7. Remi's calendar and the rest
 - [ ] Google Calendar on a computer: Settings → your calendar → Integrate
       calendar → **Secret address in iCal format** → `REMI_CALENDAR_URLS`.
