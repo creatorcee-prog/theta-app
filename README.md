@@ -311,6 +311,39 @@ and Done buttons), her page, or the Calendar tab. A reminder you haven't
 marked done takes over her window, and tapping its notification opens her
 page. Today's reminders are also listed in Mistral's morning digest.
 
+**Remi's email** (Settings → Gmail → Connect; the Email page at `/mail`).
+Each round she reads your inbox (last 2 weeks) and labels new threads in
+Gmail under **Theta/Family, Friends, Work, Bills, Shopping, Newsletters,
+Other**. She tracks what's waiting on your reply and drafts replies for
+the unimportant ones (not family, friends or work; change with
+`GMAIL_IMPORTANT`). Drafts are real Gmail drafts too. On the Email page
+you edit, then **Send** (a threaded reply from your Gmail) or **Skip**;
+nothing is ever sent without that tap. Important emails are listed; tap
+**Draft a reply** if you want her help. New senders appear under "Who are
+these?" so you can correct her guess once. `GMAIL_ARCHIVE=newsletters`
+also moves those out of the inbox. Emails go to the models as data with
+an instruction to ignore anything inside them; the worst a hostile email
+can do is produce a bad draft you then don't send. Needs
+`GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (a Google Cloud OAuth
+client; its sign-in is stored encrypted with a key from your dashboard
+key, so changing that key means reconnecting).
+
+**Glass, analyst** (Money tab → Stocks). With `FINNHUB_API_KEY` (free at
+finnhub.io), `GLASS_HOLDINGS` (`AAPL:10,VTI:25`) and/or `GLASS_WATCHLIST`
+(`NVDA,MSFT`), each of her rounds saves prices, posts and pushes a move of
+`GLASS_MOVE_ALERT`% (5) or more once, flags earnings within a week, and
+on Sundays posts the week: your holdings against the S&P 500
+(`GLASS_BENCHMARK`, default `SPY`), the biggest movers and a headline
+each. The Money tab charts holdings against the S&P 500, both indexed to
+the first day she has prices for. She reports and explains; she never
+trades or advises buying or selling.
+
+**Voices.** Settings → Voices: **Babble** (game-style sounds as replies type
+out, a pitch and timbre per agent; offline), **AI voices** (Gemini speaks
+as each agent with a voice and manner chosen for them, via `POST
+/api/voice`; `GEMINI_TTS_MODEL` picks the model; falls back to phone
+voices on any error), or **Phone voices**.
+
 **Morning digest time.** The tick sends Mistral's digest at `DIGEST_TIME`
 (default `07:00`, hub time), so it no longer waits for a round. Without
 the tick job, it goes out with the first round after that time.
