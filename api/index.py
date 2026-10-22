@@ -32,6 +32,7 @@ Local test (memory mode, no KV needed):
   BOT_KEYS="miner-1:key1,master-1:mkey" BOT_ROLES="miner-1:miner,master-1:master" \
   PORT=8770 python3 api/index.py
 """
+import base64
 import csv
 import hashlib
 import html
@@ -2977,6 +2978,8 @@ def watchdog_findings():
         out.append(("warn", f"DASHBOARD_KEY is only {len(DASHBOARD_KEY)} characters; use 32+ random ones."))
     if STORAGE_MODE.startswith("memory"):
         out.append(("high", "Storage is in memory: everything is lost between requests. Connect Upstash Redis."))
+    if DASHBOARD_KEY and not passkeys():
+        out.append(("info", "Add Face ID sign-in (Settings) so the key stays out of your links."))
     for r in wiring():
         if r["state"] == "bad" or (r["state"] == "off" and r.get("testable", True)):
             out.append(("warn", f"{r['name']}: {r['note']}"))
@@ -6086,6 +6089,260 @@ def security_rows():
         for sv, t in findings) or '<li>All clear: everything\'s wired, nothing\'s failing, no wrong-key attempts.</li>'
 
 
+# ---- Face ID sign-in (passkeys). Your phone checks your face itself; the
+# hub only ever sees a signature, never a picture. Register a device in
+# Settings while signed in; after that the sign-in page has "Sign in with
+# Face ID", which sets the same login cookie the dashboard key does.
+# ES256 (P-256) passkeys, the kind iPhones, Macs and Android phones make.
+PASSKEY_CHALLENGE_SECONDS = 300
+_PK_LOCK = threading.Lock()
+
+
+def _b64u_decode(s):
+    s = str(s)
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+
+def _b64u(b):
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+def cbor_decode(data):
+    """Just enough CBOR for WebAuthn (maps, arrays, ints, bytes, text)."""
+    def item(i):
+        ib = data[i]
+        major, info = ib >> 5, ib & 31
+        i += 1
+        if info < 24:
+            val = info
+        elif info in (24, 25, 26, 27):
+            n = 1 << (info - 24)
+            val = int.from_bytes(data[i:i + n], "big")
+            i += n
+        else:
+            raise ValueError("unsupported CBOR")
+        if major == 0:
+            return val, i
+        if major == 1:
+            return -1 - val, i
+        if major in (2, 3):
+            chunk = data[i:i + val]
+            return (bytes(chunk) if major == 2 else chunk.decode()), i + val
+        if major == 4:
+            out = []
+            for _ in range(val):
+                v, i = item(i)
+                out.append(v)
+            return out, i
+        if major == 5:
+            out = {}
+            for _ in range(val):
+                k, i = item(i)
+                v, i = item(i)
+                out[k] = v
+            return out, i
+        if major == 7 and info in (20, 21, 22):
+            return {20: False, 21: True, 22: None}[info], i
+        raise ValueError("unsupported CBOR")
+    value, _ = item(0)
+    return value
+
+
+def passkeys():
+    return _meta_json("passkeys", [])
+
+
+def new_challenge(kind):
+    c = _b64u(os.urandom(32))
+    with _PK_LOCK:
+        live = {k: v for k, v in _meta_json("pk:challenges", {}).items() if v["exp"] > time.time()}
+        live[c] = {"kind": kind, "exp": time.time() + PASSKEY_CHALLENGE_SECONDS}
+        store().set_meta("pk:challenges", json.dumps(dict(list(live.items())[-50:])))
+    return c
+
+
+def _take_challenge(c, kind):
+    """A challenge is good once, for its kind, for 5 minutes."""
+    with _PK_LOCK:
+        live = _meta_json("pk:challenges", {})
+        got = live.pop(c, None)
+        store().set_meta("pk:challenges", json.dumps(live))
+    return bool(got and got["kind"] == kind and got["exp"] > time.time())
+
+
+def _check_client(client_json, kind, origin):
+    cd = json.loads(client_json)
+    if cd.get("type") != f"webauthn.{kind}":
+        raise ValueError("wrong ceremony")
+    if cd.get("origin") != origin:
+        raise ValueError(f"wrong origin {cd.get('origin')}")
+    if not _take_challenge(cd.get("challenge", ""), kind):
+        raise ValueError("challenge expired or already used")
+
+
+def _check_auth_data(auth, rp_id):
+    if auth[:32] != hashlib.sha256(rp_id.encode()).digest():
+        raise ValueError("passkey is for another site")
+    flags = auth[32]
+    if not flags & 0x01 or not flags & 0x04:
+        raise ValueError("the device didn't verify you (Face ID, Touch ID or passcode)")
+    return flags, int.from_bytes(auth[33:37], "big")
+
+
+def register_passkey(data, rp_id, origin, name="This device"):
+    from cryptography.hazmat.primitives.asymmetric import ec
+    _check_client(_b64u_decode(data["clientDataJSON"]), "create", origin)
+    att = cbor_decode(_b64u_decode(data["attestationObject"]))
+    auth = att["authData"]
+    flags, count = _check_auth_data(auth, rp_id)
+    if not flags & 0x40:
+        raise ValueError("no credential in the response")
+    n = int.from_bytes(auth[53:55], "big")
+    cred_id, cose = auth[55:55 + n], cbor_decode(auth[55 + n:])
+    if cose.get(3) != -7 or cose.get(1) != 2 or cose.get(-1) != 1:
+        raise ValueError("only ES256 (P-256) passkeys are supported")
+    ec.EllipticCurvePublicNumbers(int.from_bytes(cose[-2], "big"), int.from_bytes(cose[-3], "big"),
+                                  ec.SECP256R1()).public_key()  # a real point on the curve, or this raises
+    pk = {"id": _b64u(cred_id), "x": _b64u(cose[-2]), "y": _b64u(cose[-3]), "count": count,
+          "name": str(name)[:60] or "This device", "created": time.time(), "used": None}
+    with _PK_LOCK:
+        keys = [k for k in passkeys() if k["id"] != pk["id"]] + [pk]
+        store().set_meta("passkeys", json.dumps(keys[-10:]))
+    post_event("qwerty", f"QWERTY added a Face ID sign-in: {pk['name']}")
+    return pk
+
+
+def verify_passkey(data, rp_id, origin):
+    """True when the signature is from one of your registered devices."""
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+    key = next((k for k in passkeys() if k["id"] == data.get("id")), None)
+    if not key:
+        raise ValueError("this device isn't registered")
+    client = _b64u_decode(data["clientDataJSON"])
+    _check_client(client, "get", origin)
+    auth = _b64u_decode(data["authenticatorData"])
+    _, count = _check_auth_data(auth, rp_id)
+    pub = ec.EllipticCurvePublicNumbers(int.from_bytes(_b64u_decode(key["x"]), "big"),
+                                        int.from_bytes(_b64u_decode(key["y"]), "big"), ec.SECP256R1()).public_key()
+    try:
+        pub.verify(_b64u_decode(data["signature"]), auth + hashlib.sha256(client).digest(), ec.ECDSA(hashes.SHA256()))
+    except InvalidSignature:
+        raise ValueError("signature didn't match")
+    if count and key["count"] and count <= key["count"]:
+        raise ValueError("this passkey may have been copied (its counter went backwards)")
+    with _PK_LOCK:
+        keys = passkeys()
+        for k in keys:
+            if k["id"] == key["id"]:
+                k.update(count=count, used=time.time())
+        store().set_meta("passkeys", json.dumps(keys))
+    return True
+
+
+def _rp(headers):
+    """The site passkeys belong to, and the origin the browser reports."""
+    host = (headers.get("host") or "localhost").split(",")[0].strip()
+    proto = "http" if host.startswith(("127.0.0.1", "localhost")) else "https"
+    return host.split(":")[0], f"{proto}://{host}"
+
+
+_SIGNIN_JS = r"""
+(() => {
+  const out = document.getElementById("si-status"), b64 = s => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - s.length % 4) % 4)), c => c.charCodeAt(0));
+  const u = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  document.getElementById("si-face").onclick = async () => {
+    if (!window.PublicKeyCredential) { out.textContent = "This browser can't use passkeys. Use your key below."; return; }
+    out.textContent = "Waiting for Face ID...";
+    try {
+      const o = await (await fetch("/api/passkey/options?type=login")).json();
+      const cred = await navigator.credentials.get({publicKey: {challenge: b64(o.challenge), rpId: o.rpId, userVerification: "required", timeout: 60000}});
+      const r = cred.response;
+      const d = await (await fetch("/api/passkey/login", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(
+        {id: cred.id, clientDataJSON: u(r.clientDataJSON), authenticatorData: u(r.authenticatorData), signature: u(r.signature)})})).json();
+      if (!d.ok) throw new Error(d.error);
+      out.textContent = "Signed in."; location.reload();
+    } catch (e) { out.textContent = "Couldn't sign in: " + (e.message || e); }
+  };
+  document.getElementById("si-key").onsubmit = e => { e.preventDefault(); const k = document.getElementById("si-keyin").value.trim(); if (k) location.href = location.pathname + "?key=" + encodeURIComponent(k); };
+})();
+"""
+
+_PASSKEY_JS = r"""
+(() => {
+  const out = document.getElementById("pk-status"), H = window.THETA_H;
+  const b64 = s => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - s.length % 4) % 4)), c => c.charCodeAt(0));
+  const u = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const add = document.getElementById("pk-add");
+  if (!window.PublicKeyCredential) { add.disabled = true; out.textContent = "This browser can't make passkeys."; }
+  add.onclick = async () => {
+    out.textContent = "Follow your device's prompt...";
+    try {
+      const o = await (await fetch("/api/passkey/options?type=register", {headers: H})).json();
+      if (!o.ok) throw new Error(o.error);
+      const cred = await navigator.credentials.create({publicKey: {
+        challenge: b64(o.challenge), rp: {name: "Theta", id: o.rpId},
+        user: {id: b64(o.userId), name: "theta-owner", displayName: "Theta"},
+        pubKeyCredParams: [{type: "public-key", alg: -7}], timeout: 60000, attestation: "none",
+        authenticatorSelection: {residentKey: "required", userVerification: "required"},
+        excludeCredentials: o.have.map(id => ({type: "public-key", id: b64(id)}))}});
+      const d = await (await fetch("/api/passkey/register", {method: "POST", headers: H, body: JSON.stringify({
+        name: document.getElementById("pk-name").value || "This device",
+        clientDataJSON: u(cred.response.clientDataJSON), attestationObject: u(cred.response.attestationObject)})})).json();
+      if (!d.ok) throw new Error(d.error);
+      out.textContent = "Added. You can sign in with Face ID on this device now."; setTimeout(() => location.reload(), 900);
+    } catch (e) { out.textContent = "Couldn't add it: " + (e.message || e); }
+  };
+  document.querySelectorAll("[data-pk-remove]").forEach(b => b.onclick = async () => {
+    const d = await (await fetch("/api/passkey/remove", {method: "POST", headers: H, body: JSON.stringify({id: b.dataset.pkRemove})})).json();
+    if (d.ok) b.closest("li").remove();
+  });
+})();
+"""
+
+
+def signin_page(headers):
+    """What you see without the key: Face ID, or type the key."""
+    has = bool(passkeys())
+    body = (
+        f'<div style="max-width:420px;margin:12vh auto 0" class="card stack"><div class="hero">{avatar_img("theta", 56)}'
+        f'<div><p class="eyebrow">{APP_NAME}</p><h1>Sign in</h1></div></div>'
+        + ('<button class="btn" id="si-face" type="button">Sign in with Face ID</button>' if has else
+           '<p class="muted small">Open Theta once with your key, then add Face ID sign-in in Settings.</p>'
+           '<button class="btn" id="si-face" type="button" hidden></button>')
+        + '<form id="si-key" class="box" style="padding:5px 5px 5px 14px"><input id="si-keyin" type="password" '
+          'placeholder="Dashboard key" aria-label="Dashboard key" autocomplete="current-password" '
+          'style="flex:1;border:0;background:transparent;outline:none;padding:8px 0;min-width:0">'
+          '<button class="btn small" type="submit">Open</button></form><p class="note" id="si-status"></p></div>'
+        f"<script>{_SIGNIN_JS}</script>")
+    theme, mode, _ = ui_prefs(headers)
+    return (f'<!doctype html><html lang="en" data-theme="{theme}" data-mode="{mode}"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
+            f'<title>Sign in · {APP_NAME}</title><link rel="stylesheet" href="/ui.css?v={_ASSET_V}">'
+            '<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">'
+            '<link rel="apple-touch-icon" href="/apple-touch-icon.png"></head>'
+            f'<body><main class="main">{body}</main></body></html>')
+
+
+def passkeys_card():
+    rows = "".join(
+        f'<li><div class="brow" style="align-items:center"><span>{html.escape(k["name"])}</span>'
+        f'<button class="btn ghost small" type="button" data-pk-remove="{html.escape(k["id"])}">Remove</button></div>'
+        f'<div class="muted small">Added {datetime.fromtimestamp(k["created"], hub_tz()):%b %d}'
+        + (f', last used {datetime.fromtimestamp(k["used"], hub_tz()):%b %d %H:%M}' if k.get("used") else "")
+        + "</div></li>" for k in passkeys())
+    return ('<section class="card stack" id="faceid"><div><h2>Sign in with Face ID</h2><p class="muted small">Add this '
+            'device and Theta opens with Face ID (or Touch ID, or your passcode) instead of the key in a link. Your face '
+            'never leaves your phone; Theta only checks a signature. Passkeys sync through iCloud Keychain to your other '
+            'Apple devices.</p></div>'
+            '<div style="display:flex;gap:8px;flex-wrap:wrap"><input id="pk-name" class="field" style="flex:1;min-width:160px" '
+            'placeholder="Name, like iPhone" aria-label="Device name"><button class="btn" id="pk-add" type="button">'
+            'Add this device</button></div><p class="note" id="pk-status"></p>'
+            f'<ul class="list">{rows or "<li class=empty>No devices yet.</li>"}</ul></section>'
+            f"<script>{_PASSKEY_JS}</script>")
+
+
 _VOICE_SAMPLES = [
     ["theta", "Theta. I have the final say."], ["mistral", "Mistral. I'll sort out who answers."],
     ["glass", "Glass. Your budget, to the cent."], ["remi", "Remi here, sweetheart. Did you take your meds?"],
@@ -6143,7 +6400,7 @@ def settings_page(headers):
         'type="button">Send a test</button></p><p class="note" id="push-status"></p></section>'
         f'<section class="card stack" id="security"><div class="hero" style="gap:12px">{avatar_img("qwerty", 40)}<div><h2>Security and health</h2>'
         '<p class="muted small">QWERTY checks this every round and tells you in #dev-and-security when it changes.</p></div></div>'
-        f'<ul class="list">{security_rows()}</ul></section>'
+        f'<ul class="list">{security_rows()}</ul></section>' + passkeys_card() +
         '<section class="card stack"><div class="brow"><h2>Rounds</h2></div><p class="muted small">Every agent does its '
         'job three times a day (Supabase Cron). Run one now to refresh the windows.</p>'
         f'<p><button class="btn" type="button" data-run-round="round-status-s">{ui_icon("play")}Run a round now</button></p>'
@@ -6882,6 +7139,30 @@ def handle(method, path, query, headers, body):
                 store().add_chat("lenz", line, channel="screen")
             return _json(200, {"ok": True, "item": it, "line": line})
 
+        if path.startswith("/api/passkey/"):
+            rp_id, origin = _rp(headers)
+            if path == "/api/passkey/login":
+                try:
+                    verify_passkey(data, rp_id, origin)
+                except (ValueError, KeyError, TypeError) as e:
+                    return _json(401, {"ok": False, "error": str(e)[:160]})
+                return (*_json(200, {"ok": True}), [("Set-Cookie", f"hub_key={DASHBOARD_KEY}; Path=/; Max-Age=31536000; "
+                                                                  "HttpOnly; Secure; SameSite=Lax")])
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            if path == "/api/passkey/register":
+                try:
+                    pk = register_passkey(data, rp_id, origin, data.get("name") or "This device")
+                except (ValueError, KeyError, TypeError, IndexError) as e:
+                    return _json(400, {"ok": False, "error": str(e)[:160]})
+                return _json(200, {"ok": True, "name": pk["name"]})
+            if path == "/api/passkey/remove":
+                with _PK_LOCK:
+                    keys = [k for k in passkeys() if k["id"] != data.get("id")]
+                    store().set_meta("passkeys", json.dumps(keys))
+                return _json(200, {"ok": True})
+            return _json(404, {"ok": False, "error": "unknown route"})
+
         if path == "/api/tick":  # Supabase Cron, every few minutes: reminders that are due
             cron = bool(CRON_SECRET) and headers.get("authorization") == f"Bearer {CRON_SECRET}"
             if not (cron or (DASHBOARD_KEY and _auth_dashboard(query, headers))):
@@ -6957,7 +7238,7 @@ def handle(method, path, query, headers, body):
 
     if path == "/":
         if not _auth_dashboard(query, headers):
-            return _json(401, {"ok": False, "error": "dashboard key required"})
+            return 401, "text/html; charset=utf-8", signin_page(headers).encode()
         st = store()
         host = headers.get("host")
         if host and st.get_meta("hub:origin") != f"https://{host}":
@@ -6970,7 +7251,7 @@ def handle(method, path, query, headers, body):
     agent_path = path.startswith("/agent/") and path[len("/agent/"):] in AGENTS
     if path in pages or agent_path:
         if not _auth_dashboard(query, headers):
-            return _json(401, {"ok": False, "error": "dashboard key required"})
+            return 401, "text/html; charset=utf-8", signin_page(headers).encode()
         out = agent_page(headers, path[len("/agent/"):]) if agent_path else pages[path]()
         return 200, "text/html; charset=utf-8", out.encode(), _login_cookie(query)
 
@@ -7053,6 +7334,17 @@ def handle(method, path, query, headers, body):
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
         return _json(200, {"ok": True, "items": library(), "taste": taste_profile()})
+
+    if path == "/api/passkey/options":
+        kind = query.get("type", ["login"])[0]
+        if kind == "register" and not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        if not DASHBOARD_KEY:
+            return _json(400, {"ok": False, "error": "set DASHBOARD_KEY first; with no key there's nothing to sign in to"})
+        rp_id, _ = _rp(headers)
+        return _json(200, {"ok": True, "challenge": new_challenge("create" if kind == "register" else "get"),
+                           "rpId": rp_id, "userId": _b64u(hashlib.sha256(DASHBOARD_KEY.encode()).digest()[:16]),
+                           "have": [k["id"] for k in passkeys()] if kind == "register" else []})
 
     if path == "/api/reminders":
         if not _auth_dashboard(query, headers):

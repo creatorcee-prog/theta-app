@@ -21,6 +21,12 @@
 - [ ] `GLASS_BUDGETS`, e.g. `Groceries:600,Dining:200`; optionally
       `GLASS_CATEGORY_MAP` to match Rocket Money's category names.
 - [ ] `BIRTHDAYS`, e.g. `Sam:03-14,Grandma:11-02`.
+- [ ] Run the `bot-hub-tick` job from `supabase/cron.sql.example` (Remi's
+      reminders check every 5 minutes).
+- [ ] `LENZ_DOC_URL` (your entertainment log), `MAL_CLIENT_ID` and
+      `MAL_USERNAME` for Lenz; `GITHUB_TOKEN` for QWERTY's `/issue`.
+- [ ] Settings → Face ID sign-in → Add this device, then re-add the Home
+      Screen icon without `?key=` in it.
 
 ## Planned
 
@@ -30,15 +36,19 @@
 - [ ] Discord: webhook mirror, then slash commands, then Remi's
       auto-moderation (needs an always-on host, not Vercel).
 - [ ] Paid model for Theta.
+- [ ] Gmail for Remi: list threads you haven't answered, sort senders into
+      family / friends / work / other (you confirm each new sender once),
+      and draft replies for the unimportant ones for you to approve. Needs
+      a Google Cloud OAuth client (set up on a computer).
+- [ ] Sending on your behalf: email via Gmail drafts first; SMS via Twilio
+      only if worth the 10DLC registration and per-text fees; iMessage only
+      through an iPhone Shortcut you run.
+- [ ] Lenz writes ratings and status back to MyAnimeList (needs MAL's
+      sign-in flow, not just the client ID).
 
 ## Ideas (not built yet)
 
-- [ ] Coverage bar on news windows: how many of Red's, Blue's and Gray's
-      outlets carried each story (the hub already counts this).
-- [ ] Unread dots on channels and the Chat tab.
 - [ ] Charter's charts in the current color scheme (they're always light now).
-- [ ] Tap a window to open its full text and sources in a sheet, instead of
-      leaving the app.
 - [ ] Quick actions on Home: log an expense, ask Remi, start a round.
 - [ ] Open offline: cache the app's pages like Garage Gym does.
 - [ ] Rearrange or pin windows on Home.

@@ -275,6 +275,14 @@ package against Google's OSV vulnerability database.
   suggested fix, filed when `GITHUB_TOKEN` (fine-grained, Issues: read and
   write on this repo only) is set; `GITHUB_REPO` picks the repo. He never
   changes or deploys code himself. `/security` posts what he sees now.
+- **Face ID sign-in** (Settings → Face ID sign-in → Add this device).
+  A passkey: your phone checks your face and signs a one-time challenge;
+  the hub only ever sees a public key and the signature, never your face
+  or a picture. Once added, opening the app signed out shows a "Sign in
+  with Face ID" page, so you no longer need `?key=` in links or Home
+  Screen icons. Passkeys belong to the address you added them on (a
+  preview deployment's URL needs its own). Remove a lost device in the
+  same card; the dashboard key still works as a fallback.
 
 **Article briefs.** Before Red, Blue and Gray take the round's story, the
 hub reads the article itself and one small model call writes a neutral
