@@ -41,11 +41,14 @@ Vercel's serverless model: `api/index.py` is one Python function,
      `master_work()`
    - `GROQ_API_KEY` — managers and miners (from console.groq.com)
    - Optional model overrides: `MINER_MODEL` (default
-     `llama-3.1-8b-instant`), `MANAGER_MODEL` (`llama-3.3-70b-versatile`),
-     `LOW_BRAIN_MODEL` (`gemini-2.5-flash`), `GEMINI_REASONING_EFFORT`
-     (`none`; set it empty for Gemini models that can't turn thinking
-     off). An agent whose key is missing answers chat with
-     "…_API_KEY is not set" instead of failing
+     `openai/gpt-oss-20b`), `MANAGER_MODEL` (`openai/gpt-oss-120b`),
+     `LOW_BRAIN_MODEL` (`gemini-3.8-flash`). Providers retire models:
+     when chat says a model doesn't exist, open `/api/models` (dashboard
+     key) to see what your keys can use and set the override.
+     `GEMINI_REASONING_EFFORT` and `GROQ_REASONING_EFFORT` (both `low`;
+     Groq sends it to gpt-oss models only; empty sends nothing) keep
+     thinking from using up the reply. An agent whose key is missing
+     answers chat with "…_API_KEY is not set" instead of failing
    - `NEWS_FEEDS` — comma-separated RSS URLs; the default is 10 outlets
      across the spectrum. `NEWS_TOP` (8), `NEWS_BREAKING_MAX` (2) and
      `NEWS_BREAKING_MINUTES` (90) shape the News section
@@ -81,7 +84,9 @@ Same as the Railway build: `POST /api/report`, `POST /api/escalate`,
 `POST /api/chat` (dashboard key), `POST /api/status`, `GET /`
 (dashboard), `GET /api/feed`, `GET /api/orders`, `GET /api/escalations`,
 `GET /api/widgets`, `GET /api/fitness`, `GET /api/agents` (dashboard
-key), `GET /api/bots`, `GET /api/tiers`.
+key), `GET /api/models` (dashboard key), `GET /api/wiring` (dashboard
+key), `GET|POST /api/allchat` (dashboard key or bot key), `GET /api/bots`,
+`GET /api/tiers`.
 
 ## Agents
 
@@ -125,6 +130,20 @@ curl -X POST https://<project>.vercel.app/api/status -H "x-bot-key: $KEY" \
 ```
 
 ## Chat
+
+**All Agents** (first in the chat picker) is one shared, saved thread
+(the last 200 messages). You post with the dashboard key; bots post with
+their own key (`POST /api/allchat {"bot_id", "text"}`, `x-bot-key`) and
+read it with `GET /api/allchat?bot_id=…`. @mention agents (`@remi`,
+`@james`) and each one named answers once (up to 3 per message), with
+the recent thread as context. Replies and bot posts never trigger more
+replies, so agents can't loop and run up the API limits.
+
+**Wiring**, under the chat, shows for each agent whether its key is set
+and can use its model (James: whether Garage Gym answers). **Test** sends
+a tiny message and shows the reply time; James has no Test button
+because each one would use one of his daily questions.
+
 
 The dashboard has a chat box: pick an agent and talk to it.
 History lives in the page (reload clears it). The same thing over

@@ -54,16 +54,16 @@ PROVIDERS = {
     "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
                "GEMINI_API_KEY"),
 }
-# Extra request fields per provider. Gemini 2.5 Flash thinks by default,
-# which eats into max_tokens; "none" turns that off. Set
-# GEMINI_REASONING_EFFORT to "" for models that can't turn it off.
-_GEMINI_EFFORT = os.environ.get("GEMINI_REASONING_EFFORT", "none")
-PROVIDER_EXTRA = {"gemini": {"reasoning_effort": _GEMINI_EFFORT} if _GEMINI_EFFORT else {}}
+# Thinking models count their reasoning against max_tokens, so ask for
+# little of it. Gemini 3 can't turn thinking off ("none" was 2.5 only);
+# on Groq only the gpt-oss models take reasoning_effort. "" sends nothing.
+GEMINI_REASONING_EFFORT = os.environ.get("GEMINI_REASONING_EFFORT", "low")
+GROQ_REASONING_EFFORT = os.environ.get("GROQ_REASONING_EFFORT", "low")
 # tier -> (provider, model id); *_MODEL env vars override the model id
 TIER_LLM = {
-    "miner": ("groq", os.environ.get("MINER_MODEL", "llama-3.1-8b-instant")),
-    "manager": ("groq", os.environ.get("MANAGER_MODEL", "llama-3.3-70b-versatile")),
-    "low_brain": ("gemini", os.environ.get("LOW_BRAIN_MODEL", "gemini-2.5-flash")),
+    "miner": ("groq", os.environ.get("MINER_MODEL", "openai/gpt-oss-20b")),
+    "manager": ("groq", os.environ.get("MANAGER_MODEL", "openai/gpt-oss-120b")),
+    "low_brain": ("gemini", os.environ.get("LOW_BRAIN_MODEL", "gemini-3.8-flash")),
 }
 # The paid master model isn't wired yet; the low brain answers for it.
 MASTER_MODEL = os.environ.get("MASTER_MODEL", "Opus 5.5")
@@ -71,6 +71,8 @@ MODELS = {t: f"{m} ({p.title()})" for t, (p, m) in TIER_LLM.items()}
 MODELS["master"] = f"{MASTER_MODEL} (not connected; {TIER_LLM['low_brain'][1]} standing in)"
 LLM_TIMEOUT = int(os.environ.get("LLM_TIMEOUT_SECONDS", "25"))
 CHAT_HISTORY = 20  # most recent messages sent per chat request
+ALLCHAT_KEEP = 200  # All Agents chat: messages kept
+ALLCHAT_MENTIONS = 3  # agents that may answer one message of yours
 
 # ---- Agents: the hub's named personas. The name is the persona, not
 # the model (like James in Garage Gym); each runs on its tier's model.
@@ -229,6 +231,7 @@ class MemoryStore:
         self.reports, self.escalations, self.orders = [], [], {}
         self.order_ids, self.fitness, self.processed, self.seq = [], [], set(), 0
         self.seen, self.activity = {}, {}
+        self.allchat = []  # newest first
 
     def _next_id(self):
         self.seq += 1
@@ -293,6 +296,15 @@ class MemoryStore:
         self.seen[bot_id] = time.time()
         if activity is not None:
             self.activity[bot_id] = activity
+
+    def add_chat(self, sender, text):
+        item = {"id": self._next_id(), "from": sender, "text": text, "at": _now()}
+        self.allchat.insert(0, item)
+        del self.allchat[ALLCHAT_KEEP:]
+        return item
+
+    def list_chat(self, limit):
+        return list(reversed(self.allchat[:limit]))  # oldest first
 
     def list_status(self):
         return {b: {"seen": t, "activity": self.activity.get(b, "")}
@@ -396,6 +408,16 @@ class KVStore:
         self._cmd("HSET", "hub:seen", bot_id, str(int(time.time())))
         if activity is not None:
             self._cmd("HSET", "hub:activity", bot_id, activity)
+
+    def add_chat(self, sender, text):
+        item = {"id": self._next_id(), "from": sender, "text": text, "at": _now()}
+        self._cmd("LPUSH", "hub:allchat", json.dumps(item))
+        self._cmd("LTRIM", "hub:allchat", "0", str(ALLCHAT_KEEP - 1))
+        return item
+
+    def list_chat(self, limit):
+        rows = self._cmd("LRANGE", "hub:allchat", "0", str(limit - 1))
+        return [json.loads(r) for r in reversed(rows)]  # oldest first
 
     def list_status(self):
         seen = self._cmd("HGETALL", "hub:seen") or []
@@ -687,6 +709,36 @@ def system_prompt(agent_id):
             f"Stay in character{brevity}.")
 
 
+def provider_extra(provider, model):
+    """Extra request fields for this provider and model (see *_REASONING_EFFORT)."""
+    if provider == "gemini" and GEMINI_REASONING_EFFORT:
+        return {"reasoning_effort": GEMINI_REASONING_EFFORT}
+    if provider == "groq" and GROQ_REASONING_EFFORT and model.startswith("openai/gpt-oss"):
+        return {"reasoning_effort": GROQ_REASONING_EFFORT}
+    return {}
+
+
+def list_models(provider):
+    """Model ids this provider's key can use, or {"error": ...}. Providers
+    retire models, so /api/models shows what to put in *_MODEL."""
+    url, key_var = PROVIDERS[provider]
+    key = os.environ.get(key_var, "")
+    if not key:
+        return {"error": f"{key_var} is not set"}
+    req = urllib.request.Request(
+        url.rsplit("/chat/completions", 1)[0] + "/models",
+        headers={"Authorization": f"Bearer {key}", "User-Agent": "bot-hub/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read()).get("data", [])
+    except urllib.error.HTTPError as e:
+        return {"error": f"{provider} returned {e.code}"}
+    except (urllib.error.URLError, TimeoutError, ValueError, AttributeError) as e:
+        return {"error": f"{provider} call failed: {e!r}"}
+    ids = (m.get("id", "") for m in data if isinstance(m, dict))
+    return {"models": sorted(i.removeprefix("models/") for i in ids if i)}
+
+
 def llm_chat(tier, messages, max_tokens=800):
     """One chat-completion call for `tier`; returns the reply text.
     Master is answered by the low brain until the paid model is wired."""
@@ -696,7 +748,7 @@ def llm_chat(tier, messages, max_tokens=800):
     if not key:
         raise LLMError(f"{key_var} is not set in the project's env vars")
     payload = {"model": model, "messages": messages, "max_tokens": max_tokens,
-               **PROVIDER_EXTRA.get(provider, {})}
+               **provider_extra(provider, model)}
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode(),
         headers={"Authorization": f"Bearer {key}",
@@ -705,12 +757,16 @@ def llm_chat(tier, messages, max_tokens=800):
     try:
         with urllib.request.urlopen(req, timeout=LLM_TIMEOUT) as resp:
             out = json.loads(resp.read())
-        return out["choices"][0]["message"]["content"]
+        text = out["choices"][0]["message"].get("content") or ""
     except urllib.error.HTTPError as e:
         detail = e.read()[:300].decode("utf-8", "replace")
         raise LLMError(f"{provider} returned {e.code}: {detail}")
-    except (urllib.error.URLError, TimeoutError, ValueError, KeyError, IndexError) as e:
+    except (urllib.error.URLError, TimeoutError, ValueError, KeyError, IndexError, AttributeError) as e:
         raise LLMError(f"{provider} call failed: {e!r}")
+    if not text.strip():
+        raise LLMError(f"{model} returned an empty reply (it may have spent its "
+                       "token budget thinking)")
+    return text
 
 
 def summarize(unprocessed):
@@ -745,6 +801,76 @@ def master_work(escalation):
         return {"ok": False, "error": str(e), "escalation": escalation}
     return {"ok": True, "result": text, "model": MODELS["master"],
             "escalation": escalation}
+
+
+# ---- All Agents chat: one shared thread for you and the bots. Bots post
+# with their own key; your @mentions get one reply from each agent named
+# (up to ALLCHAT_MENTIONS). Replies never trigger further replies, so
+# agents can't run up each other's API limits in a loop.
+def chat_name(sender):
+    return "You" if sender == "you" else display_name(sender)
+
+
+def mentioned_agents(text):
+    """Agent ids @mentioned in `text` (by id or name), in order, deduped."""
+    names = {a: a for a in AGENTS} | {v["name"].lower(): a for a, v in AGENTS.items()}
+    out = []
+    for word in text.split():
+        if word.startswith("@"):
+            a = names.get(word[1:].strip(".,!?:;").lower())
+            if a and a not in out:
+                out.append(a)
+    return out[:ALLCHAT_MENTIONS]
+
+
+def allchat_reply(agent, thread):
+    """One agent's reply to the latest message, with the thread as context."""
+    if agent == "james":  # Garage Gym takes a single question
+        return james_chat([{"role": "user", "content": thread[-1]["text"]}])
+    transcript = "\n".join(f"{chat_name(m['from'])}: {m['text']}" for m in thread[-CHAT_HISTORY:])
+    name = AGENTS[agent]["name"]
+    return llm_chat(AGENTS[agent]["tier"], [
+        {"role": "system", "content": system_prompt(agent) + " You're in the All Agents "
+         "group chat with the user and the other agents."},
+        {"role": "user", "content": f"The chat so far:\n{transcript}\n\nReply to the latest "
+         f"message as {name}. Write only your message, without your name in front."}])
+
+
+def allchat_view(limit=50):
+    return [dict(m, name=chat_name(m["from"])) for m in store().list_chat(limit)]
+
+
+# ---- Wiring: is each agent's model actually reachable?
+def wiring():
+    """Per agent: what answers for it and whether it's wired in. Checks the
+    key and that the key can use the model; costs no tokens."""
+    models = {p: list_models(p) for p in {p for p, _ in TIER_LLM.values()}}
+    rows = []
+    for aid, a in AGENTS.items():
+        row = {"agent": aid, "name": a["name"], "tier": TIER_LABELS[a["tier"]],
+               "model": agent_model(aid), "testable": not a.get("home")}
+        if a.get("home"):
+            if not GARAGE_GYM_SECRET:
+                row.update(state="off", note="Not linked: set GARAGE_GYM_SECRET")
+            elif james_summary():
+                row.update(state="ok", note="Garage Gym answered")
+            else:
+                row.update(state="bad", note="Garage Gym didn't answer: check GARAGE_GYM_URL "
+                           "and that HUB_SECRET there matches GARAGE_GYM_SECRET here")
+        else:
+            provider, model = TIER_LLM["low_brain" if a["tier"] == "master" else a["tier"]]
+            found = models[provider]
+            if "error" in found:
+                missing = found["error"].endswith("is not set")
+                row.update(state="off" if missing else "bad", note=found["error"])
+            elif model not in found["models"]:
+                row.update(state="bad", note=f"{model} isn't available to this key; "
+                           "pick one from /api/models")
+            else:
+                row.update(state="ok", note="Key set and model available"
+                           + (f" ({MASTER_MODEL} not connected; standing in)" if a["tier"] == "master" else ""))
+        rows.append(row)
+    return rows
 
 
 # ---- Core request handling (framework-free, so Vercel and the local
@@ -792,38 +918,82 @@ def _auth_dashboard(query, headers):
             or query.get("key", [None])[0] == DASHBOARD_KEY)
 
 
-# Dashboard chat box. History lives in the page only (one per agent);
-# each send posts that agent's recent messages to /api/chat with the
-# dashboard key.
+# Dashboard chat box. One-on-one history lives in the page only (one per
+# agent) and posts to /api/chat; "All Agents" is the shared thread at
+# /api/allchat, refreshed every 8 s while open. The Wiring panel below it
+# reads /api/wiring and can send each agent a tiny test message.
 _CHAT_JS = """
 const key = new URLSearchParams(location.search).get("key") || "";
+const H = {"Content-Type": "application/json", "x-dashboard-key": key};
+const ALL = "__all";
 const hist = {};
+let thread = [], poll = null;
 const agentSel = document.getElementById("chat-agent"), log = document.getElementById("chat-log");
 const msg = document.getElementById("chat-msg"), btn = document.getElementById("chat-send");
 const status = document.getElementById("chat-status");
-function show() {
-  const name = agentSel.selectedOptions[0].dataset.name;
-  log.replaceChildren(...(hist[agentSel.value] || []).map(m => {
-    const p = document.createElement("p"), b = document.createElement("b");
-    b.textContent = m.role === "user" ? "You: " : name + ": ";
-    p.style.whiteSpace = "pre-wrap";
-    p.append(b, m.content);
-    return p;
-  }));
+function line(who, text) {
+  const p = document.createElement("p"), b = document.createElement("b");
+  b.textContent = who + ": ";
+  p.style.whiteSpace = "pre-wrap";
+  p.append(b, text);
+  return p;
 }
-agentSel.onchange = () => { status.textContent = ""; show(); };
+function show() {
+  if (agentSel.value === ALL) {
+    log.replaceChildren(...thread.map(m => line(m.name, m.text)));
+    return;
+  }
+  const name = agentSel.selectedOptions[0].dataset.name;
+  log.replaceChildren(...(hist[agentSel.value] || []).map(m => line(m.role === "user" ? "You" : name, m.content)));
+}
+async function loadThread() {
+  try {
+    const d = await (await fetch("/api/allchat", {headers: H})).json();
+    if (d.ok) { thread = d.messages; if (agentSel.value === ALL) show(); }
+  } catch (err) {}
+}
+function onAgent() {
+  status.textContent = "";
+  clearInterval(poll); poll = null;
+  if (agentSel.value === ALL) {
+    msg.placeholder = "Message everyone. @mention agents (like @remi or @james) for a reply.";
+    loadThread();
+    poll = setInterval(() => { if (!document.hidden) loadThread(); }, 8000);
+  } else {
+    msg.placeholder = "";
+  }
+  show();
+}
+agentSel.onchange = onAgent;
 document.getElementById("chat-form").onsubmit = async e => {
   e.preventDefault();
   const text = msg.value.trim(), agent = agentSel.value;
   if (!text) return;
+  msg.value = ""; btn.disabled = true;
+  if (agent === ALL) {
+    status.textContent = /@\\w/.test(text) ? "Waiting for replies..." : "Sending...";
+    thread = [...thread, {name: "You", text}];
+    show();
+    try {
+      const d = await (await fetch("/api/allchat", {method: "POST", headers: H, body: JSON.stringify({text})})).json();
+      if (!d.ok) throw new Error(d.error);
+      thread = d.messages;
+      const errs = Object.entries(d.errors || {}).map(([n, m]) => n + " couldn't reply: " + m);
+      status.textContent = errs.join(" | ");
+    } catch (err) {
+      thread = thread.slice(0, -1); msg.value = text;
+      status.textContent = "Error: " + err.message;
+    }
+    btn.disabled = false;
+    show();
+    return;
+  }
   const h = hist[agent] = hist[agent] || [];
   h.push({role: "user", content: text});
-  msg.value = ""; btn.disabled = true; status.textContent = "Thinking...";
+  status.textContent = "Thinking...";
   show();
   try {
-    const r = await fetch("/api/chat", {method: "POST",
-      headers: {"Content-Type": "application/json", "x-dashboard-key": key},
-      body: JSON.stringify({agent, messages: h})});
+    const r = await fetch("/api/chat", {method: "POST", headers: H, body: JSON.stringify({agent, messages: h})});
     const d = await r.json();
     if (!d.ok) throw new Error(d.error);
     h.push({role: "assistant", content: d.reply});
@@ -835,11 +1005,67 @@ document.getElementById("chat-form").onsubmit = async e => {
   btn.disabled = false;
   show();
 };
+onAgent();
+
+const wiringBody = document.getElementById("wiring-rows");
+const MARK = {ok: ["Wired", "#1a7f37"], bad: ["Not wired", "#b3261e"], off: ["Not set up", "#8a6d00"]};
+function cell(text, style) {
+  const td = document.createElement("td");
+  td.textContent = text;
+  if (style) td.style.cssText = style;
+  return td;
+}
+async function loadWiring() {
+  const note = document.getElementById("wiring-note");
+  note.textContent = "Checking...";
+  try {
+    const d = await (await fetch("/api/wiring", {headers: H})).json();
+    if (!d.ok) throw new Error(d.error);
+    wiringBody.replaceChildren(...d.agents.map(a => {
+      const tr = document.createElement("tr");
+      const [label, color] = MARK[a.state] || ["Unknown", "#888"];
+      const result = cell(a.note, "color:#666");
+      const test = document.createElement("td");
+      if (a.testable) {
+        const b = document.createElement("button");
+        b.type = "button"; b.textContent = "Test";
+        b.onclick = () => testAgent(a.agent, result, b);
+        test.append(b);
+      } else {
+        test.append(cell("No test: it would use a daily question").firstChild);
+      }
+      tr.append(cell(a.name), cell(a.model, "font-family:monospace;font-size:0.85em"),
+                cell(label, "font-weight:bold;color:" + color), result, test);
+      return tr;
+    }));
+    note.textContent = "Checked " + new Date().toLocaleTimeString() + ". Test sends a tiny message and uses a few tokens.";
+  } catch (err) {
+    note.textContent = "Couldn't check wiring: " + err.message;
+  }
+}
+async function testAgent(agent, out, b) {
+  b.disabled = true; out.textContent = "Testing...";
+  const t0 = performance.now();
+  try {
+    const d = await (await fetch("/api/chat", {method: "POST", headers: H, body: JSON.stringify(
+      {agent, messages: [{role: "user", content: "Wiring test: reply with just OK."}]})})).json();
+    const secs = ((performance.now() - t0) / 1000).toFixed(1);
+    if (!d.ok) throw new Error(d.error);
+    out.textContent = "Replied in " + secs + " s: " + d.reply.slice(0, 80);
+    out.style.color = "#1a7f37";
+  } catch (err) {
+    out.textContent = "Failed: " + err.message;
+    out.style.color = "#b3261e";
+  }
+  b.disabled = false;
+}
+document.getElementById("wiring-recheck").onclick = loadWiring;
+loadWiring();
 """
 
 
 def _chat_html():
-    groups = []
+    groups = ['<option value="__all" data-name="All Agents">All Agents (shared chat)</option>']
     for tier in reversed(TIERS):  # High Brain first
         opts = "".join(
             f"<option value=\"{a}\" data-name=\"{html.escape(v['name'])}\">"
@@ -853,6 +1079,12 @@ def _chat_html():
             "<form id=\"chat-form\"><textarea id=\"chat-msg\" rows=\"3\" "
             "style=\"width:100%\"></textarea><br><button id=\"chat-send\">Send</button> "
             "<i id=\"chat-status\"></i></form>"
+            "<h3>Wiring</h3><div style=\"overflow-x:auto\"><table style=\"border-collapse:collapse\" "
+            "cellpadding=\"4\"><thead><tr><th align=\"left\">Agent</th><th align=\"left\">Model</th>"
+            "<th align=\"left\">Status</th><th align=\"left\">Details</th><th></th></tr></thead>"
+            "<tbody id=\"wiring-rows\"></tbody></table></div>"
+            "<p><button id=\"wiring-recheck\" type=\"button\">Recheck</button> "
+            "<i id=\"wiring-note\"></i></p>"
             f"<script>{_CHAT_JS}</script>")
 
 
@@ -957,6 +1189,37 @@ def handle(method, path, query, headers, body):
                 return _json(502, {"ok": False, "error": str(e)})
             return _json(200, {"ok": True, "agent": agent, "name": AGENTS[agent]["name"],
                                "model": agent_model(agent), "reply": reply})
+
+        if path == "/api/allchat":
+            text, bot_id = data.get("text"), data.get("bot_id")
+            if not isinstance(text, str) or not text.strip():
+                return _json(400, {"ok": False, "error": "text required"})
+            if bot_id:  # a bot posting: no replies, so agents can't loop
+                if not _auth_bot(bot_id, headers):
+                    return _json(401, {"ok": False, "error": "bad bot_id or key"})
+                store().add_chat(bot_id, text.strip()[:2000])
+                return _json(200, {"ok": True, "messages": allchat_view()})
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            st = store()
+            st.add_chat("you", text.strip()[:2000])
+            thread = st.list_chat(CHAT_HISTORY)
+            agents = mentioned_agents(text)
+            errors = {}
+
+            def answer(a):
+                try:
+                    return a, allchat_reply(a, thread), None
+                except LLMError as e:
+                    return a, None, str(e)
+            if agents:
+                with ThreadPoolExecutor(max_workers=len(agents)) as ex:
+                    for a, reply, err in ex.map(answer, agents):
+                        if reply:
+                            st.add_chat(a, reply.strip()[:4000])
+                        else:
+                            errors[AGENTS[a]["name"]] = err
+            return _json(200, {"ok": True, "messages": allchat_view(), "errors": errors})
 
         if path == "/api/status":
             bot_id, activity = data.get("bot_id"), data.get("activity")
@@ -1113,6 +1376,25 @@ def handle(method, path, query, headers, body):
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
         return _json(200, agent_statuses())
+
+    if path == "/api/allchat":
+        bot_id = query.get("bot_id", [None])[0]
+        if not (_auth_dashboard(query, headers) if not bot_id else _auth_bot(bot_id, headers)):
+            return _json(401, {"ok": False, "error": "dashboard key or bot key required"})
+        return _json(200, {"ok": True, "messages": allchat_view()})
+
+    if path == "/api/wiring":
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        return _json(200, {"ok": True, "agents": wiring()})
+
+    if path == "/api/models":
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        return _json(200, {
+            "in_use": {t: f"{p}: {m}" for t, (p, m) in TIER_LLM.items()},
+            **{p: list_models(p) for p in PROVIDERS},
+        })
 
     if path == "/api/tiers":
         return _json(200, {
