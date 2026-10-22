@@ -2301,21 +2301,80 @@ AGENT_LOOKS = {
 }
 
 
+def _pt(cx, cy, r, deg):
+    import math
+    a = math.radians(deg - 90)
+    return f"{cx + r * math.cos(a):.2f} {cy + r * math.sin(a):.2f}"
+
+
+def _arc(r, a0, a1, cx=12, cy=12):
+    """An open arc path from angle a0 to a1 (degrees, clockwise from top)."""
+    return f"M{_pt(cx, cy, r, a0)}A{r} {r} 0 {1 if (a1 - a0) % 360 > 180 else 0} 1 {_pt(cx, cy, r, a1)}"
+
+
+def _aperture():
+    out = []
+    for k in range(6):
+        o0, o1 = _pt(12, 12, 10, 60 * k), _pt(12, 12, 10, 60 * k + 60)
+        i0, i1 = _pt(12, 12, 3.6, 60 * k + 40), _pt(12, 12, 3.6, 60 * k + 100)
+        out.append(f'<path d="M{o0}L{o1}L{i1}z"/><path d="M{o0}L{i1}L{i0}z" opacity=".62"/>')
+    return "".join(out)
+
+
+# Avatars: a solid emblem per agent on a lit, glassy tile (the line glyphs
+# in AGENT_LOOKS stay for window placeholders). Marks are drawn in a
+# 24x24 box; fill is white unless noted.
+AGENT_MARKS = {
+    "theta": '<path fill-rule="evenodd" d="M4.4 12a7.6 10 0 1 0 15.2 0a7.6 10 0 1 0-15.2 0zM7.5 12a4.5 7 0 1 0 9 0a4.5 7 0 1 0-9 0z"/>'
+             '<rect x="7.2" y="10.6" width="9.6" height="2.8" rx="1.4"/>',
+    "mistral": (f'<g fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><path d="{_arc(9.4, 20, 250)}"/>'
+                f'<path d="{_arc(6.2, 140, 370)}" opacity=".8"/><path d="{_arc(3, 260, 470)}" opacity=".6"/></g>'),
+    "glass": '<path d="M6.2 4.5h11.6l3.7 5H2.5z" opacity=".95"/><path d="M9 4.5h6l-3 5z" opacity=".55"/>'
+             '<path d="M2.5 9.5H12v11z" opacity=".78"/><path d="M12 9.5h9.5L12 20.5z" opacity=".5"/>',
+    "remi": '<path d="M12 20.6C6 16.4 2.7 13 2.7 9.2 2.7 6.3 5 4 7.8 4c1.8 0 3.3.9 4.2 2.3C12.9 4.9 14.4 4 16.2 4 '
+            '19 4 21.3 6.3 21.3 9.2c0 3.8-3.3 7.2-9.3 11.4z"/>',
+    "lenz": _aperture(),
+    "red": '<path d="M12 2.5a9.5 9.5 0 0 1 0 19z"/><path d="M12 2.5a9.5 9.5 0 0 0 0 19z" opacity=".34"/>',
+    "blue": '<path d="M12 2.5a9.5 9.5 0 0 0 0 19z"/><path d="M12 2.5a9.5 9.5 0 0 1 0 19z" opacity=".34"/>',
+    "gray": '<path d="M11 2.56a9.5 9.5 0 0 0 0 18.88z" opacity=".62"/><path d="M13 2.56a9.5 9.5 0 0 1 0 18.88z" opacity=".62"/>'
+            '<circle cx="12" cy="12" r="2.2"/>',
+    "charter": '<rect x="3.5" y="13" width="4.6" height="7.5" rx="2.3" opacity=".6"/>'
+               '<rect x="9.7" y="8.5" width="4.6" height="12" rx="2.3" opacity=".8"/>'
+               '<rect x="15.9" y="3.5" width="4.6" height="17" rx="2.3"/>',
+    "james": '<path d="M8 9.6V8a4 4 0 0 1 8 0v1.6" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/>'
+             '<circle cx="12" cy="14.6" r="6.6"/>',
+    "qwerty": '<path d="M12 2.6l7.8 2.9v6c0 4.7-3.3 8.5-7.8 10-4.5-1.5-7.8-5.3-7.8-10v-6z"/>'
+              '<path d="M10.2 9.4L7.6 12l2.6 2.6M13.8 9.4l2.6 2.6-2.6 2.6" fill="none" stroke="{c2}" stroke-width="2" '
+              'stroke-linecap="round" stroke-linejoin="round"/>',
+    "hub": '<path fill-rule="evenodd" d="M12 2.5l8.2 4.75v9.5L12 21.5l-8.2-4.75v-9.5zM12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6z"/>',
+    "you": '<circle cx="12" cy="8.2" r="4.2"/><path d="M3.8 20.8a8.2 8.2 0 0 1 16.4 0z"/>',
+}
+
+
 def agent_look(agent_id):
     return AGENT_LOOKS.get(agent_id) or AGENT_LOOKS["hub"]
 
 
 def avatar_svg(agent_id, size=40):
-    """An agent's avatar as standalone SVG (also served at /avatar/<id>.svg)."""
-    c1, c2, glyph = agent_look(agent_id)
-    gid = f"av-{agent_id if agent_id in AGENT_LOOKS else 'hub'}"
+    """An agent's avatar as standalone SVG (also served at /avatar/<id>.svg):
+    their emblem, softly shadowed, on a lit gradient tile."""
+    aid = agent_id if agent_id in AGENT_LOOKS else "hub"
+    c1, c2, _ = agent_look(aid)
+    mark = AGENT_MARKS.get(aid, AGENT_MARKS["hub"]).replace("{c2}", c2)
+    g = f"av-{aid}"
     return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="{size}" height="{size}" '
             f'role="img" aria-label="{html.escape(display_name(agent_id) if agent_id in AGENTS else agent_id)}">'
-            f'<defs><linearGradient id="{gid}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="{c1}"/>'
-            f'<stop offset="1" stop-color="{c2}"/></linearGradient></defs>'
-            f'<rect width="40" height="40" rx="12" fill="url(#{gid})"/>'
-            f'<g transform="translate(8 8)" fill="none" stroke="#fff" stroke-width="2" '
-            f'stroke-linecap="round" stroke-linejoin="round">{glyph}</g></svg>')
+            f'<defs><linearGradient id="{g}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="{c1}"/>'
+            f'<stop offset="1" stop-color="{c2}"/></linearGradient>'
+            f'<radialGradient id="{g}-l" cx=".22" cy=".12" r=".95"><stop offset="0" stop-color="#fff" stop-opacity=".38"/>'
+            f'<stop offset=".55" stop-color="#fff" stop-opacity="0"/></radialGradient>'
+            f'<linearGradient id="{g}-s" x1="0" y1="0" x2="0" y2="1"><stop offset=".45" stop-color="#000" stop-opacity="0"/>'
+            f'<stop offset="1" stop-color="#000" stop-opacity=".22"/></linearGradient></defs>'
+            f'<rect width="40" height="40" rx="11" fill="url(#{g})"/><rect width="40" height="40" rx="11" fill="url(#{g}-l)"/>'
+            f'<rect width="40" height="40" rx="11" fill="url(#{g}-s)"/>'
+            f'<rect x=".5" y=".5" width="39" height="39" rx="10.5" fill="none" stroke="#fff" stroke-opacity=".22"/>'
+            f'<g transform="translate(5.8 6.9) scale(1.18)" fill="#000" opacity=".2">{mark.replace(chr(35) + "fff", chr(35) + "000")}</g>'
+            f'<g transform="translate(5.8 5.8) scale(1.18)" fill="#fff">{mark}</g></svg>')
 
 
 _ICONS = {}
