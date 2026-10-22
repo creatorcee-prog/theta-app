@@ -108,7 +108,8 @@ ABILITIES = {
                "escalations, check what's wired, and decide who answers in All Agents",
     "glass": "log expenses, report budgets and send budget alerts, review weekly spending, and "
              "import Rocket Money CSVs. You can't see bank accounts or block spending",
-    "remi": "read the family calendar (read-only), post agendas, and remind people of birthdays. "
+    "remi": "read the family calendar (read-only), post agendas, remind people of birthdays, and set "
+            "phone reminders (\"remind me at 8am every day to take my meds until done\"). "
             "You can't add or change calendar events or text anyone, and Discord moderation "
             "isn't built yet",
     "lenz": "recommend from TMDB's trending list and the entertainment feeds",
@@ -1232,6 +1233,10 @@ def allchat_reply(agent, thread):
         chart = charter_reply(thread[-1]["text"])
         if chart:
             return chart  # (caption, image url): the caller posts it with the image
+    if agent == "remi" and thread[-1]["from"] == "you":
+        quick = remi_quick_reply(thread[-1]["text"])
+        if quick:
+            return quick
     if agent == "james":  # Garage Gym takes a single question
         return james_chat([{"role": "user", "content": thread[-1]["text"]}])
     transcript = "\n".join(chat_line(m) for m in thread[-CHAT_HISTORY:])
@@ -1556,14 +1561,219 @@ def occurrence_text(o, with_day=False):
 
 
 def remi_context():
-    """The next 14 days, for Remi's prompt, so she answers from the real calendar."""
+    """The next 14 days and the reminders set, for Remi's prompt, so she
+    answers from the real calendar."""
+    rs = reminders()
+    rem = ("\nReminders set for the user (exact):\n" + "\n".join(f"- {reminder_line(r)}" for r in rs)) if rs else ""
     if not calendar_linked():
-        return ""
+        return f"\n{rem}" if rem else ""
     today = datetime.now(hub_tz()).date()
     items = calendar_events(today, today + timedelta(days=13))
     listing = "\n".join(f"- {occurrence_text(o, with_day=True)}" for o in items[:60]) or "- nothing scheduled"
     return (f"\n\nToday is {today:%A %B %d}. The family calendar for the next 14 days "
-            f"(exact; never change times or add events):\n{listing}")
+            f"(exact; never change times or add events):\n{listing}{rem}")
+
+
+# ---- Remi's reminders: one-off or repeating ("every day", "weekdays",
+# "every friday"), pushed to your phone on time by /api/tick (Supabase Cron
+# every few minutes). "until done" ones nag every REMINDER_NAG_MINUTES, up
+# to REMINDER_NAG_MAX times, until you mark them done.
+REMINDER_NAG_MINUTES = int(os.environ.get("REMINDER_NAG_MINUTES", "15"))
+REMINDER_NAG_MAX = int(os.environ.get("REMINDER_NAG_MAX", "4"))
+_REM_LOCK = threading.Lock()
+_WEEKDAY = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+_WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+_DAY_RE = r"(mon|tue|wed|thu|fri|sat|sun)(?:days?|sdays?|nesdays?|rsdays?|urdays?|s|t|r|rs|n)?"
+
+
+def parse_reminder(text, now=None):
+    """'8am every day take my meds until done' -> {what, at, repeat, weekday,
+    hour, minute, nag}. Raises ValueError with a hint when it can't tell."""
+    now = now or datetime.now(hub_tz())
+    s = " " + " ".join(text.split()) + " "
+    found = {}
+
+    def take(key, pattern):
+        nonlocal s
+        m = re.search(pattern, s, re.I)
+        if m:
+            found[key] = m
+            s = s[:m.start()] + " " + s[m.end():]
+        return m
+    nag = bool(take("nag", r"\buntil (?:i'?m |it'?s |i say it'?s )?(?:done|confirmed|i say so)\b"))
+    repeat, weekday = None, None
+    if take("rep", r"\b(?:every ?day|daily|each day|every night|nightly)\b"):
+        repeat = "daily"
+    elif take("rep", r"\b(?:every |on )?weekdays\b"):
+        repeat = "weekdays"
+    elif take("rep", r"\b(?:every|each) " + _DAY_RE + r"\b"):
+        repeat, weekday = "weekly", _WEEKDAY[found["rep"].group(1).lower()]
+    elif take("rep", r"\bweekly\b"):
+        repeat = "weekly"
+    rel = take("rel", r"\bin (\d{1,3}) ?(minutes?|mins?|m|hours?|hrs?|h)\b")
+    dayword = take("day", r"\b(today|tonight|tomorrow)\b")
+    if weekday is None and take("wd", r"\b(?:on |this |next )?" + _DAY_RE + r"\b"):
+        weekday = _WEEKDAY[found["wd"].group(1).lower()]
+    hour = minute = None
+    if take("t", r"\b(?:at )?(\d{1,2})(?::(\d{2}))? ?([ap])\.?m?\.?(?=\W)"):
+        m = found["t"]
+        hour, minute = int(m.group(1)) % 12 + (12 if m.group(3).lower() == "p" else 0), int(m.group(2) or 0)
+        if int(m.group(1)) > 12:
+            raise ValueError("That time doesn't look right. Try '8am' or '20:30'.")
+    elif take("t", r"\b(?:at )?([01]?\d|2[0-3]):([0-5]\d)\b"):
+        hour, minute = int(found["t"].group(1)), int(found["t"].group(2))
+    elif take("t", r"\b(noon|midday|midnight)\b"):
+        hour, minute = (0 if found["t"].group(1).lower() == "midnight" else 12), 0
+    elif take("t", r"\bat (\d{1,2})\b"):
+        h = int(found["t"].group(1)) % 12  # "at 8": whichever 8 comes next
+        hour, minute = (h if (now.hour, now.minute) < (h, 0) else h + 12), 0
+    elif dayword and dayword.group(1).lower() == "tonight":
+        hour, minute = 20, 0
+    what = re.sub(r"^\W*(?:remind me|reminder|remind)\b\W*", "", s.strip(), flags=re.I)
+    what = re.sub(r"^(?:to|that|about|at|on)\s+", "", what.strip(" ,.:;-"), flags=re.I)
+    what = re.sub(r"\s+(?:at|on|to)$", "", what.strip(" ,.:;-"), flags=re.I).strip(" ,.:;-")
+    if not what:
+        raise ValueError("What should I remind you about?")
+    if not (rel or hour is not None or dayword or weekday is not None or repeat):
+        raise ValueError("When? Try '8am', 'in 20 min', 'tomorrow 9am' or 'every day at 8pm'.")
+    if rel:
+        n, unit = int(rel.group(1)), rel.group(2).lower()
+        at = now + (timedelta(hours=n) if unit.startswith("h") else timedelta(minutes=n))
+        return {"what": what[:200], "at": at.timestamp(), "repeat": None, "weekday": None,
+                "hour": at.hour, "minute": at.minute, "nag": nag}
+    if hour is None:
+        hour, minute = 9, 0  # a day but no time: 9 in the morning
+    r = {"what": what[:200], "repeat": repeat, "weekday": weekday, "hour": hour, "minute": minute, "nag": nag}
+    day = now.date() + timedelta(days=1 if dayword and dayword.group(1).lower() == "tomorrow" else 0)
+    first = _occurrence(r, day)
+    while (first <= now or (weekday is not None and first.weekday() != weekday)
+           or (repeat == "weekdays" and first.weekday() >= 5)):
+        day += timedelta(days=1)
+        first = _occurrence(r, day)
+    if repeat == "weekly" and weekday is None:
+        r["weekday"] = first.weekday()
+    r["at"] = first.timestamp()
+    return r
+
+
+def _occurrence(r, day):
+    return datetime.combine(day, datetime.min.time().replace(hour=r["hour"], minute=r["minute"]), hub_tz())
+
+
+def _next_after(r, after):
+    """The repeat's next time after `after` (an aware datetime)."""
+    d = after.astimezone(hub_tz()).date() + timedelta(days=1)
+    while True:
+        t = _occurrence(r, d)
+        if (r["repeat"] == "daily" or (r["repeat"] == "weekdays" and t.weekday() < 5)
+                or (r["repeat"] == "weekly" and t.weekday() == r["weekday"])):
+            return t
+        d += timedelta(days=1)
+
+
+def reminders():
+    return sorted(_meta_json("reminders", []), key=lambda r: r["at"])
+
+
+def _save_reminders(rs):
+    store().set_meta("reminders", json.dumps(rs))
+
+
+def add_reminder(text, now=None):
+    r = parse_reminder(text, now)
+    with _REM_LOCK:
+        rs = reminders()
+        r.update(id=max([x["id"] for x in rs] + [0]) + 1, pending=False, nags=0, created=time.time())
+        rs.append(r)
+        _save_reminders(rs)
+    post_event("remi", f"Remi set a reminder: {r['what']}")
+    return r
+
+
+def reminder_line(r):
+    when = datetime.fromtimestamp(r["at"], hub_tz())
+    clock = _clock(when)
+    rep = {"daily": f"every day at {clock}", "weekdays": f"weekdays at {clock}",
+           "weekly": f"every {_WEEKDAY_NAMES[r['weekday'] or 0]} at {clock}"}.get(r["repeat"])
+    nxt = f"{when:%a %b} {when.day} at {clock}"
+    return (f"#{r['id']} {r['what']}: " + (f"{rep} (next {nxt})" if rep else nxt)
+            + (", until done" if r["nag"] else "") + (". Waiting for you to mark it done" if r.get("pending") else ""))
+
+
+def ack_reminder(rid):
+    """Mark a reminder done: stops its nagging; a one-off is then removed."""
+    with _REM_LOCK:
+        rs = reminders()
+        r = next((x for x in rs if x["id"] == rid), None)
+        if not r:
+            return None
+        r.update(pending=False, nags=0)
+        if not r["repeat"] and r["at"] <= time.time():
+            rs.remove(r)
+        _save_reminders(rs)
+    post_event("remi", f"You marked done: {r['what']}")
+    return r
+
+
+def delete_reminder(rid):
+    with _REM_LOCK:
+        rs = reminders()
+        r = next((x for x in rs if x["id"] == rid), None)
+        if r:
+            rs.remove(r)
+            _save_reminders(rs)
+    return r
+
+
+def run_tick(now=None):
+    """Send what's due: reminders whose time came, and nags for "until done"
+    ones not marked done yet. Cheap; meant for every few minutes."""
+    now = now or time.time()
+    fired, nagged = [], []
+    with _REM_LOCK:
+        keep = []
+        for r in reminders():
+            if r.get("pending") and r.get("nag_at", 0) <= now and r["nags"] < REMINDER_NAG_MAX:
+                notify("Remi", f"Still to do: {r['what']}", "/calendar#reminders")
+                r["nags"] += 1
+                r["nag_at"] = now + REMINDER_NAG_MINUTES * 60
+                nagged.append(r["what"])
+            if r["at"] <= now and not r.get("fired"):
+                notify("Remi", f"Reminder: {r['what']}", "/calendar#reminders")
+                fired.append(r["what"])
+                if r["nag"]:
+                    r.update(pending=True, nags=0, nag_at=now + REMINDER_NAG_MINUTES * 60)
+                if r["repeat"]:
+                    r["at"] = _next_after(r, datetime.fromtimestamp(max(r["at"], now), hub_tz())).timestamp()
+                elif not r["nag"]:
+                    continue  # a plain one-off is finished once it's sent
+                else:
+                    r["fired"] = True  # a one-off, kept until it's marked done
+            keep.append(r)
+        if fired or nagged:
+            _save_reminders(keep)
+    for what in fired:
+        post_event("remi", f"Remi reminded you: {what}")
+    return {"fired": fired, "nagged": nagged}
+
+
+_ACK_RE = re.compile(r"\b(done|did it|took (?:it|them|my \w+)|taken|finished|handled|all set)\b", re.I)
+
+
+def remi_quick_reply(text):
+    """Remi handles reminders herself, with no model call: "remind me ..."
+    sets one; "done" or "took them" marks the latest nagging one done."""
+    if re.search(r"\bremind me\b", text, re.I):
+        try:
+            r = add_reminder(re.sub(r"@\w+", "", text))
+        except ValueError as e:
+            return f"Happy to, love. {e}"
+        return f"Got it. I'll remind you: {reminder_line(r)}."
+    pending = [r for r in reminders() if r.get("pending")]
+    if pending and _ACK_RE.search(text):
+        r = ack_reminder(pending[-1]["id"])
+        return f"Thank you, sweetheart. Marked done: {r['what']}."
+    return None
 
 
 # ---- Glass's ledger: expenses from chat ("@glass $42 groceries"), bots, or
@@ -3104,6 +3314,32 @@ def _cmd_agenda(arg):
     return "Remi posted the agenda."
 
 
+def _cmd_remind(arg):
+    if not arg:
+        raise CommandError("Try /remind 8am every day take my meds until done")
+    try:
+        r = add_reminder(arg)
+    except ValueError as e:
+        raise CommandError(str(e))
+    store().add_chat("remi", f"I'll remind you: {reminder_line(r)}.", channel="family")
+    return f"Reminder set: {reminder_line(r)}"
+
+
+def _cmd_reminders(arg):
+    rs = reminders()
+    store().add_chat("remi", "Your reminders:\n" + "\n".join(f"- {reminder_line(r)}" for r in rs)
+                     if rs else "No reminders set. Try /remind 8am every day take my meds.", channel="family")
+    return f"{len(rs)} reminder{'s' if len(rs) != 1 else ''}."
+
+
+def _cmd_forget(arg):
+    r = delete_reminder(int(arg.strip().lstrip("#"))) if arg.strip().lstrip("#").isdigit() else None
+    if not r:
+        raise CommandError("Which one? /reminders shows the numbers, e.g. /forget 3")
+    post_event("remi", f"You removed the reminder: {r['what']}")
+    return f"Removed: {r['what']}"
+
+
 def _cmd_spend(arg):
     parsed = parse_expense(arg if "$" in arg else "$" + arg.strip())
     if not parsed:
@@ -3168,6 +3404,9 @@ COMMANDS = [  # shown in the "/" menu in this order
     {"name": "round", "args": "", "about": "Run every agent's job now", "run": _cmd_round},
     {"name": "digest", "args": "", "about": "Mistral posts today's digest", "run": _cmd_digest},
     {"name": "agenda", "args": "[tomorrow]", "about": "Remi posts the agenda", "run": _cmd_agenda},
+    {"name": "remind", "args": "<when> <what> [every day] [until done]", "about": "Remi reminds you on your phone", "run": _cmd_remind},
+    {"name": "reminders", "args": "", "about": "Remi lists your reminders", "run": _cmd_reminders},
+    {"name": "forget", "args": "<number>", "about": "Remove a reminder", "run": _cmd_forget},
     {"name": "spend", "args": "$42 groceries", "about": "Glass logs an expense", "run": _cmd_spend},
     {"name": "budget", "args": "", "about": "Glass posts this month's budget", "run": _cmd_budget},
     {"name": "chart", "args": "spending|daily|calendar|coverage|activity", "about": "Charter draws a chart", "run": _cmd_chart},
@@ -4330,7 +4569,10 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
         '<link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="icon" href="/avatar/theta.svg" type="image/svg+xml">'
         f'<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="{APP_NAME}">'
         '<meta name="apple-mobile-web-app-status-bar-style" content="default">'
-        f'{metas}<link rel="stylesheet" href="/ui.css?v={_ASSET_V}"></head>'
+        f'{metas}<link rel="stylesheet" href="/ui.css?v={_ASSET_V}">'
+        # Request headers for page scripts, defined before any of them runs.
+        '<script>window.THETA_H = {"Content-Type": "application/json", "x-dashboard-key": '
+        'new URLSearchParams(location.search).get("key") || ""};</script></head>'
         f'<body class="{body_class}"><div class="app"><aside class="rail" aria-label="Sidebar">'
         f'<a class="brand" href="/">{avatar_img("theta", 32)}{APP_NAME}</a><nav aria-label="Main">{nav}</nav>'
         f'<div class="label">Crew</div>{crew}</aside><main class="main">{body}</main></div>'
@@ -4740,6 +4982,50 @@ def agent_page(headers, agent):
     return page(headers, v["name"], "", body)
 
 
+_REMINDERS_JS = r"""
+(() => {
+  const H = window.THETA_H, out = document.getElementById("rem-status");
+  async function post(url, body) {
+    const d = await (await fetch(url, {method: "POST", headers: H, body: JSON.stringify(body || {})})).json();
+    if (!d.ok) throw new Error(d.error);
+    return d;
+  }
+  document.getElementById("rem-form").onsubmit = async e => {
+    e.preventDefault();
+    const box = document.getElementById("rem-text"), text = box.value.trim();
+    if (!text) return;
+    out.textContent = "Setting it...";
+    try { const d = await post("/api/reminders", {text}); out.textContent = "Set: " + d.line; box.value = ""; setTimeout(() => location.reload(), 900); }
+    catch (err) { out.textContent = err.message; }
+  };
+  document.querySelectorAll("[data-rem]").forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { await post("/api/reminders/" + b.dataset.rem + "/" + b.dataset.act); b.closest("li").remove(); }
+    catch (err) { out.textContent = err.message; b.disabled = false; }
+  });
+})();
+"""
+
+
+def reminders_card():
+    rows = "".join(
+        f'<li><div class="brow" style="align-items:center"><span>{html.escape(r["what"])}</span><span style="display:flex;gap:6px">'
+        + (f'<button class="btn small" type="button" data-rem="{r["id"]}" data-act="done">Done</button>' if r.get("pending") else "")
+        + f'<button class="btn ghost small" type="button" data-rem="{r["id"]}" data-act="delete" aria-label="Remove {html.escape(r["what"])}">Remove</button>'
+        f'</span></div><div class="muted small">{html.escape(reminder_line(r).split(": ", 1)[1])}</div></li>'
+        for r in reminders())
+    return (f'<section class="card stack" id="reminders" style="margin-bottom:14px"><div><h2>Reminders</h2>'
+            '<p class="muted small">Remi sends these to your phone. Say it like you would to her: '
+            '"8am every day take my meds until done", "in 20 min check the oven", "fri 6pm pay rent weekly". '
+            '"Until done" keeps nudging every 15 minutes until you tap Done (or tell Remi "done").</p></div>'
+            '<form id="rem-form" class="box" style="padding:5px 5px 5px 14px"><input id="rem-text" '
+            'placeholder="8am every day take my meds until done" aria-label="New reminder" '
+            'style="flex:1;border:0;background:transparent;outline:none;padding:8px 0;min-width:0">'
+            '<button class="btn small" type="submit">Add</button></form><p class="note" id="rem-status"></p>'
+            f'<ul class="list">{rows or "<li class=empty>No reminders yet.</li>"}</ul></section>'
+            f"<script>{_REMINDERS_JS}</script>")
+
+
 def calendar_page(headers, query):
     """Remi's tab: a month grid plus the same month as a day-by-day list."""
     tz = hub_tz()
@@ -4755,6 +5041,7 @@ def calendar_page(headers, query):
             f'<h1>{first:%B %Y}</h1></div></div><div class="monthnav"><a class="btn ghost small" href="/calendar?month={prev:%Y-%m}">'
             f'← {prev:%b}</a><a class="btn ghost small" href="/calendar">Today</a><a class="btn ghost small" '
             f'href="/calendar?month={nxt:%Y-%m}">{nxt:%b} →</a></div></header>')
+    head += reminders_card()
     if not calendar_linked():
         return page(headers, "Calendar", "/calendar", head + (
             '<section class="card"><h2>No calendar linked yet</h2><p>In Google Calendar on a computer: Settings → '
@@ -5041,6 +5328,27 @@ def handle(method, path, query, headers, body):
                 post_event(bot_id, f"{display_name(bot_id)} is now {activity.strip()[:80]}")
             return _json(200, {"ok": True})
 
+        if path == "/api/tick":  # Supabase Cron, every few minutes: reminders that are due
+            cron = bool(CRON_SECRET) and headers.get("authorization") == f"Bearer {CRON_SECRET}"
+            if not (cron or (DASHBOARD_KEY and _auth_dashboard(query, headers))):
+                return _json(401, {"ok": False, "error": "CRON_SECRET or dashboard key required"})
+            return _json(200, {"ok": True, **run_tick()})
+
+        if path == "/api/reminders" or path.startswith("/api/reminders/"):
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            if path == "/api/reminders":
+                try:
+                    r = add_reminder(str(data.get("text") or ""))
+                except ValueError as e:
+                    return _json(400, {"ok": False, "error": str(e)})
+                return _json(200, {"ok": True, "reminder": r, "line": reminder_line(r)})
+            parts = path.split("/")  # /api/reminders/<id>/<done|delete>
+            if len(parts) != 5 or not parts[3].isdigit() or parts[4] not in ("done", "delete"):
+                return _json(404, {"ok": False, "error": "unknown route"})
+            r = (ack_reminder if parts[4] == "done" else delete_reminder)(int(parts[3]))
+            return _json(200 if r else 404, {"ok": bool(r), **({} if r else {"error": "no such reminder"})})
+
         if path == "/api/round":
             cron = bool(CRON_SECRET) and headers.get("authorization") == f"Bearer {CRON_SECRET}"
             if not (cron or (DASHBOARD_KEY and _auth_dashboard(query, headers))):
@@ -5185,6 +5493,11 @@ def handle(method, path, query, headers, body):
         month = query.get("month", [datetime.now(hub_tz()).strftime("%Y-%m")])[0]
         return _json(200, {"ok": True, "month": month, "status": month_status(month),
                            "expenses": sorted(store().list_expenses(month), key=lambda e: e["date"])})
+
+    if path == "/api/reminders":
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        return _json(200, {"ok": True, "reminders": [dict(r, line=reminder_line(r)) for r in reminders()]})
 
     if path == "/api/wiring":
         if not _auth_dashboard(query, headers):

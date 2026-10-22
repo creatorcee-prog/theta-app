@@ -1,4 +1,4 @@
--- Runs the hub's agent rounds (/api/round) on a schedule. Run ONCE in the
+-- Runs the hub's agent rounds (/api/round) and reminder ticks (/api/tick) on a schedule. Run ONCE in the
 -- Supabase SQL editor (any Supabase project works, e.g. Garage Gym's) after:
 --   1. CRON_SECRET is set in the hub's Vercel project (any long random string)
 --      and the hub is redeployed
@@ -25,6 +25,21 @@ select cron.schedule(
   $$
 );
 
+-- Every 5 minutes: Remi's reminders (/api/tick). It only sends what's due, so
+-- it's quick and costs no model calls. Use '* * * * *' for minute-exact times.
+select cron.schedule(
+  'bot-hub-tick',
+  '*/5 * * * *',
+  $$
+  select net.http_post(
+    url     := 'https://YOUR-HUB.vercel.app/api/tick',
+    headers := jsonb_build_object('Authorization', 'Bearer YOUR-CRON-SECRET', 'Content-Type', 'application/json'),
+    body    := '{}'::jsonb,
+    timeout_milliseconds := 15000
+  );
+  $$
+);
+
 -- To check it's running:   select * from cron.job_run_details order by start_time desc limit 5;
 -- To see HTTP responses:   select status_code, timed_out, error_msg, content from net._http_response order by created desc limit 5;
--- To stop it:              select cron.unschedule('bot-hub-rounds');
+-- To stop them:            select cron.unschedule('bot-hub-rounds'); select cron.unschedule('bot-hub-tick');
