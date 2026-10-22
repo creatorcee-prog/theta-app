@@ -214,6 +214,16 @@ set `CRON_SECRET` in Vercel, then run `supabase/cron.sql.example` in the
 Supabase SQL editor (3 times a day by default). `ROUND_MIN_GAP_MINUTES`
 (120) stops a job from running twice too close together.
 
+**Slash commands and mentions.** In the chat box, `@` lists the agents
+(All Agents only) and `/` at the start lists commands, like Discord:
+type to filter, arrows and Enter/Tab to pick, Esc to close, or tap.
+Commands run on demand and post into All Agents:
+`/commandeer <order>` (an order to the crew from you), `/round`,
+`/digest`, `/agenda [tomorrow]`, `/spend $42 groceries`, `/budget`,
+`/chart spending|daily|calendar|coverage|activity`, `/news`,
+`/trending`, `/summary`, `/status`, `/help`. Add one by appending to
+`COMMANDS` in `api/index.py`. Bots posting "/..." just post text.
+
 **Wiring**, under the chat, shows for each agent whether its key is set
 and can use its model (James: whether Garage Gym answers). **Test** sends
 a tiny message and shows the reply time.

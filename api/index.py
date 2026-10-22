@@ -240,6 +240,8 @@ def role_of(bot_id):
 
 
 def display_name(bot_id):
+    if bot_id == "you":
+        return "You"
     if bot_id in BOT_NAMES:
         return BOT_NAMES[bot_id]
     return AGENTS[bot_id]["name"] if bot_id in AGENTS else "@" + bot_id
@@ -2177,13 +2179,14 @@ ROUND_JOBS = {
 _NEWS_AGENTS = {"red", "blue", "gray"}
 
 
-def run_round(force=False, now=None):
-    """Run every agent's job that is due (or all, with force), in parallel,
-    and post one Hub line saying what each did."""
+def run_round(force=False, now=None, only=None):
+    """Run every agent's job that is due (or all, with force; or just `only`),
+    in parallel, and post one Hub line saying what each did."""
     now = now or time.time()
     st = store()
     last = json.loads(st.get_meta("round:last") or "{}")
-    due = [a for a in ROUND_JOBS if force or now - last.get(a, 0) >= ROUND_MIN_GAP]
+    due = [a for a in ROUND_JOBS if (only is None or a in only)
+           and (force or now - last.get(a, 0) >= ROUND_MIN_GAP)]
     ctx = {}
     if _NEWS_AGENTS & set(due):  # the news miners all take the same new story
         breaking, top = news_items()
@@ -2208,13 +2211,145 @@ def run_round(force=False, now=None):
             a: len(side_coverage(a, ctx["story"]["title"])) for a in _NEWS_AGENTS}}))
     parts = [f"{AGENTS[a]['name']}: {r['did']}" if r["ok"] else f"{AGENTS[a]['name']}: failed ({r['did']})"
              for a, r in results.items()]
-    idle = [AGENTS[a]["name"] for a in AGENTS if a not in ROUND_JOBS]
+    idle = [AGENTS[a]["name"] for a in AGENTS if a not in ROUND_JOBS] if only is None else []
     if idle:
         parts.append(f"{', '.join(idle)}: no job yet")
     if results:
         post_event("hub", "Round: " + "; ".join(parts) + ".")
     return {"ok": True, "ran": results,
             "skipped": [a for a in ROUND_JOBS if a not in due], "no_job": idle}
+
+
+# ---- Slash commands: typed in either chat box ("/" opens the list, like
+# Discord). Each one runs an agent's job on demand; outputs land in All
+# Agents. Only you can run them (bots posting "/..." are just text).
+class CommandError(Exception):
+    """Unknown command or wrong usage; shown to you, not posted."""
+
+
+def _cmd_commandeer(arg):
+    if not arg:
+        raise CommandError("Usage: /commandeer <order for the crew>")
+    oid = store().add_order(arg[:500], "you")
+    post_event("you", f"You issued order #{oid}: {arg[:200]}")
+    return f"Order #{oid} issued. Bots see it at /api/orders and acknowledge it."
+
+
+def _cmd_round(arg):
+    r = run_round(force=True)
+    return f"Ran {len(r['ran'])} agents' jobs; the Round line says what each did."
+
+
+def _cmd_digest(arg):
+    post, _ = morning_digest()
+    store().add_chat("mistral", post)
+    return "Mistral posted the digest."
+
+
+def _cmd_agenda(arg):
+    if not calendar_linked():
+        raise CommandError("Remi has no calendar yet: set REMI_CALENDAR_URLS in Vercel.")
+    today = datetime.now(hub_tz()).date()
+    day = today + timedelta(days=1) if arg.strip().lower() == "tomorrow" else today
+    items = calendar_events(day, day)
+    lines = [f"{'Tomorrow' if day != today else 'Today'}, {day:%A %B %d}:"] + (
+        [f"- {occurrence_text(o)}" for o in items] or ["- Nothing on the calendar."])
+    store().add_chat("remi", "\n".join(lines))
+    return "Remi posted the agenda."
+
+
+def _cmd_spend(arg):
+    parsed = parse_expense(arg if "$" in arg else "$" + arg.strip())
+    if not parsed:
+        raise CommandError("Usage: /spend $42 groceries at Costco")
+    store().add_chat("glass", glass_log_reply(parsed))
+    return "Glass logged it."
+
+
+def _cmd_budget(arg):
+    lines = status_lines()
+    store().add_chat("glass", f"Budget for {datetime.now(hub_tz()):%B}:\n" + (
+        "\n".join(f"- {x}" for x in lines) if lines else "- Nothing logged and no budgets set."))
+    return "Glass posted the budget."
+
+
+def _cmd_chart(arg):
+    name = arg.strip().lower() if arg.strip().lower() in CHARTS else pick_chart(arg)
+    if not name:
+        raise CommandError("Usage: /chart " + next(c["args"] for c in COMMANDS if c["name"] == "chart"))
+    caption, svg = CHARTS[name][1]()
+    store().add_chat("charter", caption, image=save_chart(svg))
+    return "Charter posted the chart."
+
+
+def _cmd_news(arg):
+    r = run_round(force=True, only=_NEWS_AGENTS)
+    return "Red, Blue and Gray: " + "; ".join(f"{AGENTS[a]['name']} {v['did']}" for a, v in r["ran"].items())
+
+
+def _cmd_trending(arg):
+    r = run_round(force=True, only={"lenz"})
+    return f"Lenz {r['ran']['lenz']['did']}."
+
+
+def _cmd_summary(arg):
+    unprocessed = store().unprocessed_reports(50)
+    if not unprocessed:
+        return "No new reports to summarize."
+    r = summarize(unprocessed)
+    if not r["ok"]:
+        raise CommandError(r["error"])
+    return f"Theta summarized {r['unprocessed_count']} report(s)."
+
+
+def _cmd_status(arg):
+    rows = [r for r in wiring() if r["state"] != "ok"]
+    store().add_chat("mistral", "Everyone is wired." if not rows else "Status:\n" + "\n".join(
+        f"- {r['name']}: {'not set up' if r['state'] == 'off' else 'not wired'} ({r['note']})" for r in rows))
+    return "Mistral posted the status."
+
+
+def _cmd_help(arg):
+    store().add_chat("hub", "Commands:\n" + "\n".join(
+        f"/{c['name']}{' ' + c['args'] if c['args'] else ''}: {c['about']}" for c in COMMANDS))
+    return "Posted the command list."
+
+
+COMMANDS = [  # shown in the "/" menu in this order
+    {"name": "commandeer", "args": "<order>", "about": "Issue an order to the whole crew", "run": _cmd_commandeer},
+    {"name": "round", "args": "", "about": "Run every agent's job now", "run": _cmd_round},
+    {"name": "digest", "args": "", "about": "Mistral posts today's digest", "run": _cmd_digest},
+    {"name": "agenda", "args": "[tomorrow]", "about": "Remi posts the agenda", "run": _cmd_agenda},
+    {"name": "spend", "args": "$42 groceries", "about": "Glass logs an expense", "run": _cmd_spend},
+    {"name": "budget", "args": "", "about": "Glass posts this month's budget", "run": _cmd_budget},
+    {"name": "chart", "args": "spending|daily|calendar|coverage|activity", "about": "Charter draws a chart", "run": _cmd_chart},
+    {"name": "news", "args": "", "about": "Red, Blue and Gray take the top story", "run": _cmd_news},
+    {"name": "trending", "args": "", "about": "Lenz pitches the next trending title", "run": _cmd_trending},
+    {"name": "summary", "args": "", "about": "Theta summarizes new reports", "run": _cmd_summary},
+    {"name": "status", "args": "", "about": "Mistral posts what's wired and what isn't", "run": _cmd_status},
+    {"name": "help", "args": "", "about": "List these commands", "run": _cmd_help},
+]
+
+
+def run_command(text):
+    """Run '/name args'. Returns a one-line result; raises CommandError."""
+    name, _, arg = text.strip()[1:].partition(" ")
+    cmd = next((c for c in COMMANDS if c["name"] == name.lower()), None)
+    if not cmd:
+        raise CommandError(f"Unknown command /{name}. Type / to see the list.")
+    post_event("you", f"You used /{cmd['name']}{' ' + arg.strip() if arg.strip() else ''}")
+    try:
+        return cmd["run"](arg.strip())
+    except LLMError as e:
+        raise CommandError(str(e))
+
+
+def menu_data():
+    """What the "@" and "/" menus list."""
+    online = {a["bot_id"]: a["online"] for a in agent_statuses()}
+    return {"agents": [{"id": a, "name": v["name"], "tier": TIER_LABELS[v["tier"]], "online": online.get(a, False)}
+                       for a, v in AGENTS.items()],
+            "commands": [{k: c[k] for k in ("name", "args", "about")} for c in COMMANDS]}
 
 
 # ---- Wiring: is each agent's model actually reachable?
@@ -2408,11 +2543,96 @@ function onAgent() {
   show();
 }
 agentSel.onchange = onAgent;
+async function runCommand(text) {
+  status.textContent = "Running " + text.split(" ")[0] + "...";
+  try {
+    const d = await (await fetch("/api/allchat", {method: "POST", headers: H, body: JSON.stringify({text})})).json();
+    if (!d.ok) throw new Error(d.error);
+    thread = d.messages;
+    status.textContent = d.result + (agentSel.value === ALL ? "" : " (in All Agents)");
+  } catch (err) {
+    msg.value = text;
+    status.textContent = err.message;
+  }
+  btn.disabled = false;
+  show();
+}
+
+// "@" and "/" menus, like Discord: type to filter, arrows + Enter/Tab, Esc, or tap.
+const menu = document.getElementById("chat-menu");
+let menuItems = [], menuActive = 0, menuRange = null;
+function menuQuery() {
+  const before = msg.value.slice(0, msg.selectionStart);
+  let m = before.match(/(^|\\s)@([\\w-]*)$/);
+  if (m && agentSel.value === ALL) return {kind: "@", q: m[2].toLowerCase(), start: before.length - m[2].length - 1};
+  m = before.match(/^\\/(\\w*)$/);
+  if (m) return {kind: "/", q: m[1].toLowerCase(), start: 0};
+  return null;
+}
+function closeMenu() { menu.hidden = true; menuItems = []; menuRange = null; msg.removeAttribute("aria-activedescendant"); }
+function renderMenu() {
+  const q = menuQuery();
+  if (!q) return closeMenu();
+  const src = q.kind === "@" ? HUB_MENU.agents : HUB_MENU.commands;
+  const key = x => (q.kind === "@" ? x.name : x.name).toLowerCase();
+  menuItems = src.filter(x => key(x).startsWith(q.q) || (q.kind === "@" && x.id.startsWith(q.q)))
+    .concat(src.filter(x => !key(x).startsWith(q.q) && key(x).includes(q.q) && q.q)).slice(0, 12);
+  if (!menuItems.length) return closeMenu();
+  menuRange = q; menuActive = Math.min(menuActive, menuItems.length - 1);
+  menu.replaceChildren(...menuItems.map((x, i) => {
+    const li = document.createElement("li");
+    li.id = "chat-menu-" + i; li.setAttribute("role", "option");
+    li.setAttribute("aria-selected", String(i === menuActive));
+    li.style.cssText = "padding:6px 10px;cursor:pointer;" + (i === menuActive ? "background:#e8eefc" : "");
+    const b = document.createElement("b"), small = document.createElement("span");
+    small.style.color = "#666";
+    if (q.kind === "@") {
+      const dot = document.createElement("span");
+      dot.textContent = "\u25CF "; dot.style.color = x.online ? "#1a7f37" : "#aaa";
+      b.textContent = x.name; small.textContent = " " + x.tier;
+      li.append(dot, b, small);
+    } else {
+      b.textContent = "/" + x.name; small.textContent = (x.args ? " " + x.args : "") + " \u2014 " + x.about;
+      li.append(b, small);
+    }
+    li.onmousedown = ev => { ev.preventDefault(); pickMenu(i); };
+    return li;
+  }));
+  menu.hidden = false;
+  msg.setAttribute("aria-activedescendant", "chat-menu-" + menuActive);
+}
+function pickMenu(i) {
+  const x = menuItems[i], q = menuRange;
+  if (!x || !q) return;
+  const insert = q.kind === "@" ? "@" + x.name + " " : "/" + x.name + " ";
+  const end = msg.selectionStart;
+  msg.value = msg.value.slice(0, q.start) + insert + msg.value.slice(end);
+  const pos = q.start + insert.length;
+  msg.setSelectionRange(pos, pos); msg.focus();
+  menuActive = 0; closeMenu();
+}
+msg.addEventListener("input", () => { menuActive = 0; renderMenu(); });
+msg.addEventListener("click", renderMenu);
+msg.addEventListener("blur", () => setTimeout(closeMenu, 150));
+msg.addEventListener("keydown", e => {
+  if (menu.hidden) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    menuActive = (menuActive + (e.key === "ArrowDown" ? 1 : menuItems.length - 1)) % menuItems.length;
+    renderMenu();
+  } else if (e.key === "Enter" || e.key === "Tab") {
+    e.preventDefault(); pickMenu(menuActive);
+  } else if (e.key === "Escape") {
+    e.preventDefault(); closeMenu();
+  }
+});
+
 document.getElementById("chat-form").onsubmit = async e => {
   e.preventDefault();
   const text = msg.value.trim(), agent = agentSel.value;
   if (!text) return;
-  msg.value = ""; btn.disabled = true;
+  msg.value = ""; btn.disabled = true; closeMenu();
+  if (text.startsWith("/")) return runCommand(text);
   if (agent === ALL) {
     status.textContent = "Waiting for replies...";
     thread = [...thread, {name: "You", text}];
@@ -2530,11 +2750,18 @@ def _chat_html():
         if opts:
             groups.append(f"<optgroup label=\"{TIER_LABELS[tier]} — "
                           f"{html.escape(MODELS[tier])}\">{opts}</optgroup>")
+    menu = json.dumps(menu_data()).replace("</", "<\\/")
     return (f"<p><select id=\"chat-agent\" style=\"max-width:100%\">{''.join(groups)}</select></p>"
             "<div id=\"chat-log\"></div>"
-            "<form id=\"chat-form\"><textarea id=\"chat-msg\" rows=\"3\" "
+            "<form id=\"chat-form\" style=\"position:relative\">"
+            "<ul id=\"chat-menu\" role=\"listbox\" hidden style=\"position:absolute;bottom:100%;left:0;"
+            "right:0;max-height:260px;overflow-y:auto;margin:0 0 4px;padding:4px 0;list-style:none;"
+            "background:#fff;border:1px solid #ccc;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.15);"
+            "z-index:5\"></ul>"
+            "<textarea id=\"chat-msg\" rows=\"3\" aria-autocomplete=\"list\" aria-controls=\"chat-menu\" "
             "style=\"width:100%\"></textarea><br><button id=\"chat-send\">Send</button> "
             "<i id=\"chat-status\"></i></form>"
+            f"<script>window.HUB_MENU = {menu};</script>"
             "<h3>Wiring</h3><div style=\"overflow-x:auto\"><table style=\"border-collapse:collapse\" "
             "cellpadding=\"4\"><thead><tr><th align=\"left\">Agent</th><th align=\"left\">Model</th>"
             "<th align=\"left\">Status</th><th align=\"left\">Details</th><th></th></tr></thead>"
@@ -2798,6 +3025,13 @@ def handle(method, path, query, headers, body):
                 return _json(200, {"ok": True, "messages": allchat_view()})
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
+            if text.strip().startswith("/"):
+                try:
+                    result = run_command(text)
+                except CommandError as e:
+                    return _json(400, {"ok": False, "error": str(e)})
+                return _json(200, {"ok": True, "command": True, "result": result,
+                                   "messages": allchat_view(), "errors": {}, "routed": []})
             st = store()
             st.add_chat("you", text.strip()[:2000])
             thread = st.list_chat(CHAT_HISTORY)
@@ -3015,7 +3249,7 @@ def handle(method, path, query, headers, body):
             "<title>Bot Hub</title><link rel=\"manifest\" href=\"/manifest.webmanifest\" crossorigin=\"use-credentials\">"
             "<link rel=\"apple-touch-icon\" href=\"/apple-touch-icon.png\"><meta name=\"theme-color\" content=\"#2f5bd3\">"
             "<meta name=\"apple-mobile-web-app-capable\" content=\"yes\">"
-            f"{_nav('/')}<h1>Bot hub</h1>"
+            f"{_PAGE_CSS}{_nav('/')}<h1>Bot hub</h1>"
             f"<h2>Agents</h2><ul style=\"list-style:none;padding-left:0\">{agent_items}</ul>{round_btn}"
             f"<h2>Chat</h2>{_chat_html()}"
             f"<h2>News</h2>{news_html}"
