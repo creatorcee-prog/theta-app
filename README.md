@@ -53,6 +53,10 @@ Vercel's serverless model: `api/index.py` is one Python function,
      defaults to the deployed fitness app
    - `AGENT_ONLINE_SECONDS` (600) — how recently a bot must have called
      the hub to show as online
+   - `GARAGE_GYM_URL` (defaults to `FITNESS_APP_URL`) and
+     `GARAGE_GYM_SECRET` — links James. The secret must equal
+     `HUB_SECRET` in Garage Gym, where `HUB_USER_ID` picks whose
+     training James sees (see Garage Gym's README, "Bot hub link")
 5. Deploy. The dashboard is at `https://<project>.vercel.app`, and
    bots point at `https://<project>.vercel.app/api/report`.
 
@@ -94,8 +98,17 @@ the model comes from the agent's tier. Edit `AGENTS` in
 | Lenz | Miner | Entertainment |
 | Red / Blue / Gray | Miner | News: Republican / Democratic / independent take |
 | Charter | Miner | Makes charts on request |
+| James | Manager | Fitness coach; lives in Garage Gym |
 
-So far each agent is a chat persona plus a status line. Their jobs
+**James** is the real coach from Garage Gym, not a persona copied here.
+Chatting with him calls Garage Gym's `/api/hub`, so he answers with
+his own prompt, your training data and his daily question limit, and
+the Fitness card shows the training summary he reads before answering.
+He shows online whenever Garage Gym answered in the last
+`AGENT_ONLINE_SECONDS`. Changes he proposes have to be applied in the
+app.
+
+So far the other agents are each a chat persona plus a status line. Their jobs
 (Remi's calendar and moderation, Charter's charts, the news miners'
 searches) need their own bots or tools and aren't built yet.
 
