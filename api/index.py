@@ -217,6 +217,7 @@ ENTERTAINMENT_FEEDS = [u.strip() for u in os.environ.get(
 FITNESS_APP_URL = os.environ.get(
     "FITNESS_APP_URL", "https://fitness-tracker-snowy-seven-83.vercel.app/")
 FITNESS_REPO_URL = "https://github.com/creatorcee-prog/fitness-tracker"
+TMDB_BASE = "https://api.themoviedb.org/3"
 # Garage Gym's /api/hub (James): GARAGE_GYM_SECRET must equal its HUB_SECRET.
 GARAGE_GYM_URL = (os.environ.get("GARAGE_GYM_URL") or FITNESS_APP_URL).rstrip("/")
 GARAGE_GYM_SECRET = os.environ.get("GARAGE_GYM_SECRET", "")
@@ -600,6 +601,52 @@ def _names(title):
     return {w.lower() for w in words if w[:1].isupper() and len(w) >= 3} - _STOP
 
 
+# ---- Lenz's TMDB link: trending movies and shows with real facts.
+# TMDB_API_KEY takes either the v3 "API key" or the v4 "read access token".
+TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "")
+TMDB_NOTICE = "This product uses the TMDB API but is not endorsed or certified by TMDB."
+_TMDB_CACHE = {"at": 0.0, "items": None}
+
+
+def tmdb_trending():
+    """This week's trending movies and shows ({title, kind, overview, date,
+    rating, url}), cached 30 min. Raises LLMError when TMDB refuses."""
+    if not TMDB_API_KEY:
+        return []
+    if _TMDB_CACHE["items"] is not None and time.time() - _TMDB_CACHE["at"] < 1800:
+        return _TMDB_CACHE["items"]
+    bearer = TMDB_API_KEY.startswith("eyJ")  # v4 tokens are JWTs
+    url = TMDB_BASE + "/trending/all/week" + ("" if bearer else f"?api_key={TMDB_API_KEY}")
+    headers = {"User-Agent": "bot-hub/1.0", "Accept": "application/json"}
+    if bearer:
+        headers["Authorization"] = f"Bearer {TMDB_API_KEY}"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=8) as resp:
+            results = json.loads(resp.read()).get("results", [])
+    except urllib.error.HTTPError as e:
+        raise LLMError(f"TMDB returned {e.code}")
+    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+        raise LLMError(f"TMDB unreachable: {e!r}")
+    items = []
+    for r in results:
+        kind = r.get("media_type")
+        if kind not in ("movie", "tv") or not r.get("id"):
+            continue
+        items.append({
+            "title": r.get("title") or r.get("name") or "?", "kind": "movie" if kind == "movie" else "TV show",
+            "overview": (r.get("overview") or "")[:400], "date": r.get("release_date") or r.get("first_air_date") or "",
+            "rating": round(float(r.get("vote_average") or 0), 1),
+            "url": f"https://www.themoviedb.org/{kind}/{r['id']}"})
+    _TMDB_CACHE.update(at=time.time(), items=items)
+    return items
+
+
+def tmdb_fact_line(it):
+    bits = [it["kind"]] + ([f"released {it['date']}"] if it["date"] else []) \
+        + ([f"rated {it['rating']}/10 on TMDB"] if it["rating"] else [])
+    return f"{it['title']} ({', '.join(bits)})"
+
+
 def story_key(title):
     return _keywords(title), _names(title)
 
@@ -787,6 +834,16 @@ def system_prompt(agent_id):
     personality = f" Your personality: {', '.join(traits)}." if traits else ""
     brevity = " and be concise" if "concise" in persona else ""
     extra = remi_context() if agent_id == "remi" else ""
+    if agent_id == "lenz":
+        try:
+            trending = tmdb_trending()[:10]
+        except LLMError:
+            trending = []
+        charts = [i["title"] for i in widget_items(ENTERTAINMENT_FEEDS)[:8]]
+        if trending or charts:
+            extra = ("\n\nWhat's current (only these facts; say so rather than guess):"
+                     + "".join(f"\n- Trending: {tmdb_fact_line(i)}" for i in trending)
+                     + "".join(f"\n- In the feeds: {t}" for t in charts))
     if agent_id in SIDE_FEEDS:
         latest = side_headlines(agent_id)
         if latest:
@@ -1284,16 +1341,25 @@ def _round_news(agent):
 
 
 def _round_lenz(ctx):
-    item = next((i for i in widget_items(ENTERTAINMENT_FEEDS)
-                 if i["url"] not in _seen("round:lenz:seen")), None)
-    if not item:
-        return "nothing new in the feeds"
+    """Pitch one new trending title (TMDB facts when linked, else the feeds)."""
+    trending = tmdb_trending()
+    item = next((i for i in trending if i["url"] not in _seen("round:lenz:seen")), None)
+    if item:
+        facts = (f"Trending this week on TMDB: {tmdb_fact_line(item)}\n"
+                 f"Synopsis: {item['overview'] or 'none given'}\n"
+                 "In 1-2 sentences, say why it might be worth a watch. Use only these facts.")
+    else:
+        item = next((i for i in widget_items(ENTERTAINMENT_FEEDS)
+                     if i["url"] not in _seen("round:lenz:seen")), None)
+        if not item:
+            return "nothing new to pitch"
+        facts = (f"New in the feeds ({item['source']}): {item['title']}\n"
+                 "In 1-2 sentences, say why it might be worth a look. You only have the title: "
+                 "don't invent details.")
     pitch = llm_chat("miner", [
         {"role": "system", "content": system_prompt("lenz") + " You're posting in the All "
          "Agents group chat."},
-        {"role": "user", "content": f"New in the feeds ({item['source']}): {item['title']}\n"
-         "In 1-2 sentences, say why it might be worth a look. You only have the title: "
-         "don't invent details."}])
+        {"role": "user", "content": facts}])
     store().add_chat("lenz", f"{pitch.strip()}\n{item['url']}")
     _mark_seen("round:lenz:seen", item["url"])
     return f"pitched \"{item['title'][:60]}\""
@@ -1431,6 +1497,17 @@ def wiring():
                 row.update(state="ok", note="Key set and model available"
                            + (f" ({MASTER_MODEL} not connected; standing in)" if a["tier"] == "master" else ""))
         rows.append(row)
+    if TMDB_API_KEY:
+        try:
+            n = len(tmdb_trending())
+            rows.append({"agent": "lenz-tmdb", "name": "Lenz's TMDB", "tier": "", "model": "TMDB trending",
+                         "testable": False, "state": "ok", "note": f"{n} trending titles"})
+        except LLMError as e:
+            rows.append({"agent": "lenz-tmdb", "name": "Lenz's TMDB", "tier": "", "model": "TMDB trending",
+                         "testable": False, "state": "bad", "note": f"{e}: check TMDB_API_KEY"})
+    else:
+        rows.append({"agent": "lenz-tmdb", "name": "Lenz's TMDB", "tier": "", "model": "TMDB trending",
+                     "testable": False, "state": "off", "note": "Not linked: set TMDB_API_KEY"})
     if calendar_linked():
         bad = calendar_problems()
         rows.append({"agent": "remi-calendar", "name": "Remi's calendar", "tier": "",
@@ -2046,6 +2123,7 @@ def handle(method, path, query, headers, body):
             f"<h2>Escalations</h2><ul>{esc_items}</ul>"
             f"<h2>Commandeer orders</h2><ul>{ord_items}</ul>"
             f"{storage_note}"
+            + (f"<p><small>{TMDB_NOTICE}</small></p>" if TMDB_API_KEY else "")
         ).encode()
         return 200, "text/html; charset=utf-8", body, _login_cookie(query)
 
