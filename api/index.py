@@ -1604,6 +1604,19 @@ def remi_context():
 # every few minutes). "until done" ones nag every REMINDER_NAG_MINUTES, up
 # to REMINDER_NAG_MAX times, until you mark them done.
 REMINDER_NAG_MINUTES = int(os.environ.get("REMINDER_NAG_MINUTES", "15"))
+REMINDER_URL = "/agent/remi#reminders"
+DIGEST_TIME = os.environ.get("DIGEST_TIME", "07:00")  # Mistral's morning digest, hub time
+
+
+def digest_due(now=None):
+    """True once today's digest time has passed and it hasn't gone out."""
+    now = now or datetime.now(hub_tz())
+    try:
+        h, m = (int(x) for x in DIGEST_TIME.split(":"))
+    except ValueError:
+        h, m = 7, 0
+    return ((now.hour, now.minute) >= (h, m)
+            and store().get_meta("round:mistral:digest_day") != now.date().isoformat())
 REMINDER_NAG_MAX = int(os.environ.get("REMINDER_NAG_MAX", "4"))
 _REM_LOCK = threading.Lock()
 _WEEKDAY = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
@@ -1759,12 +1772,12 @@ def run_tick(now=None):
         keep = []
         for r in reminders():
             if r.get("pending") and r.get("nag_at", 0) <= now and r["nags"] < REMINDER_NAG_MAX:
-                notify("Remi", f"Still to do: {r['what']}", "/calendar#reminders")
+                notify("Remi", f"Still to do: {r['what']}", REMINDER_URL)
                 r["nags"] += 1
                 r["nag_at"] = now + REMINDER_NAG_MINUTES * 60
                 nagged.append(r["what"])
             if r["at"] <= now and not r.get("fired"):
-                notify("Remi", f"Reminder: {r['what']}", "/calendar#reminders")
+                notify("Remi", f"Reminder: {r['what']}", REMINDER_URL)
                 fired.append(r["what"])
                 if r["nag"]:
                     r.update(pending=True, nags=0, nag_at=now + REMINDER_NAG_MINUTES * 60)
@@ -1779,7 +1792,14 @@ def run_tick(now=None):
             _save_reminders(keep)
     for what in fired:
         post_event("remi", f"Remi reminded you: {what}")
-    return {"fired": fired, "nagged": nagged}
+    digest = False
+    local = datetime.fromtimestamp(now, hub_tz())
+    if digest_due(local):  # the tick runs every 5 minutes, so the digest goes out on time
+        try:
+            digest = send_digest(opener=False, now=local)
+        except Exception as e:  # never let the digest stop reminders
+            print(f"digest failed in tick: {e!r}")
+    return {"fired": fired, "nagged": nagged, "digest": digest}
 
 
 _ACK_RE = re.compile(r"\b(done|did it|took (?:it|them|my \w+)|taken|finished|handled|all set)\b", re.I)
@@ -2418,9 +2438,9 @@ _PUSH_JS = """
 
 
 # ---- Mistral's daily digest and escalation triage
-def morning_digest():
+def morning_digest(today=None):
     """(post, phone one-liner) for today, from real data only."""
-    today = datetime.now(hub_tz()).date()
+    today = today or datetime.now(hub_tz()).date()
     lines, brief = [f"Here's today, {today:%A %B %d}:"], []
     if calendar_linked():
         events = calendar_events(today, today)
@@ -2432,6 +2452,13 @@ def morning_digest():
         for o in soon:
             lines.append(f"Birthday: {o['title']} {'today' if (o['start'] == today) else 'tomorrow'}.")
             brief.append(o["title"])
+    end = datetime.combine(today + timedelta(days=1), datetime.min.time(), hub_tz()).timestamp()
+    due = [r for r in reminders() if r["at"] < end or r.get("pending")]
+    if due:
+        lines.append("Reminders: " + "; ".join(
+            (f"{r['what']} (still to do)" if r.get("pending") else
+             f"{_clock(datetime.fromtimestamp(r['at'], hub_tz()))} {r['what']}") for r in due))
+        brief.append(f"{len(due)} reminder{'s' if len(due) != 1 else ''}")
     try:
         breaking, top = news_items()
         heads = (breaking + top)[:3]
@@ -2579,31 +2606,45 @@ def _round_theta(ctx):
     return ", ".join(did) or "nothing new to summarize"
 
 
+def send_digest(opener=True, now=None):
+    """Post and push today's digest once (the tick at DIGEST_TIME, or the
+    first round after it). opener: a one-line model greeting on top."""
+    st = store()
+    today = (now or datetime.now(hub_tz())).date().isoformat()
+    with _DIGEST_LOCK:
+        if st.get_meta("round:mistral:digest_day") == today:
+            return False
+        st.set_meta("round:mistral:digest_day", today)  # claimed first: a slow model can't double-send
+    post, brief = morning_digest(now.date() if now else None)
+    if opener:
+        try:
+            line = llm_chat("low_brain", [
+                {"role": "system", "content": system_prompt("mistral")},
+                {"role": "user", "content": "Write one short sentence to open today's digest. "
+                 "Don't mention any events, numbers or headlines."}], max_tokens=300)
+            post = f"{line.strip()}\n{post}"
+        except LLMError:
+            pass
+    item = st.add_chat("mistral", post)
+    try:
+        lead = next(iter(news_items()[1]), None)
+    except Exception:
+        lead = None
+    save_card("mistral", "Morning digest", post, (lead or {}).get("image"))
+    st.set_meta("round:mistral:digest_id", str(item["id"]))
+    notify("Mistral", brief)
+    return True
+
+
+_DIGEST_LOCK = threading.Lock()
+
+
 def _round_mistral(ctx):
     """Morning digest (once a day), breaking-news alerts and escalation
     triage. (QWERTY does the wiring check.)"""
     st = store()
     did = []
-    today = datetime.now(hub_tz()).date().isoformat()
-    if st.get_meta("round:mistral:digest_day") != today:
-        post, brief = morning_digest()
-        try:
-            opener = llm_chat("low_brain", [
-                {"role": "system", "content": system_prompt("mistral")},
-                {"role": "user", "content": "Write one short sentence to open today's digest. "
-                 "Don't mention any events, numbers or headlines."}], max_tokens=300)
-            post = f"{opener.strip()}\n{post}"
-        except LLMError:
-            pass
-        item = st.add_chat("mistral", post)
-        try:
-            lead = next(iter(news_items()[1]), None)
-        except Exception:
-            lead = None
-        save_card("mistral", "Morning digest", post, (lead or {}).get("image"))
-        st.set_meta("round:mistral:digest_day", today)
-        st.set_meta("round:mistral:digest_id", str(item["id"]))
-        notify("Mistral", brief)
+    if digest_due() and send_digest():
         did.append("posted the morning digest")
     try:
         breaking = news_items()[0]
@@ -4096,6 +4137,24 @@ def _at(stamp):
         return None
 
 
+def remi_reminders(w, rems, look):
+    """Remi's window leads with a reminder you haven't marked done, and
+    its sheet lists your reminders with Done buttons and an add box."""
+    pending = [r for r in rems if r.get("pending")]
+    nxt = next((r for r in rems if not r.get("pending")), None)
+    if pending:
+        r = pending[0]
+        w.update(raw=f"Still to do: {r['what']}", title=None, tag="Reminder", href=REMINDER_URL,
+                 sub=f"{len(pending)} waiting for Done" if len(pending) > 1 else "Tap Done when it's handled")
+    elif nxt and nxt["at"] - time.time() < 6 * 3600 and not w.get("sub", "").startswith("Today"):
+        when = datetime.fromtimestamp(nxt["at"], hub_tz())
+        w.update(raw=nxt["what"], title=None, tag="Reminder", sub=f"Reminder · {_clock(when)}", href=REMINDER_URL)
+    lines = [reminder_line(r).split(" ", 1)[1] for r in rems[:6]]
+    w["text"] = "\n".join(x for x in [("Reminders:\n" + "\n".join(lines)) if lines else "", w.get("text") or ""] if x)
+    w["remind"] = {"pending": [[r["id"], r["what"]] for r in pending]}
+    w["links"] = [["All reminders", REMINDER_URL]] + [l for l in (w.get("links") or []) if l[1] != REMINDER_URL]
+
+
 def agent_windows(chat=None, cards=None):
     """A window for every agent, from saved cards, then live data, then
     their latest post. No model calls."""
@@ -4161,6 +4220,7 @@ def agent_windows(chat=None, cards=None):
                         text="\n".join(status_lines(month)) or "Nothing logged this month.",
                         links=[["Open Money", "/money"]])
     today = datetime.now(hub_tz()).date()
+    rems = reminders()
     if calendar_linked():
         try:
             soon = calendar_events(today, today + timedelta(days=14))
@@ -4187,6 +4247,7 @@ def agent_windows(chat=None, cards=None):
         out["remi"] = _win("remi", "", "Link your Google Calendar to see what's next", _tile_svg(
             look["remi"][0], look["remi"][1], str(today.day), f"{today:%A}", f"{today:%B}"),
             "/calendar", title="No calendar linked")
+    remi_reminders(out["remi"], rems, look)
     chart = _latest_post(chat, "charter", with_image=True)
     if chart:
         out["charter"] = _win("charter", chart["text"], "Latest chart", chart["image"], at=_at(chart["at"]), fit=True,
@@ -4949,6 +5010,10 @@ dialog.sheet[open]{animation:up .22s cubic-bezier(.2,.8,.2,1)}
 .sheet .covlist{display:grid;gap:6px;font-size:13px}
 .sheet .covlist b{display:inline-block;min-width:44px}
 .sheet .acts{display:flex;flex-wrap:wrap;gap:8px;padding-top:4px}
+.sheet .remind{display:grid;gap:8px}
+.sheet .remind .brow{align-items:center;gap:10px}
+.sheet .remind form{padding:5px 5px 5px 14px}
+.sheet .remind input{flex:1;min-width:0;border:0;background:transparent;outline:none;padding:8px 0;font:inherit;font-size:16px;color:inherit}
 
 /* Unread dots */
 .unread{position:relative}
@@ -5277,6 +5342,34 @@ _UI_JS_SRC = r'''
   document.body.append(dlg);
   dlg.addEventListener("click", e => { if (e.target === dlg) dlg.close(); });
   const el = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text) x.textContent = text; return x; };
+  // Remi's sheet: Done for what's waiting, and a box to add a reminder.
+  async function remPost(url, body) {
+    const r = await fetch(url, {method: "POST", headers: window.THETA_H, body: JSON.stringify(body || {})});
+    const d = await r.json().catch(() => ({}));
+    if (!d.ok) throw new Error(d.error || "Couldn't reach Remi");
+    return d;
+  }
+  function remindBox(rm) {
+    const box = el("div", "remind"), note = el("p", "note");
+    (rm.pending || []).forEach(([id, what]) => {
+      const row = el("div", "brow"), b = el("button", "btn small", "Done");
+      b.type = "button";
+      b.onclick = async () => { b.disabled = true; try { await remPost("/api/reminders/" + id + "/done"); row.remove(); note.textContent = "Marked done: " + what; } catch (e) { note.textContent = e.message; b.disabled = false; } };
+      row.append(el("span", "", what), b); box.append(row);
+    });
+    const f = el("form", "box"), inp = el("input"), add = el("button", "btn small", "Add");
+    inp.placeholder = "8am every day take my meds until done"; inp.setAttribute("aria-label", "New reminder");
+    inp.enterKeyHint = "done"; add.type = "submit"; f.append(inp, add);
+    f.onsubmit = async e => {
+      e.preventDefault(); const text = inp.value.trim(); if (!text) return;
+      add.disabled = true; note.textContent = "Setting it...";
+      try { const d = await remPost("/api/reminders", {text}); note.textContent = "Set: " + d.line; inp.value = ""; }
+      catch (err) { note.textContent = err.message; }
+      add.disabled = false;
+    };
+    box.append(el("h3", "", "Add a reminder"), f, note);
+    return box;
+  }
   function openSheet(w) {
     let d;
     try { d = JSON.parse(w.dataset.sheet); } catch (_) { return false; }
@@ -5305,6 +5398,7 @@ _UI_JS_SRC = r'''
       if (/^https?:/.test(url)) { a.target = "_blank"; a.rel = "noopener"; a.textContent = "Read at " + label + " \u2197"; }
       acts.append(a);
     });
+    if (d.remind) inn.append(remindBox(d.remind));
     if (d.agent === "lenz") {
       const w2 = el("a", "btn", "I've watched it"); w2.href = "/lenz?log=" + encodeURIComponent(d.title);
       acts.append(w2);
@@ -5865,7 +5959,7 @@ def win_html(w):
              "links": [[label, url] for label, url in (w.get("links") or []) if url],
              "coverage": w.get("coverage"), "agent": w["agent"],
              "name": display_name(w["agent"]) if w["agent"] else "", "source": w.get("source") or "",
-             "page": f"/agent/{w['agent']}" if w["agent"] in AGENTS else ""}
+             "page": f"/agent/{w['agent']}" if w["agent"] in AGENTS else "", "remind": w.get("remind")}
     sheet_attr = "" if w.get("nosheet") else f' data-sheet="{html.escape(json.dumps(sheet))}"'
     return (f'<a class="win" href="{html.escape(w["href"])}"{ext}{sheet_attr}>'
             f'<div class="pic">{ph}{img}{tag}</div>'
@@ -6746,7 +6840,8 @@ def agent_page(headers, agent):
         f'<div><p class="eyebrow">{TIER_LABELS[v["tier"]]}{" · " + html.escape(v["home"]) if v.get("home") else ""}</p>'
         f'<h1>{html.escape(v["name"])}</h1><p class="muted small">{html.escape(st_row["activity"] if st_row else "offline")}</p></div></div>'
         f'<a class="btn" href="/chat?ch={ch}&amp;to={agent}">{ui_icon("chat")}Message {html.escape(v["name"])}</a></header>'
-        '<div class="grid2">'
+        + (reminders_card() if agent == "remi" else "")
+        + '<div class="grid2">'
         f'<section class="card stack"><h2>Latest</h2><div class="wins" style="grid-template-columns:minmax(0,1fr)">{"".join(win_html(w) for w in win)}</div></section>'
         '<section class="card stack"><h2>About</h2>'
         f'<dl class="kv"><dt>Job</dt><dd>{html.escape(v["role"])}</dd><dt>Can</dt><dd>{html.escape(ABILITIES.get(agent, "chat"))}</dd>'

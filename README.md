@@ -233,7 +233,7 @@ an agent says so instead of inventing work.
 | Agent | Each round | Tokens |
 |---|---|---|
 | Theta | Summarizes new reports; decides escalations that reach him (`ORDER:` replies issue a commandeer order); Sundays, a weekly review from the week's real facts | only when there's something to do |
-| Mistral | Once a day, the morning digest (calendar, birthdays, headlines, budget, overnight activity); flags breaking news; answers Low Brain escalations or forwards them to Theta; wiring check on first run and on change | ~1 a day, plus triage |
+| Mistral | Once a day at `DIGEST_TIME`, the morning digest (calendar, reminders, birthdays, headlines, budget, overnight activity); flags breaking news; answers Low Brain escalations or forwards them to Theta; wiring check on first run and on change | ~1 a day, plus triage |
 | Remi | Once a day, today's agenda from the family calendar; an update when today's plans change; birthdays 7 days, 1 day and the day of | 1 a day |
 | Glass | Budget alerts at 90% and 100% (once per category per month); Sundays, the week in review | none |
 | Red, Blue, Gray | Each takes the same new top story, grounded in how their own outlets covered it, or noting they haven't | 3 small calls |
@@ -306,6 +306,14 @@ ones re-send every `REMINDER_NAG_MINUTES` (15), up to `REMINDER_NAG_MAX`
 (4) times, until you tap Done on the Calendar tab or tell Remi "done" or
 "took them". `POST /api/tick` sends what's due; run it every 5 minutes with
 the `bot-hub-tick` job in `supabase/cron.sql.example`. No model calls.
+Add one from anywhere: tap Remi's window on Home (the sheet has an add box
+and Done buttons), her page, or the Calendar tab. A reminder you haven't
+marked done takes over her window, and tapping its notification opens her
+page. Today's reminders are also listed in Mistral's morning digest.
+
+**Morning digest time.** The tick sends Mistral's digest at `DIGEST_TIME`
+(default `07:00`, hub time), so it no longer waits for a round. Without
+the tick job, it goes out with the first round after that time.
 
 **Lenz's library** (`/lenz`; his Home window opens it): what you're on,
 up next (by tier), waiting on new seasons, finished (with your 1-10
