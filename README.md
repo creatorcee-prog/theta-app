@@ -385,7 +385,27 @@ search says when it'll be back, and Settings → Wiring shows
 which quota ran out. Picking who answers an un-mentioned message runs on
 Groq's miner (`ROUTER_TIER`), so it doesn't spend Gemini's daily quota.
 
-**Chat formatting.** Messages render a safe subset of markdown: tables,
+**Today's check** (Home). A short list of daily habits, "Read the news"
+and "Read a book or comic" to start; Edit adds or removes them. Ticks
+reset each day, the streak counts days with everything done, and the
+5-minute tick has Remi push what's left once after `DAILY_NUDGE_TIME`
+(`20:00`).
+
+**Lenz's release calendar** (top of the Lenz page). What's coming out in
+the next 120 days: movies and shows from TMDB (`TMDB_API_KEY`,
+`TMDB_REGION`), anime from Jikan, games from RAWG (`RAWG_API_KEY`, free at
+rawg.io/apidocs). The next release is highlighted; anything on your list
+that you haven't finished is tagged Following, and on release day Lenz
+posts it and pushes you. Refreshed once a day on Lenz's round; a source
+that fails keeps its last list.
+
+**Glass shine.** Window pictures have a glassy shine that follows the
+cursor; Settings → Glass shine lets it follow the phone's tilt (iPhone asks
+once for motion access). Off with reduced motion.
+
+**Chat formatting.** Agents are told the chat renders markdown, so
+comparisons come as tables. Typing an agent's name ("rem") offers the
+@mention; Tab or a tap takes it, Enter sends as typed. Messages render a safe subset of markdown: tables,
 bullet, numbered and checklist items, code blocks, headings, **bold**,
 *italic*, `code` and https images. Everything is built as page elements,
 never as HTML, so nothing in a message can run.
