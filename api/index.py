@@ -77,6 +77,16 @@ MASTER_MODEL = os.environ.get("MASTER_MODEL", "Opus 5.5")
 MODELS = {t: f"{m} ({p.title()})" for t, (p, m) in TIER_LLM.items()}
 MODELS["master"] = f"{MASTER_MODEL} (not connected; {TIER_LLM['low_brain'][1]} standing in)"
 LLM_TIMEOUT = int(os.environ.get("LLM_TIMEOUT_SECONDS", "25"))
+# When a tier's provider is busy or down (429/5xx, timeouts), retry once,
+# then let a model on the other provider answer. *_FALLBACK_MODEL env vars
+# override; set one to "off" to fail instead.
+FALLBACK_LLM = {
+    "miner": ("groq", os.environ.get("MINER_FALLBACK_MODEL", "openai/gpt-oss-120b")),
+    "manager": ("gemini", os.environ.get("MANAGER_FALLBACK_MODEL", "gemini-3.8-flash")),
+    "low_brain": ("groq", os.environ.get("LOW_BRAIN_FALLBACK_MODEL", "openai/gpt-oss-120b")),
+}
+LLM_RETRY_DELAY = 1.5  # seconds before the one retry on the same model
+_RETRYABLE = {408, 429, 500, 502, 503, 504}
 CHAT_HISTORY = 20  # most recent messages sent per chat request
 ALLCHAT_KEEP = 200  # All Agents chat: messages kept
 ALLCHAT_MENTIONS = 3  # agents that may answer one message of yours
@@ -98,14 +108,19 @@ ABILITIES = {
                "escalations, check what's wired, and decide who answers in All Agents",
     "glass": "log expenses, report budgets and send budget alerts, review weekly spending, and "
              "import Rocket Money CSVs. You can't see bank accounts or block spending",
-    "remi": "read the family calendar (read-only), post agendas, and remind people of birthdays. "
+    "remi": "read the family calendar (read-only), post agendas, remind people of birthdays, and set "
+            "phone reminders (\"remind me at 8am every day to take my meds until done\"). "
             "You can't add or change calendar events or text anyone, and Discord moderation "
             "isn't built yet",
-    "lenz": "recommend from TMDB's trending list and the entertainment feeds",
-    "red": "read your outlets' headlines and give your take on the top story. You can't search "
-           "beyond those feeds", "blue": "read your outlets' headlines and give your take on the "
-           "top story. You can't search beyond those feeds", "gray": "read your outlets' "
-           "headlines and give your take on the top story. You can't search beyond those feeds",
+    "lenz": "recommend from TMDB's trending list and the entertainment feeds, keep the user's library "
+            "(what they watch, play and read, their ratings and rankings), log what they finish "
+            "(\"I finished Frieren, 9/10\"), post news about titles they follow, and a weekly taste report",
+    "red": "read your outlets' headlines and the top story's article brief (summary, exact quotes, "
+           "framing, byline), and give your take. You can't search beyond those feeds",
+    "blue": "read your outlets' headlines and the top story's article brief (summary, exact quotes, "
+            "framing, byline), and give your take. You can't search beyond those feeds",
+    "gray": "read the top story's article and brief it neutrally (summary, exact quotes, how it's framed, "
+            "who wrote it), read your outlets' headlines, and give your take. You can't search beyond those feeds",
     "charter": "draw charts of spending, daily spending, calendar busyness, news coverage and "
                "All Agents activity, and nothing else yet",
 }
@@ -656,6 +671,13 @@ def _item_image(el):
     return None
 
 
+def _plain(text, limit=420):
+    """Feed HTML as plain text, cut at a word."""
+    t = re.sub(r"<[^>]+>", " ", html.unescape(text or ""))
+    t = " ".join(html.unescape(t).split())
+    return t if len(t) <= limit else t[:limit].rsplit(" ", 1)[0] + "…"
+
+
 def _bigger(url):
     """Ask image services that size by URL for a card-sized copy."""
     if url and "ichef.bbci.co.uk" in url:
@@ -672,7 +694,9 @@ def _parse_rss(data):
         link = (el.findtext("link") or "").strip()
         if link:
             items.append({"title": title or link, "url": link, "source": source,
-                          "published": _parse_date(el.findtext("pubDate")), "image": _bigger(_item_image(el))})
+                          "published": _parse_date(el.findtext("pubDate")), "image": _bigger(_item_image(el)),
+                          "summary": _plain(el.findtext("description")
+                                            or el.findtext("{http://purl.org/rss/1.0/modules/content/}encoded"))})
     if not items:  # Atom fallback
         ns = {"a": "http://www.w3.org/2005/Atom"}
         source = (root.findtext("a:title", "", ns) or "").strip()[:40]
@@ -684,7 +708,8 @@ def _parse_rss(data):
                 items.append({"title": title or link, "url": link, "source": source,
                               "published": _parse_date(el.findtext("a:updated", "", ns)
                                                        or el.findtext("a:published", "", ns)),
-                              "image": _item_image(el)})
+                              "image": _item_image(el),
+                              "summary": _plain(el.findtext("a:summary", "", ns) or el.findtext("a:content", "", ns))})
     return items[:10]
 
 
@@ -732,7 +757,7 @@ def widget_items(feeds):
         for it in items:
             out.append({"source": it.get("source") or urlparse(url).netloc,
                         "title": it["title"], "url": it["url"], "image": it.get("image"),
-                        "kind": it.get("kind")})
+                        "kind": it.get("kind"), "summary": it.get("summary", "")})
     return out[:20]
 
 
@@ -908,7 +933,12 @@ def pushed_items(event_type, limit=10):
 
 # ---- Models ----
 class LLMError(Exception):
-    """A model call failed: missing key, API error or timeout."""
+    """A model call failed: missing key, API error or timeout. retryable:
+    the provider was busy or unreachable, so another try (or model) may work."""
+
+    def __init__(self, msg, retryable=False, timed_out=False):
+        super().__init__(msg)
+        self.retryable, self.timed_out = retryable, timed_out
 
 
 def agent_model(agent_id):
@@ -998,6 +1028,7 @@ def system_prompt(agent_id):
             extra = ("\n\nWhat's current (only these facts; say so rather than guess):"
                      + "".join(f"\n- Trending: {tmdb_fact_line(i)}" for i in trending)
                      + "".join(f"\n- In the feeds: {t}" for t in charts))
+        extra += lenz_context()
     if agent_id in SIDE_FEEDS:
         latest = side_headlines(agent_id)
         if latest:
@@ -1045,10 +1076,53 @@ def list_models(provider):
     return {"models": sorted(i.removeprefix("models/") for i in ids if i)}
 
 
+def _llm_error_text(provider, code, raw):
+    """A readable error: the provider's own message instead of its JSON."""
+    try:
+        body = json.loads(raw)
+        body = body[0] if isinstance(body, list) and body else body
+        msg = (body.get("error") or {}).get("message") if isinstance(body, dict) else None
+    except ValueError:
+        msg = None
+    return f"{provider} returned {code}: {(msg or raw)[:200]}"
+
+
 def llm_chat(tier, messages, max_tokens=800):
     """One chat-completion call for `tier`; returns the reply text.
-    Master is answered by the low brain until the paid model is wired."""
-    provider, model = TIER_LLM["low_brain" if tier == "master" else tier]
+    Master is answered by the low brain until the paid model is wired.
+    A busy or down provider gets one quick retry (not after a timeout),
+    then the tier's fallback model on the other provider answers."""
+    t = "low_brain" if tier == "master" else tier
+    provider, model = TIER_LLM[t]
+    try:
+        return _llm_call(provider, model, messages, max_tokens)
+    except LLMError as e:
+        if not e.retryable:
+            raise
+        first = e
+    if not first.timed_out:
+        time.sleep(LLM_RETRY_DELAY)
+        try:
+            return _llm_call(provider, model, messages, max_tokens)
+        except LLMError as e:
+            if not e.retryable:
+                raise
+    fb_provider, fb_model = FALLBACK_LLM.get(t, (None, "off"))
+    if fb_model == "off" or not os.environ.get(PROVIDERS[fb_provider][1]):
+        raise first
+    try:
+        text = _llm_call(fb_provider, fb_model, messages, max_tokens)
+    except LLMError as e:
+        raise LLMError(f"{first} (and the fallback, {fb_model}, failed too: {e})")
+    try:
+        store().set_meta("llm:fallback", json.dumps({"tier": t, "at": time.time(), "why": str(first)[:160],
+                                                     "model": fb_model}))
+    except Exception:
+        pass  # noting it must never cost the reply
+    return text
+
+
+def _llm_call(provider, model, messages, max_tokens):
     url, key_var = PROVIDERS[provider]
     key = os.environ.get(key_var, "")
     if not key:
@@ -1065,9 +1139,12 @@ def llm_chat(tier, messages, max_tokens=800):
             out = json.loads(resp.read())
         text = out["choices"][0]["message"].get("content") or ""
     except urllib.error.HTTPError as e:
-        detail = e.read()[:300].decode("utf-8", "replace")
-        raise LLMError(f"{provider} returned {e.code}: {detail}")
-    except (urllib.error.URLError, TimeoutError, ValueError, KeyError, IndexError, AttributeError) as e:
+        raise LLMError(_llm_error_text(provider, e.code, e.read()[:2000].decode("utf-8", "replace")),
+                       retryable=e.code in _RETRYABLE)
+    except (urllib.error.URLError, TimeoutError) as e:
+        timed_out = isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError)
+        raise LLMError(f"{provider} call failed: {e!r}", retryable=True, timed_out=timed_out)
+    except (ValueError, KeyError, IndexError, AttributeError) as e:
         raise LLMError(f"{provider} call failed: {e!r}")
     if not text.strip():
         raise LLMError(f"{model} returned an empty reply (it may have spent its "
@@ -1161,6 +1238,14 @@ def allchat_reply(agent, thread):
         chart = charter_reply(thread[-1]["text"])
         if chart:
             return chart  # (caption, image url): the caller posts it with the image
+    if agent == "lenz" and thread[-1]["from"] == "you":
+        quick = lenz_quick_reply(thread[-1]["text"])
+        if quick:
+            return quick
+    if agent == "remi" and thread[-1]["from"] == "you":
+        quick = remi_quick_reply(thread[-1]["text"])
+        if quick:
+            return quick
     if agent == "james":  # Garage Gym takes a single question
         return james_chat([{"role": "user", "content": thread[-1]["text"]}])
     transcript = "\n".join(chat_line(m) for m in thread[-CHAT_HISTORY:])
@@ -1226,6 +1311,16 @@ def home_channel(sender):
 
 def message_channel(m):
     return m.get("ch") or home_channel(m["from"])
+
+
+def latest_by_channel(chat=None):
+    """{channel: id of its newest message from an agent or bot}, for unread dots."""
+    out = {}
+    for m in (store().list_chat(ALLCHAT_KEEP) if chat is None else chat):
+        if m.get("kind") != "event" and m["from"] != "you":
+            ch = message_channel(m)
+            out[ch] = max(out.get(ch, 0), m["id"])
+    return out
 
 
 def allchat_view(limit=50, channel="all"):
@@ -1475,14 +1570,219 @@ def occurrence_text(o, with_day=False):
 
 
 def remi_context():
-    """The next 14 days, for Remi's prompt, so she answers from the real calendar."""
+    """The next 14 days and the reminders set, for Remi's prompt, so she
+    answers from the real calendar."""
+    rs = reminders()
+    rem = ("\nReminders set for the user (exact):\n" + "\n".join(f"- {reminder_line(r)}" for r in rs)) if rs else ""
     if not calendar_linked():
-        return ""
+        return f"\n{rem}" if rem else ""
     today = datetime.now(hub_tz()).date()
     items = calendar_events(today, today + timedelta(days=13))
     listing = "\n".join(f"- {occurrence_text(o, with_day=True)}" for o in items[:60]) or "- nothing scheduled"
     return (f"\n\nToday is {today:%A %B %d}. The family calendar for the next 14 days "
-            f"(exact; never change times or add events):\n{listing}")
+            f"(exact; never change times or add events):\n{listing}{rem}")
+
+
+# ---- Remi's reminders: one-off or repeating ("every day", "weekdays",
+# "every friday"), pushed to your phone on time by /api/tick (Supabase Cron
+# every few minutes). "until done" ones nag every REMINDER_NAG_MINUTES, up
+# to REMINDER_NAG_MAX times, until you mark them done.
+REMINDER_NAG_MINUTES = int(os.environ.get("REMINDER_NAG_MINUTES", "15"))
+REMINDER_NAG_MAX = int(os.environ.get("REMINDER_NAG_MAX", "4"))
+_REM_LOCK = threading.Lock()
+_WEEKDAY = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+_WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+_DAY_RE = r"(mon|tue|wed|thu|fri|sat|sun)(?:days?|sdays?|nesdays?|rsdays?|urdays?|s|t|r|rs|n)?"
+
+
+def parse_reminder(text, now=None):
+    """'8am every day take my meds until done' -> {what, at, repeat, weekday,
+    hour, minute, nag}. Raises ValueError with a hint when it can't tell."""
+    now = now or datetime.now(hub_tz())
+    s = " " + " ".join(text.split()) + " "
+    found = {}
+
+    def take(key, pattern):
+        nonlocal s
+        m = re.search(pattern, s, re.I)
+        if m:
+            found[key] = m
+            s = s[:m.start()] + " " + s[m.end():]
+        return m
+    nag = bool(take("nag", r"\buntil (?:i'?m |it'?s |i say it'?s )?(?:done|confirmed|i say so)\b"))
+    repeat, weekday = None, None
+    if take("rep", r"\b(?:every ?day|daily|each day|every night|nightly)\b"):
+        repeat = "daily"
+    elif take("rep", r"\b(?:every |on )?weekdays\b"):
+        repeat = "weekdays"
+    elif take("rep", r"\b(?:every|each) " + _DAY_RE + r"\b"):
+        repeat, weekday = "weekly", _WEEKDAY[found["rep"].group(1).lower()]
+    elif take("rep", r"\bweekly\b"):
+        repeat = "weekly"
+    rel = take("rel", r"\bin (\d{1,3}) ?(minutes?|mins?|m|hours?|hrs?|h)\b")
+    dayword = take("day", r"\b(today|tonight|tomorrow)\b")
+    if weekday is None and take("wd", r"\b(?:on |this |next )?" + _DAY_RE + r"\b"):
+        weekday = _WEEKDAY[found["wd"].group(1).lower()]
+    hour = minute = None
+    if take("t", r"\b(?:at )?(\d{1,2})(?::(\d{2}))? ?([ap])\.?m?\.?(?=\W)"):
+        m = found["t"]
+        hour, minute = int(m.group(1)) % 12 + (12 if m.group(3).lower() == "p" else 0), int(m.group(2) or 0)
+        if int(m.group(1)) > 12:
+            raise ValueError("That time doesn't look right. Try '8am' or '20:30'.")
+    elif take("t", r"\b(?:at )?([01]?\d|2[0-3]):([0-5]\d)\b"):
+        hour, minute = int(found["t"].group(1)), int(found["t"].group(2))
+    elif take("t", r"\b(noon|midday|midnight)\b"):
+        hour, minute = (0 if found["t"].group(1).lower() == "midnight" else 12), 0
+    elif take("t", r"\bat (\d{1,2})\b"):
+        h = int(found["t"].group(1)) % 12  # "at 8": whichever 8 comes next
+        hour, minute = (h if (now.hour, now.minute) < (h, 0) else h + 12), 0
+    elif dayword and dayword.group(1).lower() == "tonight":
+        hour, minute = 20, 0
+    what = re.sub(r"^\W*(?:remind me|reminder|remind)\b\W*", "", s.strip(), flags=re.I)
+    what = re.sub(r"^(?:to|that|about|at|on)\s+", "", what.strip(" ,.:;-"), flags=re.I)
+    what = re.sub(r"\s+(?:at|on|to)$", "", what.strip(" ,.:;-"), flags=re.I).strip(" ,.:;-")
+    if not what:
+        raise ValueError("What should I remind you about?")
+    if not (rel or hour is not None or dayword or weekday is not None or repeat):
+        raise ValueError("When? Try '8am', 'in 20 min', 'tomorrow 9am' or 'every day at 8pm'.")
+    if rel:
+        n, unit = int(rel.group(1)), rel.group(2).lower()
+        at = now + (timedelta(hours=n) if unit.startswith("h") else timedelta(minutes=n))
+        return {"what": what[:200], "at": at.timestamp(), "repeat": None, "weekday": None,
+                "hour": at.hour, "minute": at.minute, "nag": nag}
+    if hour is None:
+        hour, minute = 9, 0  # a day but no time: 9 in the morning
+    r = {"what": what[:200], "repeat": repeat, "weekday": weekday, "hour": hour, "minute": minute, "nag": nag}
+    day = now.date() + timedelta(days=1 if dayword and dayword.group(1).lower() == "tomorrow" else 0)
+    first = _occurrence(r, day)
+    while (first <= now or (weekday is not None and first.weekday() != weekday)
+           or (repeat == "weekdays" and first.weekday() >= 5)):
+        day += timedelta(days=1)
+        first = _occurrence(r, day)
+    if repeat == "weekly" and weekday is None:
+        r["weekday"] = first.weekday()
+    r["at"] = first.timestamp()
+    return r
+
+
+def _occurrence(r, day):
+    return datetime.combine(day, datetime.min.time().replace(hour=r["hour"], minute=r["minute"]), hub_tz())
+
+
+def _next_after(r, after):
+    """The repeat's next time after `after` (an aware datetime)."""
+    d = after.astimezone(hub_tz()).date() + timedelta(days=1)
+    while True:
+        t = _occurrence(r, d)
+        if (r["repeat"] == "daily" or (r["repeat"] == "weekdays" and t.weekday() < 5)
+                or (r["repeat"] == "weekly" and t.weekday() == r["weekday"])):
+            return t
+        d += timedelta(days=1)
+
+
+def reminders():
+    return sorted(_meta_json("reminders", []), key=lambda r: r["at"])
+
+
+def _save_reminders(rs):
+    store().set_meta("reminders", json.dumps(rs))
+
+
+def add_reminder(text, now=None):
+    r = parse_reminder(text, now)
+    with _REM_LOCK:
+        rs = reminders()
+        r.update(id=max([x["id"] for x in rs] + [0]) + 1, pending=False, nags=0, created=time.time())
+        rs.append(r)
+        _save_reminders(rs)
+    post_event("remi", f"Remi set a reminder: {r['what']}")
+    return r
+
+
+def reminder_line(r):
+    when = datetime.fromtimestamp(r["at"], hub_tz())
+    clock = _clock(when)
+    rep = {"daily": f"every day at {clock}", "weekdays": f"weekdays at {clock}",
+           "weekly": f"every {_WEEKDAY_NAMES[r['weekday'] or 0]} at {clock}"}.get(r["repeat"])
+    nxt = f"{when:%a %b} {when.day} at {clock}"
+    return (f"#{r['id']} {r['what']}: " + (f"{rep} (next {nxt})" if rep else nxt)
+            + (", until done" if r["nag"] else "") + (". Waiting for you to mark it done" if r.get("pending") else ""))
+
+
+def ack_reminder(rid):
+    """Mark a reminder done: stops its nagging; a one-off is then removed."""
+    with _REM_LOCK:
+        rs = reminders()
+        r = next((x for x in rs if x["id"] == rid), None)
+        if not r:
+            return None
+        r.update(pending=False, nags=0)
+        if not r["repeat"] and r["at"] <= time.time():
+            rs.remove(r)
+        _save_reminders(rs)
+    post_event("remi", f"You marked done: {r['what']}")
+    return r
+
+
+def delete_reminder(rid):
+    with _REM_LOCK:
+        rs = reminders()
+        r = next((x for x in rs if x["id"] == rid), None)
+        if r:
+            rs.remove(r)
+            _save_reminders(rs)
+    return r
+
+
+def run_tick(now=None):
+    """Send what's due: reminders whose time came, and nags for "until done"
+    ones not marked done yet. Cheap; meant for every few minutes."""
+    now = now or time.time()
+    fired, nagged = [], []
+    with _REM_LOCK:
+        keep = []
+        for r in reminders():
+            if r.get("pending") and r.get("nag_at", 0) <= now and r["nags"] < REMINDER_NAG_MAX:
+                notify("Remi", f"Still to do: {r['what']}", "/calendar#reminders")
+                r["nags"] += 1
+                r["nag_at"] = now + REMINDER_NAG_MINUTES * 60
+                nagged.append(r["what"])
+            if r["at"] <= now and not r.get("fired"):
+                notify("Remi", f"Reminder: {r['what']}", "/calendar#reminders")
+                fired.append(r["what"])
+                if r["nag"]:
+                    r.update(pending=True, nags=0, nag_at=now + REMINDER_NAG_MINUTES * 60)
+                if r["repeat"]:
+                    r["at"] = _next_after(r, datetime.fromtimestamp(max(r["at"], now), hub_tz())).timestamp()
+                elif not r["nag"]:
+                    continue  # a plain one-off is finished once it's sent
+                else:
+                    r["fired"] = True  # a one-off, kept until it's marked done
+            keep.append(r)
+        if fired or nagged:
+            _save_reminders(keep)
+    for what in fired:
+        post_event("remi", f"Remi reminded you: {what}")
+    return {"fired": fired, "nagged": nagged}
+
+
+_ACK_RE = re.compile(r"\b(done|did it|took (?:it|them|my \w+)|taken|finished|handled|all set)\b", re.I)
+
+
+def remi_quick_reply(text):
+    """Remi handles reminders herself, with no model call: "remind me ..."
+    sets one; "done" or "took them" marks the latest nagging one done."""
+    if re.search(r"\bremind me\b", text, re.I):
+        try:
+            r = add_reminder(re.sub(r"@\w+", "", text))
+        except ValueError as e:
+            return f"Happy to, love. {e}"
+        return f"Got it. I'll remind you: {reminder_line(r)}."
+    pending = [r for r in reminders() if r.get("pending")]
+    if pending and _ACK_RE.search(text):
+        r = ack_reminder(pending[-1]["id"])
+        return f"Thank you, sweetheart. Marked done: {r['what']}."
+    return None
 
 
 # ---- Glass's ledger: expenses from chat ("@glass $42 groceries"), bots, or
@@ -2328,22 +2628,82 @@ def _round_news(agent):
                 f"- {it['source']}: {it['title']}" for it in seen)
         else:
             coverage = "None of your outlets have covered it yet; say so, that's worth knowing."
+        brief = ctx.get("brief")
+        grounded = (f"A neutral brief of the article ({brief['credit']}):\n{brief['summary']}\n"
+                    f"Its framing: {brief['bias']}\n" if brief and brief.get("summary") else
+                    "You only have the headline; say so instead of guessing details.\n")
         take = llm_chat(AGENTS[agent]["tier"], [
             {"role": "system", "content": system_prompt(agent) + " You're posting in the All "
              "Agents group chat."},
             {"role": "user", "content": f"Today's top story ({story['source']}): {story['title']}\n"
-             f"{coverage}\nGive your take in 2-3 sentences. You only have these headlines: "
-             "say so instead of guessing details."}])
+             f"{grounded}{coverage}\nGive your take in 2-3 sentences, from the brief and your outlets' "
+             "coverage only. Don't put anything in quotation marks."}])
         links = [story["url"]] + [it["url"] for it in seen if it["url"] != story["url"]][:1]
-        store().add_chat(agent, take.strip() + "\n" + "\n".join(links))
+        # Gray, the independent, posts the brief itself; Red and Blue argue from it.
+        has_brief = bool(brief and brief.get("summary"))
+        lead = f"Brief: {brief_text(brief)}\n\n" if has_brief and agent == "gray" else ""
+        store().add_chat(agent, lead + take.strip() + "\n" + "\n".join(links))
         pic = story.get("image") or next((it.get("image") for it in seen if it.get("image")), None)
-        save_card(agent, story["title"], take.strip(), pic, story["url"], story["source"])
+        save_card(agent, story["title"], take.strip() + (f"\n\n{brief_text(brief)}" if has_brief else ""),
+                  pic, story["url"], story["source"])
         return (f"posted a take on \"{story['title'][:60]}\""
                 + (f" ({len(seen)} of their outlets covered it)" if seen else " (their outlets haven't covered it)"))
     return job
 
 
 def _round_lenz(ctx):
+    """Keep your library current (doc and MyAnimeList syncs once a day,
+    posters and genres), post news about what you follow, Sunday's taste
+    report, then pitch one new trending title."""
+    st = store()
+    did = []
+    today = datetime.now(hub_tz()).date()
+    if st.get_meta("round:lenz:sync_day") != today.isoformat():
+        for label, fn in (("your doc", sync_library_doc), ("MyAnimeList", sync_mal)):
+            try:
+                r = fn()
+                if r:
+                    did.append(f"synced {label} ({r['added']} new)")
+            except LLMError as e:
+                did.append(f"couldn't sync {label}: {str(e)[:80]}")
+        st.set_meta("round:lenz:sync_day", today.isoformat())
+    try:
+        n = enrich_library(deadline=time.time() + 12)
+        if n:
+            did.append(f"found posters for {n}")
+    except Exception as e:  # cosmetic: never sink the round
+        did.append(f"poster lookup failed ({str(e)[:60]})")
+    seen = _seen("round:lenz:news")
+    fresh = [n for n in followed_news() if n["url"] not in seen][:3]
+    if fresh:
+        def brief_for(n):
+            try:
+                return brief_text(story_brief(n["title"], n["url"], n["source"], n.get("summary", "")))
+            except LLMError:
+                return n["source"]
+        with ThreadPoolExecutor(max_workers=len(fresh)) as ex:
+            briefs = list(ex.map(brief_for, fresh))
+        st.add_chat("lenz", "News on what you follow:\n\n" + "\n\n".join(
+            f"{n['about']}: {n['title']}\n{b}\n{n['url']}" for n, b in zip(fresh, briefs)), channel="screen")
+        for n in fresh:
+            _mark_seen("round:lenz:news", n["url"])
+            if n["waiting"]:
+                notify("Lenz", f"{n['about']}: {n['title']}", n["url"])
+        did.append(f"posted {len(fresh)} news item{'s' if len(fresh) != 1 else ''} on what you follow")
+    if today.weekday() == 6 and st.get_meta("round:lenz:week") != today.isoformat() and library():
+        st.add_chat("lenz", lenz_week_report(today), channel="screen")
+        st.set_meta("round:lenz:week", today.isoformat())
+        did.append("posted your weekly taste report")
+    try:
+        did.append(_lenz_pitch())
+    except LLMError as e:
+        if not did:
+            raise
+        did.append(f"no pitch ({str(e)[:60]})")
+    return ", ".join(did)
+
+
+def _lenz_pitch():
     """Pitch one new trending title (TMDB facts when linked, else the feeds)."""
     trending = tmdb_trending()
     item = next((i for i in trending if i["url"] not in _seen("round:lenz:seen")), None)
@@ -2503,6 +2863,12 @@ def run_round(force=False, now=None, only=None):
     if _NEWS_AGENTS & set(due):  # the news miners all take the same new story
         breaking, top = news_items()
         ctx["story"] = next((i for i in breaking + top if i["url"] not in _seen("round:news:seen")), None)
+        if ctx["story"]:
+            try:  # one neutral brief, read from the article itself, for all three
+                ctx["brief"] = story_brief(ctx["story"]["title"], ctx["story"]["url"], ctx["story"]["source"],
+                                           ctx["story"].get("summary", ""))
+            except LLMError:
+                ctx["brief"] = None
 
     def run(a):
         try:
@@ -2537,6 +2903,739 @@ def run_round(force=False, now=None, only=None):
         post_event("hub", "Round: " + "; ".join(parts) + ".")
     return {"ok": True, "ran": results,
             "skipped": [a for a in ROUND_JOBS if a not in due], "no_job": idle}
+
+
+# ---- Lenz's library: everything you watch, play and read, with your
+# progress, ratings and rankings. Imported from your log (a Google Doc's
+# text, pasted or synced from LENZ_DOC_URL) and kept here after that.
+# MyAnimeList (MAL_CLIENT_ID + MAL_USERNAME) syncs your anime list in.
+KINDS = {"G": "game", "AN": "anime", "S": "show", "M": "movie", "MW": "manhwa", "WN": "web novel",
+         "B": "book", "C": "comic", "P": "musical", "MANGA": "manga"}
+KIND_LABELS = {"game": "Game", "anime": "Anime", "show": "TV", "movie": "Movie", "manhwa": "Manhwa",
+               "web novel": "Web novel", "book": "Book", "comic": "Comic", "musical": "Musical", "manga": "Manga"}
+STATUSES = {"current": "Now", "queue": "Up next", "waiting": "Waiting", "done": "Finished",
+            "paused": "Paused", "dropped": "Dropped"}
+LENZ_DOC_URL = os.environ.get("LENZ_DOC_URL", "")
+_LIB_LOCK = threading.Lock()
+_CODE = r"(?:AN|MW|WN|MANGA|G|S|M|B|C|P)"
+_NOTE_START = re.compile(
+    r"^(waiting|updates|stopped|cannot|multiple|manga only|ongoing|light novel|obscure|limited|too vague|"
+    r"does not|children|experimental|chinese|high fan|adult swim|\d{4} |early|read |rewatch)", re.I)
+_PROGRESS = re.compile(r"^(?:ep|eps|episode|ch|chapter|vol|volume|season|s\d+)\b", re.I)
+
+
+def _norm_title(title):
+    t = re.sub(r"^(the|a|an) ", "", title.lower().replace("’", "'"))
+    return re.sub(r"[^a-z0-9]", "", t)
+
+
+def parse_media_line(line):
+    """One line of the log -> {title, kind, progress, with, note, times,
+    scores, eps, hours, price, paused}. Unknown bits stay in the title."""
+    s = " " + line.replace("’", "'").strip() + " "
+    out = {"kind": None, "progress": "", "with": "", "notes": [], "times": 0, "scores": {}, "eps": None,
+           "hours": None, "price": "", "paused": False}
+
+    def cut(pattern, flags=re.I):
+        nonlocal s
+        found = list(re.finditer(pattern, s, flags))
+        for m in reversed(found):
+            s = s[:m.start()] + " " + s[m.end():]
+        return found
+    for m in cut(r"\(\s*w/\s*([^)]*)\)"):
+        inner = m.group(1)
+        p = re.search(r"(?:S\d+\s*)?Ep\s*\d+", inner, re.I)
+        if p:
+            out["progress"] = p.group(0)
+            inner = inner.replace(p.group(0), "")
+        out["with"] = " ".join(inner.split()).strip(" ,")
+    codes = cut(r"\(\s*(" + _CODE + r"(?:\s*[+/]\s*" + _CODE + r")?)\s*\??\s*\)")
+    codes += cut(r"(?<=\s)-\s*(" + _CODE + r"(?:\s*[+/]\s*" + _CODE + r")?)(?=[\s\dx+]*$)")
+    if codes:
+        out["kind"] = KINDS.get(re.split(r"[+/]", codes[-1].group(1))[0].strip().upper())
+    times = [int(m.group(1)) for m in cut(r"\b(\d{1,2})x\+?(?=\s|$)")]
+    out["times"] = max(times) if times else 0
+    for m in cut(r"\$(\d+)"):
+        out["price"] = f"${m.group(1)}"
+    for m in cut(r"\b(IMDB|MAL)\s*(\d{1,2}(?:\.\d)?)(?:\s*[/,])?", flags=0):
+        out["scores"][m.group(1)] = float(m.group(2))
+    for m in cut(r"\(\s*(Movie|~?\d+\+?\s*eps)\b([^)]*)\)"):
+        if m.group(1).lower() == "movie":
+            out["kind"] = out["kind"] or "movie"
+        else:
+            out["eps"] = int(re.sub(r"\D", "", m.group(1)))
+        h = re.search(r"([\d.]+)\s*hrs", m.group(0))
+        out["hours"] = float(h.group(1)) if h else None
+    for m in cut(r"\(\s*([\d.]+)\s*hrs\)"):
+        out["hours"] = float(m.group(1))
+    for m in cut(r"\(?\bstopped at ([^)\-]*?)\)?(?=\s-|\s*$)"):
+        out["notes"].append(f"Stopped at {m.group(1).strip()}")
+        out["paused"] = True
+    for m in cut(r"\((rewatch|read [^)]*|sub|dub|netflix|youtube|adult swim|as of [^)]*|ongoing [^)]*|"
+                 r"unknown[^)]*|\d{4}s)\)"):
+        out["notes"].append(m.group(1).strip().capitalize())
+    segs = [x.strip(" -") for x in re.split(r"\s+-\s*|\s*-\s+", s.strip())]
+    segs = [x for x in segs if x]
+    title = segs[0] if segs else ""
+    for seg in segs[1:]:
+        if _PROGRESS.match(seg) and not out["progress"]:
+            out["progress"] = seg
+        elif _NOTE_START.match(seg):
+            out["notes"].append(seg.rstrip("."))
+        else:
+            title += " - " + seg
+    title = re.sub(r"^watching\s+", "", title, flags=re.I)
+    m = re.search(r"\s((?:S\d+\s*)?Ep\s*\d+\??)$", title, re.I)  # "Old Country Bumpkin ... Ep 5"
+    if m and not out["progress"]:
+        out["progress"], title = m.group(1), title[:m.start()]
+    out["title"] = " ".join(title.split()).strip(" -:,")
+    out["note"] = "; ".join(out.pop("notes"))
+    return out
+
+
+_HEADINGS = [
+    (r"^key\b", {"section": "key"}),
+    (r"^waiting for new", {"section": "waiting"}),
+    (r"^current\b", {"section": "current"}),
+    (r"^in queue\b", {"section": "queue"}),
+    (r"^overall rankings\b", {"section": "ranked"}),
+    (r"^rankings\b", {"section": "done"}),
+    (r"^most beloved\b", {"section": "beloved"}),
+    (r"^games?$", {"medium": "game"}),
+    (r"^video$", {"medium": "video"}),
+    (r"^text$", {"medium": "text"}),
+    (r"^([sabcd])-tier\b", {"tier": 1}),
+    (r"^anime$", {"kind": "anime"}),
+    (r"^tv series", {"kind": "show"}),
+    (r"^movies\b", {"kind": "movie"}),
+    (r"^(family|main|other)$", {"group": 1}),
+]
+
+
+def parse_media_log(text):
+    """A log like your Google Doc ("Current", "In Queue", "Rankings",
+    "Overall Rankings", type codes like (AN)) -> list of entries."""
+    state = {"section": None, "medium": None, "tier": None, "kind": None, "group": None}
+    out, parent_indent, last = [], None, None
+    for raw in text.replace("﻿", "").splitlines():
+        if not raw.strip() or re.match(r"^\s*[_\-=]{4,}\s*$", raw) or "end list" in raw:
+            continue
+        indent = len(raw) - len(raw.lstrip())
+        m = re.match(r"^\s*(?:[*•●○■-]|\d+\.)\s+(.*)$", raw)
+        item = m is not None
+        content = (m.group(1) if m else raw).strip().lstrip("#").strip()
+        bare = re.sub(r"\s*\(.*$", "", content).strip(" :").lower()
+        head = next(((pat, upd) for pat, upd in _HEADINGS if re.match(pat, bare)), None)
+        if head and (not item or bare in ("family", "main", "other", "tv series")):
+            hm = re.match(head[0], bare)
+            for k, v in head[1].items():
+                state[k] = hm.group(1).upper() if (v == 1 and k == "tier") else (
+                    hm.group(1).title() if v == 1 else v)
+            if "section" in head[1]:
+                state.update(medium=None, tier=None, kind=None, group=None)
+            if "medium" in head[1]:
+                state.update(kind=None, group=None)
+            if "tier" in head[1]:
+                state["kind"] = None
+            parent_indent = indent if "group" in head[1] else None
+            last = None
+            continue
+        sec = state["section"]
+        if sec in (None, "key") or (not item and sec != "beloved"):
+            continue  # descriptions like "Highest quality shows - worth prioritizing"
+        if last is not None and item and indent > (last["_indent"]):
+            last["note"] = "; ".join(x for x in (last["note"], content.strip()) if x)  # a nested detail
+            continue
+        e = parse_media_line(content)
+        if not e["title"]:
+            continue
+        e["kind"] = e["kind"] or state["kind"] or {"game": "game"}.get(state["medium"]) or (
+            ("anime" if "MAL" in e["scores"] else "show") if e["eps"] else None)
+        e.update(status={"waiting": "waiting", "current": "current", "queue": "queue", "done": "done",
+                         "ranked": "done", "beloved": "done"}[sec], tier=state["tier"] if sec == "queue" else None,
+                 group=state["group"] if sec == "current" else None, rank=None, beloved=sec == "beloved",
+                 _indent=indent)
+        if e["paused"] and e["status"] == "done":
+            e["status"] = "paused"
+        if sec == "ranked":
+            e["rank"] = sum(1 for x in out if x.get("rank")) + 1
+        out.append(e)
+        last = e
+    for e in out:
+        e.pop("_indent", None)
+        e.pop("paused", None)
+    return out
+
+
+def library():
+    return _meta_json("lenz:lib", [])
+
+
+def _save_library(lib):
+    store().set_meta("lenz:lib", json.dumps(lib))
+
+
+_STATUS_RANK = {"current": 5, "waiting": 4, "paused": 3, "queue": 2, "done": 1, "dropped": 0}
+
+
+def merge_into_library(entries, source="import"):
+    """Add or update entries by title. Your ratings and finish dates are
+    never overwritten; a title in several sections keeps its liveliest
+    status (watching beats waiting beats up next beats finished)."""
+    with _LIB_LOCK:
+        lib = library()
+        by_key = {_norm_title(x["title"]): x for x in lib}
+        added = updated = 0
+        for e in entries:
+            key = _norm_title(e["title"])
+            if not key:
+                continue
+            cur = by_key.get(key)
+            if not cur:
+                cur = {"id": max([x["id"] for x in lib] + [0]) + 1, "title": e["title"], "kind": e.get("kind"),
+                       "status": e.get("status", "queue"), "progress": "", "with": "", "note": "", "times": 0,
+                       "rank": None, "tier": None, "group": None, "rating": None, "beloved": False, "scores": {},
+                       "eps": None, "hours": None, "price": "", "added": time.time(), "updated": time.time(),
+                       "done_at": None, "source": source}
+                lib.append(cur)
+                by_key[key] = cur
+                added += 1
+            else:
+                updated += 1
+                # What you set here (finished, started...) beats an older log.
+                if not cur.get("pinned") and _STATUS_RANK.get(e.get("status"), 0) > _STATUS_RANK.get(cur["status"], 0):
+                    cur["status"] = e["status"]
+            for k in ("kind", "progress", "with", "note", "tier", "group", "price", "eps", "hours"):
+                if e.get(k) and not cur.get(k):
+                    cur[k] = e[k]
+            for k in ("progress", "with", "note", "group") if e.get("status") == "current" and not cur.get("pinned") else ():
+                if e.get(k):
+                    cur[k] = e[k]
+            cur["times"] = max(cur.get("times") or 0, e.get("times") or 0)
+            cur["scores"] = {**(cur.get("scores") or {}), **(e.get("scores") or {})}
+            if e.get("rank"):
+                cur["rank"] = e["rank"]
+            if e.get("beloved"):
+                cur["beloved"] = True
+            if e.get("rating") and not cur.get("rating"):
+                cur["rating"] = e["rating"]
+            for k in ("mal_id", "image", "genres"):
+                if e.get(k) and not cur.get(k):
+                    cur[k] = e[k]
+        _save_library(lib)
+    return {"added": added, "updated": updated, "total": len(lib)}
+
+
+def update_library_item(iid, action, value=None):
+    """watched (value: rating or None), start, next (+1 episode/chapter),
+    rate, status, delete. Returns the item (or None) and a note for chat."""
+    with _LIB_LOCK:
+        lib = library()
+        it = next((x for x in lib if x["id"] == iid), None)
+        if not it:
+            return None
+        it["updated"] = time.time()
+        if action in ("watched", "start", "status", "next"):
+            it["pinned"] = True  # set here, so a re-imported log won't undo it
+        if action == "delete":
+            lib.remove(it)
+        elif action == "watched":
+            it.update(status="done", done_at=time.time(), times=(it.get("times") or 0) + (1 if it["status"] == "done" else 0))
+            if value is not None:
+                it["rating"] = max(1, min(10, int(value)))
+        elif action == "rate":
+            it["rating"] = max(1, min(10, int(value)))
+        elif action == "start":
+            it["status"] = "current"
+        elif action == "status" and value in STATUSES:
+            it["status"] = value
+        elif action == "next":
+            m = re.search(r"(\d+)(?!.*\d)", it.get("progress") or "")
+            unit = "Ch" if it.get("kind") in ("manhwa", "manga", "comic", "web novel", "book") else "Ep"
+            if m:
+                it["progress"] = it["progress"][:m.start()] + str(int(m.group(1)) + 1) + it["progress"][m.end():]
+            else:
+                it["progress"] = f"{unit} 1"
+        _save_library(lib)
+    return it
+
+
+def add_library_item(title, kind=None, status="queue"):
+    r = merge_into_library([{"title": title.strip()[:160], "kind": kind if kind in KIND_LABELS else None,
+                             "status": status if status in STATUSES else "queue"}], source="added")
+    return next((x for x in library() if _norm_title(x["title"]) == _norm_title(title)), None), r
+
+
+def taste_profile(lib=None, since=None):
+    """What your log says about your taste: counts and average rating per
+    kind, top-rated, and (with `since`) what you finished after it."""
+    lib = library() if lib is None else lib
+    done = [x for x in lib if x["status"] == "done"]
+    kinds = {}
+    for x in done:
+        k = kinds.setdefault(x.get("kind") or "other", {"n": 0, "rated": []})
+        k["n"] += 1
+        if x.get("rating"):
+            k["rated"].append(x["rating"])
+    genres = {}
+    for x in done:
+        for g in x.get("genres") or []:
+            genres[g] = genres.get(g, 0) + (x.get("rating") or 6)
+    recent = [x for x in done if since and (x.get("done_at") or 0) >= since]
+    return {"finished": len(done), "rated": sum(1 for x in done if x.get("rating")),
+            "kinds": {k: {"n": v["n"], "avg": round(sum(v["rated"]) / len(v["rated"]), 1) if v["rated"] else None}
+                      for k, v in sorted(kinds.items(), key=lambda kv: -kv[1]["n"])},
+            "genres": [g for g, _ in sorted(genres.items(), key=lambda kv: -kv[1])[:6]],
+            "top": [x["title"] for x in sorted(done, key=lambda x: (-(x.get("rating") or 0), x.get("rank") or 999))[:5]],
+            "recent": [{"title": x["title"], "rating": x.get("rating"), "kind": x.get("kind")} for x in recent]}
+
+
+def sync_library_doc():
+    """Re-import LENZ_DOC_URL (a Google Doc shared "anyone with the link")."""
+    if not LENZ_DOC_URL:
+        return None
+    m = re.search(r"/document/d/([\w-]+)", LENZ_DOC_URL)
+    url = f"https://docs.google.com/document/d/{m.group(1)}/export?format=txt" if m else LENZ_DOC_URL
+    try:
+        text = _fetch_url(url, timeout=10).decode("utf-8", "replace")
+    except Exception as e:
+        raise LLMError(f"couldn't read LENZ_DOC_URL ({str(e)[:80]}); is the doc shared 'anyone with the link'?")
+    if "<html" in text[:500].lower():
+        raise LLMError("LENZ_DOC_URL gave a web page, not the doc's text; share it 'anyone with the link'")
+    return merge_into_library(parse_media_log(text), source="doc")
+
+
+MAL_CLIENT_ID = os.environ.get("MAL_CLIENT_ID", "")
+MAL_USERNAME = os.environ.get("MAL_USERNAME", "")
+LENZ_NEWS_FEEDS = [u.strip() for u in os.environ.get(
+    "LENZ_NEWS_FEEDS",
+    "https://myanimelist.net/rss/news.xml,https://feeds.feedburner.com/ign/games-all,"
+    "https://www.gamespot.com/feeds/game-news,https://www.polygon.com/rss/index.xml").split(",") if u.strip()]
+_MAL_STATUS = {"watching": "current", "reading": "current", "completed": "done", "on_hold": "paused",
+               "dropped": "dropped", "plan_to_watch": "queue", "plan_to_read": "queue"}
+
+
+def lenz_context():
+    """The user's library, for Lenz's prompt: what they're on, waiting for,
+    their favorites and ratings, so his picks fit their taste."""
+    lib = library()
+    if not lib:
+        return ""
+    by = lambda st: [x for x in lib if x["status"] == st]
+    fmt = lambda x: x["title"] + (f" ({KIND_LABELS.get(x.get('kind'), '')}, {x['progress']})" if x.get("progress") else
+                                  f" ({KIND_LABELS.get(x.get('kind'), '')})" if x.get("kind") else "")
+    ranked = sorted((x for x in lib if x.get("rank")), key=lambda x: x["rank"])[:15]
+    rated = sorted((x for x in lib if x.get("rating")), key=lambda x: -x["rating"])[:10]
+    prof = taste_profile(lib)
+    parts = ["\n\nThe user's library (exact; it's theirs, so use it to fit picks to their taste):",
+             "Watching/playing/reading now: " + "; ".join(fmt(x) for x in by("current")[:20]),
+             "Waiting on new seasons: " + "; ".join(x["title"] for x in by("waiting")[:15]),
+             "Their all-time favorites, in order: " + "; ".join(x["title"] for x in ranked)]
+    if rated:
+        parts.append("Their ratings: " + "; ".join(f"{x['title']} {x['rating']}/10" for x in rated))
+    if prof["genres"]:
+        parts.append("Genres they rate highest: " + ", ".join(prof["genres"]))
+    parts.append(f"Up next: {len(by('queue'))} titles. Finished: {prof['finished']}, {prof['rated']} rated.")
+    return "\n".join(p for p in parts if not p.endswith(": "))
+
+
+def mal_entries():
+    """Your MyAnimeList anime and manga lists (public lists, read with
+    MAL_CLIENT_ID; no password needed)."""
+    if not (MAL_CLIENT_ID and MAL_USERNAME):
+        return []
+    out = []
+    for kind, path in (("anime", "animelist"), ("manga", "mangalist")):
+        fields = "list_status,genres,mean,media_type," + ("num_episodes" if kind == "anime" else "num_chapters")
+        url = (f"https://api.myanimelist.net/v2/users/{quote(MAL_USERNAME)}/{path}?"
+               + urlencode({"fields": fields, "limit": "1000", "nsfw": "true"}))
+        req = urllib.request.Request(url, headers={"X-MAL-CLIENT-ID": MAL_CLIENT_ID, "User-Agent": WIKI_UA})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read()).get("data", [])
+        except urllib.error.HTTPError as e:
+            raise LLMError(f"MyAnimeList returned {e.code}: check MAL_CLIENT_ID, and that "
+                           f"{MAL_USERNAME}'s list is public")
+        except (urllib.error.URLError, TimeoutError, ValueError) as e:
+            raise LLMError(f"MyAnimeList unreachable: {e!r}")
+        for row in data:
+            node, ls = row.get("node", {}), row.get("list_status", {})
+            done_n = ls.get("num_episodes_watched") or ls.get("num_chapters_read") or 0
+            mt = node.get("media_type") or ""
+            out.append({"title": node.get("title", ""), "status": _MAL_STATUS.get(ls.get("status"), "queue"),
+                        "kind": "anime" if kind == "anime" else ("manhwa" if mt == "manhwa" else
+                                                                  "web novel" if mt in ("novel", "light_novel") else "manga"),
+                        "progress": (f"{'Ep' if kind == 'anime' else 'Ch'} {done_n}" if done_n else ""),
+                        "rating": ls.get("score") or None, "mal_id": node.get("id"),
+                        "image": (node.get("main_picture") or {}).get("large"),
+                        "genres": [g["name"] for g in node.get("genres", [])],
+                        "scores": {"MAL": node["mean"]} if node.get("mean") else {}})
+    return out
+
+
+_READING = ("manga", "manhwa", "web novel", "comic", "book")
+
+
+def sync_mal():
+    rows = mal_entries()
+    if not rows:
+        return None
+    # The same title on your anime and manga lists stays two entries.
+    watch_keys = {_norm_title(x["title"]) for x in library() if x.get("kind") not in _READING}
+    watch_keys |= {_norm_title(r["title"]) for r in rows if r["kind"] == "anime"}
+    for r in rows:
+        if r["kind"] in _READING and _norm_title(r["title"]) in watch_keys:
+            r["title"] += " (manga)"
+    with _LIB_LOCK:  # MAL is newer than the doc for anime: its status wins
+        lib = library()
+        by_key = {_norm_title(x["title"]): x for x in lib}
+        for r in rows:
+            cur = by_key.get(_norm_title(r["title"]))
+            if cur and r["status"] != cur["status"]:
+                cur["status"] = r["status"]
+                if r["status"] == "done" and not cur.get("done_at"):
+                    cur["done_at"] = time.time()
+            if cur and r["progress"]:
+                cur["progress"] = r["progress"]
+        _save_library(lib)
+    return merge_into_library(rows, source="mal")
+
+
+def _jikan(kind, title):
+    """Anime or manga facts from Jikan (a free MyAnimeList mirror)."""
+    url = f"https://api.jikan.moe/v4/{kind}?" + urlencode({"q": title, "limit": "1", "sfw": "true"})
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": WIKI_UA}), timeout=8) as resp:
+            hit = (json.loads(resp.read()).get("data") or [None])[0]
+    except (urllib.error.URLError, TimeoutError, ValueError):
+        return None
+    if not hit:
+        return {}
+    return {"mal_id": hit.get("mal_id"), "image": ((hit.get("images") or {}).get("jpg") or {}).get("large_image_url"),
+            "genres": [g["name"] for g in (hit.get("genres") or []) + (hit.get("themes") or [])][:6],
+            "mal_score": hit.get("score")}
+
+
+def _tmdb_search(title):
+    if not TMDB_API_KEY:
+        return None
+    bearer = TMDB_API_KEY.startswith("eyJ")
+    url = TMDB_BASE + "/search/multi?" + urlencode({"query": title, **({} if bearer else {"api_key": TMDB_API_KEY})})
+    headers = {"User-Agent": WIKI_UA, "Accept": "application/json"}
+    if bearer:
+        headers["Authorization"] = f"Bearer {TMDB_API_KEY}"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=8) as resp:
+            hit = next((r for r in json.loads(resp.read()).get("results", []) if r.get("poster_path")), None)
+    except (urllib.error.URLError, TimeoutError, ValueError):
+        return None
+    return {"image": f"https://image.tmdb.org/t/p/w500{hit['poster_path']}"} if hit else {}
+
+
+def enrich_library(limit=6, deadline=None):
+    """Posters and genres for a few titles that have none (current first)."""
+    order = {"current": 0, "waiting": 1, "queue": 2, "paused": 3, "done": 4, "dropped": 5}
+    todo = sorted((x for x in library() if not x.get("looked_up")), key=lambda x: (order.get(x["status"], 9), x.get("rank") or 999))
+    found = {}
+    for it in todo[:limit]:
+        if deadline and time.time() > deadline:
+            break
+        kind = it.get("kind")
+        if kind in ("anime",):
+            facts = _jikan("anime", it["title"])
+        elif kind in ("manga", "manhwa", "web novel", "comic"):
+            facts = _jikan("manga", it["title"])
+        elif kind in ("movie", "show"):
+            facts = _tmdb_search(it["title"])
+        else:
+            facts = None
+        if facts is None and kind not in ("movie", "show", "anime", "manga", "manhwa", "web novel"):
+            answered, img = wiki_image(it["title"] + (" video game" if kind == "game" else ""))
+            facts = {"image": img} if answered else None
+        if facts is not None:
+            found[it["id"]] = facts
+        time.sleep(0.4)  # Jikan allows about 3 a second
+    if found:
+        with _LIB_LOCK:
+            lib = library()
+            for x in lib:
+                if x["id"] in found:
+                    f = found[x["id"]]
+                    x["looked_up"] = True
+                    for k in ("image", "genres", "mal_id"):
+                        if f.get(k) and not x.get(k):
+                            x[k] = f[k]
+                    if f.get("mal_score"):
+                        x.setdefault("scores", {})["MAL"] = f["mal_score"]
+            _save_library(lib)
+    return len(found)
+
+
+def _follow_keys(it):
+    """Ways a headline might name this title: whole, or before a colon."""
+    base = re.sub(r"\s+(?:S\d+|Season \d+|\d+(?:-\d+)?|Series|Trilogy|Movies)$", "", it["title"], flags=re.I)
+    keys = {_norm_title(base), _norm_title(re.split(r"[:(]| - ", base)[0])}
+    return {k for k in keys if len(k) >= 5}
+
+
+def followed_news(limit=12):
+    """Anime, manga and game news that names something you follow
+    (what you're on, waiting for, have paused, games up next, favorites)."""
+    follows = [x for x in library() if x["status"] in ("current", "waiting", "paused")
+               or (x["status"] == "queue" and x.get("kind") == "game") or x.get("beloved")]
+    keyed = [(k, x) for x in follows for k in _follow_keys(x)]
+    out, seen = [], set()
+    for it in outlet_items(LENZ_NEWS_FEEDS):
+        t = _norm_title(it["title"])
+        hit = next((x for k, x in keyed if k in t), None)
+        if hit and it["url"] not in seen:
+            seen.add(it["url"])
+            out.append(dict(it, about=hit["title"], waiting=hit["status"] == "waiting"))
+    out.sort(key=lambda i: -(i.get("published") or 0))
+    return out[:limit]
+
+
+def lenz_week_report(today):
+    """Sunday's taste report: what you finished, how you rated it, and how
+    your taste file moved since last week. Facts only; no model call."""
+    st = store()
+    since = time.time() - 7 * 86400
+    prof = taste_profile(since=since)
+    last = json.loads(st.get_meta("lenz:taste:last") or "null")
+    lines = [f"Your week in media (to {today:%b} {today.day}):"]
+    if prof["recent"]:
+        lines.append("Finished: " + ", ".join(f"{r['title']}" + (f" ({r['rating']}/10)" if r["rating"] else " (unrated)")
+                                                for r in prof["recent"]) + ".")
+    else:
+        lines.append("Nothing marked finished this week. Tap \"Watched it\" on my page when you finish something.")
+    for k, v in list(prof["kinds"].items())[:4]:
+        was = (last or {}).get("kinds", {}).get(k, {})
+        if v["avg"] is not None and was.get("avg") is not None and abs(v["avg"] - was["avg"]) >= 0.2:
+            lines.append(f"{KIND_LABELS.get(k, k.title())} average {'up' if v['avg'] > was['avg'] else 'down'} "
+                         f"to {v['avg']} (was {was['avg']}).")
+    if prof["genres"] and last and prof["genres"][:3] != last.get("genres", [])[:3]:
+        lines.append("Your top genres now: " + ", ".join(prof["genres"][:3]) + ".")
+    unrated = prof["finished"] - prof["rated"]
+    if unrated:
+        lines.append(f"{unrated} finished title{'s' if unrated != 1 else ''} still unrated; every rating sharpens your taste file.")
+    st.set_meta("lenz:taste:last", json.dumps(prof))
+    return "\n".join(lines)
+
+
+_WATCHED_RE = re.compile(r"\b(?:i )?(?:just )?(?:watched|finished|beat|read|completed)\s+(.+?)"
+                         r"(?:[\s,:-]+(\d{1,2})\s*(?:/\s*10|out of 10)?)?\s*[.!]?$", re.I)
+
+
+def lenz_quick_reply(text):
+    """'@lenz I finished Frieren, 9/10' logs it, no model call."""
+    m = _WATCHED_RE.search(re.sub(r"@\w+", "", text).strip())
+    if not m:
+        return None
+    title, rating = m.group(1).strip(" ,.!"), m.group(2)
+    rating = int(rating) if rating and 1 <= int(rating) <= 10 else None
+    key = _norm_title(title)
+    it = next((x for x in library() if _norm_title(x["title"]) == key), None) or next(
+        (x for x in library() if key and key in _norm_title(x["title"])), None)
+    if not it:
+        it, _ = add_library_item(title, status="done")
+    it = update_library_item(it["id"], "watched", rating)
+    return lenz_logged_line(it)
+
+
+def lenz_logged_line(it):
+    """Lenz's note when you finish something: the facts, and a nudge to rate."""
+    if not it.get("rating"):
+        return (f"Logged {it['title']} as finished. What would you give it out of 10? "
+                "Rating it teaches your taste file what you love.")
+    same = [x for x in library() if x["status"] == "done" and x.get("rating") and x.get("kind") == it.get("kind")]
+    better = sum(1 for x in same if x["rating"] < it["rating"])
+    plural = {"game": "games", "show": "shows", "movie": "movies", "web novel": "web novels", "book": "books",
+              "comic": "comics", "musical": "musicals"}.get(it.get("kind"), it.get("kind") or "titles")
+    rank = (f" That's above {better} of the {len(same) - 1} other {plural} you've rated." if len(same) > 1 else "")
+    return f"Logged {it['title']}: {it['rating']}/10.{rank}"
+
+
+# ---- Reading articles: the news bots (and Lenz) read the story itself,
+# write a short neutral brief with a few exact quotes and a line on the
+# article's framing, and credit everyone who wrote it. Only the brief,
+# short quotes and the link are kept; the article text is used once and
+# dropped (republishing whole articles would be copying the outlets' work).
+# Sites that refuse automated readers are respected, not dodged.
+ARTICLE_UA = "Theta-dashboard/1.0 (personal news reader; https://github.com/creatorcee-prog/dashboard-app)"
+ARTICLE_TYPES = {"newsarticle", "article", "reportagenewsarticle", "analysisnewsarticle", "blogposting",
+                 "opinionnewsarticle", "backgroundnewsarticle", "liveblogposting", "webpage"}
+_ARTICLE_CACHE = {}  # url -> (fetched_at, article); per process
+BRIEF_KEEP = 60  # briefs remembered (by story URL)
+_BRIEF_LOCK = threading.Lock()
+
+
+def _ld_objects(page):
+    out = []
+    for block in re.findall(r"<script[^>]+application/ld\+json[^>]*>(.*?)</script>", page, re.S | re.I):
+        try:
+            data = json.loads(html.unescape(block.strip()))
+        except ValueError:
+            continue
+        stack = data if isinstance(data, list) else [data]
+        while stack:
+            o = stack.pop(0)
+            if isinstance(o, dict):
+                stack += o.get("@graph", []) if isinstance(o.get("@graph"), list) else []
+                out.append(o)
+            elif isinstance(o, list):
+                stack += o
+    return out
+
+
+def _author_names(v):
+    """Author names from JSON-LD's author field (a dict, a list or text)."""
+    if isinstance(v, list):
+        return [n for x in v for n in _author_names(x)]
+    if isinstance(v, dict):
+        return _author_names(v.get("name"))
+    if isinstance(v, str) and v.strip() and not v.startswith("http"):
+        return [n.strip() for n in re.split(r",| and ", re.sub(r"^by\s+", "", v.strip(), flags=re.I)) if n.strip()]
+    return []
+
+
+def _meta(page, *names):
+    vals = []
+    for n in names:
+        for m in re.finditer(r"<meta\b[^>]*>", page, re.I):
+            tag = m.group(0)
+            if re.search(r"(?:name|property)=[\"']" + re.escape(n) + r"[\"']", tag, re.I):
+                c = re.search(r"content=[\"']([^\"']*)", tag, re.I)
+                if c and c.group(1).strip():
+                    vals.append(html.unescape(c.group(1).strip()))
+    return vals
+
+
+def read_article(url):
+    """{title, authors, publisher, text, blocked}: the article's text and
+    byline from its page (structured data first, then meta tags, then
+    paragraphs). blocked: the site refused us or had no readable text."""
+    hit = _ARTICLE_CACHE.get(url)
+    if hit and time.time() - hit[0] < 3600:
+        return hit[1]
+    art = {"title": "", "authors": [], "publisher": "", "text": "", "blocked": ""}
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": ARTICLE_UA, "Accept": "text/html"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            page = resp.read(1_500_000).decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        art["blocked"] = (f"the site doesn't allow automated reading ({e.code})" if e.code in (401, 403, 429, 451)
+                          else f"the site returned {e.code}")
+        _ARTICLE_CACHE[url] = (time.time(), art)
+        return art
+    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+        art["blocked"] = "the site didn't answer"
+        return art
+    for o in _ld_objects(page):
+        types = o.get("@type") or []
+        types = {t.lower() for t in (types if isinstance(types, list) else [types]) if isinstance(t, str)}
+        if not types & ARTICLE_TYPES:
+            continue
+        art["title"] = art["title"] or str(o.get("headline") or "")
+        art["authors"] = art["authors"] or _author_names(o.get("author"))
+        pub = o.get("publisher")
+        art["publisher"] = art["publisher"] or (pub.get("name", "") if isinstance(pub, dict) else "")
+        if isinstance(o.get("articleBody"), str) and len(o["articleBody"]) > len(art["text"]):
+            art["text"] = o["articleBody"]
+    if not art["authors"]:
+        for v in _meta(page, "author", "byl", "parsely-author", "sailthru.author", "article:author"):
+            if v.startswith("http"):  # profile links: "/profile/jane-doe" -> Jane Doe
+                art["authors"] += [p.rstrip("/").rsplit("/", 1)[-1].replace("-", " ").title()
+                                   for p in v.split(",") if "/" in p]
+            else:
+                art["authors"] += _author_names(v)
+    art["authors"] = list(dict.fromkeys(a for a in art["authors"] if 1 < len(a) < 60))[:6]
+    art["publisher"] = art["publisher"] or (_meta(page, "og:site_name") or [""])[0]
+    if len(art["text"]) < 400:
+        page = re.sub(r"<(script|style|noscript|template)\b.*?</\1\s*>", " ", page, flags=re.S | re.I)
+        body = re.search(r"<article\b.*?</article>", page, re.S | re.I)
+        paras = re.findall(r"<p\b[^>]*>(.*?)</p>", body.group(0) if body else page, re.S | re.I)
+        paras = [_plain(p, 2000) for p in paras]
+        art["text"] = "\n".join(p for p in paras if len(p) > 60 and not re.search(
+            r"(?i)subscribe|sign up|newsletter|cookies|all rights reserved|advertis", p))
+    art["text"] = _plain(art["text"], 6000) if "<" in art["text"] else art["text"][:6000]
+    if len(art["text"]) < 300:
+        art["blocked"] = art["blocked"] or "there was no readable article text (likely a paywall)"
+    _ARTICLE_CACHE[url] = (time.time(), art)
+    return art
+
+
+def credit_line(art, outlet):
+    names = art.get("authors") or []
+    who = (", ".join(names[:-1]) + " and " + names[-1]) if len(names) > 1 else (names[0] if names else "")
+    return f"By {who}, {outlet}" if who else f"{outlet} (no byline given)"
+
+
+_QUOTE_RE = re.compile(r"[\"“]([^\"”]{12,300})[\"”]")
+
+
+def _squash(text):
+    t = text.replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"').replace("—", "-").replace("–", "-")
+    return " ".join(re.sub(r"[^\w' -]", " ", t.lower()).split())
+
+
+def keep_true_quotes(text, source):
+    """Drop any sentence that quotes words the article doesn't contain
+    (models sometimes invent quotes). Returns (text, how many dropped)."""
+    src = _squash(source)
+    sentences = re.split(r"(?<=[.!?][\"”])\s+|(?<=[.!?])\s+(?=[A-Z\"“])", text.strip())
+    kept, dropped = [], 0
+    for sent in sentences:
+        quotes = _QUOTE_RE.findall(sent)
+        if quotes and not all(_squash(q) in src for q in quotes):
+            dropped += 1
+            continue
+        kept.append(sent)
+    return " ".join(kept), dropped
+
+
+def story_brief(title, url, outlet, fallback=""):
+    """A neutral brief of one story: {summary, bias, credit, read} where
+    read says whether the article itself was read. One miner-model call,
+    remembered by URL. Quotes are checked against the article's text."""
+    have = _meta_json("briefs", {}).get(url)
+    if have:
+        return have
+    art = read_article(url)
+    source = art["text"] if not art["blocked"] else (fallback or "")
+    credit = credit_line(art, outlet)
+    if not source.strip():
+        brief = {"summary": "", "bias": "", "credit": credit, "read": False,
+                 "note": f"Couldn't read it: {art['blocked'] or 'no text'}."}
+        return brief
+    reply = llm_chat("miner", [
+        {"role": "system", "content": "You brief news stories for a busy reader: neutral, exact, short."},
+        {"role": "user", "content": f"Story: {title} ({outlet})\n"
+         + ("Article text" if not art["blocked"] else "Only the outlet's own summary (the article couldn't be read)")
+         + f":\n{source[:4000]}\n\nWrite exactly two lines.\n"
+         "SUMMARY: 2-3 neutral sentences on what happened, using only this text. Where the exact words matter, "
+         "quote them word for word in quotation marks (at most 2 short quotes). Never put anything in quotes "
+         "that isn't in the text.\n"
+         "BIAS: one sentence on how this piece frames the story: loaded words, whose voices lead, context left "
+         "out. If it reads as straight reporting, say that. Be fair."}], max_tokens=700)
+    summary = re.search(r"SUMMARY:\s*(.+?)(?=\n\s*BIAS:|$)", reply, re.S | re.I)
+    bias = re.search(r"BIAS:\s*(.+)", reply, re.S | re.I)
+    text, dropped = keep_true_quotes((summary.group(1) if summary else reply).strip(), source)
+    brief = {"summary": text, "bias": (bias.group(1).strip().split("\n")[0] if bias else ""), "credit": credit,
+             "read": not art["blocked"], "dropped_quotes": dropped,
+             "note": "" if not art["blocked"] else f"From the outlet's summary; {art['blocked']}."}
+    with _BRIEF_LOCK:
+        briefs = _meta_json("briefs", {})
+        briefs[url] = brief
+        store().set_meta("briefs", json.dumps(dict(list(briefs.items())[-BRIEF_KEEP:])))
+    return brief
+
+
+def brief_text(b):
+    parts = [b["summary"]] if b.get("summary") else []
+    if b.get("bias"):
+        parts.append(f"Framing: {b['bias']}")
+    parts.append(b["credit"] + (f". {b['note']}" if b.get("note") else ""))
+    return "\n".join(parts)
 
 
 # ---- Agent windows: each agent's latest output as a small card with a
@@ -2690,12 +3789,21 @@ def _bars_svg(c1, c2, rows):
 
 
 def _win(agent, raw, sub="", image=None, href=None, at=None, tag=None, source=None, external=False, title=None,
-         fit=False):
+         fit=False, text="", links=None, coverage=None):
     """One window. raw: the full title (condensed later); title: already short;
-    fit: show the whole picture (charts) instead of filling the frame."""
+    fit: show the whole picture (charts) instead of filling the frame; text,
+    links and coverage fill the sheet that opens when it's tapped."""
+    url = href if external else None
     return {"agent": agent, "raw": raw, "title": title, "sub": sub, "image": image,
             "href": href or f"/agent/{agent}", "at": at, "tag": tag, "source": source,
-            "external": external, "fit": fit}
+            "external": external, "fit": fit, "text": text,
+            "links": links if links is not None else ([[source or "Open", url]] if url else []),
+            "coverage": coverage, "site": urlparse(url).netloc if url else ""}
+
+
+def story_coverage(title):
+    """Which of Red's, Gray's and Blue's outlets carried this story."""
+    return {a: sorted({it["source"] for it in side_coverage(a, title, limit=20)}) for a in ("red", "gray", "blue")}
 
 
 def _latest_post(chat, agent, with_image=False):
@@ -2722,20 +3830,26 @@ def agent_windows(chat=None, cards=None):
     for a in ("red", "blue", "gray"):
         c = cards.get(a)
         if c:
+            urls = re.findall(r"https?://\S+", c["text"])
+            links = [[c.get("source") or "Story", c["url"]]] if c.get("url") else []
+            links += [[urlparse(u).netloc.removeprefix("www."), u] for u in urls if u != c.get("url")]
             out[a] = _win(a, c["title"], _first_line(c["text"]), c.get("image"), c.get("url"), c["at"],
-                          source=c.get("source"), external=bool(c.get("url")))
+                          source=c.get("source"), external=bool(c.get("url")),
+                          text=re.sub(r"\s*https?://\S+", "", c["text"]).strip(), links=links,
+                          coverage=story_coverage(c["title"]))
         else:
             heads = side_headlines(a, 1)
             if heads:
                 h = heads[0]
                 out[a] = _win(a, h["title"], f"Top story at {h['source']}", h.get("image"), h["url"],
-                              h.get("published"), source=h["source"], external=True)
+                              h.get("published"), source=h["source"], external=True, text=h.get("summary", ""),
+                              coverage=story_coverage(h["title"]))
             else:
                 out[a] = _win(a, "", "Their outlets have nothing new", title="No headlines yet")
     c = cards.get("lenz")
     if c:
         out["lenz"] = _win("lenz", c["title"], _first_line(c["text"]), c.get("image"), c.get("url"), c["at"],
-                           external=bool(c.get("url")))
+                           external=bool(c.get("url")), text=re.sub(r"\s*https?://\S+", "", c["text"]).strip())
     else:
         try:
             pick = (tmdb_trending() or [None])[0]
@@ -2744,12 +3858,13 @@ def agent_windows(chat=None, cards=None):
         if pick:
             out["lenz"] = _win("lenz", pick["title"], f"Trending {pick['kind'].lower()}"
                                + (f" · {pick['rating']}/10" if pick["rating"] else ""), pick.get("image"),
-                               pick["url"], external=True)
+                               pick["url"], external=True, text=pick.get("overview", ""), source="TMDB")
         else:
             feed = widget_items(ENTERTAINMENT_FEEDS)
             pick = next((w for w in feed if w.get("kind") == "song"), None) or next(iter(feed), None)
             out["lenz"] = (_win("lenz", pick["title"], "Most played right now" if pick.get("kind") == "song"
-                                else f"New at {pick['source']}", pick.get("image"), pick["url"], external=True)
+                                else f"New at {pick['source']}", pick.get("image"), pick["url"], external=True,
+                                text=pick.get("summary", ""), source=pick["source"])
                            if pick else _win("lenz", "", "Nothing trending yet", title="Nothing to pitch yet"))
     look = AGENT_LOOKS
     month = datetime.now(hub_tz()).strftime("%Y-%m")
@@ -2767,7 +3882,9 @@ def agent_windows(chat=None, cards=None):
              "Set GLASS_BUDGETS or import a Rocket Money export")
     g_img = (_bars_svg(look["glass"][0], look["glass"][1], [(k, f) for f, k in hot]) if hot else
              _tile_svg(look["glass"][0], look["glass"][1], f"${spent:,.0f}", "this month", f"{datetime.now(hub_tz()):%B}"))
-    out["glass"] = _win("glass", "", g_sub, g_img, "/money", title=g_title)
+    out["glass"] = _win("glass", "", g_sub, g_img, "/money", title=g_title,
+                        text="\n".join(status_lines(month)) or "Nothing logged this month.",
+                        links=[["Open Money", "/money"]])
     today = datetime.now(hub_tz()).date()
     if calendar_linked():
         try:
@@ -2785,7 +3902,8 @@ def agent_windows(chat=None, cards=None):
             out["remi"] = _win("remi", o["title"], f"{when}{'' if o['all_day'] else ' · ' + _clock(o['start'])}"
                                f" · {len(todays)} on today", _tile_svg(look["remi"][0], look["remi"][1],
                                str(d.day), when if when in ("Today", "Tomorrow") else f"{d:%A}", f"{d:%B}"),
-                               "/calendar")
+                               "/calendar", text="\n".join(occurrence_text(x, with_day=True) for x in upcoming[:8]),
+                               links=[["Open the calendar", "/calendar"]])
         else:
             out["remi"] = _win("remi", "", "Nothing in the next two weeks", _tile_svg(
                 look["remi"][0], look["remi"][1], str(today.day), f"{today:%A}", f"{today:%B}"),
@@ -2796,7 +3914,8 @@ def agent_windows(chat=None, cards=None):
             "/calendar", title="No calendar linked")
     chart = _latest_post(chat, "charter", with_image=True)
     if chart:
-        out["charter"] = _win("charter", chart["text"], "Latest chart", chart["image"], at=_at(chart["at"]), fit=True)
+        out["charter"] = _win("charter", chart["text"], "Latest chart", chart["image"], at=_at(chart["at"]), fit=True,
+                              text=chart["text"], links=[["Open the chart", chart["image"]]])
     elif spent:
         caption, svg = _chart_spending(month)
         out["charter"] = _win("charter", caption, "Ask me for any chart",
@@ -2809,9 +3928,9 @@ def agent_windows(chat=None, cards=None):
         post = _latest_post(chat, a)
         if c:
             out[a] = _win(a, c["title"], _first_line(c["text"]), c.get("image"), c.get("url"), c["at"],
-                          external=bool(c.get("url")))
+                          external=bool(c.get("url")), text=c["text"], source=c.get("source"))
         elif post:
-            out[a] = _win(a, _first_line(post["text"], 300), "", at=_at(post["at"]))
+            out[a] = _win(a, _first_line(post["text"], 300), "", at=_at(post["at"]), text=post["text"])
         else:
             out[a] = _win(a, "", idle, title="Nothing yet")
     j = james_summary()
@@ -2824,10 +3943,16 @@ def agent_windows(chat=None, cards=None):
     elif j and j.get("summary"):
         lines = [ln.strip("-• ") for ln in j["summary"].splitlines() if ln.strip()]
         out["james"] = _win("james", next((ln for ln in lines if any(ch.isdigit() for ch in ln)), lines[0]),
-                            "From Garage Gym", james_img)
+                            "From Garage Gym", james_img, text=j["summary"],
+                            links=[["Open Garage Gym", FITNESS_APP_URL]] if FITNESS_APP_URL else [])
     else:
         out["james"] = _win("james", "", "Link Garage Gym to see your training" if not GARAGE_GYM_SECRET
                             else "Garage Gym hasn't answered yet", james_img, title="Training")
+    if "lenz" in out:  # Lenz's window opens his library
+        now_on = [x for x in library() if x["status"] == "current"]
+        out["lenz"].update(href="/lenz", external=False, nosheet=True,
+                           sub=(f"On the go: {now_on[0]['title']}" + (f" (+{len(now_on) - 1} more)" if len(now_on) > 1 else ""))
+                           if now_on else out["lenz"]["sub"])
     return [out[a] for a in AGENTS if a in out]
 
 
@@ -2848,8 +3973,11 @@ def _pushed_windows(event_type):
 
 def news_windows():
     breaking, top = news_items()
-    return [_win("", it["title"], it["source"], it.get("image"), it["url"], it.get("published"),
-                 tag="Breaking" if it in breaking else None, source=it["source"], external=True)
+    briefs = _meta_json("briefs", {})  # stories the bots have read
+    return [_win("", it["title"], "", it.get("image"), it["url"], it.get("published"),
+                 tag="Breaking" if it in breaking else None, source=it["source"], external=True,
+                 text=brief_text(briefs[it["url"]]) if it["url"] in briefs else it.get("summary", ""),
+                 coverage=story_coverage(it["title"]))
             for it in breaking + top] + _pushed_windows("news")
 
 
@@ -2858,14 +3986,15 @@ def trending_windows():
     try:
         for it in tmdb_trending()[:6]:
             out.append(_win("lenz", it["title"], it["kind"] + (f" · {it['rating']}/10" if it["rating"] else ""),
-                            it.get("image"), it["url"], external=True))
+                            it.get("image"), it["url"], external=True, text=it.get("overview", ""), source="TMDB"))
     except LLMError:
         pass
     for it in widget_items(ENTERTAINMENT_FEEDS):
         if len(out) >= 12:
             break
         out.append(_win("lenz", it["title"], "Most played song" if it.get("kind") == "song" else it["source"],
-                        it.get("image"), it["url"], external=True))
+                        it.get("image"), it["url"], external=True, text=it.get("summary", ""),
+                        source="Apple Music" if it.get("kind") == "song" else it["source"]))
     return out
 
 
@@ -3000,6 +4129,32 @@ def _cmd_agenda(arg):
     return "Remi posted the agenda."
 
 
+def _cmd_remind(arg):
+    if not arg:
+        raise CommandError("Try /remind 8am every day take my meds until done")
+    try:
+        r = add_reminder(arg)
+    except ValueError as e:
+        raise CommandError(str(e))
+    store().add_chat("remi", f"I'll remind you: {reminder_line(r)}.", channel="family")
+    return f"Reminder set: {reminder_line(r)}"
+
+
+def _cmd_reminders(arg):
+    rs = reminders()
+    store().add_chat("remi", "Your reminders:\n" + "\n".join(f"- {reminder_line(r)}" for r in rs)
+                     if rs else "No reminders set. Try /remind 8am every day take my meds.", channel="family")
+    return f"{len(rs)} reminder{'s' if len(rs) != 1 else ''}."
+
+
+def _cmd_forget(arg):
+    r = delete_reminder(int(arg.strip().lstrip("#"))) if arg.strip().lstrip("#").isdigit() else None
+    if not r:
+        raise CommandError("Which one? /reminders shows the numbers, e.g. /forget 3")
+    post_event("remi", f"You removed the reminder: {r['what']}")
+    return f"Removed: {r['what']}"
+
+
 def _cmd_spend(arg):
     parsed = parse_expense(arg if "$" in arg else "$" + arg.strip())
     if not parsed:
@@ -3064,6 +4219,9 @@ COMMANDS = [  # shown in the "/" menu in this order
     {"name": "round", "args": "", "about": "Run every agent's job now", "run": _cmd_round},
     {"name": "digest", "args": "", "about": "Mistral posts today's digest", "run": _cmd_digest},
     {"name": "agenda", "args": "[tomorrow]", "about": "Remi posts the agenda", "run": _cmd_agenda},
+    {"name": "remind", "args": "<when> <what> [every day] [until done]", "about": "Remi reminds you on your phone", "run": _cmd_remind},
+    {"name": "reminders", "args": "", "about": "Remi lists your reminders", "run": _cmd_reminders},
+    {"name": "forget", "args": "<number>", "about": "Remove a reminder", "run": _cmd_forget},
     {"name": "spend", "args": "$42 groceries", "about": "Glass logs an expense", "run": _cmd_spend},
     {"name": "budget", "args": "", "about": "Glass posts this month's budget", "run": _cmd_budget},
     {"name": "chart", "args": "spending|daily|calendar|coverage|activity", "about": "Charter draws a chart", "run": _cmd_chart},
@@ -3097,6 +4255,18 @@ def menu_data():
 
 
 # ---- Wiring: is each agent's model actually reachable?
+def recent_fallback(tier, within=86400):
+    """The last time this tier's fallback model answered, if within a day."""
+    try:
+        fb = json.loads(store().get_meta("llm:fallback") or "null")
+    except ValueError:
+        return None
+    if not fb or fb["tier"] != ("low_brain" if tier == "master" else tier) or time.time() - fb["at"] > within:
+        return None
+    mins = int((time.time() - fb["at"]) // 60)
+    return dict(fb, ago=f"{mins // 60} h" if mins >= 60 else f"{mins} min")
+
+
 def wiring():
     """Per agent: what answers for it and whether it's wired in. Checks the
     key and that the key can use the model; costs no tokens."""
@@ -3125,6 +4295,10 @@ def wiring():
             else:
                 row.update(state="ok", note="Key set and model available"
                            + (f" ({MASTER_MODEL} not connected; standing in)" if a["tier"] == "master" else ""))
+            fb = recent_fallback(a["tier"])
+            if fb and row["state"] == "ok":
+                row["note"] += (f". Busy {fb['ago']} ago, so {fb['model']} answered instead "
+                                f"({fb['why']})")
         rows.append(row)
     if TMDB_API_KEY:
         try:
@@ -3454,6 +4628,52 @@ a.kpi:hover{text-decoration:none;border-color:color-mix(in srgb,var(--accent) 50
 .win .title{font-weight:720;font-size:15px;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .win .sub{font-size:12.5px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .swipe .win .sub{-webkit-line-clamp:1}
+.logo{width:14px;height:14px;border-radius:3px;vertical-align:-2px;margin-right:4px;flex:none}
+.who > .logo{margin-right:0}
+.cov{margin-top:auto;padding-top:6px;font-size:11px;color:var(--muted);font-weight:600}
+.covbar{display:flex;gap:2px;height:5px;border-radius:999px;overflow:hidden;margin-bottom:4px;background:var(--surface2)}
+.covbar i{display:block;min-width:4px}
+:root[data-layout="compact"] .cov span{display:none}
+:root[data-layout="compact"] .cov{padding-top:3px}
+
+/* The sheet a window opens into */
+dialog.sheet{border:0;padding:0;margin:auto auto 0;width:100%;max-width:640px;max-height:88dvh;border-radius:24px 24px 0 0;
+ background:var(--surface);color:var(--text);box-shadow:0 -12px 40px rgba(0,0,0,.3);overflow:hidden;display:flex;flex-direction:column}
+dialog.sheet:not([open]){display:none}
+:root[data-glass] dialog.sheet{background:color-mix(in srgb,var(--bg) 82%,transparent);-webkit-backdrop-filter:blur(28px);backdrop-filter:blur(28px)}
+@media (min-width:760px){dialog.sheet{margin:auto;border-radius:24px;max-height:84dvh}}
+dialog.sheet::backdrop{background:rgba(0,0,0,.45)}
+dialog.sheet[open]{animation:up .22s cubic-bezier(.2,.8,.2,1)}
+@keyframes up{from{transform:translateY(40px);opacity:.4}}
+.sheet .grab{width:38px;height:5px;border-radius:9px;background:var(--border);margin:8px auto 0;flex:none}
+.sheet .x{position:absolute;right:12px;top:12px;z-index:3;width:34px;height:34px;border-radius:50%;border:0;cursor:pointer;
+ background:rgba(0,0,0,.45);color:#fff;font-size:20px;line-height:34px;text-align:center}
+.sheet .scroll{overflow-y:auto;padding-bottom:calc(env(safe-area-inset-bottom) + 18px)}
+.sheet .pic{aspect-ratio:16/9;border-radius:0}
+.sheet .in{padding:16px 20px 4px;display:flex;flex-direction:column;gap:10px}
+.sheet h2{font-size:21px;line-height:1.25}
+.sheet .text{color:var(--text);font-size:15px;line-height:1.5}
+.sheet .covlist{display:grid;gap:6px;font-size:13px}
+.sheet .covlist b{display:inline-block;min-width:44px}
+.sheet .acts{display:flex;flex-wrap:wrap;gap:8px;padding-top:4px}
+
+/* Unread dots */
+.unread{position:relative}
+.tabbar a.unread svg{overflow:visible}
+.tabbar a.unread::after{content:"";position:absolute;top:5px;left:calc(50% + 7px);width:9px;height:9px;border-radius:50%;
+ background:var(--bad);border:2px solid var(--bg)}
+.rail nav a.unread::after,.chans a.unread::after{content:"";margin-left:auto;width:8px;height:8px;border-radius:50%;background:var(--bad);flex:none}
+body.chatpage .rail nav a.unread::after{position:absolute;top:6px;right:6px;margin:0}
+.chip.unread::after{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--bad);margin-left:2px}
+
+/* Quick feedback: every tap shows at once; a bar runs while the next page loads */
+a,button,.sw,.lo,.chip{touch-action:manipulation}
+.tabbar a:active,.rail nav a:active,.chip:active,.sw:active,.lo:active,.crewlink:active,.mrow:active,.seg button:active{transform:scale(.95);transition:transform .06s}
+.tabbar a,.rail nav a,.chip,.sw,.lo,.crewlink,.mrow,.seg button{transition:transform .14s}
+#loadbar{position:fixed;top:0;left:0;height:3px;width:0;z-index:100;background:linear-gradient(90deg,var(--accent),var(--accent2));
+ box-shadow:0 0 8px var(--accent);transition:width 2.5s cubic-bezier(.1,.7,.2,1),opacity .3s;pointer-events:none}
+#loadbar.go{width:85%}
+.haptic-switch{position:fixed;left:-9999px;opacity:0;pointer-events:none}
 
 /* Feed: one column of big cards */
 :root[data-layout="feed"] .wins{grid-template-columns:minmax(0,1fr);max-width:640px}
@@ -3600,6 +4820,30 @@ body.typing .chat{height:100dvh}
 .bar i.bad{background:var(--bad)}
 .brow{display:flex;justify-content:space-between;gap:10px;font-weight:620}
 
+/* Lenz's library */
+.ltabs{display:flex;flex-wrap:nowrap;overflow-x:auto;max-width:100%;scrollbar-width:none}
+.ltabs::-webkit-scrollbar{display:none}
+.ltabs button{white-space:nowrap}
+.ltabs i{font-style:normal;font-size:11px;opacity:.7;margin-left:3px}
+.llist{list-style:none;margin:0 0 6px;padding:0;display:grid;gap:8px}
+@media (min-width:1000px){.llist{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.lrow{display:flex;gap:12px;align-items:flex-start;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:10px;min-width:0}
+.lpic{position:relative;flex:none;width:54px;height:76px;border-radius:10px;overflow:hidden;display:grid;place-items:center;
+ background:linear-gradient(135deg,var(--c1),var(--c2));color:#fff;font-weight:800;font-size:22px}
+.lpic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.lbody{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.ltitle{font-weight:700;line-height:1.25}
+.lchips{display:flex;flex-wrap:wrap;gap:4px}
+.lchips .chip{padding:2px 8px;font-size:11.5px}
+.chip.rated{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,var(--border))}
+.lacts{display:flex;gap:6px;flex-wrap:wrap}
+.lrank{flex:none;width:28px;text-align:right;font-weight:800;font-size:18px;color:var(--muted);padding-top:24px}
+.lgroup{margin:14px 0 8px}
+.rategrid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.rategrid .btn{font-size:18px;padding:12px 0}
+.field{width:100%;border:1px solid var(--border);background:var(--surface2);color:var(--text);border-radius:12px;padding:10px 12px;font:inherit}
+select.field{width:auto;flex:1;min-width:120px}
+
 /* Agent profile */
 .hero{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
 .hero .av{width:76px;height:76px}
@@ -3700,6 +4944,120 @@ _UI_JS_SRC = r'''
       btn.disabled = false;
     }
   });
+
+  // Haptics: Android vibrates; iPhone (iOS 18+) gives a tick when a switch
+  // toggles, so a hidden one is flipped. Off in Settings, saved per device.
+  let haptics = true;
+  try { haptics = localStorage.getItem("theta_haptics") !== "off"; } catch (_) {}
+  const hl = document.createElement("label"), hi = document.createElement("input");
+  hl.className = "haptic-switch"; hl.setAttribute("aria-hidden", "true");
+  hi.type = "checkbox"; hi.setAttribute("switch", ""); hi.tabIndex = -1;
+  hl.append(hi); document.body.append(hl);
+  const tick = () => { if (!haptics) return; if (navigator.vibrate) navigator.vibrate(8); else hl.click(); };
+  window.thetaHaptic = tick;
+  function markHaptics() {
+    document.querySelectorAll("[data-haptics]").forEach(b => b.classList.toggle("on", (b.dataset.haptics === "on") === haptics));
+  }
+  markHaptics();
+
+  // A bar runs across the top while the next page loads.
+  const bar = document.createElement("div");
+  bar.id = "loadbar"; document.body.append(bar);
+  addEventListener("pageshow", () => { bar.className = ""; bar.style.opacity = ""; });
+
+  // Tapping a window opens its sheet: the whole text, where it came from and
+  // who covered it. Its link still works without the script.
+  const dlg = document.createElement("dialog");
+  dlg.className = "sheet"; dlg.setAttribute("aria-label", "Details");
+  document.body.append(dlg);
+  dlg.addEventListener("click", e => { if (e.target === dlg) dlg.close(); });
+  const el = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text) x.textContent = text; return x; };
+  function openSheet(w) {
+    let d;
+    try { d = JSON.parse(w.dataset.sheet); } catch (_) { return false; }
+    const close = el("button", "x", "\u00d7");
+    close.type = "button"; close.setAttribute("aria-label", "Close"); close.onclick = () => dlg.close();
+    const scroll = el("div", "scroll"), inn = el("div", "in");
+    scroll.append(w.querySelector(".pic").cloneNode(true));
+    inn.append(w.querySelector(".who").cloneNode(true), el("h2", "", d.title));
+    if (d.sub && d.sub !== d.text) inn.append(el("p", "muted small", d.sub));
+    if (d.text) inn.append(el("div", "text", d.text));
+    const cov = d.coverage || {};
+    if (Object.values(cov).some(x => x && x.length)) {
+      const box = el("div", "covlist");
+      box.append(el("h3", "", "Who covered it"));
+      for (const [k, label] of [["red", "Red"], ["gray", "Gray"], ["blue", "Blue"]]) {
+        const row = el("div"), b = el("b", "", label);
+        row.append(b, (cov[k] || []).length ? (cov[k] || []).join(", ") : "none of their outlets");
+        box.append(row);
+      }
+      inn.append(box);
+    }
+    const acts = el("div", "acts");
+    (d.links || []).forEach(([label, url], i) => {
+      const a = el("a", "btn" + (i ? " ghost" : ""), label);
+      a.href = url;
+      if (/^https?:/.test(url)) { a.target = "_blank"; a.rel = "noopener"; a.textContent = "Read at " + label + " \u2197"; }
+      acts.append(a);
+    });
+    if (d.agent === "lenz") {
+      const w2 = el("a", "btn", "I've watched it"); w2.href = "/lenz?log=" + encodeURIComponent(d.title);
+      acts.append(w2);
+    }
+    if (d.page) {
+      const ask = el("a", "btn ghost", "Ask " + d.name); ask.href = "/chat?to=" + d.agent;
+      const pg = el("a", "btn ghost", d.name + "'s page"); pg.href = d.page;
+      acts.append(ask, pg);
+    }
+    inn.append(acts);
+    scroll.append(inn);
+    dlg.replaceChildren(el("div", "grab"), close, scroll);
+    dlg.showModal();
+    scroll.scrollTop = 0;
+    return true;
+  }
+  document.addEventListener("click", e => {
+    const h = e.target.closest("[data-haptics]");
+    if (h) {
+      haptics = h.dataset.haptics === "on";
+      try { localStorage.setItem("theta_haptics", haptics ? "on" : "off"); } catch (_) {}
+      markHaptics(); tick(); return;
+    }
+    const t = e.target.closest("a, button, .win");
+    if (t && !t.closest(".haptic-switch")) tick();
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    const w = e.target.closest(".win[data-sheet]");
+    if (w && typeof dlg.showModal === "function") {
+      e.preventDefault();
+      if (!openSheet(w)) location.href = w.href;
+      return;
+    }
+    const a = e.target.closest("a[href]");
+    if (a && !a.target && a.origin === location.origin && !a.hash) {
+      bar.className = ""; void bar.offsetWidth; bar.className = "go";
+    }
+  });
+
+  // Unread dots on Chat and its channels. What you've read is kept on this
+  // device; the newest message per channel comes with each page.
+  const LATEST = window.THETA_LATEST || {};
+  let seen = null;
+  try { seen = JSON.parse(localStorage.getItem("theta_seen") || "null"); } catch (_) {}
+  const saveSeen = () => { try { localStorage.setItem("theta_seen", JSON.stringify(seen)); } catch (_) {} };
+  if (!seen) { seen = Object.assign({}, LATEST); saveSeen(); }  // a first visit starts with nothing unread
+  const unread = c => (LATEST[c] || 0) > (seen[c] || 0);
+  function paintDots() {
+    const any = Object.keys(LATEST).some(unread);
+    document.querySelectorAll('a[href="/chat"]').forEach(a => a.classList.toggle("unread", any));
+    document.querySelectorAll('a[href^="/chat?ch="]').forEach(a => {
+      const c = new URL(a.href).searchParams.get("ch");
+      a.classList.toggle("unread", c === "all" ? any : unread(c));
+    });
+  }
+  window.thetaSeen = (ch, id) => { if (typeof id === "number" && id > (seen[ch] || 0)) { seen[ch] = id; saveSeen(); } };
+  window.thetaLatest = obj => { Object.assign(LATEST, obj || {}); paintDots(); };
+  window.thetaPaintDots = paintDots;
+  paintDots();
 })();
 '''
 
@@ -3815,6 +5173,8 @@ _CHAT_JS = r'''
     }
     box.replaceChildren(...out);
     lastIds = new Set(thread.map(m => m.id));
+    for (const m of thread) if (m.kind !== "event" && m.from !== "you") thetaSeen(m.ch || C.channel, m.id);
+    thetaPaintDots();
     if (near) box.scrollTop = box.scrollHeight;
     first = false;
   }
@@ -3822,6 +5182,7 @@ _CHAT_JS = r'''
     try {
       const d = await (await fetch("/api/allchat?channel=" + C.channel, {headers: H})).json();
       if (d.ok) {
+        thetaLatest(d.latest);
         const ids = d.messages.map(m => m.id).join();
         if (ids !== thread.map(m => m.id).join()) { thread = d.messages; render(); }
       }
@@ -3928,6 +5289,7 @@ _CHAT_JS = r'''
       const d = await (await fetch("/api/allchat", {method: "POST", headers: H, body: JSON.stringify({text, channel: C.channel})})).json();
       if (!d.ok) throw new Error(d.error);
       thread = d.messages; render(); box.scrollTop = box.scrollHeight;
+      thetaLatest(d.latest);
       if (isCmd) status.textContent = d.result;
       else {
         const errs = Object.entries(d.errors || {}).map(([n, m]) => n + " couldn't reply: " + m);
@@ -4023,7 +5385,7 @@ def _json_script(name, obj):
     return f"<script>window.{name} = {safe};</script>"
 
 
-def page(headers, title, active, body, body_class="", statuses=None):
+def page(headers, title, active, body, body_class="", statuses=None, chat=None):
     """A full page in the app shell: sidebar on wide screens, tab bar on phones."""
     theme, mode, layout = ui_prefs(headers)
     t = THEMES[theme]
@@ -4050,12 +5412,16 @@ def page(headers, title, active, body, body_class="", statuses=None):
         '<link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="icon" href="/avatar/theta.svg" type="image/svg+xml">'
         f'<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="{APP_NAME}">'
         '<meta name="apple-mobile-web-app-status-bar-style" content="default">'
-        f'{metas}<link rel="stylesheet" href="/ui.css?v={_ASSET_V}"></head>'
+        f'{metas}<link rel="stylesheet" href="/ui.css?v={_ASSET_V}">'
+        # Request headers for page scripts, defined before any of them runs.
+        '<script>window.THETA_H = {"Content-Type": "application/json", "x-dashboard-key": '
+        'new URLSearchParams(location.search).get("key") || ""};</script></head>'
         f'<body class="{body_class}"><div class="app"><aside class="rail" aria-label="Sidebar">'
         f'<a class="brand" href="/">{avatar_img("theta", 32)}{APP_NAME}</a><nav aria-label="Main">{nav}</nav>'
         f'<div class="label">Crew</div>{crew}</aside><main class="main">{body}</main></div>'
         f'<nav class="tabbar" aria-label="Main">{nav}</nav>'
-        f'<script src="/ui.js?v={_ASSET_V}"></script></body></html>')
+        + _json_script("THETA_LATEST", latest_by_channel(chat))
+        + f'<script src="/ui.js?v={_ASSET_V}"></script></body></html>')
 
 
 def _ago(ts, now=None):
@@ -4086,18 +5452,47 @@ def win_html(w):
            f'{" class=fit" if w.get("fit") else ""} referrerpolicy="no-referrer" onerror="this.remove()">'
            if w.get("image") else "")
     tag = f'<span class="tag">{html.escape(w["tag"])}</span>' if w.get("tag") else ""
+    logo = (f'<img class="logo" src="{site_logo(w["site"])}" alt="" width="16" height="16" loading="lazy" '
+            f'referrerpolicy="no-referrer" onerror="this.remove()">' if w.get("site") else "")
     if w["agent"]:
         who = f'{avatar_img(w["agent"], 18)}<span class="nm">{html.escape(display_name(w["agent"]))}</span>'
         if w.get("source"):
-            who += f'<span class="src">· {html.escape(w["source"])}</span>'
+            who += f'<span class="src">· {logo}{html.escape(w["source"])}</span>'
     else:
-        who = f'<span>{html.escape(w.get("source") or "")}</span>'
+        who = f'{logo}<span>{html.escape(w.get("source") or "")}</span>'
     when = _ago(w.get("at"))
     sub = f'<div class="sub">{html.escape(w["sub"])}</div>' if w.get("sub") else ""
     ext = ' target="_blank" rel="noopener"' if w.get("external") else ""
-    return (f'<a class="win" href="{html.escape(w["href"])}"{ext}><div class="pic">{ph}{img}{tag}</div>'
+    sheet = {"title": w["raw"] or w["title"] or "", "sub": w.get("sub") or "", "text": w.get("text") or "",
+             "links": [[label, url] for label, url in (w.get("links") or []) if url],
+             "coverage": w.get("coverage"), "agent": w["agent"],
+             "name": display_name(w["agent"]) if w["agent"] else "", "source": w.get("source") or "",
+             "page": f"/agent/{w['agent']}" if w["agent"] in AGENTS else ""}
+    sheet_attr = "" if w.get("nosheet") else f' data-sheet="{html.escape(json.dumps(sheet))}"'
+    return (f'<a class="win" href="{html.escape(w["href"])}"{ext}{sheet_attr}>'
+            f'<div class="pic">{ph}{img}{tag}</div>'
             f'<div class="body"><div class="who">{who}<span class="t">{when}</span></div>'
-            f'<div class="title">{html.escape(w["title"] or "")}</div>{sub}</div></a>')
+            f'<div class="title">{html.escape(w["title"] or "")}</div>{sub}{coverage_html(w.get("coverage"))}</div></a>')
+
+
+def site_logo(site):
+    """A news site's own icon, by domain (DuckDuckGo's favicon service)."""
+    return f"https://icons.duckduckgo.com/ip3/{quote(site.lower())}.ico"
+
+
+_SIDES = (("red", "Red"), ("gray", "Gray"), ("blue", "Blue"))
+
+
+def coverage_html(cov):
+    """How many of each side's outlets carried a story, as a split bar."""
+    if not cov or not any(cov.values()):
+        return ""
+    counts = [(a, label, len(cov.get(a) or [])) for a, label in _SIDES]
+    tip = "; ".join(f"{label}'s outlets: {', '.join(cov.get(a) or []) or 'none'}" for a, label, _ in counts)
+    bar = "".join(f'<i style="flex:{n};background:{AGENT_LOOKS[a][0]}"></i>' for a, _, n in counts if n)
+    text = " · ".join(f"{label} {n}" for _, label, n in counts)
+    return (f'<div class="cov" title="{html.escape(tip)}"><div class="covbar" aria-hidden="true">{bar}</div>'
+            f'<span>{html.escape(text)}</span></div>')
 
 
 def ring_svg(frac, size=46, color="var(--accent)"):
@@ -4179,7 +5574,7 @@ def home_page(headers):
         + ("<p>Storage: memory (not persistent). Connect Upstash Redis in Vercel and redeploy.</p>"
            if STORAGE_MODE.startswith("memory") else "")
         + "<p>Pictures come from each outlet's feed, TMDB, Apple Music and Wikipedia.</p></footer>")
-    return page(headers, "Home", "/", body, statuses=statuses)
+    return page(headers, "Home", "/", body, statuses=statuses, chat=chat)
 
 
 def chat_page(headers, query):
@@ -4316,6 +5711,9 @@ def settings_page(headers):
         'version. Saved on this device.</p></div>'
         f'<div class="swatches">{swatches}</div>'
         f'<div><h3>Light or dark</h3><p class="muted small">Match device follows your phone\'s setting.</p><div class="seg" role="group" aria-label="Light or dark">{modes}</div></div>'
+        '<div><h3>Haptics</h3><p class="muted small">A light tap when you press things. iPhone needs iOS 18 or later.</p>'
+        '<div class="seg" role="group" aria-label="Haptics"><button type="button" data-haptics="on">On</button>'
+        '<button type="button" data-haptics="off">Off</button></div></div>'
         f'<div><h3>Home layout</h3><p class="muted small">How the windows on Home are arranged.</p><div class="layouts">{layouts}</div></div></section>'
         '<section class="card stack"><div><h2>Phone notifications</h2><p class="muted small">Mistral sends these: '
         'the morning digest, breaking news, budget alerts and birthdays. On iPhone, open Theta from its Home Screen icon.</p></div>'
@@ -4388,6 +5786,254 @@ def money_page(headers):
     return page(headers, "Money", "/money", body)
 
 
+_LENZ_JS = r"""
+(() => {
+  // Lenz's library page: one JSON (window.LENZ), lists built per tab.
+  const L = window.LENZ, H = window.THETA_H;
+  const $ = s => document.querySelector(s);
+  const el = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text != null) x.textContent = text; return x; };
+  let tab = (location.hash || "#now").slice(1), kind = "all", sort = "rating";
+  const KIND_GROUP = {anime: "anime", show: "tv", movie: "movies", game: "games", manga: "reading", manhwa: "reading",
+                      "web novel": "reading", book: "reading", comic: "reading", musical: "movies"};
+  const byStatus = s => L.items.filter(x => x.status === s && (kind === "all" || KIND_GROUP[x.kind] === kind));
+  async function act(id, action, value) {
+    const d = await (await fetch("/api/lenz/items/" + id, {method: "POST", headers: H, body: JSON.stringify({action, value})})).json();
+    if (!d.ok) throw new Error(d.error);
+    const i = L.items.findIndex(x => x.id === id);
+    if (action === "delete") L.items.splice(i, 1); else L.items[i] = d.item;
+    return d;
+  }
+  function toast(t) { const n = $("#lenz-note"); n.textContent = t; }
+  function poster(x) {
+    const p = el("div", "lpic");
+    p.style.setProperty("--c1", L.colors[x.kind] ? L.colors[x.kind][0] : "#64748b");
+    p.style.setProperty("--c2", L.colors[x.kind] ? L.colors[x.kind][1] : "#334155");
+    p.append(el("span", "", (x.title.match(/[A-Za-z0-9]/) || ["?"])[0].toUpperCase()));
+    if (x.image) { const i = el("img"); i.src = x.image; i.alt = ""; i.loading = "lazy"; i.referrerPolicy = "no-referrer"; i.onerror = () => i.remove(); p.append(i); }
+    return p;
+  }
+  function row(x, opts) {
+    const li = el("li", "lrow"), body = el("div", "lbody"), chips = el("div", "lchips");
+    if (opts && opts.rank) li.append(el("span", "lrank", String(x.rank)));
+    li.append(poster(x));
+    body.append(el("div", "ltitle", x.title));
+    const add = (t, cls) => { if (t) chips.append(el("span", "chip" + (cls ? " " + cls : ""), t)); };
+    add(L.kinds[x.kind]); add(x.progress); add(x.with ? "with " + x.with : ""); add(x.tier ? x.tier + "-tier" : "");
+    add(x.rating ? "★ " + x.rating + "/10" : "", "rated"); add(x.times > 1 ? x.times + "x" : ""); add(x.beloved ? "♥ beloved" : "");
+    if (x.note) add(x.note);
+    body.append(chips);
+    const btns = el("div", "lacts");
+    const b = (label, fn, ghost) => { const k = el("button", "btn small" + (ghost ? " ghost" : ""), label); k.type = "button"; k.onclick = fn; btns.append(k); };
+    if (x.status === "current") {
+      if (x.kind !== "game" && x.kind !== "movie")
+        b("+1", async () => { const d = await act(x.id, "next"); toast(x.title + ": " + d.item.progress); render(); }, true);
+      b("Finished", () => rate(x));
+    } else if (x.status === "queue" || x.status === "waiting" || x.status === "paused") {
+      b("Start", async () => { await act(x.id, "start"); toast("Started " + x.title); render(); }, true);
+      b("Watched it", () => rate(x));
+    } else if (!x.rating) {
+      b("Rate", () => rate(x, true));
+    }
+    body.append(btns);
+    li.append(body);
+    return li;
+  }
+  // Rating sheet: 1-10, or skip
+  const dlg = el("dialog", "sheet");
+  document.body.append(dlg);
+  dlg.addEventListener("click", e => { if (e.target === dlg) dlg.close(); });
+  function rate(x, onlyRate) {
+    const box = el("div", "in");
+    box.append(el("h2", "", onlyRate ? "Rate " + x.title : "Finished " + x.title + "?"),
+               el("p", "muted small", "Out of 10. Lenz uses every rating to learn your taste."));
+    const grid = el("div", "rategrid");
+    for (let n = 1; n <= 10; n++) {
+      const k = el("button", "btn ghost", String(n)); k.type = "button";
+      k.onclick = async () => { dlg.close(); const d = await act(x.id, onlyRate ? "rate" : "watched", n); toast(d.line || ("Rated " + n + "/10")); render(); };
+      grid.append(k);
+    }
+    box.append(grid);
+    if (!onlyRate) {
+      const skip = el("button", "btn ghost small", "Finished, rate later"); skip.type = "button";
+      skip.onclick = async () => { dlg.close(); const d = await act(x.id, "watched", null); toast(d.line); render(); };
+      box.append(skip);
+    }
+    dlg.replaceChildren(el("div", "grab"), box);
+    dlg.showModal();
+  }
+  function list(items, opts) {
+    const ul = el("ul", "llist");
+    if (!items.length) ul.append(el("li", "empty", opts && opts.empty || "Nothing here yet."));
+    items.slice(0, opts && opts.limit || 400).forEach(x => ul.append(row(x, opts)));
+    return ul;
+  }
+  const VIEWS = {
+    now: () => {
+      const items = byStatus("current"), groups = {};
+      const gname = x => x.group || L.plural[x.kind] || "Other";
+      items.forEach(x => (groups[gname(x)] = groups[gname(x)] || []).push(x));
+      const f = document.createDocumentFragment();
+      if (!items.length) f.append(list([], {empty: "Nothing on the go. Start something from Up next."}));
+      for (const [g, xs] of Object.entries(groups)) { f.append(el("h3", "lgroup", g)); f.append(list(xs)); }
+      return f;
+    },
+    next: () => {
+      const items = byStatus("queue"), f = document.createDocumentFragment();
+      const tiers = [...new Set(items.map(x => x.tier || "Other"))].sort();
+      tiers.forEach(t => { f.append(el("h3", "lgroup", t === "Other" ? "Up next" : t + "-tier")); f.append(list(items.filter(x => (x.tier || "Other") === t))); });
+      if (!items.length) f.append(list([], {empty: "Your queue is empty."}));
+      return f;
+    },
+    waiting: () => list(byStatus("waiting").concat(byStatus("paused")), {empty: "Not waiting on anything."}),
+    done: () => {
+      const items = byStatus("done").slice();
+      const keyf = {rating: x => -(x.rating || 0) * 1000 + (x.rank || 999), recent: x => -(x.done_at || 0),
+                    rank: x => x.rank || 9999, az: x => x.title.toLowerCase()}[sort];
+      items.sort((a, b) => { const ka = keyf(a), kb = keyf(b); return ka < kb ? -1 : ka > kb ? 1 : 0; });
+      const f = document.createDocumentFragment(), bar = el("div", "chips lsort");
+      [["rating", "Your rating"], ["rank", "Ranking"], ["recent", "Recent"], ["az", "A–Z"]].forEach(([k, label]) => {
+        const c = el("button", "chip" + (sort === k ? " on" : ""), label); c.type = "button";
+        c.onclick = () => { sort = k; render(); }; bar.append(c);
+      });
+      const unrated = items.filter(x => !x.rating).length;
+      f.append(bar);
+      if (unrated) f.append(el("p", "muted small", unrated + " finished titles aren't rated yet. Tap Rate on any of them; it takes a second."));
+      f.append(list(items));
+      return f;
+    },
+    top: () => list(L.items.filter(x => x.rank && (kind === "all" || KIND_GROUP[x.kind] === kind)).sort((a, b) => a.rank - b.rank), {rank: true, empty: "No rankings yet."}),
+    taste: () => {
+      const f = document.createDocumentFragment(), t = L.taste;
+      const card = el("div", "card stack");
+      card.append(el("h3", "", "Your taste file"));
+      const tbl = el("table", "tbl"); tbl.style.minWidth = "0";
+      tbl.innerHTML = "<thead><tr><th>Kind</th><th>Finished</th><th>Avg rating</th></tr></thead>";
+      const tb = el("tbody");
+      Object.entries(t.kinds).forEach(([k, v]) => { const tr = el("tr"); tr.append(el("td", "", L.kinds[k] || k), el("td", "", String(v.n)), el("td", "", v.avg == null ? "–" : String(v.avg))); tb.append(tr); });
+      tbl.append(tb); card.append(tbl);
+      if (t.genres.length) card.append(el("p", "", "Genres you rate highest: " + t.genres.join(", ")));
+      if (t.top.length) card.append(el("p", "", "Your top rated: " + t.top.join(", ")));
+      card.append(el("p", "muted small", t.rated + " of " + t.finished + " finished titles rated."));
+      f.append(card);
+      if (L.report) { const r = el("div", "card stack"); r.style.marginTop = "12px"; r.append(el("h3", "", "Lenz's latest weekly report"), el("div", "text", L.report)); f.append(r); }
+      return f;
+    },
+    news: () => {
+      const ul = el("ul", "list");
+      if (!L.news.length) ul.append(el("li", "empty", "No news on what you follow right now. Lenz checks MyAnimeList, IGN, GameSpot and Polygon every round."));
+      L.news.forEach(n => {
+        const li = el("li"), a = el("a", "", n.title);
+        a.href = n.url; a.target = "_blank"; a.rel = "noopener";
+        li.append(a, el("div", "muted small", n.about + " · " + n.source));
+        ul.append(li);
+      });
+      return ul;
+    },
+  };
+  function render() {
+    document.querySelectorAll("[data-tab]").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
+    document.querySelectorAll("[data-kind]").forEach(b => b.classList.toggle("on", b.dataset.kind === kind));
+    const v = $("#lenz-view");
+    v.replaceChildren((VIEWS[tab] || VIEWS.now)());
+    const counts = {now: "current", next: "queue", waiting: "waiting", done: "done"};
+    document.querySelectorAll("[data-tab]").forEach(b => {
+      const s = counts[b.dataset.tab], n = b.querySelector("i");
+      if (s && n) n.textContent = byStatus(s).length + (s === "waiting" ? byStatus("paused").length : 0);
+    });
+  }
+  document.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { tab = b.dataset.tab; history.replaceState(null, "", "#" + tab); render(); });
+  document.querySelectorAll("[data-kind]").forEach(b => b.onclick = () => { kind = b.dataset.kind; render(); });
+  // Log something new
+  $("#lenz-add").onsubmit = async e => {
+    e.preventDefault();
+    const title = $("#lenz-title").value.trim(), k = $("#lenz-kind").value, st = $("#lenz-status").value;
+    if (!title) return;
+    const d = await (await fetch("/api/lenz/items", {method: "POST", headers: H, body: JSON.stringify({title, kind: k, status: st})})).json();
+    if (!d.ok) { toast(d.error); return; }
+    $("#lenz-title").value = "";
+    const i = L.items.findIndex(x => x.id === d.item.id);
+    if (i >= 0) L.items[i] = d.item; else L.items.push(d.item);
+    toast("Added " + d.item.title + ".");
+    if (st === "done") rate(d.item, false); else { tab = {current: "now", queue: "next", waiting: "waiting"}[st] || "next"; render(); }
+  };
+  // Import your log
+  $("#lenz-import").onclick = async () => {
+    const text = $("#lenz-paste").value;
+    if (!text.trim()) { $("#lenz-import-note").textContent = "Paste your log's text first."; return; }
+    $("#lenz-import-note").textContent = "Reading it...";
+    const d = await (await fetch("/api/lenz/import", {method: "POST", headers: H, body: JSON.stringify({text})})).json();
+    $("#lenz-import-note").textContent = d.ok ? "Added " + d.added + ", updated " + d.updated + ". Reloading..." : d.error;
+    if (d.ok) setTimeout(() => location.reload(), 900);
+  };
+  // Coming from a window's "I've watched it": open the rating for that title
+  const log = new URLSearchParams(location.search).get("log");
+  if (log) {
+    fetch("/api/lenz/items", {method: "POST", headers: H, body: JSON.stringify({title: log, status: "queue"})})
+      .then(r => r.json()).then(d => { if (d.ok) { const i = L.items.findIndex(x => x.id === d.item.id); if (i < 0) L.items.push(d.item); rate(d.item, false); } });
+  }
+  render();
+})();
+"""
+
+
+def lenz_page(headers):
+    lib = library()
+    taste = taste_profile(lib)
+    report = next((m["text"] for m in reversed(store().list_chat(ALLCHAT_KEEP))
+                   if m["from"] == "lenz" and m["text"].startswith("Your week in media")), "")
+    try:
+        news = [{k: n[k] for k in ("title", "url", "source", "about")} for n in followed_news()]
+    except Exception:
+        news = []
+    keep = ("id", "title", "kind", "status", "progress", "with", "note", "times", "rank", "tier", "group",
+            "rating", "beloved", "image", "done_at")
+    data = {"items": [{k: x.get(k) for k in keep} for x in lib], "kinds": KIND_LABELS, "taste": taste,
+            "plural": {"game": "Games", "anime": "Anime", "show": "TV", "movie": "Movies", "manhwa": "Manhwa",
+                       "web novel": "Web novels", "book": "Books", "comic": "Comics", "musical": "Musicals", "manga": "Manga"},
+            "report": report, "news": news,
+            "colors": {"anime": ("#f472b6", "#7c3aed"), "show": ("#38bdf8", "#1d4ed8"), "movie": ("#fbbf24", "#ea580c"),
+                       "game": ("#34d399", "#0f766e"), "manga": ("#f87171", "#9f1239"), "manhwa": ("#fb7185", "#be123c"),
+                       "web novel": ("#a78bfa", "#4c1d95"), "book": ("#a3a3a3", "#44403c"), "comic": ("#facc15", "#b45309"),
+                       "musical": ("#f0abfc", "#a21caf")}}
+    n = {s: sum(1 for x in lib if x["status"] == s) for s in STATUSES}
+    rated = sum(1 for x in lib if x["status"] == "done" and x.get("rating"))
+    tabs = [("now", "Now", True), ("next", "Up next", True), ("waiting", "Waiting", True), ("done", "Finished", True),
+            ("top", "Top", False), ("taste", "Taste", False), ("news", "News", False)]
+    kinds = [("all", "All"), ("anime", "Anime"), ("tv", "TV"), ("movies", "Movies"), ("games", "Games"), ("reading", "Reading")]
+    opts = "".join(f'<option value="{k}">{v}</option>' for k, v in KIND_LABELS.items())
+    sts = "".join(f'<option value="{k}">{v}</option>' for k, v in (("queue", "Up next"), ("current", "On it now"),
+                                                                    ("done", "Finished"), ("waiting", "Waiting")))
+    body = (
+        f'<header class="top"><div class="hero">{avatar_img("lenz", 56)}<div><p class="eyebrow">Lenz · your library</p>'
+        f'<h1>Entertainment</h1></div></div><a class="btn ghost" href="/chat?ch=screen&amp;to=lenz">{ui_icon("chat")}Ask Lenz</a></header>'
+        '<div class="kpis">'
+        + kpi_html(str(n["current"]), "On the go", "watching, playing, reading", icon="play")
+        + kpi_html(str(n["queue"]), "Up next", f"{n['waiting']} waiting on new seasons", icon="calendar")
+        + kpi_html(f"{rated}/{n['done']}" if n["done"] else "0", "Finished, rated", "rate the rest", rated / n["done"] if n["done"] else 0)
+        + kpi_html(str(sum(1 for x in lib if x.get('beloved'))), "Most beloved",
+                   next((x["title"] for x in lib if x.get("beloved")), "mark favorites in your log"), icon="bolt")
+        + '</div>'
+        + '<div class="chips" style="margin:16px 0 8px">' + "".join(f'<button type="button" class="chip" data-kind="{k}">{v}</button>' for k, v in kinds) + "</div>"
+        + '<div class="seg ltabs" role="tablist">' + "".join(
+            f'<button type="button" role="tab" data-tab="{k}">{v}{" <i></i>" if c else ""}</button>' for k, v, c in tabs) + "</div>"
+        + '<p class="note" id="lenz-note"></p><div id="lenz-view"></div>'
+        + '<section class="card stack" style="margin-top:18px"><h2>Log something</h2>'
+          f'<form id="lenz-add" class="stack"><input id="lenz-title" class="field" placeholder="Title" aria-label="Title">'
+          f'<div style="display:flex;gap:8px;flex-wrap:wrap"><select id="lenz-kind" class="field" aria-label="Kind">{opts}</select>'
+          f'<select id="lenz-status" class="field" aria-label="Status">{sts}</select>'
+          '<button class="btn" type="submit">Add</button></div></form></section>'
+        + '<section class="card stack" style="margin-top:14px"><h2>Bring in your log</h2>'
+          '<p class="muted small">Paste the text of your entertainment log (in Google Docs: select all, copy) and Lenz '
+          'sorts it: Current, In Queue, Waiting, Rankings and type codes like (AN) or (G). Run it again any time; your '
+          'ratings stay. Or have Lenz re-read it every day: share the doc "anyone with the link can view" and set '
+          '<code>LENZ_DOC_URL</code> in Vercel. For MyAnimeList, set <code>MAL_CLIENT_ID</code> (myanimelist.net/apiconfig) '
+          'and <code>MAL_USERNAME</code>; your list must be public.</p>'
+          '<textarea id="lenz-paste" class="field" rows="5" placeholder="Paste your log here"></textarea>'
+          '<p><button class="btn" type="button" id="lenz-import">Import</button> <span class="note" id="lenz-import-note"></span></p></section>'
+        + _json_script("LENZ", data) + f"<script>{_LENZ_JS}</script>")
+    return page(headers, "Lenz", "", body)
+
+
 def agent_page(headers, agent):
     v = AGENTS[agent]
     st_row = next((a for a in agent_statuses() if a["bot_id"] == agent), None)
@@ -4428,6 +6074,50 @@ def agent_page(headers, agent):
     return page(headers, v["name"], "", body)
 
 
+_REMINDERS_JS = r"""
+(() => {
+  const H = window.THETA_H, out = document.getElementById("rem-status");
+  async function post(url, body) {
+    const d = await (await fetch(url, {method: "POST", headers: H, body: JSON.stringify(body || {})})).json();
+    if (!d.ok) throw new Error(d.error);
+    return d;
+  }
+  document.getElementById("rem-form").onsubmit = async e => {
+    e.preventDefault();
+    const box = document.getElementById("rem-text"), text = box.value.trim();
+    if (!text) return;
+    out.textContent = "Setting it...";
+    try { const d = await post("/api/reminders", {text}); out.textContent = "Set: " + d.line; box.value = ""; setTimeout(() => location.reload(), 900); }
+    catch (err) { out.textContent = err.message; }
+  };
+  document.querySelectorAll("[data-rem]").forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { await post("/api/reminders/" + b.dataset.rem + "/" + b.dataset.act); b.closest("li").remove(); }
+    catch (err) { out.textContent = err.message; b.disabled = false; }
+  });
+})();
+"""
+
+
+def reminders_card():
+    rows = "".join(
+        f'<li><div class="brow" style="align-items:center"><span>{html.escape(r["what"])}</span><span style="display:flex;gap:6px">'
+        + (f'<button class="btn small" type="button" data-rem="{r["id"]}" data-act="done">Done</button>' if r.get("pending") else "")
+        + f'<button class="btn ghost small" type="button" data-rem="{r["id"]}" data-act="delete" aria-label="Remove {html.escape(r["what"])}">Remove</button>'
+        f'</span></div><div class="muted small">{html.escape(reminder_line(r).split(": ", 1)[1])}</div></li>'
+        for r in reminders())
+    return (f'<section class="card stack" id="reminders" style="margin-bottom:14px"><div><h2>Reminders</h2>'
+            '<p class="muted small">Remi sends these to your phone. Say it like you would to her: '
+            '"8am every day take my meds until done", "in 20 min check the oven", "fri 6pm pay rent weekly". '
+            '"Until done" keeps nudging every 15 minutes until you tap Done (or tell Remi "done").</p></div>'
+            '<form id="rem-form" class="box" style="padding:5px 5px 5px 14px"><input id="rem-text" '
+            'placeholder="8am every day take my meds until done" aria-label="New reminder" '
+            'style="flex:1;border:0;background:transparent;outline:none;padding:8px 0;min-width:0">'
+            '<button class="btn small" type="submit">Add</button></form><p class="note" id="rem-status"></p>'
+            f'<ul class="list">{rows or "<li class=empty>No reminders yet.</li>"}</ul></section>'
+            f"<script>{_REMINDERS_JS}</script>")
+
+
 def calendar_page(headers, query):
     """Remi's tab: a month grid plus the same month as a day-by-day list."""
     tz = hub_tz()
@@ -4443,6 +6133,7 @@ def calendar_page(headers, query):
             f'<h1>{first:%B %Y}</h1></div></div><div class="monthnav"><a class="btn ghost small" href="/calendar?month={prev:%Y-%m}">'
             f'← {prev:%b}</a><a class="btn ghost small" href="/calendar">Today</a><a class="btn ghost small" '
             f'href="/calendar?month={nxt:%Y-%m}">{nxt:%b} →</a></div></header>')
+    head += reminders_card()
     if not calendar_linked():
         return page(headers, "Calendar", "/calendar", head + (
             '<section class="card"><h2>No calendar linked yet</h2><p>In Google Calendar on a computer: Settings → '
@@ -4619,7 +6310,7 @@ def handle(method, path, query, headers, body):
                 if not _auth_bot(bot_id, headers):
                     return _json(401, {"ok": False, "error": "bad bot_id or key"})
                 store().add_chat(bot_id, text.strip()[:2000], channel=data.get("channel") if ch != "all" else None)
-                return _json(200, {"ok": True, "messages": allchat_view(channel=ch)})
+                return _json(200, {"ok": True, "messages": allchat_view(channel=ch), "latest": latest_by_channel()})
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
             if text.strip().startswith("/"):
@@ -4627,7 +6318,7 @@ def handle(method, path, query, headers, body):
                     result = run_command(text)
                 except CommandError as e:
                     return _json(400, {"ok": False, "error": str(e)})
-                return _json(200, {"ok": True, "command": True, "result": result,
+                return _json(200, {"ok": True, "command": True, "result": result, "latest": latest_by_channel(),
                                    "messages": allchat_view(channel=ch), "errors": {}, "routed": []})
             st = store()
             st.add_chat("you", text.strip()[:2000], channel=ch)
@@ -4663,7 +6354,7 @@ def handle(method, path, query, headers, body):
                         else:
                             errors[AGENTS[a]["name"]] = err
             return _json(200, {"ok": True, "messages": allchat_view(channel=ch), "errors": errors,
-                               "routed": [AGENTS[a]["name"] for a in routed]})
+                               "routed": [AGENTS[a]["name"] for a in routed], "latest": latest_by_channel()})
 
         if path == "/api/glass/expense":
             bot_id = data.get("bot_id")
@@ -4729,6 +6420,60 @@ def handle(method, path, query, headers, body):
                 post_event(bot_id, f"{display_name(bot_id)} is now {activity.strip()[:80]}")
             return _json(200, {"ok": True})
 
+        if path.startswith("/api/lenz/"):
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            if path == "/api/lenz/import":
+                entries = parse_media_log(str(data.get("text") or ""))
+                if not entries:
+                    return _json(400, {"ok": False, "error": "Lenz couldn't find any titles in that. Paste the "
+                                       "whole log, headings included (Current, In Queue, Rankings...)."})
+                r = merge_into_library(entries)
+                post_event("lenz", f"Lenz imported your log: {r['added']} new, {r['updated']} updated, {r['total']} in all")
+                return _json(200, {"ok": True, **r})
+            if path == "/api/lenz/items":
+                title = str(data.get("title") or "").strip()
+                if not title:
+                    return _json(400, {"ok": False, "error": "title required"})
+                it, _ = add_library_item(title, data.get("kind"), data.get("status") or "queue")
+                return _json(200, {"ok": True, "item": it})
+            iid = path[len("/api/lenz/items/"):] if path.startswith("/api/lenz/items/") else ""
+            action = data.get("action")
+            if not iid.isdigit() or action not in ("watched", "rate", "start", "next", "status", "delete"):
+                return _json(400, {"ok": False, "error": "unknown item or action"})
+            value = data.get("value")
+            if action in ("rate",) and not (isinstance(value, int) and 1 <= value <= 10):
+                return _json(400, {"ok": False, "error": "rating must be 1-10"})
+            it = update_library_item(int(iid), action, value)
+            if not it:
+                return _json(404, {"ok": False, "error": "no such item"})
+            line = ""
+            if action == "watched":
+                line = lenz_logged_line(it)
+                store().add_chat("lenz", line, channel="screen")
+            return _json(200, {"ok": True, "item": it, "line": line})
+
+        if path == "/api/tick":  # Supabase Cron, every few minutes: reminders that are due
+            cron = bool(CRON_SECRET) and headers.get("authorization") == f"Bearer {CRON_SECRET}"
+            if not (cron or (DASHBOARD_KEY and _auth_dashboard(query, headers))):
+                return _json(401, {"ok": False, "error": "CRON_SECRET or dashboard key required"})
+            return _json(200, {"ok": True, **run_tick()})
+
+        if path == "/api/reminders" or path.startswith("/api/reminders/"):
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            if path == "/api/reminders":
+                try:
+                    r = add_reminder(str(data.get("text") or ""))
+                except ValueError as e:
+                    return _json(400, {"ok": False, "error": str(e)})
+                return _json(200, {"ok": True, "reminder": r, "line": reminder_line(r)})
+            parts = path.split("/")  # /api/reminders/<id>/<done|delete>
+            if len(parts) != 5 or not parts[3].isdigit() or parts[4] not in ("done", "delete"):
+                return _json(404, {"ok": False, "error": "unknown route"})
+            r = (ack_reminder if parts[4] == "done" else delete_reminder)(int(parts[3]))
+            return _json(200 if r else 404, {"ok": bool(r), **({} if r else {"error": "no such reminder"})})
+
         if path == "/api/round":
             cron = bool(CRON_SECRET) and headers.get("authorization") == f"Bearer {CRON_SECRET}"
             if not (cron or (DASHBOARD_KEY and _auth_dashboard(query, headers))):
@@ -4791,6 +6536,7 @@ def handle(method, path, query, headers, body):
         return 200, "text/html; charset=utf-8", home_page(headers).encode(), _login_cookie(query)
 
     pages = {"/chat": lambda: chat_page(headers, query), "/calendar": lambda: calendar_page(headers, query),
+             "/lenz": lambda: lenz_page(headers),
              "/money": lambda: money_page(headers), "/settings": lambda: settings_page(headers)}
     agent_path = path.startswith("/agent/") and path[len("/agent/"):] in AGENTS
     if path in pages or agent_path:
@@ -4855,7 +6601,8 @@ def handle(method, path, query, headers, body):
         bot_id = query.get("bot_id", [None])[0]
         if not (_auth_dashboard(query, headers) if not bot_id else _auth_bot(bot_id, headers)):
             return _json(401, {"ok": False, "error": "dashboard key or bot key required"})
-        return _json(200, {"ok": True, "messages": allchat_view(channel=query.get("channel", ["all"])[0])})
+        return _json(200, {"ok": True, "messages": allchat_view(channel=query.get("channel", ["all"])[0]),
+                           "latest": latest_by_channel()})
 
     if path.startswith("/chart/") and path.endswith(".svg"):
         if not _auth_dashboard(query, headers):
@@ -4872,6 +6619,16 @@ def handle(method, path, query, headers, body):
         month = query.get("month", [datetime.now(hub_tz()).strftime("%Y-%m")])[0]
         return _json(200, {"ok": True, "month": month, "status": month_status(month),
                            "expenses": sorted(store().list_expenses(month), key=lambda e: e["date"])})
+
+    if path == "/api/lenz":
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        return _json(200, {"ok": True, "items": library(), "taste": taste_profile()})
+
+    if path == "/api/reminders":
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        return _json(200, {"ok": True, "reminders": [dict(r, line=reminder_line(r)) for r in reminders()]})
 
     if path == "/api/wiring":
         if not _auth_dashboard(query, headers):
