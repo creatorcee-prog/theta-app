@@ -1,3 +1,5 @@
+> **Status (applied):** the renderer is live in `api/index.py` (`richText`), with fixes: the table check no longer matches every line with a `|`, `5 * 3` isn't italicized, lists split when bullets turn into numbers, and only https images load.
+
 # Safe markdown rendering for chat
 
 ## Problem

@@ -1,3 +1,5 @@
+> **Status (applied):** web search is live as a one-search step in chat replies and in projects (Gemini with Google Search, real cited sources only). An agent-chosen `fetch_page` was left out on purpose: with private data in some agents' prompts (Remi's email and calendar), a page could steer an agent into sending it somewhere. `api/tools.py` isn't used; persistent tasks overlap with reminders and projects and aren't wired.
+
 # Agent Tools: Web Search, Page Fetch & Persistent Tasks
 
 This document describes the two highest-leverage tools to add to Theta.
