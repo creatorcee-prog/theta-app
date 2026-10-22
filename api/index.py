@@ -1184,7 +1184,9 @@ def _round_theta(ctx):
 
 
 def _round_mistral(ctx):
-    problems = sorted(f"{r['name']}: {r['note']}" for r in wiring() if r["state"] != "ok")
+    # Optional links (testable False, e.g. the calendar) only count once set up and failing.
+    problems = sorted(f"{r['name']}: {r['note']}" for r in wiring()
+                      if r["state"] == "bad" or (r["state"] == "off" and r.get("testable", True)))
     sig = "|".join(problems)
     if sig == store().get_meta("round:mistral:wiring"):  # None on the first check: report it
         return "wiring unchanged"
