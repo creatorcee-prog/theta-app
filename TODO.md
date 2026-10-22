@@ -66,7 +66,8 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
 
 ### 8. Projects
 - [ ] `HOME_LOCATION` (like `Denver, CO`) so "find me a job here" knows
-      where "here" is.
+      where "here" is. Or just tell any agent "remember my home is
+      Saint George, UT" (look for the ✓).
 - [ ] Free Adzuna key: developer.adzuna.com → register (for "website", use
       your hub's address, `https://<project>.vercel.app`) → `ADZUNA_APP_ID`
       and `ADZUNA_APP_KEY` (`ADZUNA_COUNTRY` if not `us`).

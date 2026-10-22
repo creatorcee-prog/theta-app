@@ -188,6 +188,33 @@ curl -X POST https://<project>.vercel.app/api/status -H "x-bot-key: $KEY" \
   -d '{"bot_id": "remi", "activity": "checking the calendar"}'
 ```
 
+## Tools: agents do things for real
+
+In chat, an agent changes something only by ending its message with a line
+like `ACTION: remind | 6pm call Mom`. The hub runs it and puts a receipt in
+its place: ✓ with what was saved, or ✗ with why not. At most three per
+reply. The tools (`TOOLS` in `api/index.py`):
+
+| Tool | Does |
+|---|---|
+| `remember \| Home: Saint George, UT` | a fact every agent sees in its prompt |
+| `forget \| saint george` | drops remembered facts with those words |
+| `remind \| tomorrow 9am dentist` | a real Remi reminder |
+| `check \| Stretch` | adds to Today's check |
+| `note \| title :: text` | saves a note (lists, tables, snippets) |
+| `spend \| $42 groceries` | logs to Glass's ledger |
+| `watched \| Frieren, 9` | logs to Lenz's library |
+| `project \| barista jobs here` | Theta and Mistral only: starts a project |
+
+Every agent's prompt also has the current date and time (in
+`HUB_TIMEZONE`) and the remembered facts. If a reply claims it saved,
+logged or set something with no ACTION line, the hub adds "Nothing was
+actually saved: no tool was used." Tools are only offered in chat (All
+Agents and an agent's window), not in rounds or digests, and not to James,
+who runs in Garage Gym. Settings → **Memory and notes** lists both, each
+with a remove button (`POST /api/memory/remove`, `/api/notes/remove`
+`{"id"}`).
+
 ## Chat
 
 Chat works like a Discord server: channels on the left, members and
@@ -348,7 +375,7 @@ two agents found are posted once. Results go to #command, Theta sums up,
 and your phone gets a push. Each day Theta's round reruns active projects
 and posts only new leads, until the order expires (`ORDER_DAYS`) or
 `/stopproject <n>`. "Here" / "near me" uses `HOME_LOCATION` (like
-`Denver, CO`).
+`Denver, CO`), or else a remembered "Home: …" fact (see Tools).
 
 Job hunts (a goal that mentions a job, role, position, hiring...) go to
 the job boards first: Adzuna (`ADZUNA_APP_ID`, `ADZUNA_APP_KEY`,

@@ -140,7 +140,7 @@ ABILITIES = {
               "GitHub issues with suggested fixes (/issue; filed when GITHUB_TOKEN is set). You can't change "
               "or deploy code yourself",
     "charter": "draw charts of spending, daily spending, calendar busyness, news coverage and "
-               "All Agents activity, and nothing else yet",
+               "All Agents activity",
 }
 
 
@@ -1104,7 +1104,158 @@ def james_summary(now=None):
     return value
 
 
-def system_prompt(agent_id):
+# ---- Tools: how agents actually do things. An agent asks with a line
+# "ACTION: <tool> | <details>"; the hub runs it and adds a receipt (✓ done
+# or ✗ why not), so a reply can't claim more than happened. Shared memory
+# (facts you ask the crew to remember) and notes are kept here too.
+MEMORY_MAX, NOTES_MAX = 60, 100
+_TOOL_LOCK = threading.Lock()
+_ACTION_RE = re.compile(r"^\s*\**ACTION\**\s*:\s*([a-z_]+)\s*\|\s*(.+?)\s*$", re.I | re.M)
+_CLAIM_RE = re.compile(r"\b(?:i(?:'ve| have)? (?:now )?(?:logged|saved|set|created|stored|recorded|added|scheduled|updated|"
+                       r"noted|changed|booked|sent)|(?:all )?(?:actions|tasks) (?:are |have been )?(?:completed|done)|"
+                       r"(?:has|have) been (?:logged|saved|set|created|stored|recorded|added|scheduled|updated)|"
+                       r"(?:logged|recorded|stored|saved) (?:in|to) (?:the )?hub)\b", re.I)
+
+
+def memory():
+    return _meta_json("memory", [])
+
+
+def notes():
+    return _meta_json("notes", [])
+
+
+def home_location():
+    """HOME_LOCATION, or a remembered "home is ..." fact."""
+    if HOME_LOCATION:
+        return HOME_LOCATION
+    for m in reversed(memory()):
+        hit = re.search(r"\bhome\b[^:]{0,20}?(?:\bis\b|:|=)\s*(.+)", m["text"], re.I)
+        if hit:
+            return hit.group(1).strip(" .\"'")
+    return ""
+
+
+def _tool_remember(arg, agent):
+    text = " ".join(arg.split())[:200]
+    if not text:
+        raise ValueError("nothing to remember")
+    with _TOOL_LOCK:
+        mem = [m for m in memory() if m["text"].lower() != text.lower()]
+        mem.append({"id": f"m{int(time.time() * 1000) % 10**10}", "text": text, "by": agent, "at": time.time()})
+        store().set_meta("memory", json.dumps(mem[-MEMORY_MAX:]))
+    return f"Remembered for the whole crew: {text}"
+
+
+def _tool_forget(arg, agent):
+    words = arg.lower().split()
+    with _TOOL_LOCK:
+        mem = memory()
+        keep = [m for m in mem if not all(w in m["text"].lower() for w in words)]
+        store().set_meta("memory", json.dumps(keep))
+    gone = len(mem) - len(keep)
+    if not gone:
+        raise ValueError(f"nothing remembered matches “{arg}”")
+    return f"Forgot {gone} thing{'s' if gone != 1 else ''}"
+
+
+def _tool_remind(arg, agent):
+    r = add_reminder(arg)
+    return f"Reminder set: {reminder_line(r).split(' ', 1)[1]}"
+
+
+def _tool_check(arg, agent):
+    it = daily_add(arg)
+    return f"Added to Today's check: {it['text']}"
+
+
+def _tool_note(arg, agent):
+    title, _, body = arg.partition("::")
+    title, body = title.strip()[:80], body.strip()[:2000]
+    if not title:
+        raise ValueError("a note needs a title")
+    with _TOOL_LOCK:
+        ns = notes()
+        ns.append({"id": f"n{int(time.time() * 1000) % 10**10}", "title": title, "text": body, "by": agent, "at": time.time()})
+        store().set_meta("notes", json.dumps(ns[-NOTES_MAX:]))
+    return f"Saved note: {title} (Settings → Memory and notes)"
+
+
+def _tool_spend(arg, agent):
+    parsed = parse_expense(arg if "$" in arg else "$" + arg)
+    if not parsed:
+        raise ValueError("couldn't read an amount (like $42 groceries)")
+    return glass_log_reply(parsed)
+
+
+def _tool_watched(arg, agent):
+    title, _, rating = arg.partition(",")
+    line = lenz_quick_reply(f"finished {title.strip()}" + (f", {rating.strip()}" if rating.strip() else ""))
+    if not line:
+        raise ValueError("couldn't read a title")
+    return line
+
+
+def _tool_project(arg, agent):
+    return start_project(arg)
+
+
+TOOLS = {
+    "remember": ("remember | <a fact about the user, like Home: Saint George, UT>", _tool_remember, None),
+    "forget": ("forget | <words in the fact to drop>", _tool_forget, None),
+    "remind": ("remind | <when and what, like 6pm call Mom, or 1/22/2027 oil change>", _tool_remind, None),
+    "check": ("check | <a daily habit for Today's check>", _tool_check, None),
+    "note": ("note | <title> :: <text>   (save a note, list or snippet)", _tool_note, None),
+    "spend": ("spend | $42 groceries", _tool_spend, None),
+    "watched": ("watched | <title>, <rating 1-10>   (log something finished)", _tool_watched, None),
+    "project": ("project | <what to find>   (the whole crew searches the web)", _tool_project, {"theta", "mistral"}),
+}
+
+
+def tools_prompt(agent):
+    usable = [d for name, (d, _, who) in TOOLS.items() if who is None or agent in who]
+    return ("\n\nTools. You change things ONLY through these; put one line per action at the very end of your "
+            "message, in exactly this form:\n" + "\n".join("ACTION: " + d for d in usable) +
+            "\nThe hub runs each one and adds a receipt. Never say you saved, logged, set, created or recorded anything "
+            "without its ACTION line. If no tool can do what's asked, say plainly that you can't. Only act on what the "
+            "user asked you; don't restate, reassign or add tasks for other agents.")
+
+
+def run_actions(agent, reply):
+    """Run the reply's ACTION lines (at most 3); return the reply with
+    receipts in their place, plus a note when it claims an action it didn't take."""
+    found = _ACTION_RE.findall(reply)
+    text = _ACTION_RE.sub("", reply).strip()
+    receipts = []
+    for name, arg in found[:3]:
+        tool = TOOLS.get(name.lower())
+        if not tool or (tool[2] is not None and agent not in tool[2]):
+            receipts.append(f"✗ {name}: not a tool I have")
+            continue
+        try:
+            receipts.append("✓ " + tool[1](arg, agent))
+        except (ValueError, CommandError, LLMError) as e:
+            receipts.append(f"✗ {name}: {e}")
+    if receipts:
+        return (text + "\n\n" if text else "") + "\n".join(receipts)
+    if _CLAIM_RE.search(text):
+        return text + "\n\n_(Nothing was actually saved: no tool was used.)_"
+    return text
+
+
+def now_line():
+    now = datetime.now(hub_tz())
+    return (f"\n\nRight now it's {now:%A, %B} {now.day}, {now.year}, {_clock(now)} {now.tzname()} ({HUB_TIMEZONE})."
+            + (f" The user's home: {home_location()}." if home_location() else ""))
+
+
+def memory_prompt():
+    mem = memory()
+    return ("\n\nWhat the user asked the crew to remember (true unless they say otherwise):\n"
+            + "\n".join(f"- {m['text']}" for m in mem[-25:])) if mem else ""
+
+
+def system_prompt(agent_id, tools=False):
     a = AGENTS[agent_id]
     team = ", ".join(f"{x['name']} ({TIER_LABELS[x['tier']]})" for x in AGENTS.values())
     stand_in = (f" The paid {MASTER_MODEL} model isn't answering right now, so you "
@@ -1143,7 +1294,7 @@ def system_prompt(agent_id):
             f"Stay in character{brevity}. The chat shows markdown: when it helps, use a table for things compared "
             "across columns (a header row, then |---| ), bullet or numbered lists for several items, - [ ] for "
             "to-dos, and **bold** sparingly; show an image only with ![alt](https link) for a link you were given."
-            f"{extra}")
+            f"{extra}{now_line()}{memory_prompt()}{tools_prompt(agent_id) if tools and not a.get('home') else ''}")
 
 
 def provider_extra(provider, model):
@@ -1495,7 +1646,7 @@ def allchat_reply(agent, thread):
     split = (f" The user also asked {', '.join(others)} in this message: answer only your own part and "
              "leave theirs to them." if others and thread[-1]["from"] == "you" else "")
     can_search = bool(os.environ.get("GEMINI_API_KEY"))
-    system = (system_prompt(agent) + " You're in the All Agents group chat with the user and the other agents."
+    system = (system_prompt(agent, tools=True) + " You're in the All Agents group chat with the user and the other agents."
               + split + (" If answering well needs current facts from the web that you don't have, reply with "
                          "exactly one line, SEARCH: <query>, and nothing else; you'll get the results." if can_search else ""))
     ask = (f"The chat so far:\n{transcript}\n\nReply to the latest message as {name}. "
@@ -1503,8 +1654,8 @@ def allchat_reply(agent, thread):
     reply = llm_chat(AGENTS[agent]["tier"], [{"role": "system", "content": system}, {"role": "user", "content": ask}])
     m = re.match(r"^\s*SEARCH:\s*(.+)$", reply.strip(), re.I)
     if not (m and can_search):
-        return reply
-    return answer_with_search(agent, system, ask, m.group(1).strip()[:200])
+        return run_actions(agent, reply)
+    return run_actions(agent, answer_with_search(agent, system, ask, m.group(1).strip()[:200]))
 
 
 def answer_with_search(agent, system, ask, query):
@@ -3819,7 +3970,10 @@ HUB_MAP = (
     "/api/tick every 5 min. Chat: add_chat()/allchat_view() with channels (CHANNELS). Pages are server-rendered "
     "strings (page(), home_page(), chat_page(), lenz_page()...) with CSS in _BASE_CSS and themes in THEMES; "
     "scripts in _UI_JS_SRC, _CHAT_JS. Push: notify() with pywebpush and VAPID keys. Tests are standalone "
-    "scripts that call app() with fake providers.")
+    "scripts that call app() with fake providers. Time: the server clock is UTC and nothing needs it changed; every "
+    "time the hub shows or schedules uses HUB_TIMEZONE (an env var, default America/Denver = MDT/MST). To change "
+    "it, set HUB_TIMEZONE in Vercel → Settings → Environment Variables and redeploy. Agents' tools (ACTION lines) "
+    "are in TOOLS; shared memory and notes in hub:meta 'memory' and 'notes'.")
 
 
 def qwerty_context():
@@ -5696,9 +5850,10 @@ def start_project(goal, deadline=None):
     jobs = bool(_JOB_RE.search(clean))
     if not os.environ.get("GEMINI_API_KEY", "") and not (jobs and boards_on()):
         raise CommandError("Projects need GEMINI_API_KEY (web search), or Adzuna/USAJOBS keys for job hunts.")
-    loc = HOME_LOCATION if _HERE_RE.search(goal) else ""
+    loc = home_location() if _HERE_RE.search(goal) else ""
     if _HERE_RE.search(goal) and not loc:
-        raise CommandError("Where's \u201chere\u201d? Say the place (\u201c\u2026in Denver\u201d) or set HOME_LOCATION in Vercel.")
+        raise CommandError("Where's \u201chere\u201d? Say the place (\u201c\u2026in Denver\u201d), tell the crew "
+                           "\u201cremember my home is ...\u201d, or set HOME_LOCATION in Vercel.")
     targets = mentioned_agents(goal)
     pid = max([x["id"] for x in projects()] + [0]) + 1
     p = {"id": pid, "goal": clean[:300], "loc": loc, "plan": plan_project(clean, loc, targets), "seen": [],
@@ -6430,6 +6585,7 @@ body.typing .chat{height:100dvh}
 .dcheck input:checked+span{color:var(--muted);text-decoration:line-through}
 .daily .dx{display:none;border:0;background:none;color:var(--muted);font-size:20px;cursor:pointer;padding:4px 8px}
 .daily.editing .dx{display:block}.daily .dadd{display:none;padding:5px 5px 5px 14px}.daily.editing .dadd{display:flex}
+.mem li{justify-content:space-between}.mem .dx{border:0;background:none;color:var(--muted);font-size:20px;cursor:pointer;padding:4px 8px}
 .daily .dadd input{flex:1;min-width:0;border:0;background:transparent;outline:none;padding:8px 0;font:inherit}
 .linkbtn{border:0;background:none;color:var(--accent);font:inherit;cursor:pointer;padding:0}
 /* Phones: iOS zooms the page when a field's text is under 16px, and the page then drifts. Keep fields at 16px and
@@ -8557,6 +8713,38 @@ def round_push(results):
     return body
 
 
+_MEMORY_JS = """
+(() => {
+  const box = document.getElementById("memory"); if (!box) return;
+  box.addEventListener("click", async e => {
+    const x = e.target.closest("[data-forget]"); if (!x) return;
+    const [kind, id] = x.dataset.forget.split(":");
+    const d = await (await fetch("/api/" + kind + "/remove", {method: "POST", headers: window.THETA_H,
+      body: JSON.stringify({id})})).json();
+    if (d.ok) x.closest("li").remove(); else box.querySelector(".note").textContent = d.error;
+  });
+})();
+"""
+
+
+def memory_card():
+    """What the crew remembers and the notes they saved, each removable."""
+    def row(kind, item, label):
+        when = datetime.fromtimestamp(item["at"], hub_tz())
+        by = AGENTS.get(item.get("by"), {}).get("name", "")
+        return (f'<li><span>{label}<span class="muted small"> · {html.escape(by)} {when:%b} {when.day}</span></span>'
+                f'<button type="button" class="dx" data-forget="{kind}:{html.escape(item["id"])}" aria-label="Remove">×</button></li>')
+    mem = "".join(row("memory", m, html.escape(m["text"])) for m in reversed(memory()))
+    ns = "".join(row("notes", n, f'<b>{html.escape(n["title"])}</b>'
+                     + (f'<br><span class="small">{html.escape(n["text"])}</span>' if n["text"] else ""))
+                 for n in reversed(notes()))
+    return ('<section class="card stack" id="memory" aria-label="Memory and notes"><h2>Memory and notes</h2>'
+            '<p class="muted small">Tell any agent “remember …” or “save a note …”. Every agent sees the memory; '
+            f'a ✓ in chat means it really saved.</p><h3>Remembered</h3><ul class="dlist mem">{mem or "<li class=empty>Nothing yet.</li>"}</ul>'
+            f'<h3>Notes</h3><ul class="dlist mem">{ns or "<li class=empty>No notes yet.</li>"}</ul><p class="note"></p>'
+            f'<script>{_MEMORY_JS}</script></section>')
+
+
 def siri_card(headers):
     rp_id, origin = _rp(headers)
     on = store().get_meta("notify:rounds") == "on"
@@ -8625,7 +8813,7 @@ def settings_page(headers):
         'type="button">Send a test</button></p><p class="note" id="push-status"></p></section>'
         f'<section class="card stack" id="security"><div class="hero" style="gap:12px">{avatar_img("qwerty", 40)}<div><h2>Security and health</h2>'
         '<p class="muted small">QWERTY checks this every round and tells you in #dev-and-security when it changes.</p></div></div>'
-        f'<ul class="list">{security_rows()}</ul></section>' + passkeys_card() + gmail_card(headers) + siri_card(headers) +
+        f'<ul class="list">{security_rows()}</ul></section>' + passkeys_card() + gmail_card(headers) + memory_card() + siri_card(headers) +
         '<section class="card stack"><div class="brow"><h2>Rounds</h2></div><p class="muted small">Every agent does its '
         'job three times a day (Supabase Cron). Run one now to refresh the windows.</p>'
         f'<p><button class="btn" type="button" data-run-round="round-status-s">{ui_icon("play")}Run a round now</button></p>'
@@ -9571,8 +9759,8 @@ def handle(method, path, query, headers, body):
                 elif agent == "james":
                     reply = james_chat(history)
                 else:
-                    reply = llm_chat(AGENTS[agent]["tier"],
-                                     [{"role": "system", "content": system_prompt(agent)}] + history)
+                    reply = run_actions(agent, llm_chat(AGENTS[agent]["tier"], [
+                        {"role": "system", "content": system_prompt(agent, tools=True)}] + history))
             except LLMError as e:
                 return _json(502, {"ok": False, "error": str(e)})
             return _json(200, {"ok": True, "agent": agent, "name": AGENTS[agent]["name"],
@@ -9758,6 +9946,14 @@ def handle(method, path, query, headers, body):
             store().add_chat("james", r["text"][:4000], channel=ch, buttons=r["buttons"])
             return _json(200, {"ok": True, "messages": allchat_view(channel=str(data.get("channel") or ch)),
                                "latest": latest_by_channel()})
+
+        if path in ("/api/memory/remove", "/api/notes/remove"):
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            key, item = path.split("/")[2], str(data.get("id") or "")
+            with _TOOL_LOCK:
+                store().set_meta(key, json.dumps([x for x in _meta_json(key, []) if x["id"] != item]))
+            return _json(200, {"ok": True})
 
         if path.startswith("/api/daily/"):
             if not _auth_dashboard(query, headers):
