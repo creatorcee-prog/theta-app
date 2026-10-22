@@ -5048,6 +5048,11 @@ body.typing .chat{height:100dvh}
 .meta .tier{font-size:10px;font-weight:750;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);border:1px solid var(--border);border-radius:5px;padding:0 4px}
 .meta time{font-size:11.5px;color:var(--muted)}
 .text{white-space:pre-wrap;overflow-wrap:anywhere}
+.caret{display:inline-block;width:7px;height:1.05em;vertical-align:-2px;margin-left:2px;border-radius:2px;background:var(--accent);animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.say{border:0;background:transparent;color:var(--muted);padding:2px;margin-left:2px;cursor:pointer;opacity:.7;line-height:0}
+.say svg{width:15px;height:15px}
+.say:hover{opacity:1;color:var(--accent)}
 .text .at{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);border-radius:5px;padding:0 3px;font-weight:620}
 .att{display:block;max-width:min(100%,440px);border-radius:12px;margin-top:6px;border:1px solid var(--border);background:#fff}
 .evt{display:flex;gap:8px;align-items:flex-start;padding:4px 16px 4px 28px;color:var(--muted);font-size:13px}
@@ -5335,6 +5340,63 @@ _UI_JS_SRC = r'''
     }
   });
 
+  // Agent voices: the phone's own text-to-speech, a different voice, pitch
+  // and pace per agent (free, offline). Voices differ by device, so each
+  // agent lists voices it likes and falls back to the language.
+  const VOICE = {
+    theta: {pitch: .72, rate: .9, like: ["Daniel", "Arthur", "Google UK English Male", "Aaron", "Fred"], lang: "en-GB"},
+    mistral: {pitch: 1.05, rate: 1.04, like: ["Serena", "Kate", "Google UK English Female", "Martha", "Moira"], lang: "en-GB"},
+    glass: {pitch: .9, rate: .98, like: ["Tom", "Evan", "Alex", "Google US English", "Nathan"], lang: "en-US"},
+    remi: {pitch: 1.12, rate: .94, like: ["Samantha", "Karen", "Tessa", "Victoria", "Allison"], lang: "en-US"},
+    lenz: {pitch: 1.08, rate: 1.12, like: ["Rishi", "Reed", "Oliver", "Gordon", "Lee"], lang: "en"},
+    red: {pitch: .88, rate: 1.06, like: ["Fred", "Ralph", "Evan", "Tom"], lang: "en-US"},
+    blue: {pitch: 1.0, rate: 1.06, like: ["Ava", "Allison", "Susan", "Zoe"], lang: "en-US"},
+    gray: {pitch: .95, rate: 1.0, like: ["Moira", "Fiona", "Karen", "Daniel"], lang: "en"},
+    charter: {pitch: 1.0, rate: 1.1, like: ["Nicky", "Ava", "Google US English"], lang: "en-US"},
+    james: {pitch: .95, rate: 1.12, like: ["Aaron", "Gordon", "Lee", "Reed"], lang: "en"},
+    qwerty: {pitch: .55, rate: 1.18, like: ["Fred", "Zarvox", "Trinoids", "Ralph"], lang: "en-US"},
+  };
+  const synth = window.speechSynthesis;
+  let voices = synth ? synth.getVoices() : [];
+  if (synth) synth.onvoiceschanged = () => { voices = synth.getVoices(); };
+  function pickVoice(p) {
+    for (const name of p.like) { const v = voices.find(x => x.name.includes(name)); if (v) return v; }
+    return voices.find(x => x.lang && x.lang.startsWith(p.lang)) || voices.find(x => x.lang && x.lang.startsWith("en")) || null;
+  }
+  window.thetaSpeak = (agent, text) => {
+    if (!synth) return false;
+    const p = VOICE[agent] || {pitch: 1, rate: 1, like: [], lang: "en"};
+    const clean = String(text).replace(/https?:\/\/\S+/g, "").replace(/[#*_`>\[\]]/g, "").slice(0, 1200);
+    const u = new SpeechSynthesisUtterance(clean);
+    u.pitch = p.pitch; u.rate = p.rate;
+    const v = pickVoice(p);
+    if (v) { u.voice = v; u.lang = v.lang; }
+    synth.speak(u);
+    return true;
+  };
+  window.thetaStopSpeaking = () => synth && synth.cancel();
+  let autoVoice = false;
+  try { autoVoice = localStorage.getItem("theta_voice_auto") === "on"; } catch (_) {}
+  window.thetaVoiceAuto = () => autoVoice;
+  function markVoice() {
+    document.querySelectorAll("[data-voiceauto]").forEach(b => b.classList.toggle("on", (b.dataset.voiceauto === "on") === autoVoice));
+  }
+  markVoice();
+  document.addEventListener("click", e => {
+    const v = e.target.closest("[data-voiceauto]");
+    if (v) {
+      autoVoice = v.dataset.voiceauto === "on";
+      try { localStorage.setItem("theta_voice_auto", autoVoice ? "on" : "off"); } catch (_) {}
+      markVoice();
+    }
+    const hear = e.target.closest("[data-hear]");
+    if (hear) {
+      synth && synth.cancel();
+      const lines = JSON.parse(hear.dataset.hear);
+      lines.forEach(([a, t]) => window.thetaSpeak(a, t));
+    }
+  });
+
   // Unread dots on Chat and its channels. What you've read is kept on this
   // device; the newest message per channel comes with each page.
   const LATEST = window.THETA_LATEST || {};
@@ -5411,6 +5473,39 @@ _CHAT_JS = r'''
     span.append(text.slice(last));
     return span;
   }
+  // New replies type out letter by letter, like James in Garage Gym; a tap
+  // shows the rest. Reduced motion shows them at once. Screen readers get
+  // the whole message.
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function typed(m) {
+    const full = richText(m.text);
+    if (reduceMotion || m.text.length < 2) return full;
+    const wrap = document.createElement("div"), shown = document.createElement("span"), caret = document.createElement("span"),
+      sr = document.createElement("span");
+    wrap.className = "text"; caret.className = "caret"; sr.className = "sr"; sr.textContent = m.text;
+    shown.setAttribute("aria-hidden", "true"); caret.setAttribute("aria-hidden", "true");
+    wrap.append(sr, shown, caret);
+    const total = Math.min(m.text.length * 24, 2600), per = Math.max(1, Math.ceil(m.text.length / (total / 16)));
+    let n = 0;
+    const done = () => { clearInterval(t); if (wrap.isConnected) wrap.replaceWith(full); };
+    const t = setInterval(() => {
+      if (!wrap.isConnected) return clearInterval(t);
+      const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+      n += per;
+      if (n >= m.text.length) return done();
+      shown.textContent = m.text.slice(0, n);
+      if (stick) box.scrollTop = box.scrollHeight;
+    }, 16);
+    wrap.onclick = done;
+    return wrap;
+  }
+  function sayButton(m) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "say"; b.setAttribute("aria-label", "Read aloud");
+    b.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10v4h3l5 4V6L7 10z"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/></svg>';
+    b.onclick = () => { thetaStopSpeaking(); thetaSpeak(m.from, m.text); };
+    return b;
+  }
   function render() {
     const near = first || box.scrollHeight - box.scrollTop - box.clientHeight < 140;
     const out = [];
@@ -5453,7 +5548,10 @@ _CHAT_JS = r'''
         meta.append(ch);
       }
       meta.append(time);
-      body.append(meta, richText(m.text));
+      const agentMsg = a && m.from !== "you" && m.from !== "hub";
+      if (agentMsg && window.speechSynthesis) meta.append(sayButton(m));
+      body.append(meta, fresh && agentMsg ? typed(m) : richText(m.text));
+      if (fresh && agentMsg && thetaVoiceAuto()) thetaSpeak(m.from, m.text);
       if (m.image) {
         const img = document.createElement("img");
         img.src = m.image; img.alt = m.text.split("\n")[0]; img.className = "att"; img.loading = "lazy";
@@ -5988,6 +6086,15 @@ def security_rows():
         for sv, t in findings) or '<li>All clear: everything\'s wired, nothing\'s failing, no wrong-key attempts.</li>'
 
 
+_VOICE_SAMPLES = [
+    ["theta", "Theta. I have the final say."], ["mistral", "Mistral. I'll sort out who answers."],
+    ["glass", "Glass. Your budget, to the cent."], ["remi", "Remi here, sweetheart. Did you take your meds?"],
+    ["lenz", "Lenz! I've got something you'll love."], ["red", "Red, with the conservative take."],
+    ["blue", "Blue, with the progressive take."], ["gray", "Gray. Skeptical of both."],
+    ["charter", "Charter. Want that as a chart?"], ["qwerty", "QWERTY. All systems nominal."],
+    ["james", "James. Time to train."]]
+
+
 def settings_page(headers):
     theme, mode, layout = ui_prefs(headers)
     st = store()
@@ -6019,6 +6126,13 @@ def settings_page(headers):
         'version. Saved on this device.</p></div>'
         f'<div class="swatches">{swatches}</div>'
         f'<div><h3>Light or dark</h3><p class="muted small">Match device follows your phone\'s setting.</p><div class="seg" role="group" aria-label="Light or dark">{modes}</div></div>'
+        '<div><h3>Voices</h3><p class="muted small">Each agent has their own voice, from your phone\'s built-in '
+        'speech (free, works offline; voices vary by device). Tap the speaker on any message, or have new replies '
+        'read aloud.</p><div class="seg" role="group" aria-label="Read new replies aloud">'
+        '<button type="button" data-voiceauto="off">Speaker button only</button>'
+        '<button type="button" data-voiceauto="on">Read new replies aloud</button></div>'
+        f'<p style="margin-top:8px"><button class="btn ghost small" type="button" data-hear="{html.escape(json.dumps(_VOICE_SAMPLES))}">'
+        'Hear the crew</button></p></div>'
         '<div><h3>Haptics</h3><p class="muted small">A light tap when you press things. iPhone needs iOS 18 or later.</p>'
         '<div class="seg" role="group" aria-label="Haptics"><button type="button" data-haptics="on">On</button>'
         '<button type="button" data-haptics="off">Off</button></div></div>'
