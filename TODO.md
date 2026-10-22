@@ -77,9 +77,6 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
       stops at `MASTER_MONTHLY_CAP_USD`, 15 by default).
 - [ ] Settings → Wiring → Theta should read "connected".
 
-### 10. Voices
-- [ ] Settings → Voices → **Sound check**, and send me what it shows if
-      you hear nothing.
 
 ## Planned
 
