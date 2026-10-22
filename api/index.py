@@ -87,8 +87,7 @@ AGENTS = {
                       "bills and spending, and keeping the other bots on task."},
     "remi": {"name": "Remi", "tier": "manager",
              "role": "You manage family reminders and the calendar, and "
-                     "auto-moderate the family Discord. You are motherly, warm "
-                     "and caring, but firm about the rules."},
+                     "auto-moderate the family Discord, firm about its rules."},
     "lenz": {"name": "Lenz", "tier": "miner",
              "role": "You cover entertainment: movies, TV, music and what is "
                      "worth watching or hearing."},
@@ -111,6 +110,32 @@ AGENTS = {
     # training data there (see james_chat), not to a role prompt here.
     "james": {"name": "James", "tier": "manager", "home": "Garage Gym",
               "role": "You are the fitness coach from Garage Gym."},
+}
+# Persona keywords picked in the Crew Files artifact. They shape each
+# agent's prompt (see system_prompt); "concise" asks for brevity. James's
+# persona lives in Garage Gym's own prompt, so he has none here.
+PERSONAS = {
+    "theta": ["decisive", "strategic", "big-picture", "authoritative", "concise",
+              "blunt", "stoic", "visionary"],
+    "mistral": ["analytical", "prioritizing", "organized", "concise", "detail-oriented",
+                "humble", "efficient", "nerdy"],
+    "glass": ["meticulous", "numbers-first", "organized", "accountable", "budget-minded",
+              "taskmaster", "concise", "tactful", "deadline-driven", "dry humor", "calm",
+              "spreadsheet-loving"],
+    "remi": ["motherly", "warm", "caring", "firm", "organized", "protective", "concise",
+             "patient", "gentle", "cheerful", "family-first", "sentimental",
+             "celebrates birthdays"],
+    "lenz": ["pop-culture savvy", "recommender", "enthusiastic", "music nerd",
+             "trend-spotting", "cinephile", "spoiler-careful", "honest critic",
+             "genre-hopping"],
+    "red": ["Republican view", "conservative", "news reporter", "argumentative",
+            "labels it partisan", "fact-first", "concise"],
+    "blue": ["Democratic view", "progressive", "news reporter", "argumentative",
+             "labels it partisan", "fact-first", "concise"],
+    "gray": ["independent", "skeptical of both parties", "news reporter", "fact-first",
+             "concise"],
+    "charter": ["precise", "visual", "clear", "data-driven", "concise", "labels everything",
+                "color-savvy", "annotation-heavy", "asks clarifying questions", "storyteller"],
 }
 # A bot counts as online if it called the hub this recently.
 AGENT_ONLINE_SECONDS = int(os.environ.get("AGENT_ONLINE_SECONDS", "600"))
@@ -653,9 +678,13 @@ def system_prompt(agent_id):
     team = ", ".join(f"{x['name']} ({TIER_LABELS[x['tier']]})" for x in AGENTS.values())
     stand_in = (f" The paid {MASTER_MODEL} model isn't connected yet, so you "
                 "run on the low brain's model for now." if a["tier"] == "master" else "")
+    persona = PERSONAS.get(agent_id, [])
+    traits = [k for k in persona if k != "concise"]
+    personality = f" Your personality: {', '.join(traits)}." if traits else ""
+    brevity = " and be concise" if "concise" in persona else ""
     return (f"You are {a['name']}, the {TIER_LABELS[a['tier']]} of a personal bot "
-            f"hub. {a['role']}{stand_in} The team: {team}. Stay in character "
-            "and be concise.")
+            f"hub. {a['role']}{stand_in}{personality} The team: {team}. "
+            f"Stay in character{brevity}.")
 
 
 def llm_chat(tier, messages, max_tokens=800):

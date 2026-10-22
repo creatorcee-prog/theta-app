@@ -87,7 +87,10 @@ key), `GET /api/bots`, `GET /api/tiers`.
 
 Named personas, like James in Garage Gym: the name is the persona,
 the model comes from the agent's tier. Edit `AGENTS` in
-`api/index.py` to change a name or role.
+`api/index.py` to change a name or role. Personalities are the keyword
+sets in `PERSONAS`, picked in the Crew Files page
+(https://claude.ai/artifact/UCNdEUqtBDUNN5VAekSMuS); "concise" also
+asks the agent for short answers.
 
 | Agent | Tier | Role |
 |---|---|---|
