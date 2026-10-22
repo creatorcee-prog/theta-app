@@ -77,6 +77,16 @@ MASTER_MODEL = os.environ.get("MASTER_MODEL", "Opus 5.5")
 MODELS = {t: f"{m} ({p.title()})" for t, (p, m) in TIER_LLM.items()}
 MODELS["master"] = f"{MASTER_MODEL} (not connected; {TIER_LLM['low_brain'][1]} standing in)"
 LLM_TIMEOUT = int(os.environ.get("LLM_TIMEOUT_SECONDS", "25"))
+# When a tier's provider is busy or down (429/5xx, timeouts), retry once,
+# then let a model on the other provider answer. *_FALLBACK_MODEL env vars
+# override; set one to "off" to fail instead.
+FALLBACK_LLM = {
+    "miner": ("groq", os.environ.get("MINER_FALLBACK_MODEL", "openai/gpt-oss-120b")),
+    "manager": ("gemini", os.environ.get("MANAGER_FALLBACK_MODEL", "gemini-3.8-flash")),
+    "low_brain": ("groq", os.environ.get("LOW_BRAIN_FALLBACK_MODEL", "openai/gpt-oss-120b")),
+}
+LLM_RETRY_DELAY = 1.5  # seconds before the one retry on the same model
+_RETRYABLE = {408, 429, 500, 502, 503, 504}
 CHAT_HISTORY = 20  # most recent messages sent per chat request
 ALLCHAT_KEEP = 200  # All Agents chat: messages kept
 ALLCHAT_MENTIONS = 3  # agents that may answer one message of yours
@@ -656,6 +666,13 @@ def _item_image(el):
     return None
 
 
+def _plain(text, limit=420):
+    """Feed HTML as plain text, cut at a word."""
+    t = re.sub(r"<[^>]+>", " ", html.unescape(text or ""))
+    t = " ".join(html.unescape(t).split())
+    return t if len(t) <= limit else t[:limit].rsplit(" ", 1)[0] + "…"
+
+
 def _bigger(url):
     """Ask image services that size by URL for a card-sized copy."""
     if url and "ichef.bbci.co.uk" in url:
@@ -672,7 +689,9 @@ def _parse_rss(data):
         link = (el.findtext("link") or "").strip()
         if link:
             items.append({"title": title or link, "url": link, "source": source,
-                          "published": _parse_date(el.findtext("pubDate")), "image": _bigger(_item_image(el))})
+                          "published": _parse_date(el.findtext("pubDate")), "image": _bigger(_item_image(el)),
+                          "summary": _plain(el.findtext("description")
+                                            or el.findtext("{http://purl.org/rss/1.0/modules/content/}encoded"))})
     if not items:  # Atom fallback
         ns = {"a": "http://www.w3.org/2005/Atom"}
         source = (root.findtext("a:title", "", ns) or "").strip()[:40]
@@ -684,7 +703,8 @@ def _parse_rss(data):
                 items.append({"title": title or link, "url": link, "source": source,
                               "published": _parse_date(el.findtext("a:updated", "", ns)
                                                        or el.findtext("a:published", "", ns)),
-                              "image": _item_image(el)})
+                              "image": _item_image(el),
+                              "summary": _plain(el.findtext("a:summary", "", ns) or el.findtext("a:content", "", ns))})
     return items[:10]
 
 
@@ -732,7 +752,7 @@ def widget_items(feeds):
         for it in items:
             out.append({"source": it.get("source") or urlparse(url).netloc,
                         "title": it["title"], "url": it["url"], "image": it.get("image"),
-                        "kind": it.get("kind")})
+                        "kind": it.get("kind"), "summary": it.get("summary", "")})
     return out[:20]
 
 
@@ -908,7 +928,12 @@ def pushed_items(event_type, limit=10):
 
 # ---- Models ----
 class LLMError(Exception):
-    """A model call failed: missing key, API error or timeout."""
+    """A model call failed: missing key, API error or timeout. retryable:
+    the provider was busy or unreachable, so another try (or model) may work."""
+
+    def __init__(self, msg, retryable=False, timed_out=False):
+        super().__init__(msg)
+        self.retryable, self.timed_out = retryable, timed_out
 
 
 def agent_model(agent_id):
@@ -1045,10 +1070,53 @@ def list_models(provider):
     return {"models": sorted(i.removeprefix("models/") for i in ids if i)}
 
 
+def _llm_error_text(provider, code, raw):
+    """A readable error: the provider's own message instead of its JSON."""
+    try:
+        body = json.loads(raw)
+        body = body[0] if isinstance(body, list) and body else body
+        msg = (body.get("error") or {}).get("message") if isinstance(body, dict) else None
+    except ValueError:
+        msg = None
+    return f"{provider} returned {code}: {(msg or raw)[:200]}"
+
+
 def llm_chat(tier, messages, max_tokens=800):
     """One chat-completion call for `tier`; returns the reply text.
-    Master is answered by the low brain until the paid model is wired."""
-    provider, model = TIER_LLM["low_brain" if tier == "master" else tier]
+    Master is answered by the low brain until the paid model is wired.
+    A busy or down provider gets one quick retry (not after a timeout),
+    then the tier's fallback model on the other provider answers."""
+    t = "low_brain" if tier == "master" else tier
+    provider, model = TIER_LLM[t]
+    try:
+        return _llm_call(provider, model, messages, max_tokens)
+    except LLMError as e:
+        if not e.retryable:
+            raise
+        first = e
+    if not first.timed_out:
+        time.sleep(LLM_RETRY_DELAY)
+        try:
+            return _llm_call(provider, model, messages, max_tokens)
+        except LLMError as e:
+            if not e.retryable:
+                raise
+    fb_provider, fb_model = FALLBACK_LLM.get(t, (None, "off"))
+    if fb_model == "off" or not os.environ.get(PROVIDERS[fb_provider][1]):
+        raise first
+    try:
+        text = _llm_call(fb_provider, fb_model, messages, max_tokens)
+    except LLMError as e:
+        raise LLMError(f"{first} (and the fallback, {fb_model}, failed too: {e})")
+    try:
+        store().set_meta("llm:fallback", json.dumps({"tier": t, "at": time.time(), "why": str(first)[:160],
+                                                     "model": fb_model}))
+    except Exception:
+        pass  # noting it must never cost the reply
+    return text
+
+
+def _llm_call(provider, model, messages, max_tokens):
     url, key_var = PROVIDERS[provider]
     key = os.environ.get(key_var, "")
     if not key:
@@ -1065,9 +1133,12 @@ def llm_chat(tier, messages, max_tokens=800):
             out = json.loads(resp.read())
         text = out["choices"][0]["message"].get("content") or ""
     except urllib.error.HTTPError as e:
-        detail = e.read()[:300].decode("utf-8", "replace")
-        raise LLMError(f"{provider} returned {e.code}: {detail}")
-    except (urllib.error.URLError, TimeoutError, ValueError, KeyError, IndexError, AttributeError) as e:
+        raise LLMError(_llm_error_text(provider, e.code, e.read()[:2000].decode("utf-8", "replace")),
+                       retryable=e.code in _RETRYABLE)
+    except (urllib.error.URLError, TimeoutError) as e:
+        timed_out = isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError)
+        raise LLMError(f"{provider} call failed: {e!r}", retryable=True, timed_out=timed_out)
+    except (ValueError, KeyError, IndexError, AttributeError) as e:
         raise LLMError(f"{provider} call failed: {e!r}")
     if not text.strip():
         raise LLMError(f"{model} returned an empty reply (it may have spent its "
@@ -1226,6 +1297,16 @@ def home_channel(sender):
 
 def message_channel(m):
     return m.get("ch") or home_channel(m["from"])
+
+
+def latest_by_channel(chat=None):
+    """{channel: id of its newest message from an agent or bot}, for unread dots."""
+    out = {}
+    for m in (store().list_chat(ALLCHAT_KEEP) if chat is None else chat):
+        if m.get("kind") != "event" and m["from"] != "you":
+            ch = message_channel(m)
+            out[ch] = max(out.get(ch, 0), m["id"])
+    return out
 
 
 def allchat_view(limit=50, channel="all"):
@@ -2690,12 +2771,21 @@ def _bars_svg(c1, c2, rows):
 
 
 def _win(agent, raw, sub="", image=None, href=None, at=None, tag=None, source=None, external=False, title=None,
-         fit=False):
+         fit=False, text="", links=None, coverage=None):
     """One window. raw: the full title (condensed later); title: already short;
-    fit: show the whole picture (charts) instead of filling the frame."""
+    fit: show the whole picture (charts) instead of filling the frame; text,
+    links and coverage fill the sheet that opens when it's tapped."""
+    url = href if external else None
     return {"agent": agent, "raw": raw, "title": title, "sub": sub, "image": image,
             "href": href or f"/agent/{agent}", "at": at, "tag": tag, "source": source,
-            "external": external, "fit": fit}
+            "external": external, "fit": fit, "text": text,
+            "links": links if links is not None else ([[source or "Open", url]] if url else []),
+            "coverage": coverage, "site": urlparse(url).netloc if url else ""}
+
+
+def story_coverage(title):
+    """Which of Red's, Gray's and Blue's outlets carried this story."""
+    return {a: sorted({it["source"] for it in side_coverage(a, title, limit=20)}) for a in ("red", "gray", "blue")}
 
 
 def _latest_post(chat, agent, with_image=False):
@@ -2722,20 +2812,26 @@ def agent_windows(chat=None, cards=None):
     for a in ("red", "blue", "gray"):
         c = cards.get(a)
         if c:
+            urls = re.findall(r"https?://\S+", c["text"])
+            links = [[c.get("source") or "Story", c["url"]]] if c.get("url") else []
+            links += [[urlparse(u).netloc.removeprefix("www."), u] for u in urls if u != c.get("url")]
             out[a] = _win(a, c["title"], _first_line(c["text"]), c.get("image"), c.get("url"), c["at"],
-                          source=c.get("source"), external=bool(c.get("url")))
+                          source=c.get("source"), external=bool(c.get("url")),
+                          text=re.sub(r"\s*https?://\S+", "", c["text"]).strip(), links=links,
+                          coverage=story_coverage(c["title"]))
         else:
             heads = side_headlines(a, 1)
             if heads:
                 h = heads[0]
                 out[a] = _win(a, h["title"], f"Top story at {h['source']}", h.get("image"), h["url"],
-                              h.get("published"), source=h["source"], external=True)
+                              h.get("published"), source=h["source"], external=True, text=h.get("summary", ""),
+                              coverage=story_coverage(h["title"]))
             else:
                 out[a] = _win(a, "", "Their outlets have nothing new", title="No headlines yet")
     c = cards.get("lenz")
     if c:
         out["lenz"] = _win("lenz", c["title"], _first_line(c["text"]), c.get("image"), c.get("url"), c["at"],
-                           external=bool(c.get("url")))
+                           external=bool(c.get("url")), text=re.sub(r"\s*https?://\S+", "", c["text"]).strip())
     else:
         try:
             pick = (tmdb_trending() or [None])[0]
@@ -2744,12 +2840,13 @@ def agent_windows(chat=None, cards=None):
         if pick:
             out["lenz"] = _win("lenz", pick["title"], f"Trending {pick['kind'].lower()}"
                                + (f" · {pick['rating']}/10" if pick["rating"] else ""), pick.get("image"),
-                               pick["url"], external=True)
+                               pick["url"], external=True, text=pick.get("overview", ""), source="TMDB")
         else:
             feed = widget_items(ENTERTAINMENT_FEEDS)
             pick = next((w for w in feed if w.get("kind") == "song"), None) or next(iter(feed), None)
             out["lenz"] = (_win("lenz", pick["title"], "Most played right now" if pick.get("kind") == "song"
-                                else f"New at {pick['source']}", pick.get("image"), pick["url"], external=True)
+                                else f"New at {pick['source']}", pick.get("image"), pick["url"], external=True,
+                                text=pick.get("summary", ""), source=pick["source"])
                            if pick else _win("lenz", "", "Nothing trending yet", title="Nothing to pitch yet"))
     look = AGENT_LOOKS
     month = datetime.now(hub_tz()).strftime("%Y-%m")
@@ -2767,7 +2864,9 @@ def agent_windows(chat=None, cards=None):
              "Set GLASS_BUDGETS or import a Rocket Money export")
     g_img = (_bars_svg(look["glass"][0], look["glass"][1], [(k, f) for f, k in hot]) if hot else
              _tile_svg(look["glass"][0], look["glass"][1], f"${spent:,.0f}", "this month", f"{datetime.now(hub_tz()):%B}"))
-    out["glass"] = _win("glass", "", g_sub, g_img, "/money", title=g_title)
+    out["glass"] = _win("glass", "", g_sub, g_img, "/money", title=g_title,
+                        text="\n".join(status_lines(month)) or "Nothing logged this month.",
+                        links=[["Open Money", "/money"]])
     today = datetime.now(hub_tz()).date()
     if calendar_linked():
         try:
@@ -2785,7 +2884,8 @@ def agent_windows(chat=None, cards=None):
             out["remi"] = _win("remi", o["title"], f"{when}{'' if o['all_day'] else ' · ' + _clock(o['start'])}"
                                f" · {len(todays)} on today", _tile_svg(look["remi"][0], look["remi"][1],
                                str(d.day), when if when in ("Today", "Tomorrow") else f"{d:%A}", f"{d:%B}"),
-                               "/calendar")
+                               "/calendar", text="\n".join(occurrence_text(x, with_day=True) for x in upcoming[:8]),
+                               links=[["Open the calendar", "/calendar"]])
         else:
             out["remi"] = _win("remi", "", "Nothing in the next two weeks", _tile_svg(
                 look["remi"][0], look["remi"][1], str(today.day), f"{today:%A}", f"{today:%B}"),
@@ -2796,7 +2896,8 @@ def agent_windows(chat=None, cards=None):
             "/calendar", title="No calendar linked")
     chart = _latest_post(chat, "charter", with_image=True)
     if chart:
-        out["charter"] = _win("charter", chart["text"], "Latest chart", chart["image"], at=_at(chart["at"]), fit=True)
+        out["charter"] = _win("charter", chart["text"], "Latest chart", chart["image"], at=_at(chart["at"]), fit=True,
+                              text=chart["text"], links=[["Open the chart", chart["image"]]])
     elif spent:
         caption, svg = _chart_spending(month)
         out["charter"] = _win("charter", caption, "Ask me for any chart",
@@ -2809,9 +2910,9 @@ def agent_windows(chat=None, cards=None):
         post = _latest_post(chat, a)
         if c:
             out[a] = _win(a, c["title"], _first_line(c["text"]), c.get("image"), c.get("url"), c["at"],
-                          external=bool(c.get("url")))
+                          external=bool(c.get("url")), text=c["text"], source=c.get("source"))
         elif post:
-            out[a] = _win(a, _first_line(post["text"], 300), "", at=_at(post["at"]))
+            out[a] = _win(a, _first_line(post["text"], 300), "", at=_at(post["at"]), text=post["text"])
         else:
             out[a] = _win(a, "", idle, title="Nothing yet")
     j = james_summary()
@@ -2824,7 +2925,8 @@ def agent_windows(chat=None, cards=None):
     elif j and j.get("summary"):
         lines = [ln.strip("-• ") for ln in j["summary"].splitlines() if ln.strip()]
         out["james"] = _win("james", next((ln for ln in lines if any(ch.isdigit() for ch in ln)), lines[0]),
-                            "From Garage Gym", james_img)
+                            "From Garage Gym", james_img, text=j["summary"],
+                            links=[["Open Garage Gym", FITNESS_APP_URL]] if FITNESS_APP_URL else [])
     else:
         out["james"] = _win("james", "", "Link Garage Gym to see your training" if not GARAGE_GYM_SECRET
                             else "Garage Gym hasn't answered yet", james_img, title="Training")
@@ -2848,8 +2950,9 @@ def _pushed_windows(event_type):
 
 def news_windows():
     breaking, top = news_items()
-    return [_win("", it["title"], it["source"], it.get("image"), it["url"], it.get("published"),
-                 tag="Breaking" if it in breaking else None, source=it["source"], external=True)
+    return [_win("", it["title"], "", it.get("image"), it["url"], it.get("published"),
+                 tag="Breaking" if it in breaking else None, source=it["source"], external=True,
+                 text=it.get("summary", ""), coverage=story_coverage(it["title"]))
             for it in breaking + top] + _pushed_windows("news")
 
 
@@ -2858,14 +2961,15 @@ def trending_windows():
     try:
         for it in tmdb_trending()[:6]:
             out.append(_win("lenz", it["title"], it["kind"] + (f" · {it['rating']}/10" if it["rating"] else ""),
-                            it.get("image"), it["url"], external=True))
+                            it.get("image"), it["url"], external=True, text=it.get("overview", ""), source="TMDB"))
     except LLMError:
         pass
     for it in widget_items(ENTERTAINMENT_FEEDS):
         if len(out) >= 12:
             break
         out.append(_win("lenz", it["title"], "Most played song" if it.get("kind") == "song" else it["source"],
-                        it.get("image"), it["url"], external=True))
+                        it.get("image"), it["url"], external=True, text=it.get("summary", ""),
+                        source="Apple Music" if it.get("kind") == "song" else it["source"]))
     return out
 
 
@@ -3097,6 +3201,18 @@ def menu_data():
 
 
 # ---- Wiring: is each agent's model actually reachable?
+def recent_fallback(tier, within=86400):
+    """The last time this tier's fallback model answered, if within a day."""
+    try:
+        fb = json.loads(store().get_meta("llm:fallback") or "null")
+    except ValueError:
+        return None
+    if not fb or fb["tier"] != ("low_brain" if tier == "master" else tier) or time.time() - fb["at"] > within:
+        return None
+    mins = int((time.time() - fb["at"]) // 60)
+    return dict(fb, ago=f"{mins // 60} h" if mins >= 60 else f"{mins} min")
+
+
 def wiring():
     """Per agent: what answers for it and whether it's wired in. Checks the
     key and that the key can use the model; costs no tokens."""
@@ -3125,6 +3241,10 @@ def wiring():
             else:
                 row.update(state="ok", note="Key set and model available"
                            + (f" ({MASTER_MODEL} not connected; standing in)" if a["tier"] == "master" else ""))
+            fb = recent_fallback(a["tier"])
+            if fb and row["state"] == "ok":
+                row["note"] += (f". Busy {fb['ago']} ago, so {fb['model']} answered instead "
+                                f"({fb['why']})")
         rows.append(row)
     if TMDB_API_KEY:
         try:
@@ -3454,6 +3574,52 @@ a.kpi:hover{text-decoration:none;border-color:color-mix(in srgb,var(--accent) 50
 .win .title{font-weight:720;font-size:15px;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .win .sub{font-size:12.5px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .swipe .win .sub{-webkit-line-clamp:1}
+.logo{width:14px;height:14px;border-radius:3px;vertical-align:-2px;margin-right:4px;flex:none}
+.who > .logo{margin-right:0}
+.cov{margin-top:auto;padding-top:6px;font-size:11px;color:var(--muted);font-weight:600}
+.covbar{display:flex;gap:2px;height:5px;border-radius:999px;overflow:hidden;margin-bottom:4px;background:var(--surface2)}
+.covbar i{display:block;min-width:4px}
+:root[data-layout="compact"] .cov span{display:none}
+:root[data-layout="compact"] .cov{padding-top:3px}
+
+/* The sheet a window opens into */
+dialog.sheet{border:0;padding:0;margin:auto auto 0;width:100%;max-width:640px;max-height:88dvh;border-radius:24px 24px 0 0;
+ background:var(--surface);color:var(--text);box-shadow:0 -12px 40px rgba(0,0,0,.3);overflow:hidden;display:flex;flex-direction:column}
+dialog.sheet:not([open]){display:none}
+:root[data-glass] dialog.sheet{background:color-mix(in srgb,var(--bg) 82%,transparent);-webkit-backdrop-filter:blur(28px);backdrop-filter:blur(28px)}
+@media (min-width:760px){dialog.sheet{margin:auto;border-radius:24px;max-height:84dvh}}
+dialog.sheet::backdrop{background:rgba(0,0,0,.45)}
+dialog.sheet[open]{animation:up .22s cubic-bezier(.2,.8,.2,1)}
+@keyframes up{from{transform:translateY(40px);opacity:.4}}
+.sheet .grab{width:38px;height:5px;border-radius:9px;background:var(--border);margin:8px auto 0;flex:none}
+.sheet .x{position:absolute;right:12px;top:12px;z-index:3;width:34px;height:34px;border-radius:50%;border:0;cursor:pointer;
+ background:rgba(0,0,0,.45);color:#fff;font-size:20px;line-height:34px;text-align:center}
+.sheet .scroll{overflow-y:auto;padding-bottom:calc(env(safe-area-inset-bottom) + 18px)}
+.sheet .pic{aspect-ratio:16/9;border-radius:0}
+.sheet .in{padding:16px 20px 4px;display:flex;flex-direction:column;gap:10px}
+.sheet h2{font-size:21px;line-height:1.25}
+.sheet .text{color:var(--text);font-size:15px;line-height:1.5}
+.sheet .covlist{display:grid;gap:6px;font-size:13px}
+.sheet .covlist b{display:inline-block;min-width:44px}
+.sheet .acts{display:flex;flex-wrap:wrap;gap:8px;padding-top:4px}
+
+/* Unread dots */
+.unread{position:relative}
+.tabbar a.unread svg{overflow:visible}
+.tabbar a.unread::after{content:"";position:absolute;top:5px;left:calc(50% + 7px);width:9px;height:9px;border-radius:50%;
+ background:var(--bad);border:2px solid var(--bg)}
+.rail nav a.unread::after,.chans a.unread::after{content:"";margin-left:auto;width:8px;height:8px;border-radius:50%;background:var(--bad);flex:none}
+body.chatpage .rail nav a.unread::after{position:absolute;top:6px;right:6px;margin:0}
+.chip.unread::after{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--bad);margin-left:2px}
+
+/* Quick feedback: every tap shows at once; a bar runs while the next page loads */
+a,button,.sw,.lo,.chip{touch-action:manipulation}
+.tabbar a:active,.rail nav a:active,.chip:active,.sw:active,.lo:active,.crewlink:active,.mrow:active,.seg button:active{transform:scale(.95);transition:transform .06s}
+.tabbar a,.rail nav a,.chip,.sw,.lo,.crewlink,.mrow,.seg button{transition:transform .14s}
+#loadbar{position:fixed;top:0;left:0;height:3px;width:0;z-index:100;background:linear-gradient(90deg,var(--accent),var(--accent2));
+ box-shadow:0 0 8px var(--accent);transition:width 2.5s cubic-bezier(.1,.7,.2,1),opacity .3s;pointer-events:none}
+#loadbar.go{width:85%}
+.haptic-switch{position:fixed;left:-9999px;opacity:0;pointer-events:none}
 
 /* Feed: one column of big cards */
 :root[data-layout="feed"] .wins{grid-template-columns:minmax(0,1fr);max-width:640px}
@@ -3700,6 +3866,116 @@ _UI_JS_SRC = r'''
       btn.disabled = false;
     }
   });
+
+  // Haptics: Android vibrates; iPhone (iOS 18+) gives a tick when a switch
+  // toggles, so a hidden one is flipped. Off in Settings, saved per device.
+  let haptics = true;
+  try { haptics = localStorage.getItem("theta_haptics") !== "off"; } catch (_) {}
+  const hl = document.createElement("label"), hi = document.createElement("input");
+  hl.className = "haptic-switch"; hl.setAttribute("aria-hidden", "true");
+  hi.type = "checkbox"; hi.setAttribute("switch", ""); hi.tabIndex = -1;
+  hl.append(hi); document.body.append(hl);
+  const tick = () => { if (!haptics) return; if (navigator.vibrate) navigator.vibrate(8); else hl.click(); };
+  window.thetaHaptic = tick;
+  function markHaptics() {
+    document.querySelectorAll("[data-haptics]").forEach(b => b.classList.toggle("on", (b.dataset.haptics === "on") === haptics));
+  }
+  markHaptics();
+
+  // A bar runs across the top while the next page loads.
+  const bar = document.createElement("div");
+  bar.id = "loadbar"; document.body.append(bar);
+  addEventListener("pageshow", () => { bar.className = ""; bar.style.opacity = ""; });
+
+  // Tapping a window opens its sheet: the whole text, where it came from and
+  // who covered it. Its link still works without the script.
+  const dlg = document.createElement("dialog");
+  dlg.className = "sheet"; dlg.setAttribute("aria-label", "Details");
+  document.body.append(dlg);
+  dlg.addEventListener("click", e => { if (e.target === dlg) dlg.close(); });
+  const el = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text) x.textContent = text; return x; };
+  function openSheet(w) {
+    let d;
+    try { d = JSON.parse(w.dataset.sheet); } catch (_) { return false; }
+    const close = el("button", "x", "\u00d7");
+    close.type = "button"; close.setAttribute("aria-label", "Close"); close.onclick = () => dlg.close();
+    const scroll = el("div", "scroll"), inn = el("div", "in");
+    scroll.append(w.querySelector(".pic").cloneNode(true));
+    inn.append(w.querySelector(".who").cloneNode(true), el("h2", "", d.title));
+    if (d.sub && d.sub !== d.text) inn.append(el("p", "muted small", d.sub));
+    if (d.text) inn.append(el("div", "text", d.text));
+    const cov = d.coverage || {};
+    if (Object.values(cov).some(x => x && x.length)) {
+      const box = el("div", "covlist");
+      box.append(el("h3", "", "Who covered it"));
+      for (const [k, label] of [["red", "Red"], ["gray", "Gray"], ["blue", "Blue"]]) {
+        const row = el("div"), b = el("b", "", label);
+        row.append(b, (cov[k] || []).length ? (cov[k] || []).join(", ") : "none of their outlets");
+        box.append(row);
+      }
+      inn.append(box);
+    }
+    const acts = el("div", "acts");
+    (d.links || []).forEach(([label, url], i) => {
+      const a = el("a", "btn" + (i ? " ghost" : ""), label);
+      a.href = url;
+      if (/^https?:/.test(url)) { a.target = "_blank"; a.rel = "noopener"; a.textContent = "Read at " + label + " \u2197"; }
+      acts.append(a);
+    });
+    if (d.page) {
+      const ask = el("a", "btn ghost", "Ask " + d.name); ask.href = "/chat?to=" + d.agent;
+      const pg = el("a", "btn ghost", d.name + "'s page"); pg.href = d.page;
+      acts.append(ask, pg);
+    }
+    inn.append(acts);
+    scroll.append(inn);
+    dlg.replaceChildren(el("div", "grab"), close, scroll);
+    dlg.showModal();
+    scroll.scrollTop = 0;
+    return true;
+  }
+  document.addEventListener("click", e => {
+    const h = e.target.closest("[data-haptics]");
+    if (h) {
+      haptics = h.dataset.haptics === "on";
+      try { localStorage.setItem("theta_haptics", haptics ? "on" : "off"); } catch (_) {}
+      markHaptics(); tick(); return;
+    }
+    const t = e.target.closest("a, button, .win");
+    if (t && !t.closest(".haptic-switch")) tick();
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    const w = e.target.closest(".win[data-sheet]");
+    if (w && typeof dlg.showModal === "function") {
+      e.preventDefault();
+      if (!openSheet(w)) location.href = w.href;
+      return;
+    }
+    const a = e.target.closest("a[href]");
+    if (a && !a.target && a.origin === location.origin && !a.hash) {
+      bar.className = ""; void bar.offsetWidth; bar.className = "go";
+    }
+  });
+
+  // Unread dots on Chat and its channels. What you've read is kept on this
+  // device; the newest message per channel comes with each page.
+  const LATEST = window.THETA_LATEST || {};
+  let seen = null;
+  try { seen = JSON.parse(localStorage.getItem("theta_seen") || "null"); } catch (_) {}
+  const saveSeen = () => { try { localStorage.setItem("theta_seen", JSON.stringify(seen)); } catch (_) {} };
+  if (!seen) { seen = Object.assign({}, LATEST); saveSeen(); }  // a first visit starts with nothing unread
+  const unread = c => (LATEST[c] || 0) > (seen[c] || 0);
+  function paintDots() {
+    const any = Object.keys(LATEST).some(unread);
+    document.querySelectorAll('a[href="/chat"]').forEach(a => a.classList.toggle("unread", any));
+    document.querySelectorAll('a[href^="/chat?ch="]').forEach(a => {
+      const c = new URL(a.href).searchParams.get("ch");
+      a.classList.toggle("unread", c === "all" ? any : unread(c));
+    });
+  }
+  window.thetaSeen = (ch, id) => { if (typeof id === "number" && id > (seen[ch] || 0)) { seen[ch] = id; saveSeen(); } };
+  window.thetaLatest = obj => { Object.assign(LATEST, obj || {}); paintDots(); };
+  window.thetaPaintDots = paintDots;
+  paintDots();
 })();
 '''
 
@@ -3815,6 +4091,8 @@ _CHAT_JS = r'''
     }
     box.replaceChildren(...out);
     lastIds = new Set(thread.map(m => m.id));
+    for (const m of thread) if (m.kind !== "event" && m.from !== "you") thetaSeen(m.ch || C.channel, m.id);
+    thetaPaintDots();
     if (near) box.scrollTop = box.scrollHeight;
     first = false;
   }
@@ -3822,6 +4100,7 @@ _CHAT_JS = r'''
     try {
       const d = await (await fetch("/api/allchat?channel=" + C.channel, {headers: H})).json();
       if (d.ok) {
+        thetaLatest(d.latest);
         const ids = d.messages.map(m => m.id).join();
         if (ids !== thread.map(m => m.id).join()) { thread = d.messages; render(); }
       }
@@ -3928,6 +4207,7 @@ _CHAT_JS = r'''
       const d = await (await fetch("/api/allchat", {method: "POST", headers: H, body: JSON.stringify({text, channel: C.channel})})).json();
       if (!d.ok) throw new Error(d.error);
       thread = d.messages; render(); box.scrollTop = box.scrollHeight;
+      thetaLatest(d.latest);
       if (isCmd) status.textContent = d.result;
       else {
         const errs = Object.entries(d.errors || {}).map(([n, m]) => n + " couldn't reply: " + m);
@@ -4023,7 +4303,7 @@ def _json_script(name, obj):
     return f"<script>window.{name} = {safe};</script>"
 
 
-def page(headers, title, active, body, body_class="", statuses=None):
+def page(headers, title, active, body, body_class="", statuses=None, chat=None):
     """A full page in the app shell: sidebar on wide screens, tab bar on phones."""
     theme, mode, layout = ui_prefs(headers)
     t = THEMES[theme]
@@ -4055,7 +4335,8 @@ def page(headers, title, active, body, body_class="", statuses=None):
         f'<a class="brand" href="/">{avatar_img("theta", 32)}{APP_NAME}</a><nav aria-label="Main">{nav}</nav>'
         f'<div class="label">Crew</div>{crew}</aside><main class="main">{body}</main></div>'
         f'<nav class="tabbar" aria-label="Main">{nav}</nav>'
-        f'<script src="/ui.js?v={_ASSET_V}"></script></body></html>')
+        + _json_script("THETA_LATEST", latest_by_channel(chat))
+        + f'<script src="/ui.js?v={_ASSET_V}"></script></body></html>')
 
 
 def _ago(ts, now=None):
@@ -4086,18 +4367,46 @@ def win_html(w):
            f'{" class=fit" if w.get("fit") else ""} referrerpolicy="no-referrer" onerror="this.remove()">'
            if w.get("image") else "")
     tag = f'<span class="tag">{html.escape(w["tag"])}</span>' if w.get("tag") else ""
+    logo = (f'<img class="logo" src="{site_logo(w["site"])}" alt="" width="16" height="16" loading="lazy" '
+            f'referrerpolicy="no-referrer" onerror="this.remove()">' if w.get("site") else "")
     if w["agent"]:
         who = f'{avatar_img(w["agent"], 18)}<span class="nm">{html.escape(display_name(w["agent"]))}</span>'
         if w.get("source"):
-            who += f'<span class="src">· {html.escape(w["source"])}</span>'
+            who += f'<span class="src">· {logo}{html.escape(w["source"])}</span>'
     else:
-        who = f'<span>{html.escape(w.get("source") or "")}</span>'
+        who = f'{logo}<span>{html.escape(w.get("source") or "")}</span>'
     when = _ago(w.get("at"))
     sub = f'<div class="sub">{html.escape(w["sub"])}</div>' if w.get("sub") else ""
     ext = ' target="_blank" rel="noopener"' if w.get("external") else ""
-    return (f'<a class="win" href="{html.escape(w["href"])}"{ext}><div class="pic">{ph}{img}{tag}</div>'
+    sheet = {"title": w["raw"] or w["title"] or "", "sub": w.get("sub") or "", "text": w.get("text") or "",
+             "links": [[label, url] for label, url in (w.get("links") or []) if url],
+             "coverage": w.get("coverage"), "agent": w["agent"],
+             "name": display_name(w["agent"]) if w["agent"] else "", "source": w.get("source") or "",
+             "page": f"/agent/{w['agent']}" if w["agent"] in AGENTS else ""}
+    return (f'<a class="win" href="{html.escape(w["href"])}"{ext} data-sheet="{html.escape(json.dumps(sheet))}">'
+            f'<div class="pic">{ph}{img}{tag}</div>'
             f'<div class="body"><div class="who">{who}<span class="t">{when}</span></div>'
-            f'<div class="title">{html.escape(w["title"] or "")}</div>{sub}</div></a>')
+            f'<div class="title">{html.escape(w["title"] or "")}</div>{sub}{coverage_html(w.get("coverage"))}</div></a>')
+
+
+def site_logo(site):
+    """A news site's own icon, by domain (DuckDuckGo's favicon service)."""
+    return f"https://icons.duckduckgo.com/ip3/{quote(site.lower())}.ico"
+
+
+_SIDES = (("red", "Red"), ("gray", "Gray"), ("blue", "Blue"))
+
+
+def coverage_html(cov):
+    """How many of each side's outlets carried a story, as a split bar."""
+    if not cov or not any(cov.values()):
+        return ""
+    counts = [(a, label, len(cov.get(a) or [])) for a, label in _SIDES]
+    tip = "; ".join(f"{label}'s outlets: {', '.join(cov.get(a) or []) or 'none'}" for a, label, _ in counts)
+    bar = "".join(f'<i style="flex:{n};background:{AGENT_LOOKS[a][0]}"></i>' for a, _, n in counts if n)
+    text = " · ".join(f"{label} {n}" for _, label, n in counts)
+    return (f'<div class="cov" title="{html.escape(tip)}"><div class="covbar" aria-hidden="true">{bar}</div>'
+            f'<span>{html.escape(text)}</span></div>')
 
 
 def ring_svg(frac, size=46, color="var(--accent)"):
@@ -4179,7 +4488,7 @@ def home_page(headers):
         + ("<p>Storage: memory (not persistent). Connect Upstash Redis in Vercel and redeploy.</p>"
            if STORAGE_MODE.startswith("memory") else "")
         + "<p>Pictures come from each outlet's feed, TMDB, Apple Music and Wikipedia.</p></footer>")
-    return page(headers, "Home", "/", body, statuses=statuses)
+    return page(headers, "Home", "/", body, statuses=statuses, chat=chat)
 
 
 def chat_page(headers, query):
@@ -4316,6 +4625,9 @@ def settings_page(headers):
         'version. Saved on this device.</p></div>'
         f'<div class="swatches">{swatches}</div>'
         f'<div><h3>Light or dark</h3><p class="muted small">Match device follows your phone\'s setting.</p><div class="seg" role="group" aria-label="Light or dark">{modes}</div></div>'
+        '<div><h3>Haptics</h3><p class="muted small">A light tap when you press things. iPhone needs iOS 18 or later.</p>'
+        '<div class="seg" role="group" aria-label="Haptics"><button type="button" data-haptics="on">On</button>'
+        '<button type="button" data-haptics="off">Off</button></div></div>'
         f'<div><h3>Home layout</h3><p class="muted small">How the windows on Home are arranged.</p><div class="layouts">{layouts}</div></div></section>'
         '<section class="card stack"><div><h2>Phone notifications</h2><p class="muted small">Mistral sends these: '
         'the morning digest, breaking news, budget alerts and birthdays. On iPhone, open Theta from its Home Screen icon.</p></div>'
@@ -4619,7 +4931,7 @@ def handle(method, path, query, headers, body):
                 if not _auth_bot(bot_id, headers):
                     return _json(401, {"ok": False, "error": "bad bot_id or key"})
                 store().add_chat(bot_id, text.strip()[:2000], channel=data.get("channel") if ch != "all" else None)
-                return _json(200, {"ok": True, "messages": allchat_view(channel=ch)})
+                return _json(200, {"ok": True, "messages": allchat_view(channel=ch), "latest": latest_by_channel()})
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
             if text.strip().startswith("/"):
@@ -4627,7 +4939,7 @@ def handle(method, path, query, headers, body):
                     result = run_command(text)
                 except CommandError as e:
                     return _json(400, {"ok": False, "error": str(e)})
-                return _json(200, {"ok": True, "command": True, "result": result,
+                return _json(200, {"ok": True, "command": True, "result": result, "latest": latest_by_channel(),
                                    "messages": allchat_view(channel=ch), "errors": {}, "routed": []})
             st = store()
             st.add_chat("you", text.strip()[:2000], channel=ch)
@@ -4663,7 +4975,7 @@ def handle(method, path, query, headers, body):
                         else:
                             errors[AGENTS[a]["name"]] = err
             return _json(200, {"ok": True, "messages": allchat_view(channel=ch), "errors": errors,
-                               "routed": [AGENTS[a]["name"] for a in routed]})
+                               "routed": [AGENTS[a]["name"] for a in routed], "latest": latest_by_channel()})
 
         if path == "/api/glass/expense":
             bot_id = data.get("bot_id")
@@ -4855,7 +5167,8 @@ def handle(method, path, query, headers, body):
         bot_id = query.get("bot_id", [None])[0]
         if not (_auth_dashboard(query, headers) if not bot_id else _auth_bot(bot_id, headers)):
             return _json(401, {"ok": False, "error": "dashboard key or bot key required"})
-        return _json(200, {"ok": True, "messages": allchat_view(channel=query.get("channel", ["all"])[0])})
+        return _json(200, {"ok": True, "messages": allchat_view(channel=query.get("channel", ["all"])[0]),
+                           "latest": latest_by_channel()})
 
     if path.startswith("/chart/") and path.endswith(".svg"):
         if not _auth_dashboard(query, headers):
