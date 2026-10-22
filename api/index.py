@@ -107,6 +107,10 @@ AGENTS = {
                 "role": "You make charts from the user's and other bots' "
                         "requests and hand them back: say the chart type, axes "
                         "and data plainly."},
+    # James lives in Garage Gym: chat goes to his own prompt and your
+    # training data there (see james_chat), not to a role prompt here.
+    "james": {"name": "James", "tier": "manager", "home": "Garage Gym",
+              "role": "You are the fitness coach from Garage Gym."},
 }
 # A bot counts as online if it called the hub this recently.
 AGENT_ONLINE_SECONDS = int(os.environ.get("AGENT_ONLINE_SECONDS", "600"))
@@ -157,6 +161,9 @@ ENTERTAINMENT_FEEDS = [u.strip() for u in os.environ.get(
 FITNESS_APP_URL = os.environ.get(
     "FITNESS_APP_URL", "https://fitness-tracker-snowy-seven-83.vercel.app/")
 FITNESS_REPO_URL = "https://github.com/creatorcee-prog/fitness-tracker"
+# Garage Gym's /api/hub (James): GARAGE_GYM_SECRET must equal its HUB_SECRET.
+GARAGE_GYM_URL = (os.environ.get("GARAGE_GYM_URL") or FITNESS_APP_URL).rstrip("/")
+GARAGE_GYM_SECRET = os.environ.get("GARAGE_GYM_SECRET", "")
 WIDGET_CACHE_SECONDS = int(os.environ.get("WIDGET_CACHE_SECONDS", "900"))
 
 # Vercel KV stores moved to Upstash, which may inject either naming.
@@ -574,6 +581,73 @@ class LLMError(Exception):
     """A model call failed: missing key, API error or timeout."""
 
 
+def agent_model(agent_id):
+    """What answers for an agent: its tier's model, or the app it lives in."""
+    a = AGENTS[agent_id]
+    return f"{a['home']}'s coach model" if a.get("home") else MODELS[a["tier"]]
+
+
+def _garage_gym(method, body=None, timeout=None):
+    """Call Garage Gym's /api/hub; marks James as seen when it answers."""
+    if not (GARAGE_GYM_URL and GARAGE_GYM_SECRET):
+        raise LLMError("Garage Gym isn't linked: set GARAGE_GYM_URL and GARAGE_GYM_SECRET")
+    req = urllib.request.Request(
+        GARAGE_GYM_URL + "/api/hub",
+        data=json.dumps(body).encode() if body is not None else None,
+        headers={"Authorization": f"Bearer {GARAGE_GYM_SECRET}",
+                 "Content-Type": "application/json", "User-Agent": "bot-hub/1.0"},
+        method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout or LLM_TIMEOUT) as resp:
+            out = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        detail = e.read()[:200].decode("utf-8", "replace")
+        raise LLMError(f"Garage Gym returned {e.code}: {detail}")
+    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+        raise LLMError(f"Garage Gym unreachable: {e!r}")
+    store().touch("james")
+    return out
+
+
+def james_chat(history):
+    """Ask James in Garage Gym. Hub messages become his {question, history}
+    pairs; changes he proposes need the app's Apply button."""
+    turns, asked = [], None
+    for m in history[:-1]:
+        if m["role"] == "user":
+            asked = m["content"]
+        elif asked is not None:
+            turns.append({"question": asked, "answer": m["content"]})
+            asked = None
+    out = _garage_gym("POST", {"question": history[-1]["content"], "history": turns})
+    reply = out.get("answer") or "James didn't answer. Try again in a bit."
+    n = out.get("proposedChanges") or 0
+    if n:
+        reply += (f"\n\n(James suggested {n} change{'s' if n != 1 else ''}. "
+                  "Open Garage Gym to review and apply them.)")
+    return reply
+
+
+_JAMES_CACHE = {"at": 0.0, "ttl": 0, "value": None}
+
+
+def james_summary(now=None):
+    """James's training summary for the Fitness card, or None when Garage
+    Gym isn't linked or didn't answer. Cached 5 min (1 min after a failure)."""
+    now = now or time.time()
+    if not (GARAGE_GYM_URL and GARAGE_GYM_SECRET):
+        return None
+    c = _JAMES_CACHE
+    if now - c["at"] < c["ttl"]:
+        return c["value"]
+    try:
+        value, ttl = _garage_gym("GET", timeout=8), 300
+    except LLMError:
+        value, ttl = None, 60
+    c.update(at=now, ttl=ttl, value=value)
+    return value
+
+
 def system_prompt(agent_id):
     a = AGENTS[agent_id]
     team = ", ".join(f"{x['name']} ({TIER_LABELS[x['tier']]})" for x in AGENTS.values())
@@ -672,7 +746,8 @@ def agent_statuses(now=None):
         online = bool(st and now - st["seen"] <= AGENT_ONLINE_SECONDS)
         out.append({
             "bot_id": bot_id, "name": display_name(bot_id), "role": tier,
-            "tier": TIER_LABELS[tier], "model": MODELS[tier], "online": online,
+            "tier": TIER_LABELS[tier], "online": online,
+            "model": agent_model(bot_id) if bot_id in AGENTS else MODELS[tier],
             "activity": (st["activity"] or "online") if online else "offline",
             "last_seen": (datetime.fromtimestamp(st["seen"], timezone.utc)
                           .strftime("%Y-%m-%d %H:%M:%S") if st else None),
@@ -739,7 +814,7 @@ def _chat_html():
     for tier in reversed(TIERS):  # High Brain first
         opts = "".join(
             f"<option value=\"{a}\" data-name=\"{html.escape(v['name'])}\">"
-            f"{html.escape(v['name'])}</option>"
+            f"{html.escape(v['name'])}{' (' + html.escape(v['home']) + ')' if v.get('home') else ''}</option>"
             for a, v in AGENTS.items() if v["tier"] == tier)
         if opts:
             groups.append(f"<optgroup label=\"{TIER_LABELS[tier]} — "
@@ -844,13 +919,15 @@ def handle(method, path, query, headers, body):
             if history[-1]["role"] != "user":
                 return _json(400, {"ok": False, "error": "last message must be from user"})
             try:
-                tier = AGENTS[agent]["tier"]
-                reply = llm_chat(tier, [{"role": "system", "content": system_prompt(agent)}]
-                                 + history)
+                if agent == "james":
+                    reply = james_chat(history)
+                else:
+                    reply = llm_chat(AGENTS[agent]["tier"],
+                                     [{"role": "system", "content": system_prompt(agent)}] + history)
             except LLMError as e:
                 return _json(502, {"ok": False, "error": str(e)})
             return _json(200, {"ok": True, "agent": agent, "name": AGENTS[agent]["name"],
-                               "model": MODELS[tier], "reply": reply})
+                               "model": agent_model(agent), "reply": reply})
 
         if path == "/api/status":
             bot_id, activity = data.get("bot_id"), data.get("activity")
@@ -873,6 +950,7 @@ def handle(method, path, query, headers, body):
         orders = st.list_active_orders()
         fit_rows = st.list_fitness(1)
         fit = fit_rows[0] if fit_rows else None
+        james = james_summary()  # before agent_statuses: an answer marks James online
 
         def _render_list(items):
             parts = []
@@ -913,14 +991,24 @@ def handle(method, path, query, headers, body):
             f"<li><span style=\"color:{'#1a7f37' if a['online'] else '#888'}\">●</span> "
             f"<b>{html.escape(a['name'])}</b> — {a['tier']} · {html.escape(a['activity'])}</li>"
             for a in agent_statuses())
+        if james:
+            james_html = (f"<p><b>{html.escape(james.get('coach') or 'James')}</b>'s summary</p>"
+                          f"<div style=\"white-space:pre-wrap\">{html.escape(james.get('summary') or '')}</div>")
+        elif GARAGE_GYM_SECRET:
+            james_html = ("<p>Garage Gym didn't answer. Check GARAGE_GYM_URL, and that "
+                          "HUB_SECRET there matches GARAGE_GYM_SECRET here.</p>")
+        else:
+            james_html = ""
         if fit:
-            fit_html = "<ul>" + "".join(
+            fit_html = james_html + "<ul>" + "".join(
                 f"<li><b>{html.escape(str(k))}:</b> {html.escape(str(v))}</li>"
                 for k, v in fit["summary"].items()
             ) + f"</ul><i>from {html.escape(display_name(fit['bot_id']))} at {html.escape(fit['created_at'])}</i>"
+        elif james_html:
+            fit_html = james_html
         else:
-            fit_html = ("<p>No health summary yet. The fitness app pushes one to "
-                        "POST /api/fitness after each day/session.</p>")
+            fit_html = ("<p>No health summary yet. Link Garage Gym (GARAGE_GYM_URL and "
+                        "GARAGE_GYM_SECRET) to show James's summary here.</p>")
         app_link = (
             f"<p><a href=\"{html.escape(FITNESS_APP_URL)}\">Open fitness app</a></p>"
             if FITNESS_APP_URL else
@@ -974,6 +1062,7 @@ def handle(method, path, query, headers, body):
             "entertainment": (pushed_items("entertainment") + widget_items(ENTERTAINMENT_FEEDS))[:20],
             "news": breaking + top + pushed_items("news"),
             "fitness": fit_rows[0] if fit_rows else None,
+            "james": james_summary(),
         })
 
     if path == "/api/fitness":
