@@ -6640,7 +6640,7 @@ def speakable(text):
 # carrying it is moved to a session the next time it opens Theta (and
 # listed then). Only a hash of each session token is stored.
 SESSION_KEEP = 40
-SESSION_IDLE_DAYS = 180
+SESSION_IDLE_DAYS = 45
 SESSION_SEEN_EVERY = 300  # seconds between "last seen" writes per device
 _SESS_LOCK = threading.Lock()
 _REQ = threading.local()  # per request: cookies to set, session made
@@ -6759,6 +6759,10 @@ def sign_out_device(dev_id, keep=None):
         out = {k: v for k, v in live.items()
                if (v["id"] != dev_id if dev_id != "*" else v["id"] == keep)}
         store().set_meta("sessions", json.dumps(out))
+    gone = {v["id"] for v in live.values()} - {v["id"] for v in out.values()}
+    subs = push_subs()
+    if gone and any(x.get("sess") in gone for x in subs):  # a signed-out device stops getting notifications
+        store().set_meta("push:subs", json.dumps([x for x in subs if x.get("sess") not in gone]))
     return len(live) - len(out)
 
 
@@ -7212,7 +7216,8 @@ body.typing .chat{height:100dvh}
 .dcheck input:checked+span{color:var(--muted);text-decoration:line-through}
 .daily .dx{display:none;border:0;background:none;color:var(--muted);font-size:20px;cursor:pointer;padding:4px 8px}
 .daily.editing .dx{display:block}.daily .dadd{display:none;padding:5px 5px 5px 14px}.daily.editing .dadd{display:flex}
-.mem li{justify-content:space-between}.mem .dx{border:0;background:none;color:var(--muted);font-size:20px;cursor:pointer;padding:4px 8px}
+.mem li{justify-content:space-between}.ok-t{color:var(--good);font-weight:600}.bad-t{color:var(--bad)}
+#devices li.dev{display:block;padding:10px 0}#devices details summary{cursor:pointer;padding:4px 0}.mem .dx{border:0;background:none;color:var(--muted);font-size:20px;cursor:pointer;padding:4px 8px}
 .daily .dadd input{flex:1;min-width:0;border:0;background:transparent;outline:none;padding:8px 0;font:inherit}
 .linkbtn{border:0;background:none;color:var(--accent);font:inherit;cursor:pointer;padding:0}
 /* Phones: iOS zooms the page when a field's text is under 16px, and the page then drifts. Keep fields at 16px and
@@ -8921,50 +8926,75 @@ _DEVICES_JS = """
     if (!d.ok) { note.textContent = d.error; return; }
     if (all) location.reload(); else b.closest("li").remove();
   });
+  // Tell the hub what this device is (the Home Screen app?) and which
+  // notification sign-up it holds, so the list pairs them up.
+  (async () => {
+    let endpoint = null;
+    try {
+      const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
+      const sub = reg && await reg.pushManager.getSubscription();
+      endpoint = sub ? sub.endpoint : null;
+    } catch (_) {}
+    const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+    try {
+      const d = await (await fetch("/api/devices/hello", {method: "POST", headers: window.THETA_H,
+        body: JSON.stringify({standalone, endpoint})})).json();
+      if (d.changed) location.reload();
+    } catch (_) {}
+  })();
 })();
 """
 
 
+def device_name(d):
+    """'iPhone · Home Screen app' when Settings said so, else from the user agent."""
+    return d["label"].split(" · ")[0] + " · " + d["app"] if d.get("app") else d["label"]
+
+
 def devices_card(headers):
+    """One list: each device, whether it's this one, and whether it gets notifications."""
     r, me = devices_report(), current_session(headers) or getattr(_REQ, "session", None) or {}
     esc = html.escape
-    rows = "".join(
-        f'<li><div class="brow" style="align-items:center"><span><b>{esc(d["label"])}</b>'
-        + (' <span class="chip">This device</span>' if d["id"] == me.get("id") else "")
-        + '</span>' + ('' if d["id"] == me.get("id") else
-                       f'<button class="btn ghost small" type="button" data-signout="{esc(d["id"])}">Sign out</button>')
-        + f'</div><div class="muted small">{esc(d["how"])} · {esc(d.get("place") or "place unknown")} · IP {esc(d.get("ip") or "?")}'
-          f'<br>Signed in {_when(d["made"])} · last seen {_when(d["seen"])}</div></li>'
-        for d in r["sessions"])
-    last = (_meta_json("push:last", {}) or {})
-    lastline = (f'<p class="muted small">Last push ({_when(last["at"])}): ' + "; ".join(
-        ("✓ " if x["ok"] else "✗ ") + esc(x["device"]) + ("" if x["ok"] else f' ({esc(x.get("why") or "")})')
-        for x in last.get("results", [])) + '</p>') if last.get("results") else ""
-    push = "".join(f'<li><div class="brow" style="align-items:center"><span>{esc(x["service"])}</span>'
-                   f'<button class="btn ghost small" type="button" data-pushrm="{esc(x["id"])}">Remove</button></div>'
-                   f'<div class="muted small">{esc(x["device"])}'
-                   + (f' · {esc(x["place"])}' if x["place"] else "") + (f' · added {_when(x["made"])}' if x["made"] else "")
-                   + '</div></li>' for x in r["push"])
-    keys = "".join(f'<li>{esc(k["label"])} <span class="muted small">via {esc(k["via"])}</span><div class="muted small">'
-                   f'{esc(k.get("place") or "?")} · IP {esc(k.get("ip") or "?")} · {k["uses"]}× · last {_when(k["seen"])}</div></li>'
-                   for k in r["key_users"])
-    fails = "".join(f'<li class="small">{_when(f["at"])} · {esc(f["stage"])} on {esc(f["device"])} at {esc(f["site"])}: '
-                    f'{esc(f["error"])}</li>' for f in reversed(r["pk_fails"]))
-    pfails = "".join(f'<li class="small">{_when(f["at"])} · {esc(f["stage"])} on {esc(f["device"])} '
-                     f'({"Home Screen app" if f["standalone"] else "in the browser"}): {esc(f["error"])}</li>'
-                     for f in reversed(r["push_fails"]))
+    subs = push_subs()
+    by_sess = {x.get("sess") for x in subs if x.get("sess")}
+    ids = {d["id"] for d in r["sessions"]}
+    loose = [x for x in subs if x.get("sess") not in ids]  # notifications not tied to a signed-in device
+    devs = sorted(r["sessions"], key=lambda d: (d["id"] != me.get("id"), -d["seen"]))
+    recent_fail = next((f for f in reversed(r["push_fails"]) if time.time() - f["at"] < 86400), None)
+
+    def row(d):
+        mine = d["id"] == me.get("id")
+        on = d["id"] in by_sess
+        why = (f' · <span class="bad-t">{esc(recent_fail["error"])}</span>' if mine and not on and recent_fail else "")
+        return (f'<li class="dev"><div class="brow" style="align-items:center"><span><b>{esc(device_name(d))}</b>'
+                + (' <span class="chip">This device</span>' if mine else "") + '</span>'
+                + ('' if mine else f'<button class="btn ghost small" type="button" data-signout="{esc(d["id"])}">Sign out</button>')
+                + f'</div><div class="small"><span class="{"ok-t" if on else "muted"}">'
+                  f'{"Notifications on" if on else "Notifications off"}</span>{why}'
+                  f'<span class="muted"> · active {_when(d["seen"])}</span></div></li>')
+    rows = "".join(row(d) for d in devs)
+    rows += "".join(f'<li class="dev"><div class="brow" style="align-items:center"><span><b>{esc(x["device"])}</b></span>'
+                    f'<button class="btn ghost small" type="button" data-pushrm="{esc(x["id"])}">Remove</button></div>'
+                    f'<div class="small"><span class="ok-t">Notifications on</span><span class="muted"> · not signed in '
+                    f'here (open Settings on that device to link it)</span></div></li>'
+                    for x in r["push"] if any(hashlib.sha1(y.get("endpoint", "").encode()).hexdigest()[:10] == x["id"] for y in loose))
+    details = "".join(f'<li class="small">{esc(device_name(d))}: {esc(d["how"])}, signed in {_when(d["made"])}, '
+                      f'{esc(d.get("place") or "place unknown")}, IP {esc(d.get("ip") or "?")}</li>' for d in devs)
+    details += "".join(f'<li class="small">Used the key directly: {esc(k["label"])} via {esc(k["via"])}, '
+                       f'{k["uses"]}×, last {_when(k["seen"])}, IP {esc(k.get("ip") or "?")}</li>' for k in r["key_users"])
+    details += "".join(f'<li class="small">Notifications didn\'t turn on ({_when(f["at"])}, {esc(f["device"])}): '
+                       f'{esc(f["error"])}</li>' for f in reversed(r["push_fails"]))
+    details += "".join(f'<li class="small">Face ID failed ({_when(f["at"])}, {esc(f["device"])}): {esc(f["error"])}</li>'
+                       for f in reversed(r["pk_fails"]))
     return ('<section class="card stack" id="devices" aria-label="Devices"><div class="brow"><h2>Devices</h2>'
             + (f'<button class="btn ghost small" type="button" data-signout="*">Sign out all others</button>'
-               if len(r["sessions"]) > 1 else "") + '</div>'
-            '<p class="muted small">Every browser signed in to Theta, with where it signed in from (roughly, by '
-            'internet address: phones on cellular data often show a city near the carrier\'s hub, not where you are). A new sign-in also pings your phone. Devices on the old sign-in show up the next time '
-            'they open Theta; to cut off anything you can\'t see here, change <code>DASHBOARD_KEY</code> in Vercel and '
-            'redeploy.</p>'
-            f'<h3>Signed in ({len(r["sessions"])})</h3><ul class="list">{rows or "<li class=empty>None yet.</li>"}</ul>'
-            f'<h3>Getting notifications ({len(r["push"])})</h3>{lastline}<ul class="list">{push or "<li class=empty>None.</li>"}</ul>'
-            + (f'<h3>Used the key directly</h3><ul class="list">{keys}</ul>' if keys else "")
-            + (f'<h3>Why notifications didn\'t turn on</h3><ul class="list">{pfails}</ul>' if pfails else "")
-            + (f'<h3>Recent Face ID failures</h3><ul class="list">{fails}</ul>' if fails else "")
+               if len(devs) > 1 else "") + '</div>'
+            '<p class="muted small">Everything signed in to Theta. Sign out anything you don\'t recognize.</p>'
+            f'<ul class="list">{rows or "<li class=empty>None yet.</li>"}</ul>'
+            + (f'<details class="small"><summary class="muted">Details: where and how each signed in</summary>'
+               f'<p class="muted small">Locations are rough: phones on cellular data often show the carrier\'s hub. '
+               'To cut off anything not listed, change <code>DASHBOARD_KEY</code> in Vercel and redeploy.</p>'
+               f'<ul class="list">{details}</ul></details>' if details else "")
             + f'<p class="note"></p><script>{_DEVICES_JS}</script></section>')
 
 
@@ -10731,7 +10761,8 @@ def handle(method, path, query, headers, body):
                 return _json(400, {"ok": False, "error": "not a push subscription"})
             subs = [x for x in push_subs() if x.get("endpoint") != sub["endpoint"]]
             subs.append({"endpoint": sub["endpoint"], "keys": {"p256dh": sub["keys"]["p256dh"], "auth": sub["keys"]["auth"]},
-                         "made": time.time(), "device": device_label(headers.get("user-agent")), "place": _place(headers)})
+                         "made": time.time(), "device": device_label(headers.get("user-agent")), "place": _place(headers),
+                         "sess": (current_session(headers) or _REQ.session or {}).get("id")})
             store().set_meta("push:subs", json.dumps(subs[-10:]))
             store().set_meta("push:last_error", "")
             post_event("mistral", "Mistral will now send phone notifications to a new device")
@@ -10843,6 +10874,31 @@ def handle(method, path, query, headers, body):
             store().add_chat("james", r["text"][:4000], channel=ch, buttons=r["buttons"])
             return _json(200, {"ok": True, "messages": allchat_view(channel=str(data.get("channel") or ch)),
                                "latest": latest_by_channel()})
+
+        if path == "/api/devices/hello":  # Settings says what this device is: Home Screen app? its notification sign-up?
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            me = current_session(headers) or _REQ.session
+            if not me:
+                return _json(200, {"ok": True, "changed": False})
+            changed = False
+            app = "Home Screen app" if data.get("standalone") else None
+            with _SESS_LOCK:
+                live = sessions()
+                for v in live.values():
+                    if v["id"] == me["id"] and app and v.get("app") != app:
+                        v["app"], changed = app, True
+                if changed:
+                    store().set_meta("sessions", json.dumps(live))
+            endpoint = str(data.get("endpoint") or "")
+            if endpoint:
+                subs = push_subs()
+                for x in subs:
+                    if x.get("endpoint") == endpoint and x.get("sess") != me["id"]:
+                        x["sess"], changed = me["id"], True
+                if changed:
+                    store().set_meta("push:subs", json.dumps(subs))
+            return _json(200, {"ok": True, "changed": changed})
 
         if path == "/api/devices/signout":
             if not _auth_dashboard(query, headers):
