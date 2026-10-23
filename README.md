@@ -215,6 +215,16 @@ who runs in Garage Gym. Settings → **Memory and notes** lists both, each
 with a remove button (`POST /api/memory/remove`, `/api/notes/remove`
 `{"id"}`).
 
+## Tests
+
+`tests/` has the whole suite: 31 standalone scripts that drive the app with
+fake providers (models, Redis, Gmail, push, feeds), each run with in-memory
+storage and with a fake Upstash Redis. Run them all with
+`tests/run_all.sh` (or `tests/run_all.sh path/to/python`). One file:
+`python3 tests/test_desk.py memory`. GitHub runs the suite on every pull
+request (`.github/workflows/tests.yml`), so a build is tested before it's
+merged. `test_jssyntax.py` needs Node, to check every page's scripts parse.
+
 ## Chat: the front desk
 
 By default (`CHAT_MODE=desk`) Mistral answers every chat message, @mentions

@@ -1,0 +1,24 @@
+name: Tests
+
+# Every pull request (and every push to main) runs the whole suite, so a
+# build is tested before it's merged and deployed.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4  # for the page-script syntax check
+        with:
+          node-version: "22"
+      - run: pip install -r requirements.txt
+      - run: tests/run_all.sh python
