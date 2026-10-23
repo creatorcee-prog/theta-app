@@ -146,6 +146,12 @@ check("his report lists it as fix-now, and pushes it", "[!] pywebpush" in qw and
 n = len(h.allchat_view(200, channel="dev"))
 r = h.run_round(force=True, only=["qwerty"])
 check("same findings next round: no repeat post", r["ran"]["qwerty"]["did"] == "nothing new" and len(h.allchat_view(200, channel="dev")) == n)
+r = h.run_round(force=True, only=["qwerty"])
+check("within the week and nothing updated: no new library check", "checked the libraries" not in r["ran"]["qwerty"]["did"])
+h.store().set_meta("sec:osv_fp", "an-older-deploy")
+r = h.run_round(force=True, only=["qwerty"])
+check("a deploy that changed the packages: checked again at once", "checked the libraries" in r["ran"]["qwerty"]["did"]
+      and h.store().get_meta("sec:osv_fp") == h.installed_fingerprint())
 check("short key flagged", any("only 2 characters" in t for _, t in h.watchdog_findings()))
 # coding help
 h.GITHUB_TOKEN = ""  # (this sandbox has one in its environment)

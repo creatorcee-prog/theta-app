@@ -4846,6 +4846,15 @@ def warn_secrets(found):
     notify("QWERTY", f"Hid {what} you pasted into chat. Rotate it if it was real.", "/chat?ch=dev")
 
 
+def installed_fingerprint():
+    """A short hash of the installed packages and versions: changes when a
+    deploy updates one, so the library check runs again at once."""
+    import importlib.metadata as md
+    pkgs = sorted({f"{d.metadata['Name'].lower()}=={d.version}" for d in md.distributions()
+                   if d.metadata and d.metadata["Name"]})
+    return hashlib.sha256("\n".join(pkgs).encode()).hexdigest()[:12]
+
+
 def dependency_vulns():
     """Known vulnerabilities in the installed Python packages, from Google's
     OSV database. [(name, version, [ids])]; raises LLMError if unreachable."""
@@ -4918,11 +4927,13 @@ def _round_qwerty(ctx):
     st = store()
     did = []
     last_osv = float(st.get_meta("sec:osv_at") or 0)
-    if time.time() - last_osv > 7 * 86400:
+    fp = installed_fingerprint()
+    if time.time() - last_osv > 7 * 86400 or st.get_meta("sec:osv_fp") != fp:  # weekly, and after any update
         try:
             vulns = dependency_vulns()
             st.set_meta("sec:osv", json.dumps(vulns))
             st.set_meta("sec:osv_at", str(time.time()))
+            st.set_meta("sec:osv_fp", fp)
             did.append(f"checked the libraries ({len(vulns)} with known holes)")
         except LLMError as e:
             did.append(f"couldn't check the libraries ({str(e)[:60]})")
