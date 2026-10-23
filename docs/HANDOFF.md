@@ -69,6 +69,8 @@ Last updated: 2026-10-23.
 
 **Writing for the owner**
 - Plain language and short replies.
+- **Always give a link** when there is one: GitHub files, Vercel and Supabase dashboard pages, docs.
+- Times in **MDT** (UTC−6), not UTC.
 - They use an iPhone (iOS 26.x) Home Screen web app. Test layouts at phone width and in dark mode.
 
 ## Hub architecture you need to know
@@ -146,6 +148,7 @@ Last updated: 2026-10-23.
 - Hub production is still **#38** (`76aa770`). A second production deploy of that same #38 commit was made at 05:06 UTC, probably a Redeploy of the old production deployment. Redeploying an old deployment rebuilds *its* commit, not `main`.
 - **Garage Gym #20 is NOT live either.** `main` is `3ff39fc` (#20), but GG production is still #19 (`4c8165f`).
 - Preview builds were going through again by 05:22 UTC, so the limit may already be clearing.
+- **Update, ~06:05 UTC (12:05 AM MDT): hub #39 (`2417a49`) is live** (owner used Create Deployment → `main`). Garage Gym's deploy was refused by `api-deployments-free-per-day` right after; retry after ~3:05 AM MDT.
 - **First thing to do:** list production deployments in both projects. If `2417a49` (hub) and `3ff39fc` (GG) are still missing, get them built. Easiest: the owner opens Deployments, finds the newest deployment *of that commit* (a preview is fine) and uses Redeploy → Production. Or ask the owner before triggering a deploy through the connector.
 - **Quick way to tell from the app:** if one chat message gets a single reply, shown as Theta with a "Mistral" tag, #39 is live.
 
@@ -160,6 +163,7 @@ Last updated: 2026-10-23.
 **Vercel access for Claude**
 - **The Vercel connector is linked** (2026-10-23). New sessions get `mcp__Vercel__*` tools.
 - It is **not read-only**: it has about 200 tools, including deploy, env var, domain and project changes. It acts with the owner's full access.
+- **It can't deploy or read runtime logs yet.** Both return 403 for scope `cee-5458`; `authorize_team_access` is refused ("This token cannot request SSO authorization for a team"). Listing projects and deployments works. Likely fix (untested): owner reconnects the connector at claude.ai/customize/connectors and picks the `cee-5458` scope.
 - Rule: **read freely, change nothing without asking the owner first**, every time. Env var changes still go through QWERTY's approval flow, and Claude never sets secrets.
 - IDs (not secrets):
   - Account scope: `team_XOyKnNUHANr6xVl6wVZzQ6jU` (slug `cee-5458`). `list_teams` returns empty; pass this as `teamId` if a call needs scope.
@@ -167,6 +171,12 @@ Last updated: 2026-10-23.
   - Garage Gym project: `fitness-tracker`, `prj_iwiG889gkExJsmBWxus9BjZmfx7k`, at `fitness-tracker-snowy-seven-83.vercel.app`.
 - Useful reads: `list_deployments` (with `projectId`, `target: production`), `get_deployment`, `list_deployment_events` for build logs, `get_runtime_errors` then `get_runtime_logs` for production errors.
 - Vercel Authentication (SSO protection) is on for previews, so preview URLs need the owner's sign-in.
+
+## Schedules (Supabase Cron, in Garage Gym's Supabase project)
+
+- Jobs: `fitness-reminders` (GG, every minute), `bot-hub-rounds` (hub, 00/12/18 UTC), `bot-hub-tick` (hub, every 5 min).
+- 2026-10-23: the hub jobs were first saved with the `YOUR-HUB` placeholder still in the address (404s). Fixed with `cron.alter_job(... replace(command, 'YOUR-HUB', 'dashboard-app-five-theta'))`; all 200 since. The secret is in the job command, so never ask the owner to show `command` in full.
+- In `net._http_response`, GG's replies look like `{"due":…,"sent":…,"skipped":…}`; the hub's don't. Don't mix them up.
 
 ## Recent history
 
@@ -181,9 +191,9 @@ Earlier: per-device sessions, Face ID fixes, notification fixes, personal `sk-an
 ## Open items
 
 **Owner setup** (details in `TODO.md`)
-- Get hub #39 (`2417a49`) and GG #20 (`3ff39fc`) into production; neither was live at 05:40 UTC.
+- Get GG #20 (`3ff39fc`) into production (hub #39 is live). Set GG's `HUB_URL` to `https://dashboard-app-five-theta.vercel.app` before that deploy.
+- Ignored Build Step: owner says it's set in both projects; the next branch push should show as Canceled/skipped in Vercel. Confirm then.
 - Set Ignored Build Step in both projects.
-- Garage Gym: add `HUB_URL` and redeploy. `HUB_SECRET` is already set.
 - Optional, for QWERTY: `VERCEL_TOKEN`, `VERCEL_PROJECT`, `VERCEL_DEPLOY_HOOK`.
 - Keys: `YOUTUBE_API_KEY` (needed for channel links and handles), `RAWG_API_KEY` (the owner has the key, but it may not be in Vercel yet), Adzuna keys.
 - Send a new Speed card screenshot after the deploy.
