@@ -309,6 +309,22 @@ CALLS_.clear(); CLAUDE_CALLS.clear(); PLAN["theta"] = ["Theta here, directly."]
 s, d = post("@theta are you there?")
 check("'@theta' goes straight to Theta, without Mistral", d["messages"][-1]["from"] == "theta"
       and d["messages"][-1]["text"] == "Theta here, directly." and [c[0] for c in CALLS_] == ["theta"])
+s, _, _ = call("POST", "/api/allchat", headers=K, body={"text": "@theta still there?", "channel": "all", "rid": "abc123"})
+s, w, _ = call("GET", "/api/chat/working", "rid=abc123", headers=K)
+check("the chat can see who worked on its message", s == 200 and w["agent"] == "theta" and w["name"] == "Theta")
+PLAN["mistral"] = ["ESCALATE: big one"]; PLAN["theta"] = ["On it."]
+call("POST", "/api/allchat", headers=K, body={"text": "plan my whole month", "channel": "all", "rid": "esc1"})
+check("after a hand-off it names Theta", call("GET", "/api/chat/working", "rid=esc1", headers=K)[1]["agent"] == "theta")
+check("an unknown message id: nobody working", call("GET", "/api/chat/working", "rid=nope", headers=K)[1] == {"ok": True})
+check("checking needs to be signed in", call("GET", "/api/chat/working", "rid=abc123")[0] == 401)
+call("POST", "/api/allchat", headers=K, body={"text": "hello", "channel": "all"})
+check("a message without an id leaves no note", set(h._meta_json("chat:working", {})) == {"abc123", "esc1"})
+js = call("GET", "/chat.js")[1].decode()
+check("the chat shows who's working while it waits", "chat/working?rid=" in js
+      and '"thinking"' in js
+      and "went through, but the reply took too long" in js)
+s_, page_, _ = call("GET", "/chat", headers=K)
+check("the indicator sits above the message box", b'id="chat-working"' in page_ and b"wdots" in page_)
 h.master_ready = lambda: False; CALLS_.clear()
 s, d = post("@theta are you there?")
 check("'@theta' without Claude: the desk answers as before", d["messages"][-1]["from"] == "mistral")

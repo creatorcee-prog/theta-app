@@ -1592,6 +1592,7 @@ def _tool_workout(arg, agent):
 def _tool_ask_qwerty(arg, agent):
     """Theta asks QWERTY to propose a change; QWERTY's proposal is posted for the user."""
     activity(agent, f"{AGENTS[agent]['name']} asked QWERTY: {arg.strip()[:160]}")
+    working("qwerty")
     r = allchat_reply("qwerty", [{"from": agent, "text": "@QWERTY " + arg.strip()[:800], "at": time.time()}])
     text, buttons = (r["text"], r.get("buttons")) if isinstance(r, dict) else (r, None)
     store().add_chat("qwerty", text.strip()[:4000], buttons=buttons, channel=getattr(_REQ, "ch", None))
@@ -2347,6 +2348,24 @@ def post_event(sender, text):
     store().add_chat(sender, text[:1500], kind="event")
 
 
+WORKING_KEEP = 180  # seconds a "who's working" note is kept for the chat to poll
+
+
+def working(agent, step=""):
+    """Note who's working on the message being answered right now (and on
+    what), so the chat can show "Mistral is thinking..." while it waits."""
+    rid = getattr(_REQ, "rid", None)
+    if not rid:
+        return
+    try:
+        now = time.time()
+        notes = {k: v for k, v in _meta_json("chat:working", {}).items() if now - v["at"] < WORKING_KEEP}
+        notes[rid] = {"agent": agent, "name": AGENTS.get(agent, {}).get("name", agent), "step": step[:80], "at": now}
+        store().set_meta("chat:working", json.dumps(notes))
+    except Exception:
+        pass  # never let a status note cost a reply
+
+
 def activity(sender, text):
     """A small line in the current conversation's channel showing what an agent
     did behind the scenes (handed off, searched, asked QWERTY, used a tool)."""
@@ -2442,6 +2461,7 @@ def desk_reply(thread):
         return system, ask, content
 
     def ask_as(agent, extra=""):
+        working(agent)
         system, ask, content = prompt_for(agent, extra)
         msgs = [{"role": "system", "content": system}, {"role": "system", "content": now_line()},
                 {"role": "user", "content": content}]
@@ -2601,6 +2621,7 @@ def quick_reply(agent, thread):
 
 def allchat_reply(agent, thread):
     """One agent's reply to the latest message, with the thread as context."""
+    working(agent)
     quick = quick_reply(agent, thread)  # Charter's comes back as (caption, image url)
     if quick:
         return quick
@@ -2638,6 +2659,7 @@ def answer_with_search(agent, system, ask, query):
     model writes as a link is removed. One search per reply, so a web
     page can't steer the agent into fetching something else."""
     activity(agent, f"{AGENTS[agent]['name']} searched the web: {query[:120]}")
+    working(agent, "searching the web")
     found, sources = "", []
     if _search_budget(1):
         try:
@@ -7951,6 +7973,12 @@ html,body{overflow-x:clip;max-width:100%}
 .daysep{display:flex;align-items:center;gap:10px;margin:14px 16px 6px;font-size:11.5px;font-weight:700;color:var(--muted)}
 .daysep::before,.daysep::after{content:"";flex:1;height:1px;background:var(--border)}
 .composer{position:relative;padding:8px 12px calc(10px + env(safe-area-inset-bottom) * 0);flex:none}
+.working{display:flex;align-items:center;gap:10px;padding:2px 6px 8px;color:var(--accent);font-size:15px;font-weight:600}
+.working .wdots{display:inline-flex;gap:5px}
+.working .wdots i{width:6px;height:6px;border-radius:50%;background:currentColor;animation:wdot 1.2s infinite ease-in-out}
+.working .wdots i:nth-child(2){animation-delay:.2s}.working .wdots i:nth-child(3){animation-delay:.4s}
+@keyframes wdot{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
+@media (prefers-reduced-motion:reduce){.working .wdots i{animation:none;opacity:.7}}
 .box{display:flex;align-items:flex-end;gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:18px;padding:5px 5px 5px 14px}
 .box:focus-within{border-color:color-mix(in srgb,var(--accent) 60%,var(--border))}
 .box textarea{flex:1;border:0;background:transparent;resize:none;outline:none;max-height:168px;padding:8px 0;line-height:1.4;min-width:0}
@@ -8735,19 +8763,49 @@ _CHAT_JS = r'''
     if (e.key === "Enter" && !e.shiftKey && !touch) { e.preventDefault(); form.requestSubmit(); }
   });
 
+  // "Mistral is thinking..." while a reply is on its way: the hub notes who's
+  // working on this message (and on what) and the chat asks every 1.5 s.
+  const VERBS = {mistral: ["thinking", "reading the chat", "working it out"], theta: ["pondering", "ruminating", "weighing it up"],
+                 qwerty: ["checking", "scanning"], glass: ["counting", "tallying"], remi: ["checking the calendar"],
+                 lenz: ["browsing"], charter: ["drawing"], red: ["reading the news"], blue: ["reading the news"],
+                 gray: ["reading the news"], james: ["asking Garage Gym"]};
+  const wBox = document.getElementById("chat-working"), wText = document.getElementById("chat-working-text");
+  let wTimer = null, wPoll = null;
+  function showWorking(who, name, step) {
+    wBox.hidden = false;
+    let n = 0;
+    const say = () => { const v = VERBS[who] || ["working"]; wText.textContent = name + " is " + (step || v[n++ % v.length]) + "..."; };
+    clearInterval(wTimer); say(); if (!step) wTimer = setInterval(say, 3000);
+  }
+  function startWorking(rid, who) {
+    let seen = "";
+    showWorking(who, (C.agents[who] || {}).name || "Mistral");
+    wPoll = setInterval(async () => {
+      try {
+        const d = await (await fetch("/api/chat/working?rid=" + rid, {headers: H})).json();
+        const key = d.agent ? d.agent + "|" + d.step : "";
+        if (d.ok && d.agent && key !== seen) { seen = key; showWorking(d.agent, d.name, d.step); }
+      } catch (_) {}
+    }, 1500);
+  }
+  function stopWorking() { clearInterval(wTimer); clearInterval(wPoll); wBox.hidden = true; }
+
   form.onsubmit = async e => {
     e.preventDefault();
     const text = msg.value.trim(), image = pic;
     if (!text && !image) return;
     msg.value = ""; grow(); setPic(null); btn.disabled = true; closeMenu();
     const isCmd = text.startsWith("/") && !image;
-    status.textContent = isCmd ? "Running " + text.split(" ")[0] + "..." : "Waiting for replies...";
+    const rid = Math.random().toString(36).slice(2, 12);
+    status.textContent = isCmd ? "Running " + text.split(" ")[0] + "..." : "";
+    if (!isCmd) startWorking(rid, /@theta\b/i.test(text) ? "theta" : "mistral");
     if (!isCmd) {
       thread = [...thread, {id: "pending", from: "you", name: "You", text, image, kind: "message", at: new Date().toISOString().slice(0, 19).replace("T", " "), ch: C.channel}];
       render(); box.scrollTop = box.scrollHeight;
     }
     try {
-      const d = await (await fetch("/api/allchat", {method: "POST", headers: H, body: JSON.stringify(image ? {text, image, channel: C.channel} : {text, channel: C.channel})})).json();
+      const d = await (await fetch("/api/allchat", {method: "POST", headers: H, body: JSON.stringify(image ? {text, image, channel: C.channel, rid} : {text, channel: C.channel, rid})})).json();
+      stopWorking();
       if (!d.ok) throw new Error(d.error);
       thread = d.messages; render(); box.scrollTop = box.scrollHeight;
       thetaLatest(d.latest);
@@ -8758,9 +8816,12 @@ _CHAT_JS = r'''
         status.textContent = [routed, ...errs].filter(Boolean).join(" | ");
       }
     } catch (err) {
-      if (!isCmd) { thread = thread.filter(m => m.id !== "pending"); render(); }
-      msg.value = text; grow(); setPic(image);
-      status.textContent = "Error: " + err.message;
+      stopWorking();
+      // A dropped connection doesn't mean the hub didn't get it: look before putting the text back.
+      thread = thread.filter(m => m.id !== "pending"); await load();
+      const arrived = !isCmd && thread.slice(-8).some(m => m.from === "you" && m.text === text.slice(0, 2000));
+      if (arrived) status.textContent = "Your message went through, but the reply took too long to load. It'll show up here when it's ready.";
+      else { render(); msg.value = text; grow(); setPic(image); status.textContent = "Couldn't send: " + err.message; }
     }
     btn.disabled = false;
   };
@@ -9288,6 +9349,8 @@ def chat_page(headers, query):
         f'<nav class="chiprow" aria-label="Channels">{chips}</nav>'
         '<div class="msgs" id="msgs" role="log" aria-live="polite"></div>'
         '<form class="composer" id="chat-form"><ul id="chat-menu" role="listbox" hidden></ul>'
+        '<div class="working" id="chat-working" role="status" aria-live="polite" hidden><span class="wdots" aria-hidden="true">'
+        '<i></i><i></i><i></i></span><span id="chat-working-text"></span></div>'
         '<div class="attach" id="chat-attach" hidden><img alt="Image to send"><button type="button" class="dx" '
         'aria-label="Remove image">×</button></div>'
         f'<div class="box"><label class="btn ghost pick" aria-label="Attach an image">{ui_icon("photo")}'
@@ -11580,6 +11643,7 @@ def handle(method, path, query, headers, body):
                 text = ""
             if not isinstance(text, str) or not (text.strip() or pic):
                 return _json(400, {"ok": False, "error": "text required"})
+            _REQ.rid = re.sub(r"[^\w-]", "", str(data.get("rid") or ""))[:24] or None  # for "who's working" notes
             if bot_id:  # a bot posting: no replies, so agents can't loop
                 if not _auth_bot(bot_id, headers):
                     return _json(401, {"ok": False, "error": "bad bot_id or key"})
@@ -12258,6 +12322,12 @@ def handle(method, path, query, headers, body):
             return _json(401, {"ok": False, "error": "dashboard key required"})
         return _json(200, {"ok": True, **_meta_json("bench:last", {})})
 
+    if path == "/api/chat/working":  # the chat polls this while it waits for a reply
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        note = _meta_json("chat:working", {}).get(query.get("rid", [""])[0])
+        return _json(200, {"ok": True, **({k: note[k] for k in ("agent", "name", "step")} if note else {})})
+
     if path == "/api/wiring":
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
@@ -12350,7 +12420,7 @@ def app(environ, start_response):
     body = environ["wsgi.input"].read(length) if length > 0 else b""
     ip = client_ip(environ)
     _REQ.cookies, _REQ.session, _REQ.quiet, _REQ.meta, _REQ.calls = [], None, False, {}, 0
-    _REQ.stale, _REQ.refreshing, _REQ.ch = False, False, None
+    _REQ.stale, _REQ.refreshing, _REQ.ch, _REQ.rid = False, False, None, None
     t0 = time.time()
     _REQ.page = method == "GET" and not path.startswith("/api/")
     try:
