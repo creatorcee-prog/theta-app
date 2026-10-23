@@ -126,15 +126,22 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
       "not set up".
 - [ ] Get Remi's calendar and Gmail working (setup steps 7 and 4).
 - [ ] Get the job boards working: Adzuna and USAJOBS (setup step 8).
-- [ ] Consider moving Mistral (`low_brain`) from Gemini to Haiku. Before
-      deciding:
-      - Mistral answers every chat message, so Haiku would cost real money
-        where Gemini Flash may be free.
-      - It would break the rule that Garage Gym questions (`/api/gym/ask`)
-        cost no Claude spend, unless those stay on Gemini.
-      - The Gemini key wouldn't need a new owner: web search
-        (`GEMINI_SEARCH_MODEL`), `/api/gym/ask`'s search and Theta's
-        fallback (`manager`) still use it.
+- [ ] Token use you can see (asked 2026-10-23; checked: doable).
+      - **In chat:** each reply shows its tokens next to the name, tag and
+        time (e.g. "17.6k in · 240 out"). Gemini and Groq return `usage`
+        on every reply, and Claude returns `usage` too, so the call that
+        answered records it on the message.
+      - **In Settings:** per model, tokens and calls today and this
+        month, and when each limit resets:
+        - Claude: the hub's own monthly cap, resets on the 1st.
+        - Gemini: daily quota resets at midnight Pacific
+          ([Google](https://ai.google.dev/gemini-api/docs/rate-limits)).
+          Google doesn't send what's left, so show what we used.
+        - Groq: sends what's left and when it resets in its
+          `x-ratelimit-*` headers
+          ([Groq](https://console.groq.com/docs/rate-limits)), so show
+          those.
+      - Cost: none for the counting; a few small writes per reply.
 - [ ] Two new bots, to be defined later: a habit tracker and a video
       player bot.
 - [ ] Scriptable widgets: Home Screen and Lock Screen. Build on a JSON

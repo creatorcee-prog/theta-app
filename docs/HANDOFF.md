@@ -89,6 +89,9 @@ Last updated: 2026-10-23.
 - A failed fetch keeps the old snapshot (`SNAP_KEEP_ON_FAILURE`) and sets a `failed` flag, which shows on Wiring.
 
 **Chat**
+- **Mistral's chat replies run on Claude Haiku** (`DESK_MODEL`, effort `DESK_EFFORT=low`) while Claude is connected and under `MASTER_MONTHLY_CAP_USD`, which Haiku shares with Theta. Gemini, then Groq, are his backup (`desk_chat`). Why: the desk prompt is ~17.5k tokens; Gemini 503'd ("high demand") and Groq's free tier refuses anything over 8k tokens a minute (413). `DESK_MODEL=off` goes back to Gemini.
+- **"@Theta" goes straight to Theta** when Claude is up, and **Theta answers when Mistral can't** (activity line says so). Without Claude, both behave as before.
+- An empty Gemini reply now goes to the fallback instead of failing.
 - **Default `CHAT_MODE=desk`:**
   - `desk_shortcut` runs plain commands (`$42 groceries`, `remind me…`) with no model call.
   - Everything else goes to `desk_reply`: Mistral, with every agent's facts from `crew_facts()` and every tool.
