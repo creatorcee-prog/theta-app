@@ -2490,8 +2490,28 @@ def working(agent, step=""):
     try:
         now = time.time()
         notes = {k: v for k, v in _meta_json("chat:working", {}).items() if now - v["at"] < WORKING_KEEP}
+        prev = notes.get(rid, {})
         notes[rid] = {"agent": agent, "name": AGENTS.get(agent, {}).get("name", agent), "step": step[:80], "at": now,
+                      "started": prev.get("started", now), "state": "working",
                       "done": [a for a in dict.fromkeys(trail or []) if a != agent]}
+        store().set_meta("chat:working", json.dumps(notes))
+    except Exception:
+        pass  # never let a status note cost a reply
+
+
+def working_final(rid, state):
+    """Mark a working note finished: completed, failed, or waiting_approval.
+    The note is kept until WORKING_KEEP expires so a refreshed page can see
+    the final state instead of a spinner that never ends."""
+    if not rid or state not in ("completed", "failed", "waiting_approval"):
+        return
+    try:
+        notes = _meta_json("chat:working", {})
+        note = notes.get(rid)
+        if not note:
+            return
+        note["state"] = state
+        note["at"] = time.time()
         store().set_meta("chat:working", json.dumps(notes))
     except Exception:
         pass  # never let a status note cost a reply
@@ -8298,6 +8318,7 @@ html,body{overflow-x:clip;max-width:100%}
 .working .wdots{display:inline-flex;gap:5px}
 .working .wdots i{width:6px;height:6px;border-radius:50%;background:currentColor;animation:wdot 1.2s infinite ease-in-out}
 .working .wdots i:nth-child(2){animation-delay:.2s}.working .wdots i:nth-child(3){animation-delay:.4s}
+.working .elapsed{margin-left:auto;font-size:12px;color:var(--muted);font-weight:400}
 @keyframes wdot{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
 @media (prefers-reduced-motion:reduce){.working .wdots i{animation:none;opacity:.7}}
 .box{display:flex;align-items:flex-end;gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:18px;padding:5px 5px 5px 14px}
@@ -9164,6 +9185,8 @@ _CHAT_JS = r'''
                  gray: ["reading the news"], james: ["asking Garage Gym"]};
   const wBox = document.getElementById("chat-working"), wText = document.getElementById("chat-working-text");
   const wAv = document.getElementById("chat-working-av"), wDone = document.getElementById("chat-working-done");
+  const wElapsed = document.getElementById("chat-working-elapsed"), wDots = wBox.querySelector(".wdots");
+  const fmtElapsed = s => s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s";
   let wTimer = null, wPoll = null;
   // A row of small icons, in order, for the agents that worked on something.
   function trailRow(ids, row) {
@@ -9174,13 +9197,20 @@ _CHAT_JS = r'''
     });
     return row;
   }
-  function showWorking(who, name, step, done) {
+  function showWorking(who, name, step, done, info) {
+    const state = (info && info.state) || "working";
     wBox.hidden = false;
     wAv.replaceChildren(avatar(who, 22));
     trailRow(done || [], wDone);
+    wDots.hidden = state !== "working";
+    if (info && info.elapsed != null) wElapsed.textContent = fmtElapsed(info.elapsed) + (info.stale ? " · still working" : "");
+    clearInterval(wTimer);
+    if (state === "completed") { wText.textContent = name + " finished."; return; }
+    if (state === "failed") { wText.textContent = name + " couldn't finish."; return; }
+    if (state === "waiting_approval") { wText.textContent = "Waiting for your approval."; return; }
     let n = 0;
     const say = () => { const v = VERBS[who] || ["working"]; wText.textContent = name + " is " + (step || v[n++ % v.length]) + "..."; };
-    clearInterval(wTimer); say(); if (!step) wTimer = setInterval(say, 3000);
+    say(); if (!step) wTimer = setInterval(say, 3000);
   }
   function startWorking(rid, who) {
     let seen = "";
@@ -9188,12 +9218,18 @@ _CHAT_JS = r'''
     wPoll = setInterval(async () => {
       try {
         const d = await (await fetch("/api/chat/working?rid=" + rid, {headers: H})).json();
-        const key = d.agent ? d.agent + "|" + d.step + "|" + (d.done || []).join() : "";
-        if (d.ok && d.agent && key !== seen) { seen = key; showWorking(d.agent, d.name, d.step, d.done); }
+        if (!d.ok || !d.agent) return;
+        const stale = d.updated && (Date.now() / 1000 - d.updated > 30);
+        const info = {elapsed: d.elapsed, stale, state: d.state || "working"};
+        const key = d.agent + "|" + d.step + "|" + (d.done || []).join() + "|" + info.state;
+        if (key !== seen) { seen = key; showWorking(d.agent, d.name, d.step, d.done, info); }
+        else if (d.elapsed != null) wElapsed.textContent = fmtElapsed(d.elapsed) + (stale ? " · still working" : "");
+        if (info.state !== "working") { clearInterval(wPoll); clearInterval(wTimer); }
       } catch (_) {}
     }, 1500);
   }
-  function stopWorking() { clearInterval(wTimer); clearInterval(wPoll); wBox.hidden = true; wDone.replaceChildren(); }
+  function stopWorking() { clearInterval(wTimer); clearInterval(wPoll); wBox.hidden = true; wDone.replaceChildren();
+    try { sessionStorage.removeItem("theta-pending-rid"); } catch (_) {} }
 
   form.onsubmit = async e => {
     e.preventDefault();
@@ -9202,6 +9238,7 @@ _CHAT_JS = r'''
     msg.value = ""; grow(); setPic(null); btn.disabled = true; closeMenu();
     const isCmd = text.startsWith("/") && !image;
     const rid = Math.random().toString(36).slice(2, 12);
+    try { sessionStorage.setItem("theta-pending-rid", rid); } catch (_) {}
     status.textContent = isCmd ? "Running " + text.split(" ")[0] + "..." : "";
     if (!isCmd) startWorking(rid, /@theta\b/i.test(text) ? "theta" : "mistral");
     if (!isCmd) {
@@ -9242,6 +9279,17 @@ _CHAT_JS = r'''
   thread = C.initial || [];
   render();
   load();
+  // A refresh mid-reply resumes the indicator from the hub note, if it
+  // is still working; a finished or pruned note just clears the draft.
+  try {
+    const pendingRid = sessionStorage.getItem("theta-pending-rid");
+    if (pendingRid) {
+      fetch("/api/chat/working?rid=" + pendingRid, {headers: H}).then(r => r.json()).then(d => {
+        if (d.ok && d.agent && d.state === "working") startWorking(pendingRid, d.agent);
+        else sessionStorage.removeItem("theta-pending-rid");
+      }).catch(() => {});
+    }
+  } catch (_) {}
 })();
 '''
 
@@ -9845,7 +9893,7 @@ def chat_page(headers, query):
         '<form class="composer" id="chat-form"><ul id="chat-menu" role="listbox" hidden></ul>'
         '<div class="working" id="chat-working" role="status" aria-live="polite" hidden><div class="trail" id="chat-working-done"></div>'
         '<div class="wline"><span id="chat-working-av"></span><span class="wdots" aria-hidden="true"><i></i><i></i><i></i></span>'
-        '<span id="chat-working-text"></span></div></div>'
+        '<span id="chat-working-text"></span><span class="elapsed" id="chat-working-elapsed" aria-hidden="true"></span></div></div>'
         '<div class="attach" id="chat-attach" hidden><img alt="Image to send"><button type="button" class="dx" '
         'aria-label="Remove image">×</button></div>'
         f'<div class="box"><label class="btn ghost pick" aria-label="Attach an image">{ui_icon("photo")}'
@@ -12312,6 +12360,9 @@ def handle(method, path, query, headers, body):
                         st.add_chat(who, reply.strip()[:4000], channel=ch, extra=extra)
                     if who == "theta":
                         routed = [who]
+                has_buttons = any(isinstance(r[1], dict) and r[1].get("buttons") for r in replies)
+                working_final(_REQ.rid, "failed" if (errors and not replies) else
+                              "waiting_approval" if has_buttons else "completed")
                 return _json(200, {"ok": True, "messages": allchat_view(channel=ch), "errors": errors,
                                    "routed": [AGENTS[a]["name"] for a in routed], "latest": latest_by_channel()})
             agents = mentioned_agents(text)
@@ -12333,17 +12384,24 @@ def handle(method, path, query, headers, body):
                     return a, allchat_reply(a, thread), None
                 except (LLMError, ValueError, KeyError) as e:
                     return a, None, str(e)
+            crew_ok, crew_buttons = 0, False
             if agents:
                 with ThreadPoolExecutor(max_workers=len(agents)) as ex:
                     for a, reply, err in ex.map(answer, agents):
                         if isinstance(reply, tuple):  # Charter's (caption, chart url)
+                            crew_ok += 1
                             st.add_chat(a, reply[0], image=reply[1], channel=ch)
                         elif isinstance(reply, dict):  # James's workout reply, with buttons
+                            crew_ok += 1
+                            crew_buttons = True
                             st.add_chat(a, reply["text"][:4000], channel=ch, buttons=reply["buttons"])
                         elif reply:
+                            crew_ok += 1
                             st.add_chat(a, reply.strip()[:4000], channel=ch)
                         else:
                             errors[AGENTS[a]["name"]] = err
+            working_final(_REQ.rid, "failed" if (agents and not crew_ok) else
+                          "waiting_approval" if crew_buttons else "completed")
             return _json(200, {"ok": True, "messages": allchat_view(channel=ch), "errors": errors,
                                "routed": [AGENTS[a]["name"] for a in routed], "latest": latest_by_channel()})
 
@@ -12993,7 +13051,14 @@ def handle(method, path, query, headers, body):
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
         note = _meta_json("chat:working", {}).get(query.get("rid", [""])[0])
-        return _json(200, {"ok": True, **({k: note.get(k, []) for k in ("agent", "name", "step", "done")} if note else {})})
+        if not note:
+            return _json(200, {"ok": True})
+        now = time.time()
+        started = note.get("started", note.get("at", now))
+        return _json(200, {"ok": True, "agent": note.get("agent"), "name": note.get("name"),
+                           "step": note.get("step", ""), "done": note.get("done", []),
+                           "state": note.get("state", "working"), "started": started,
+                           "updated": note.get("at", now), "elapsed": max(0, int(now - started))})
 
     if path == "/api/wiring":
         if not _auth_dashboard(query, headers):

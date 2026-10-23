@@ -137,4 +137,36 @@ check("home flags a failed round as needing attention",
       "Last round failed for" in home3)
 check("diagnostics lists the failed round",
       "boom" in page("/diagnostics"))
+
+# --- Phase 2: working notes carry started/elapsed/state ---
+import time as _time
+_now = _time.time()
+h.store().set_meta("chat:working", json.dumps({"r1": {"agent": "mistral", "name": "Mistral", "step": "thinking",
+    "at": _now, "started": _now - 30, "state": "working", "done": ["glass"]}}))
+s, w, _ = call("GET", "/api/chat/working", "rid=r1", headers=K)
+check("working endpoint reports agent, step, trail, elapsed and state",
+      s == 200 and w["agent"] == "mistral" and w["step"] == "thinking" and w["done"] == ["glass"]
+      and w["state"] == "working" and 29 <= w["elapsed"] <= 120)
+s, w, _ = call("GET", "/api/chat/working", "rid=nope", headers=K)
+check("working endpoint returns just ok for an unknown rid",
+      s == 200 and w == {"ok": True})
+h._REQ.rid = "r2"
+h.store().set_meta("chat:working", json.dumps({"r2": {"agent": "mistral", "name": "Mistral", "step": "",
+    "at": _now, "started": 1000.0, "state": "working", "done": []}}))
+h.working("theta", "pondering")
+_note = json.loads(h.store().get_meta("chat:working"))["r2"]
+check("working() keeps the first-seen start time across updates",
+      _note["started"] == 1000.0 and _note["agent"] == "theta" and _note["step"] == "pondering"
+      and _note["state"] == "working")
+h.working_final("r2", "completed")
+check("working_final marks completion",
+      json.loads(h.store().get_meta("chat:working"))["r2"]["state"] == "completed")
+h.working_final("r2", "bogus")
+check("working_final ignores unknown states",
+      json.loads(h.store().get_meta("chat:working"))["r2"]["state"] == "completed")
+h.working_final("nope", "completed")
+check("working_final on a missing note is a no-op", True)
+_, chatjs, _ = call("GET", "/chat.js")
+check("chat.js resumes a pending reply after refresh and shows elapsed time",
+      b"theta-pending-rid" in chatjs and b"chat-working-elapsed" in chatjs and b"still working" in chatjs)
 print("done")
