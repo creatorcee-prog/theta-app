@@ -90,7 +90,7 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
 - [ ] Free Adzuna key: developer.adzuna.com → register (for "website", use
       your hub's address, `https://<project>.vercel.app`) → `ADZUNA_APP_ID`
       and `ADZUNA_APP_KEY` (`ADZUNA_COUNTRY` if not `us`).
-- [ ] Optional, government jobs: developer.usajobs.gov → request an API key
+- [ ] Government jobs (USAJOBS): developer.usajobs.gov → request an API key
       → `USAJOBS_API_KEY` and `USAJOBS_EMAIL` (the email you used).
 
 ### 9. Lenz's channels, Siri and James
