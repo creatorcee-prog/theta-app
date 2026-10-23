@@ -41,8 +41,9 @@ Last updated: 2026-10-23.
 - The calendar's secret iCal address is a password.
 
 **Branches and pushes**
-- Work only on branch `claude/brave-lovelace-5tuqeg`, in both repos.
-- If that branch's PR is already merged, restart the branch from `origin/main`.
+- Each session is given its own branch name. Use the one the session gives you, in both repos.
+- The last two branches were `claude/brave-lovelace-5tuqeg` (PRs #36–#39, GG #18–#20) and `claude/gracious-albattani-ubrura` (this handoff update only).
+- If your branch's PR is already merged, restart the branch from `origin/main`.
 - Batch your work: **one push per finished change**. See "Deploy limit" below.
 
 **Commits**
@@ -139,10 +140,13 @@ Last updated: 2026-10-23.
 - Vercel's Hobby plan allows **100 deployments per day per account**, shared by both projects ([vercel.com/docs/limits](https://vercel.com/docs/limits)).
 - Every branch push makes a preview deployment in each linked project.
 
-**Current status**
-- On 2026-10-23 the limit was hit around 04:47 UTC. Hub PR #39's preview was refused.
-- #39 was merged at 04:59 UTC (merge commit `2417a49`). Its production deploy was probably refused too; that hasn't been confirmed yet.
-- **First thing to check:** is `2417a49` live? If not, Redeploy it in Vercel once the limit clears.
+**Current status (checked through the Vercel connector, 2026-10-23 ~05:40 UTC)**
+- The limit was hit around 04:47 UTC. Hub PR #39's preview was refused.
+- **Hub #39 is NOT live.** The GitHub status on merge commit `2417a49` says "Deployment rate limited — retry in 24 hours" (04:59 UTC).
+- Hub production is still **#38** (`76aa770`). A second production deploy of that same #38 commit was made at 05:06 UTC, probably a Redeploy of the old production deployment. Redeploying an old deployment rebuilds *its* commit, not `main`.
+- **Garage Gym #20 is NOT live either.** `main` is `3ff39fc` (#20), but GG production is still #19 (`4c8165f`).
+- Preview builds were going through again by 05:22 UTC, so the limit may already be clearing.
+- **First thing to do:** list production deployments in both projects. If `2417a49` (hub) and `3ff39fc` (GG) are still missing, get them built. Easiest: the owner opens Deployments, finds the newest deployment *of that commit* (a preview is fine) and uses Redeploy → Production. Or ask the owner before triggering a deploy through the connector.
 - **Quick way to tell from the app:** if one chat message gets a single reply, shown as Theta with a "Mistral" tag, #39 is live.
 
 **Planned fix**
@@ -151,12 +155,18 @@ Last updated: 2026-10-23.
   [ "$VERCEL_ENV" != "production" ]
   ```
 - Do this in both projects so branch pushes stop using up the quota.
-- The owner was going to set this. Ask whether they did.
+- Not yet confirmed as of 2026-10-23 ~05:40 UTC. The connector's project summary doesn't show this setting, so ask the owner.
 
 **Vercel access for Claude**
-- The owner may connect Vercel's connector so Claude can check deploys and logs.
-- Prefer read-only access.
-- Env var changes still go through QWERTY's approval flow.
+- **The Vercel connector is linked** (2026-10-23). New sessions get `mcp__Vercel__*` tools.
+- It is **not read-only**: it has about 200 tools, including deploy, env var, domain and project changes. It acts with the owner's full access.
+- Rule: **read freely, change nothing without asking the owner first**, every time. Env var changes still go through QWERTY's approval flow, and Claude never sets secrets.
+- IDs (not secrets):
+  - Account scope: `team_XOyKnNUHANr6xVl6wVZzQ6jU` (slug `cee-5458`). `list_teams` returns empty; pass this as `teamId` if a call needs scope.
+  - Hub project: `dashboard-app`, `prj_G7Khk8Wn6JRW4t4lXDhGKHM6gYvx`, at `dashboard-app-five-theta.vercel.app`.
+  - Garage Gym project: `fitness-tracker`, `prj_iwiG889gkExJsmBWxus9BjZmfx7k`, at `fitness-tracker-snowy-seven-83.vercel.app`.
+- Useful reads: `list_deployments` (with `projectId`, `target: production`), `get_deployment`, `list_deployment_events` for build logs, `get_runtime_errors` then `get_runtime_logs` for production errors.
+- Vercel Authentication (SSO protection) is on for previews, so preview URLs need the owner's sign-in.
 
 ## Recent history
 
@@ -171,7 +181,7 @@ Earlier: per-device sessions, Face ID fixes, notification fixes, personal `sk-an
 ## Open items
 
 **Owner setup** (details in `TODO.md`)
-- Confirm the #39 deploy is live.
+- Get hub #39 (`2417a49`) and GG #20 (`3ff39fc`) into production; neither was live at 05:40 UTC.
 - Set Ignored Build Step in both projects.
 - Garage Gym: add `HUB_URL` and redeploy. `HUB_SECRET` is already set.
 - Optional, for QWERTY: `VERCEL_TOKEN`, `VERCEL_PROJECT`, `VERCEL_DEPLOY_HOOK`.
