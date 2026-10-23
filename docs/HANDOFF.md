@@ -163,7 +163,7 @@ Last updated: 2026-10-23.
   [ "$VERCEL_ENV" != "production" ]
   ```
 - Do this in both projects so branch pushes stop using up the quota.
-- Not yet confirmed as of 2026-10-23 ~05:40 UTC. The connector's project summary doesn't show this setting, so ask the owner.
+- **Done in both projects (2026-10-23).** Confirmed on the hub: a branch push showed "Canceled by Ignored Build Step". First attempt had a stray `.` after the `]` (copied from chat), which failed every build, production included; when giving commands in chat, never end the line with punctuation.
 
 **Vercel access for Claude**
 - **The Vercel connector is linked** (2026-10-23). New sessions get `mcp__Vercel__*` tools.
@@ -197,7 +197,6 @@ Earlier: per-device sessions, Face ID fixes, notification fixes, personal `sk-an
 
 **Owner setup** (details in `TODO.md`)
 - Get GG #20 (`3ff39fc`) into production (hub #39 is live). Set GG's `HUB_URL` to `https://dashboard-app-five-theta.vercel.app` before that deploy.
-- Ignored Build Step: owner says it's set in both projects; the next branch push should show as Canceled/skipped in Vercel. Confirm then.
 - Set Ignored Build Step in both projects.
 - Optional, for QWERTY: `VERCEL_TOKEN`, `VERCEL_PROJECT`, `VERCEL_DEPLOY_HOOK`.
 - Keys: `YOUTUBE_API_KEY` (needed for channel links and handles), `RAWG_API_KEY` (the owner has the key, but it may not be in Vercel yet), Adzuna keys.
