@@ -132,6 +132,50 @@ check("counter going backwards refused", s == 401 and "copied" in r["error"])
 ch = call("GET", "/api/passkey/options", "type=register", headers=HK)[1]["challenge"]
 s, r, hd = call("POST", "/api/passkey/login", headers=H, body=login(ch, count=9), ip="5.5.5.5")
 check("register challenge can't sign in", s == 401)
+
+# Face ID lock: per device, on after Face ID passes; away longer than the grace, everything waits for Face ID
+ch = call("GET", "/api/passkey/options", "type=login", headers=H)[1]["challenge"]
+s, r, hd = call("POST", "/api/passkey/login", headers=H, body=login(ch, count=10), ip="5.5.5.5")
+sess = next(c.split(";")[0].split("=", 1)[1] for k, c in (hd.items() if isinstance(hd, dict) else hd) if k.lower() == "set-cookie" and c.startswith("hub_sess=") and not c.startswith("hub_sess=;"))
+HS = dict(H, cookie=f"hub_sess={sess}")
+s, page, _ = call("GET", "/settings", headers=HS)
+check("Settings offers the lock on this device", s == 200 and b'id="lock-set"' in page and b"Ask for Face ID when Theta opens" in page)
+check("away before the lock is on does nothing", call("POST", "/api/lock/away", headers=HS, body={})[0] == 200
+      and call("GET", "/", headers=HS)[0] == 200)
+s, r, _ = call("POST", "/api/lock/set", headers=HS, body={"on": True, "assertion": {"id": "x"}})
+check("turning it on needs Face ID to pass", s == 400 and "still off" in r["error"])
+check("turning it on needs this device signed in", call("POST", "/api/lock/set", headers=HK, body={"on": False})[0] == 401)
+ch = call("GET", "/api/passkey/options", "type=login", headers=HS)[1]["challenge"]
+s, r, _ = call("POST", "/api/lock/set", headers=HS, body={"on": True, "assertion": login(ch, count=11)})
+check("on, after Face ID", s == 200 and call("GET", "/api/lock/status", headers=HS)[1] == {"ok": True, "on": True, "locked": False})
+s, page, _ = call("GET", "/", headers=HS)
+check("pages tell the app its lock is on", s == 200 and b"window.THETA_LOCK = true" in page)
+call("POST", "/api/lock/away", headers=HS, body={})
+check("back within the grace: carries on", call("GET", "/api/lock/status", headers=HS)[1]["locked"] is False
+      and call("GET", "/", headers=HS)[0] == 200)
+key = h._tok_hash(sess)
+call("POST", "/api/lock/away", headers=HS, body={})
+h.update_session(key, hidden=time.time() - h.LOCK_GRACE - 1)  # as if it sat in the background
+s, page, hd = call("GET", "/", headers=HS)
+check("back after longer: the lock page, not the hub", s == 401 and b"Locked" in page and b"Unlock with Face ID" in page and b"data-unlock" in page)
+check("...and the device stays signed in (cookie kept)", not any(c.startswith("hub_sess=;") for k, c in (hd.items() if isinstance(hd, dict) else hd) if k.lower() == "set-cookie")
+      and key in h.sessions())
+check("data refused while locked", call("GET", "/api/allchat", headers=HS)[0] == 401 and call("POST", "/api/allchat", headers=HS, body={"text": "hi"})[0] == 401)
+check("still locked a moment later, whatever happens", call("GET", "/api/lock/status", headers=HS)[1]["locked"] is True)
+s, r, _ = call("POST", "/api/passkey/unlock", headers=HS, body={"id": "x", "clientDataJSON": "", "authenticatorData": "", "signature": ""})
+check("a bad Face ID doesn't unlock", s == 401 and call("GET", "/", headers=HS)[0] == 401)
+check("unlocking needs a signed-in device", call("POST", "/api/passkey/unlock", headers=H, body={})[0] == 401)
+ch = call("GET", "/api/passkey/options", "type=login", headers=HS)[1]["challenge"]
+n_sess = len(h.sessions())
+s, r, _ = call("POST", "/api/passkey/unlock", headers=HS, body=login(ch, count=12))
+check("Face ID unlocks it, as the same device (no new sign-in)", s == 200 and call("GET", "/", headers=HS)[0] == 200 and len(h.sessions()) == n_sess)
+check("the key still opens Theta anywhere (it's the master key)", call("GET", "/api/allchat", headers=HK)[0] == 200)
+s, r, _ = call("POST", "/api/lock/set", headers=HS, body={"on": False})
+check("turned off with one tap while unlocked", s == 200 and call("GET", "/api/lock/status", headers=HS)[1]["on"] is False)
+check("QWERTY notes it", any("Face ID lock turned" in m["text"] for m in h.store().list_chat(50)))
+js = call("GET", "/ui.js", headers=H)[1]
+js = js.decode() if isinstance(js, bytes) else js
+check("the app hides itself and tells the hub when it goes to the background", "sendBeacon(\"/api/lock/away\"" in js and "veiled" in js)
 s, page, _ = call("GET", "/settings", headers=HK)
 check("Settings lists the device", b"Test iPhone" in page)
 s, r, _ = call("POST", "/api/passkey/remove", headers=H, body={"id": b64u(cred)})

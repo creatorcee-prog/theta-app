@@ -7452,6 +7452,7 @@ def current_session(headers):
     dev = sessions().get(key)
     if not dev:
         return None
+    _REQ.sess_key = key
     now = time.time()
     if now - dev["seen"] > SESSION_SEEN_EVERY:
         with _SESS_LOCK:
@@ -7464,6 +7465,43 @@ def current_session(headers):
 
 
 SIGNED_OUT_KEEP = 15  # signed-out devices remembered on Settings → Devices
+# Face ID lock (per device, Settings → Face ID): when the app goes to the
+# background it tells the hub; back after more than LOCK_GRACE seconds, the
+# hub refuses everything from that device until Face ID passes again.
+LOCK_GRACE = int(os.environ.get("LOCK_GRACE_SECONDS", "15"))  # a glance at a notification doesn't lock it
+
+
+def update_session(key, **fields):
+    """Change a signed-in device's record; a None value removes that field."""
+    with _SESS_LOCK:
+        live = sessions()
+        if key not in live:
+            return None
+        for k, v in fields.items():
+            if v is None:
+                live[key].pop(k, None)
+            else:
+                live[key][k] = v
+        store().set_meta("sessions", json.dumps(live))
+        return live[key]
+
+
+def lock_check(dev, key):
+    """True when this device's Face ID lock is closed. Back within the grace,
+    it carries on (and the away mark is cleared); later, it stays locked
+    until Face ID passes, however soon after it's used again."""
+    if not dev.get("lock"):
+        return False
+    if dev.get("locked"):
+        return True
+    if dev.get("hidden"):
+        if time.time() - dev["hidden"] > LOCK_GRACE:
+            update_session(key, locked=True, hidden=None)
+            dev["locked"] = True
+            return True
+        update_session(key, hidden=None)
+        dev.pop("hidden", None)
+    return False
 
 
 def name_device(dev_id, name):
@@ -7523,8 +7561,13 @@ def _auth_dashboard(query, headers):
     a session."""
     if not DASHBOARD_KEY:
         return True
-    if getattr(_REQ, "session", None) or current_session(headers):
+    if getattr(_REQ, "session", None):
         return True
+    sess = current_session(headers)
+    if sess:
+        if not lock_check(sess, _REQ.sess_key):
+            return True
+        _REQ.locked = True  # signed in, but locked until Face ID: the key still works, as it would anywhere
     if _same(query.get("key", [None])[0], DASHBOARD_KEY):
         if getattr(_REQ, "page", False):  # a page opened from a key link signs the browser in
             new_session(headers, "key link")
@@ -8136,6 +8179,22 @@ _UI_JS_SRC = r'''
     const u = new URL(location.href);
     u.searchParams.delete("key");
     history.replaceState(null, "", u.pathname + u.search + u.hash);
+  }
+  // Face ID lock (window.THETA_LOCK, set when it's on for this device): going
+  // to the background hides the page and tells the hub; coming back, the hub
+  // says whether Face ID is needed, and if so the page reloads to the lock.
+  if (window.THETA_LOCK) {
+    const away = () => { root.classList.add("veiled");
+      try { navigator.sendBeacon("/api/lock/away", new Blob(["{}"], {type: "application/json"})); } catch (_) {} };
+    const back = async () => {
+      try {
+        const d = await (await fetch("/api/lock/status", {cache: "no-store"})).json();
+        if (d.locked) { location.reload(); return; }
+      } catch (_) { location.reload(); return; }
+      root.classList.remove("veiled");
+    };
+    document.addEventListener("visibilitychange", () => document.hidden ? away() : back());
+    window.addEventListener("pageshow", e => { if (e.persisted) back(); });
   }
   const dark = matchMedia("(prefers-color-scheme: dark)");
   function metaColors() {
@@ -8950,7 +9009,7 @@ def ui_icon(name):
             f'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{UI_ICONS[name]}</svg>')
 
 
-_UI_CSS = theme_css() + "\n" + _BASE_CSS
+_UI_CSS = theme_css() + "\n" + _BASE_CSS + "\nhtml.veiled .app,html.veiled .tabbar{visibility:hidden}"
 _UI_JS = _UI_JS_SRC.replace("__THEMES__", json.dumps(
     {n: {"glass": bool(t.get("glass")), "mono": bool(t.get("mono")), "light": t["light"]["bg"],
          "dark": t["dark"]["bg"]} for n, t in THEMES.items()}))
@@ -9006,7 +9065,8 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
         f'{metas}<link rel="stylesheet" href="/ui.css?v={_ASSET_V}">'
         # Request headers for page scripts, defined before any of them runs.
         '<script>window.THETA_H = {"Content-Type": "application/json", "x-dashboard-key": '
-        'new URLSearchParams(location.search).get("key") || ""};</script></head>'
+        'new URLSearchParams(location.search).get("key") || ""};'
+        + ('window.THETA_LOCK = true;' if (current_session(headers) or {}).get("lock") else '') + '</script></head>'
         f'<body class="{body_class}"><div class="app"><aside class="rail" aria-label="Sidebar">'
         f'<a class="brand" href="/">{avatar_img("theta", 32)}{APP_NAME}</a><nav aria-label="Main">{nav}</nav>'
         f'<div class="label">Crew</div>{crew}</aside><main class="main">{body}</main></div>'
@@ -9750,10 +9810,11 @@ _SIGNIN_JS = r"""
       const o = await opts();
       const cred = await navigator.credentials.get({publicKey: {challenge: b64(o.challenge), rpId: o.rpId, userVerification: "required", timeout: 60000}});
       const r = cred.response;
-      const d = await (await fetch("/api/passkey/login", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(
+      const unlock = document.getElementById("si-face").dataset.unlock;
+      const d = await (await fetch(unlock ? "/api/passkey/unlock" : "/api/passkey/login", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(
         {id: cred.id, clientDataJSON: u(r.clientDataJSON), authenticatorData: u(r.authenticatorData), signature: u(r.signature)})})).json();
       if (!d.ok) throw new Error(d.error);
-      out.textContent = "Signed in."; location.reload();
+      out.textContent = unlock ? "Unlocked." : "Signed in."; location.reload();
     } catch (e) { out.textContent = "Couldn't sign in: " + why(e, "sign-in"); }
   };
   document.getElementById("si-key").onsubmit = e => { e.preventDefault(); const k = document.getElementById("si-keyin").value.trim(); if (k) location.href = location.pathname + "?key=" + encodeURIComponent(k); };
@@ -9786,6 +9847,26 @@ _PASSKEY_JS = r"""
     return async () => { if (!o || Date.now() - at > 240000) await load(); const x = o; o = null; load(); if (!x) throw new Error("Couldn't reach Theta. Check your connection."); return x; };
   };
   if (!window.PublicKeyCredential) { add.disabled = true; out.textContent = "This browser can't make passkeys."; }
+  const lockBtn = document.getElementById("lock-set"), lockOut = document.getElementById("lock-status");
+  const lockOpts = lockBtn && lockBtn.dataset.on === "1" && window.PublicKeyCredential ? ready("/api/passkey/options?type=login", H) : null;
+  if (lockBtn) lockBtn.onclick = async () => {
+    const on = lockBtn.dataset.on === "1";
+    lockBtn.disabled = true;
+    try {
+      let assertion = null;
+      if (on) {
+        if (!lockOpts) throw new Error("This browser can't use Face ID here.");
+        lockOut.textContent = "Look at your phone...";
+        const o = await lockOpts();
+        const cred = await navigator.credentials.get({publicKey: {challenge: b64(o.challenge), rpId: o.rpId, userVerification: "required", timeout: 60000}});
+        const r = cred.response;
+        assertion = {id: cred.id, clientDataJSON: u(r.clientDataJSON), authenticatorData: u(r.authenticatorData), signature: u(r.signature)};
+      }
+      const d = await (await fetch("/api/lock/set", {method: "POST", headers: H, body: JSON.stringify({on, assertion})})).json();
+      if (!d.ok) throw new Error(d.error);
+      location.reload();
+    } catch (e) { lockOut.textContent = on ? "Couldn't turn it on: " + why(e, "lock") : "Couldn't turn it off: " + (e.message || e); lockBtn.disabled = false; }
+  };
   const opts = window.PublicKeyCredential ? ready("/api/passkey/options?type=register", H) : null;
   add.onclick = async () => {
     out.textContent = "Follow your device's prompt...";
@@ -9813,12 +9894,16 @@ _PASSKEY_JS = r"""
 
 
 def signin_page(headers):
-    """What you see without the key: Face ID, or type the key."""
+    """What you see without the key: Face ID, or type the key. A device whose
+    Face ID lock has closed gets the same page as a lock: Unlock with Face ID."""
     has = bool(passkeys())
+    locked = getattr(_REQ, "locked", False)
     body = (
         f'<div style="max-width:420px;margin:12vh auto 0" class="card stack"><div class="hero">{avatar_img("theta", 56)}'
-        f'<div><p class="eyebrow">{APP_NAME}</p><h1>Sign in</h1></div></div>'
-        + ('<button class="btn" id="si-face" type="button">Sign in with Face ID</button>' if has else
+        f'<div><p class="eyebrow">{APP_NAME}</p><h1>{"Locked" if locked else "Sign in"}</h1></div></div>'
+        + ('<p class="muted small">Theta was in the background, so it needs Face ID again.</p>'
+           '<button class="btn" id="si-face" type="button" data-unlock="1">Unlock with Face ID</button>' if locked and has else
+           '<button class="btn" id="si-face" type="button">Sign in with Face ID</button>' if has else
            '<p class="muted small">Open Theta once with your key, then add Face ID sign-in in Settings.</p>'
            '<button class="btn" id="si-face" type="button" hidden></button>')
         + '<form id="si-key" class="box" style="padding:5px 5px 5px 14px"><input id="si-keyin" type="password" '
@@ -10023,6 +10108,7 @@ def devices_card(headers):
 
 
 def passkeys_card(headers=None):
+    lock_on = bool((current_session(headers or {}) or {}).get("lock"))
     rows = "".join(
         f'<li><div class="brow" style="align-items:center"><span>{html.escape(k["name"])}</span>'
         f'<button class="btn ghost small" type="button" data-pk-remove="{html.escape(k["id"])}">Remove</button></div>'
@@ -10040,7 +10126,16 @@ def passkeys_card(headers=None):
             '<div style="display:flex;gap:8px;flex-wrap:wrap"><input id="pk-name" class="field" style="flex:1;min-width:160px" '
             'placeholder="Name, like iPhone" aria-label="Device name"><button class="btn" id="pk-add" type="button">'
             'Add this device</button></div><p class="note" id="pk-status"></p>'
-            f'<ul class="list">{rows or "<li class=empty>No devices yet.</li>"}</ul></section>'
+            f'<ul class="list">{rows or "<li class=empty>No devices yet.</li>"}</ul>'
+            + ((f'<div class="stack" style="gap:6px"><h3>Face ID lock on this device</h3><p class="muted small">Asks for Face ID '
+                f'every time Theta comes back after being in the background (a glance of under {LOCK_GRACE} seconds, like '
+                'checking a notification, doesn\'t count). Until it passes, Theta shows nothing and the hub answers nothing '
+                'from this device.</p>'
+                + ('<p><span class="chip ok-t">On</span> <button class="btn ghost small" id="lock-set" type="button" data-on="0">'
+                   'Turn off</button></p>' if lock_on else
+                   '<p><button class="btn" id="lock-set" type="button" data-on="1">Ask for Face ID when Theta opens</button></p>')
+                + '<p class="note" id="lock-status"></p></div>') if rows else "")
+            + '</section>'
             f"<script>{_PASSKEY_JS}</script>")
 
 
@@ -11999,6 +12094,30 @@ def handle(method, path, query, headers, body):
                     store().set_meta("push:subs", json.dumps(subs))
             return _json(200, {"ok": True, "changed": changed})
 
+        if path == "/api/lock/away":  # sent (beacon) when the app goes to the background
+            sess = current_session(headers)
+            if sess and sess.get("lock") and not sess.get("locked") and not sess.get("hidden"):
+                update_session(_REQ.sess_key, hidden=time.time())
+            return _json(200, {"ok": True})
+
+        if path == "/api/lock/set":
+            if not _auth_dashboard(query, headers) or not _REQ.sess_key:
+                return _json(401, {"ok": False, "error": "Sign in on this device first."})
+            me = sessions().get(_REQ.sess_key, {})
+            if data.get("on"):
+                rp_id, origin = _rp(headers)
+                try:  # proves this device can unlock before it can be locked
+                    verify_passkey(data.get("assertion") or {}, rp_id, origin)
+                except (ValueError, KeyError, TypeError) as e:
+                    passkey_fail(headers, "lock", str(e), rp_id)
+                    return _json(400, {"ok": False, "error": f"Face ID didn't pass ({str(e)[:120]}), so the lock is still off."})
+                update_session(_REQ.sess_key, lock=True, locked=None, hidden=None, unlocked=time.time())
+                post_event("qwerty", f"Face ID lock turned on for {device_name(me)}")
+            else:
+                update_session(_REQ.sess_key, lock=None, locked=None, hidden=None)
+                post_event("qwerty", f"Face ID lock turned off for {device_name(me)}")
+            return _json(200, {"ok": True})
+
         if path == "/api/devices/name":
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
@@ -12107,6 +12226,17 @@ def handle(method, path, query, headers, body):
 
         if path.startswith("/api/passkey/"):
             rp_id, origin = _rp(headers)
+            if path == "/api/passkey/unlock":  # Face ID lock: open this device again
+                sess = current_session(headers)
+                if not sess:
+                    return _json(401, {"ok": False, "error": "This device isn't signed in any more. Sign in instead."})
+                try:
+                    verify_passkey(data, rp_id, origin)
+                except (ValueError, KeyError, TypeError) as e:
+                    passkey_fail(headers, "unlock", str(e), rp_id)
+                    return _json(401, {"ok": False, "error": str(e)[:160]})
+                update_session(_REQ.sess_key, locked=None, hidden=None, unlocked=time.time())
+                return _json(200, {"ok": True})
             if path == "/api/passkey/login":
                 try:
                     pk = verify_passkey(data, rp_id, origin)
@@ -12379,6 +12509,11 @@ def handle(method, path, query, headers, body):
             return _json(401, {"ok": False, "error": "dashboard key required"})
         return _json(200, {"ok": True, **_meta_json("bench:last", {})})
 
+    if path == "/api/lock/status":  # the app asks when it comes back to the front
+        sess = current_session(headers)
+        locked = bool(sess) and lock_check(sess, _REQ.sess_key)
+        return _json(200, {"ok": True, "on": bool(sess and sess.get("lock")), "locked": locked})
+
     if path == "/api/chat/working":  # the chat polls this while it waits for a reply
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
@@ -12479,6 +12614,7 @@ def app(environ, start_response):
     _REQ.cookies, _REQ.session, _REQ.quiet, _REQ.meta, _REQ.calls = [], None, False, {}, 0
     _REQ.stale, _REQ.refreshing, _REQ.ch, _REQ.rid = False, False, None, None
     _REQ.trail, _REQ.tok = [], [0, 0]  # who worked on this request's reply, and its tokens (in, out)
+    _REQ.sess_key, _REQ.locked = None, False
     t0 = time.time()
     _REQ.page = method == "GET" and not path.startswith("/api/")
     try:
@@ -12490,7 +12626,7 @@ def app(environ, start_response):
             tried = (query.get("key") or headers.get("x-dashboard-key") or headers.get("x-ask-key")
                      or headers.get("x-bot-key") or headers.get("x-hub-secret") or _cookie(headers, "hub_key")
                      or path == "/api/passkey/login")
-            if status == 401 and _cookie(headers, "hub_sess") and not _REQ.session:
+            if status == 401 and _cookie(headers, "hub_sess") and not _REQ.session and not _REQ.locked:
                 _set_cookie("hub_sess", "", 0)  # signed out (or unknown): clear it
             if status == 401 and _cookie(headers, "hub_key"):
                 _set_cookie("hub_key", "", 0)  # an old saved key (e.g. after DASHBOARD_KEY changed): once is enough
