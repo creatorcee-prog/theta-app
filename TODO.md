@@ -159,6 +159,32 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
 
 ## Ideas (not built yet)
 
+- [ ] **One-tap merge** (a consideration, not needed yet; worth it once
+      more updates are automated and checking them by hand takes too long).
+      - The 5-minute tick checks both repos for open PRs from the owner's own
+        branches only (never forks: `fitness-tracker` is public, so anyone
+        can open a PR there), waits for tests to pass, then pushes "PR #N:
+        title. Merge / Not now". Merge merges it; Vercel deploys as usual.
+      - Not a merge-everything bot: that would ship unreviewed code, or a
+        stranger's, straight to production.
+      - Needs a fine-grained GitHub token limited to the two repos (pull
+        requests and contents: read and write), set in Vercel as Sensitive.
+- [ ] **World news + a translator bot.**
+      - World news: feeds from outlets in other countries and languages,
+        translated, so the news crew isn't only US sources.
+      - Translator: translate anything in chat on request; maybe language
+        teaching too (daily words, short quizzes, correcting what you write).
+      - Decide: one new bot, or give it to Red/Blue/Gray plus a tutor.
+- [ ] **Searcher miners** (miner tier: cheap models doing legwork).
+      - Searcher: runs longer web searches for the crew and hands back sources.
+      - Buyer: finds the best price for something you want. It must never
+        pay on its own: it proposes, you approve each purchase (like QWERTY),
+        with a spending cap. It would need no card details until that's
+        designed properly.
+      - Dark (Tor-only search): can't run on Vercel (no Tor there), so it
+        needs an always-on host with Tor. Risks to settle first: illegal or
+        scam content, malware in fetched pages, and keeping it away from
+        Buyer entirely. Read-only search results, never downloads.
 - [ ] Video and image rippers: grab a page's main image for reference.
       Downloading videos breaks most sites' terms and is too heavy for
       Vercel, so links only for now.
