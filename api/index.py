@@ -598,7 +598,22 @@ class KVStore:
         return item
 
     def get_meta(self, key):
-        return self._cmd("HGET", "hub:meta", key)
+        # Within one request, values the hub usually needs are fetched together
+        # in one round trip and kept for a few seconds (each trip to Upstash
+        # costs tens of ms, and a page reads dozens of values).
+        cache = getattr(_REQ, "meta", None)
+        if cache is None:
+            return self._cmd("HGET", "hub:meta", key)
+        now = time.time()
+        hit = cache.get(key)
+        if hit and now - hit[1] < META_CACHE_SECONDS:
+            return hit[0]
+        want = [key] + [k for k in _HOT_META if k != key and not (k in cache and now - cache[k][1] < META_CACHE_SECONDS)][:80]
+        for k, v in zip(want, self._cmd("HMGET", "hub:meta", *want)):
+            cache[k] = (v, now)
+        if not key.startswith(_BIG_META):
+            _HOT_META.add(key)
+        return cache[key][0]
 
     def add_expenses(self, month, rows):
         """rows: {id: expense}; returns how many were new (ids dedupe)."""
@@ -614,6 +629,9 @@ class KVStore:
 
     def set_meta(self, key, value):
         self._cmd("HSET", "hub:meta", key, value)
+        cache = getattr(_REQ, "meta", None)
+        if cache is not None:
+            cache[key] = (value, time.time())
 
     def list_chat(self, limit):
         rows = self._cmd("LRANGE", "hub:allchat", "0", str(limit - 1))
@@ -636,6 +654,16 @@ def get_store():
 # One shared store per process (local runs reuse it; on Vercel each
 # invocation builds its own, which is fine because KV is the memory).
 _STORE = None
+
+
+META_CACHE_SECONDS = 3
+_BIG_META = ("upload:", "chart:", "vision:")  # big values: never fetched in the batch
+# Values most pages read, fetched together; grows with what this process sees.
+_HOT_META = {"briefs", "cards", "cards:img", "cards:short", "chat:pressed", "daily:history", "daily:items",
+             "gmail:flash", "gmail:token", "hub:origin", "key:users", "lenz:feeds:at", "lenz:lib", "llm:cooldown",
+             "llm:fallback", "memory", "notes", "notify:rounds", "passkeys", "pk:fails", "push:last", "push:subs",
+             "reminders", "round:failures", "round:last", "search:used", "sec:fails", "sec:osv", "sessions",
+             "tick:last", "claude:spend", "claude:last_error", "claude:last_ok", "claude:check", "llm:fallback"}
 
 
 def store():
@@ -1329,7 +1357,20 @@ def provider_extra(provider, model):
     return {}
 
 
+_MODELS_CACHE = {}  # provider -> (at, result); per process
+
+
 def list_models(provider):
+    """Cached 10 minutes (1 after an error): Home and Settings ask on every load."""
+    hit = _MODELS_CACHE.get(provider)
+    if hit and time.time() - hit[0] < (60 if "error" in hit[1] else 600):
+        return hit[1]
+    result = _list_models(provider)
+    _MODELS_CACHE[provider] = (time.time(), result)
+    return result
+
+
+def _list_models(provider):
     """Model ids this provider's key can use, or {"error": ...}. Providers
     retire models, so /api/models shows what to put in *_MODEL."""
     url, key_var = PROVIDERS[provider]
@@ -6923,6 +6964,11 @@ a,button,.sw,.lo,.chip{touch-action:manipulation}
  box-shadow:0 0 8px var(--accent);transition:width 2.5s cubic-bezier(.1,.7,.2,1),opacity .3s;pointer-events:none}
 #loadbar.go{width:85%}
 .haptic-switch{position:fixed;left:-9999px;opacity:0;pointer-events:none}
+.nav-wait body::before{content:"";position:fixed;top:0;left:0;height:3px;width:100%;z-index:9999;pointer-events:none;
+ background:linear-gradient(90deg,transparent,var(--accent),transparent);background-size:40% 100%;background-repeat:no-repeat;
+ animation:navwait 1s linear infinite}
+@keyframes navwait{from{background-position:-40% 0}to{background-position:140% 0}}
+@media (prefers-reduced-motion:reduce){.nav-wait body::before{animation:none;background:var(--accent);opacity:.7}}
 
 /* Feed: one column of big cards */
 :root[data-layout="feed"] .wins{grid-template-columns:minmax(0,1fr);max-width:640px}
@@ -7243,6 +7289,17 @@ _UI_JS_SRC = r'''
     }
   });
 
+  // A bar shows at once when a tap opens another page, so a slow server
+  // never looks like a missed tap.
+  document.addEventListener("click", e => {
+    const a = e.target.closest && e.target.closest("a[href]");
+    if (!a || e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || a.target || a.hasAttribute("download")) return;
+    const u = new URL(a.href, location.href);
+    if (u.origin !== location.origin || (u.pathname === location.pathname && u.search === location.search)) return;
+    setTimeout(() => { if (!e.defaultPrevented) root.classList.add("nav-wait"); }, 0);
+  });
+  addEventListener("pageshow", () => root.classList.remove("nav-wait"));
+
   // Haptics: Android vibrates; iPhone (iOS 18+) gives a tick when a switch
   // toggles, so a hidden one is flipped. Off in Settings, saved per device.
   let haptics = true;
@@ -7281,10 +7338,22 @@ _UI_JS_SRC = r'''
   }
   let tilt = false;
   try { tilt = localStorage.getItem("theta_tilt") === "on"; } catch (_) {}
+  // Tilt moves the shine on the pictures in view only: setting it on the whole
+  // page made iPhones restyle every blurred card ~60 times a second, and taps lagged.
+  const shinePics = new Set();
+  const io = "IntersectionObserver" in window ? new IntersectionObserver(es => es.forEach(x =>
+    x.isIntersecting ? shinePics.add(x.target) : shinePics.delete(x.target))) : null;
+  const watchPics = () => io && document.querySelectorAll(".pic").forEach(p => io.observe(p));
+  let lastTilt = 0, tx = -1, ty = -1;
   function onTilt(e) {
-    if (e.gamma == null) return;
-    const x = Math.max(0, Math.min(100, 50 + e.gamma * 1.6)), y = Math.max(0, Math.min(100, 50 + (e.beta - 45) * 1.2));
-    shine(document.documentElement, Math.round(x), Math.round(y));
+    if (e.gamma == null || document.hidden) return;
+    const now = performance.now();
+    if (now - lastTilt < 50) return;  // 20 updates a second is plenty
+    const x = Math.round(Math.max(0, Math.min(100, 50 + e.gamma * 1.6))), y = Math.round(Math.max(0, Math.min(100, 50 + (e.beta - 45) * 1.2)));
+    if (Math.abs(x - tx) < 2 && Math.abs(y - ty) < 2) return;  // too small to see
+    lastTilt = now; tx = x; ty = y;
+    cancelAnimationFrame(shineFrame);
+    shineFrame = requestAnimationFrame(() => shinePics.forEach(p => { p.style.setProperty("--gx", x + "%"); p.style.setProperty("--gy", y + "%"); }));
   }
   async function startTilt() {
     const D = window.DeviceOrientationEvent;
@@ -7292,6 +7361,7 @@ _UI_JS_SRC = r'''
     if (typeof D.requestPermission === "function") {
       try { if ((await D.requestPermission()) !== "granted") return false; } catch (_) { return false; }
     }
+    watchPics();
     addEventListener("deviceorientation", onTilt);
     return true;
   }
@@ -7307,7 +7377,7 @@ _UI_JS_SRC = r'''
       tilt = false;
       const n = document.getElementById("tilt-note"); if (n) n.textContent = "Motion access wasn't allowed, so the shine follows taps only.";
     }
-    if (!tilt) { removeEventListener("deviceorientation", onTilt); document.documentElement.style.removeProperty("--gx"); document.documentElement.style.removeProperty("--gy"); }
+    if (!tilt) { removeEventListener("deviceorientation", onTilt); shinePics.forEach(p => { p.style.removeProperty("--gx"); p.style.removeProperty("--gy"); }); }
     try { localStorage.setItem("theta_tilt", tilt ? "on" : "off"); } catch (_) {}
     markTilt();
   });
@@ -10979,7 +11049,7 @@ def handle(method, path, query, headers, body):
             return _json(401, {"ok": False, "error": "dashboard key required"})
         return _json(200, {
             "in_use": {t: f"{p}: {m}" for t, (p, m) in TIER_LLM.items()},
-            **{p: list_models(p) for p in PROVIDERS},
+            **{p: _list_models(p) for p in PROVIDERS},  # asked fresh: this is the diagnostic
         })
 
     if path == "/api/tiers":
@@ -11009,7 +11079,7 @@ def app(environ, start_response):
         length = 0
     body = environ["wsgi.input"].read(length) if length > 0 else b""
     ip = client_ip(environ)
-    _REQ.cookies, _REQ.session, _REQ.quiet = [], None, False
+    _REQ.cookies, _REQ.session, _REQ.quiet, _REQ.meta = [], None, False, {}
     _REQ.page = method == "GET" and not path.startswith("/api/")
     try:
         if sec_locked(ip, path):  # QWERTY locked this address out for guessing keys
@@ -11034,6 +11104,7 @@ def app(environ, start_response):
     start_response(f"{status} {_REASONS.get(status, '')}",
                    [("Content-Type", ctype), ("Content-Length", str(len(out)))]
                    + SECURITY_HEADERS + (extra[0] if extra else []) + _REQ.cookies)
+    _REQ.meta = None  # the cache lives for one request only
     return [out]
 
 
