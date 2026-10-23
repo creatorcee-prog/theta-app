@@ -481,6 +481,7 @@ class KVStore:
         self.url, self.token = url, token
 
     def _cmd(self, *args):
+        _REQ.calls = getattr(_REQ, "calls", 0) + 1  # for the Speed card
         req = urllib.request.Request(
             self.url, data=json.dumps(list(args)).encode(),
             headers={"Authorization": f"Bearer {self.token}",
@@ -3205,6 +3206,9 @@ _PUSH_JS = """
   const limit = (p, what) => Promise.race([p, new Promise((_, no) =>
     setTimeout(() => no(new Error(what + " took too long")), 10000))]);
   const why = e => (e && e.message) || String(e);
+  // Failures are also sent to the hub, so Settings → Devices (and QWERTY) show why.
+  const report = (stage, msg) => fetch("/api/push/fail", {method: "POST", headers: PH,
+    body: JSON.stringify({stage, error: String(msg).slice(0, 200), standalone})}).catch(() => {});
   const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
   // iPhone only gives Notification and PushManager to Home Screen web apps.
   const noPush = !("PushManager" in window) || !("Notification" in window);
@@ -3227,15 +3231,16 @@ _PUSH_JS = """
     // The phone's own copy can outlive the server's (or predate new keys), so trust the server's count.
     say(problem || (sub && devices ? "Notifications are on for this device."
       : "Tap Turn on to get notifications on this device."));
-  }, e => say(why(e)));
+  }, e => { say(why(e)); report("check", why(e)); });
   document.getElementById("push-on").onclick = async () => {
-    if (noPush) { say(noPushWhy); return; }
+    if (noPush) { say(noPushWhy); report("turn on", noPushWhy); return; }
     say("Turning on...");
     try {
       const perm = await Notification.requestPermission();  // before any other await: iOS needs the tap's user gesture
-      if (perm !== "granted") { say("Notifications were not allowed. To retry on iPhone, remove the Home Screen app and add it again."); return; }
+      if (perm !== "granted") { say("Notifications were not allowed. To retry on iPhone, remove the Home Screen app and add it again.");
+        report("permission", "permission is " + perm); return; }
       const {reg, key, problem} = await setup;
-      if (!key) { say(problem || "Phone notifications aren't set up on the server yet."); return; }
+      if (!key) { say(problem || "Phone notifications aren't set up on the server yet."); report("server", problem || "no public key"); return; }
       // A sign-up made under older keys blocks a new one, so always start fresh.
       const old = await reg.pushManager.getSubscription();
       if (old) await old.unsubscribe();
@@ -3244,8 +3249,9 @@ _PUSH_JS = """
         applicationServerKey: Uint8Array.from(raw, c => c.charCodeAt(0))}), "Signing up with Apple");
       const d = await (await fetch("/api/push/subscribe", {method: "POST", headers: PH, body: JSON.stringify({subscription: s})})).json();
       say(d.ok ? "Notifications are on for this device." : "Couldn't turn on: " + d.error);
+      if (!d.ok) report("saving", d.error);
     } catch (e) {
-      say("Couldn't turn on: " + why(e));
+      say("Couldn't turn on: " + why(e)); report("turn on", (e && e.name ? e.name + ": " : "") + why(e));
     }
   };
   document.getElementById("push-test").onclick = async () => {
@@ -3257,8 +3263,8 @@ _PUSH_JS = """
       if (!d.ok) { say(d.error); return; }
       const lines = (d.results || []).map(x => (x.ok ? "\u2713 Apple/Google accepted it for " : "\u2717 ") + x.device + (x.ok ? "" : ": " + x.why));
       say((d.sent ? "Sent to " + d.sent + " device(s)." : "Nothing sent: " + (d.error || "no device subscribed"))
-        + (lines.length ? "\n" + lines.join("\n") : "")
-        + (d.sent ? "\nNothing showed up? Check iPhone Settings, Notifications, Theta (allowed), and that Focus is off. "
+        + (lines.length ? "\\n" + lines.join("\\n") : "")
+        + (d.sent ? "\\nNothing showed up? Check iPhone Settings, Notifications, Theta (allowed), and that Focus is off. "
           + "If you re-added the Home Screen icon, tap Turn on again here: each icon has its own sign-up." : ""));
     } catch (e) {
       say("Couldn't send: " + why(e));
@@ -4281,7 +4287,10 @@ def qwerty_context():
         devs = f"(couldn't read the device list: {e!r})"
     return ("\n\n" + HUB_MAP + "\n\nWhat you see right now (exact):\n"
             + ("\n".join(f"- [{s}] {t}" for s, t in findings) if findings else "- all clear")
-            + "\n\nWhat's connected (exact; this is all the hub can know):\n" + devs)
+            + "\n\nWhat's connected (exact; this is all the hub can know):\n" + devs
+            + "\n\nServer speed, last 20 loads (usual ms / slowest ms / storage trips / loads, cold starts):\n"
+            + ("\n".join(f"- {p}: {a} / {mx} / {c} / {n}, {cold} cold" for p, a, mx, c, n, cold in perf_rows()[0])
+               or "- not measured yet"))
 
 
 def file_issue(title, details=""):
@@ -6963,7 +6972,6 @@ a,button,.sw,.lo,.chip{touch-action:manipulation}
 #loadbar{position:fixed;top:0;left:0;height:3px;width:0;z-index:100;background:linear-gradient(90deg,var(--accent),var(--accent2));
  box-shadow:0 0 8px var(--accent);transition:width 2.5s cubic-bezier(.1,.7,.2,1),opacity .3s;pointer-events:none}
 #loadbar.go{width:85%}
-.haptic-switch{position:fixed;left:-9999px;opacity:0;pointer-events:none}
 .nav-wait body::before{content:"";position:fixed;top:0;left:0;height:3px;width:100%;z-index:9999;pointer-events:none;
  background:linear-gradient(90deg,transparent,var(--accent),transparent);background-size:40% 100%;background-repeat:no-repeat;
  animation:navwait 1s linear infinite}
@@ -7300,21 +7308,6 @@ _UI_JS_SRC = r'''
   });
   addEventListener("pageshow", () => root.classList.remove("nav-wait"));
 
-  // Haptics: Android vibrates; iPhone (iOS 18+) gives a tick when a switch
-  // toggles, so a hidden one is flipped. Off in Settings, saved per device.
-  let haptics = true;
-  try { haptics = localStorage.getItem("theta_haptics") !== "off"; } catch (_) {}
-  const hl = document.createElement("label"), hi = document.createElement("input");
-  hl.className = "haptic-switch"; hl.setAttribute("aria-hidden", "true");
-  hi.type = "checkbox"; hi.setAttribute("switch", ""); hi.tabIndex = -1;
-  hl.append(hi); document.body.append(hl);
-  const tick = () => { if (!haptics) return; if (navigator.vibrate) navigator.vibrate(8); else hl.click(); };
-  window.thetaHaptic = tick;
-  function markHaptics() {
-    document.querySelectorAll("[data-haptics]").forEach(b => b.classList.toggle("on", (b.dataset.haptics === "on") === haptics));
-  }
-  markHaptics();
-
   // Glass shine on window pictures: follows the cursor over a picture, or
   // the phone's tilt when that's switched on (iPhone asks once, on a tap).
   const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -7468,14 +7461,6 @@ _UI_JS_SRC = r'''
     return true;
   }
   document.addEventListener("click", e => {
-    const h = e.target.closest("[data-haptics]");
-    if (h) {
-      haptics = h.dataset.haptics === "on";
-      try { localStorage.setItem("theta_haptics", haptics ? "on" : "off"); } catch (_) {}
-      markHaptics(); tick(); return;
-    }
-    const t = e.target.closest("a, button, .win");
-    if (t && !t.closest(".haptic-switch")) tick();
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey) return;
     const w = e.target.closest(".win[data-sheet]");
     if (w && typeof dlg.showModal === "function") {
@@ -8747,7 +8732,7 @@ def devices_report():
             "passkeys": passkeys(), "push": push,
             "key_users": sorted(_meta_json("key:users", {}).values(), key=lambda d: -d["seen"]),
             "bots": list(BOT_KEYS),
-            "pk_fails": _meta_json("pk:fails", [])[-5:]}
+            "pk_fails": _meta_json("pk:fails", [])[-5:], "push_fails": _meta_json("push:fails", [])[-5:]}
 
 
 def devices_text():
@@ -8767,6 +8752,10 @@ def devices_text():
                 f"{k['uses']} times, last {_when(k['seen'])}" for k in r["key_users"]]
     if BOT_KEYS:
         out.append("Bots with their own keys: " + ", ".join(display_name(b) for b in BOT_KEYS))
+    if r["push_fails"]:
+        out.append("Recent notification sign-up failures:")
+        out += [f"- {_when(f['at'])} {f['stage']} on {f['device']} ({'Home Screen app' if f['standalone'] else 'in the browser'}): "
+                f"{f['error']}" for f in r["push_fails"]]
     if r["pk_fails"]:
         out.append("Recent Face ID failures:")
         out += [f"- {_when(f['at'])} {f['stage']} on {f['device']} at {f['site']}: {f['error']}" for f in r["pk_fails"]]
@@ -8823,6 +8812,9 @@ def devices_card(headers):
                    for k in r["key_users"])
     fails = "".join(f'<li class="small">{_when(f["at"])} · {esc(f["stage"])} on {esc(f["device"])} at {esc(f["site"])}: '
                     f'{esc(f["error"])}</li>' for f in reversed(r["pk_fails"]))
+    pfails = "".join(f'<li class="small">{_when(f["at"])} · {esc(f["stage"])} on {esc(f["device"])} '
+                     f'({"Home Screen app" if f["standalone"] else "in the browser"}): {esc(f["error"])}</li>'
+                     for f in reversed(r["push_fails"]))
     return ('<section class="card stack" id="devices" aria-label="Devices"><div class="brow"><h2>Devices</h2>'
             + (f'<button class="btn ghost small" type="button" data-signout="*">Sign out all others</button>'
                if len(r["sessions"]) > 1 else "") + '</div>'
@@ -8833,6 +8825,7 @@ def devices_card(headers):
             f'<h3>Signed in ({len(r["sessions"])})</h3><ul class="list">{rows or "<li class=empty>None yet.</li>"}</ul>'
             f'<h3>Getting notifications ({len(r["push"])})</h3>{lastline}<ul class="list">{push or "<li class=empty>None.</li>"}</ul>'
             + (f'<h3>Used the key directly</h3><ul class="list">{keys}</ul>' if keys else "")
+            + (f'<h3>Why notifications didn\'t turn on</h3><ul class="list">{pfails}</ul>' if pfails else "")
             + (f'<h3>Recent Face ID failures</h3><ul class="list">{fails}</ul>' if fails else "")
             + f'<p class="note"></p><script>{_DEVICES_JS}</script></section>')
 
@@ -9522,9 +9515,6 @@ def settings_page(headers):
         'version. Saved on this device.</p></div>'
         f'<div class="swatches">{swatches}</div>'
         f'<div><h3>Light or dark</h3><p class="muted small">Match device follows your phone\'s setting.</p><div class="seg" role="group" aria-label="Light or dark">{modes}</div></div>'
-        '<div><h3>Haptics</h3><p class="muted small">A light tap when you press things. iPhone needs iOS 18 or later.</p>'
-        '<div class="seg" role="group" aria-label="Haptics"><button type="button" data-haptics="on">On</button>'
-        '<button type="button" data-haptics="off">Off</button></div></div>'
         '<div><h3>Glass shine</h3><p class="muted small">Pictures have a glassy shine that follows your cursor. On a '
         'phone it can follow how you tilt it (your phone asks once for motion access).</p>'
         '<div class="seg" role="group" aria-label="Shine follows tilt"><button type="button" data-tilt="on">Follow tilt</button>'
@@ -9537,6 +9527,7 @@ def settings_page(headers):
         f'<section class="card stack" id="security"><div class="hero" style="gap:12px">{avatar_img("qwerty", 40)}<div><h2>Security and health</h2>'
         '<p class="muted small">QWERTY checks this every round and tells you in #dev-and-security when it changes.</p></div></div>'
         f'<ul class="list">{security_rows()}</ul></section>' + passkeys_card(headers) + devices_card(headers) + gmail_card(headers) + memory_card() + siri_card(headers) +
+        speed_card() +
         '<section class="card stack"><div class="brow"><h2>Rounds</h2></div><p class="muted small">Every agent does its '
         'job three times a day (Supabase Cron). Run one now to refresh the windows.</p>'
         f'<p><button class="btn" type="button" data-run-round="round-status-s">{ui_icon("play")}Run a round now</button></p>'
@@ -9971,7 +9962,15 @@ def release_strip():
 # YouTube channels and Twitch going live are pushed; subreddits get a daily
 # digest of their top posts, and any post naming something you follow is
 # pushed right away.
-LENZ_YOUTUBE = [c.strip() for c in os.environ.get("LENZ_YOUTUBE", "").split(",") if c.strip()]  # UC... ids or @handles
+def _yt_entry(c):
+    """A channel from LENZ_YOUTUBE: a UC... id, an @handle, or a channel link
+    copied from YouTube (youtube.com/@name or youtube.com/channel/UC...)."""
+    c = c.strip()
+    m = re.search(r"youtube\.com/(?:channel/(UC[\w-]{20,})|(@[\w.-]+))", c)
+    return (m.group(1) or m.group(2)) if m else c
+
+
+LENZ_YOUTUBE = [_yt_entry(c) for c in os.environ.get("LENZ_YOUTUBE", "").split(",") if c.strip()]  # UC... ids, @handles or links
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")  # only to turn @handles into channel ids
 LENZ_SUBREDDITS = [c.strip().removeprefix("r/") for c in os.environ.get("LENZ_SUBREDDITS", "").split(",") if c.strip()]
 LENZ_TWITCH = [c.strip().lower() for c in os.environ.get("LENZ_TWITCH", "").split(",") if c.strip()]
@@ -10600,6 +10599,16 @@ def handle(method, path, query, headers, body):
             post_event("mistral", "Mistral will now send phone notifications to a new device")
             return _json(200, {"ok": True, "devices": len(subs[-10:])})
 
+        if path == "/api/push/fail":  # the phone's own reason notifications didn't turn on
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            fails = _meta_json("push:fails", [])
+            fails.append({"at": time.time(), "stage": str(data.get("stage") or "?")[:20],
+                          "error": str(data.get("error") or "?")[:200], "standalone": bool(data.get("standalone")),
+                          "device": device_label(headers.get("user-agent"))})
+            store().set_meta("push:fails", json.dumps(fails[-10:]))
+            return _json(200, {"ok": True})
+
         if path == "/api/push/remove":
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
@@ -11067,6 +11076,57 @@ _REASONS = {200: "OK", 302: "Found", 400: "Bad Request", 401: "Unauthorized",
             502: "Bad Gateway"}
 
 
+# ---- Speed: how long pages take on the real server, and how many storage
+# round trips each made. Kept per process, saved at most once a minute,
+# shown in Settings → Speed (and to QWERTY).
+_BOOT = time.time()
+_PERF = {}  # path -> [(ms, storage calls, cold)]
+_PERF_SAVED = [0.0]
+_PERF_PATHS = ("/", "/chat", "/settings", "/calendar", "/money", "/api/allchat")
+
+
+def perf_record(path, ms, calls):
+    key = path if path in _PERF_PATHS else ("/agent" if path.startswith("/agent/") else None)
+    if not key:
+        return
+    cold = time.time() - _BOOT < 15  # this server had just started
+    _PERF.setdefault(key, []).append((round(ms), calls, cold))
+    del _PERF[key][:-20]
+    if time.time() - _PERF_SAVED[0] > 60:
+        _PERF_SAVED[0] = time.time()
+        try:
+            store().set_meta("perf", json.dumps({"at": time.time(), "paths": _PERF}))
+        except Exception:
+            pass
+
+
+def perf_rows():
+    """[(path, average ms, slowest ms, storage calls, loads, cold starts)] from the last save."""
+    data = _meta_json("perf", {}) or {}
+    rows = []
+    for path, xs in sorted((data.get("paths") or {}).items()):
+        warm = [x for x in xs if not x[2]] or xs
+        rows.append((path, round(sum(x[0] for x in warm) / len(warm)), max(x[0] for x in xs),
+                     round(sum(x[1] for x in warm) / len(warm)), len(xs), sum(1 for x in xs if x[2])))
+    return rows, data.get("at")
+
+
+def speed_card():
+    rows, at = perf_rows()
+    names = {"/": "Home", "/chat": "Chat", "/settings": "Settings", "/calendar": "Calendar", "/money": "Money",
+             "/api/allchat": "Chat refresh", "/agent": "Agent pages"}
+    body = "".join(f"<tr><td>{names.get(p, p)}</td><td>{a / 1000:.2f} s</td><td>{mx / 1000:.2f} s</td><td>{c}</td>"
+                   f"<td>{n}{f' ({cold} cold)' if cold else ''}</td></tr>" for p, a, mx, c, n, cold in rows)
+    return ('<section class="card stack" id="speed"><div><h2>Speed</h2><p class="muted small">How long the server takes '
+            'to build each screen (not counting your connection), from the last 20 loads. A cold load is the first '
+            'after Vercel starts Theta up, which is slower.' + (f' Saved {_ago(at)} ago.' if at and _ago(at) != "now" else "")
+            + '</p></div>' + (f'<div class="md"><div class="md-scroll"><table class="md-table"><thead><tr><th>Screen</th>'
+                              f'<th>Usual</th><th>Slowest</th><th>Storage trips</th><th>Loads</th></tr></thead>'
+                              f'<tbody>{body}</tbody></table></div></div>' if body else
+                              '<p class="muted small">Nothing measured yet. Open a few screens, then check back in a minute.</p>')
+            + '</section>')
+
+
 def app(environ, start_response):
     method = environ.get("REQUEST_METHOD", "GET")
     path = environ.get("PATH_INFO", "/") or "/"
@@ -11079,7 +11139,8 @@ def app(environ, start_response):
         length = 0
     body = environ["wsgi.input"].read(length) if length > 0 else b""
     ip = client_ip(environ)
-    _REQ.cookies, _REQ.session, _REQ.quiet, _REQ.meta = [], None, False, {}
+    _REQ.cookies, _REQ.session, _REQ.quiet, _REQ.meta, _REQ.calls = [], None, False, {}, 0
+    t0 = time.time()
     _REQ.page = method == "GET" and not path.startswith("/api/")
     try:
         if sec_locked(ip, path):  # QWERTY locked this address out for guessing keys
@@ -11105,6 +11166,8 @@ def app(environ, start_response):
                    [("Content-Type", ctype), ("Content-Length", str(len(out)))]
                    + SECURITY_HEADERS + (extra[0] if extra else []) + _REQ.cookies)
     _REQ.meta = None  # the cache lives for one request only
+    if method == "GET" or path == "/api/allchat":
+        perf_record(path, (time.time() - t0) * 1000, _REQ.calls)
     return [out]
 
 

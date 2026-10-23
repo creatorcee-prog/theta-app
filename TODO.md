@@ -84,7 +84,8 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
       → `USAJOBS_API_KEY` and `USAJOBS_EMAIL` (the email you used).
 
 ### 9. Lenz's channels, Siri and James
-- [ ] `LENZ_YOUTUBE` (channel ids, or `@handles` plus `YOUTUBE_API_KEY`),
+- [ ] `LENZ_YOUTUBE`: comma-separated channel links (`https://www.youtube.com/@name`),
+      `@handles` or `UC…` ids; links and handles need `YOUTUBE_API_KEY`,
       `LENZ_SUBREDDITS` (like `Silksong,anime`), `LENZ_TWITCH` (logins) with
       `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` (dev.twitch.tv → Your
       Console → Register Your Application; any OAuth redirect, category
