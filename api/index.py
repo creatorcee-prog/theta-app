@@ -7265,6 +7265,19 @@ def device_label(ua):
     return f"{dev} · {app}"
 
 
+def device_os(ua):
+    """'iOS 26.1', 'Android 15', 'Windows', 'macOS' from a user agent, or ''."""
+    ua = ua or ""
+    m = re.search(r"(?:iPhone|CPU) OS (\d+)[_.](\d+)", ua)
+    if m:
+        return f"{'iPadOS' if 'iPad' in ua else 'iOS'} {m.group(1)}.{m.group(2)}"
+    m = re.search(r"Android (\d+(?:\.\d+)?)", ua)
+    if m:
+        return f"Android {m.group(1)}"
+    return ("macOS" if "Macintosh" in ua else "Windows" if "Windows" in ua else "ChromeOS" if "CrOS" in ua
+            else "Linux" if "Linux" in ua else "")
+
+
 def _place(headers):
     """Rough location from Vercel's IP headers (city, region, country), or ''."""
     from urllib.parse import unquote
@@ -7337,6 +7350,25 @@ def current_session(headers):
     return dev
 
 
+SIGNED_OUT_KEEP = 15  # signed-out devices remembered on Settings → Devices
+
+
+def name_device(dev_id, name):
+    """Your own name for a signed-in device ('My iPhone'); '' clears it."""
+    name = re.sub(r"\s+", " ", name or "").strip()[:40]
+    with _SESS_LOCK:
+        live = sessions()
+        hit = next((v for v in live.values() if v["id"] == dev_id), None)
+        if not hit:
+            return False
+        if name:
+            hit["name"] = name
+        else:
+            hit.pop("name", None)
+        store().set_meta("sessions", json.dumps(live))
+    return True
+
+
 def sign_out_device(dev_id, keep=None):
     """Remove one device's session (or all but `keep` when dev_id is '*')."""
     with _SESS_LOCK:
@@ -7344,6 +7376,9 @@ def sign_out_device(dev_id, keep=None):
         out = {k: v for k, v in live.items()
                if (v["id"] != dev_id if dev_id != "*" else v["id"] == keep)}
         store().set_meta("sessions", json.dumps(out))
+        gone_devs = [dict(v, out_at=time.time()) for v in live.values() if v not in out.values()]
+        if gone_devs:  # kept (no tokens: only their hashes were ever stored) so what was signed out stays on record
+            store().set_meta("sessions:out", json.dumps((_meta_json("sessions:out", []) + gone_devs)[-SIGNED_OUT_KEEP:]))
     gone = {v["id"] for v in live.values()} - {v["id"] for v in out.values()}
     subs = push_subs()
     if gone and any(x.get("sess") in gone for x in subs):  # a signed-out device stops getting notifications
@@ -9633,8 +9668,15 @@ def devices_text():
     """The device list as plain lines, for QWERTY and /devices."""
     r = devices_report()
     out = [f"Signed-in devices ({len(r['sessions'])}):"]
-    out += [f"- {d['label']} · {d['how']} · {d.get('place') or 'place unknown'} · IP {d.get('ip') or '?'} · "
+    out += [f"- {(chr(34) + d['name'] + chr(34) + ' (named by the user), ') if d.get('name') else 'NOT NAMED: '}"
+            f"{d['label']}{', ' + device_os(d.get('ua')) if device_os(d.get('ua')) else ''} · {d['how']} · "
+            f"{d.get('place') or 'place unknown'} · IP {d.get('ip') or '?'} · "
             f"signed in {_when(d['made'])}, last seen {_when(d['seen'])}" for d in r["sessions"]] or ["- none yet"]
+    gone = _meta_json("sessions:out", [])[-5:]
+    if gone:
+        out.append("Signed out recently:")
+        out += [f"- {device_name(d)}, {d['how']}, {d.get('place') or 'place unknown'}, IP {d.get('ip') or '?'}, "
+                f"signed out {_when(d['out_at'])}" for d in reversed(gone)]
     out.append(f"Face ID passkeys ({len(r['passkeys'])}):")
     out += [f"- {k['name']} (for {k.get('site') or 'site not recorded'}), added {_when(k['created'])}, "
             f"last used {_when(k.get('used'))}" for k in r["passkeys"]] or ["- none"]
@@ -9668,6 +9710,14 @@ _DEVICES_JS = """
       if (d.ok) pr.closest("li").remove(); else box.querySelector(".note").textContent = d.error;
       return;
     }
+    const nm = e.target.closest("[data-name]");
+    if (nm) {
+      const name = prompt("Name this device (like My iPhone). Leave empty to clear.", nm.dataset.cur || "");
+      if (name === null) return;
+      const d = await (await fetch("/api/devices/name", {method: "POST", headers: window.THETA_H, body: JSON.stringify({id: nm.dataset.name, name})})).json();
+      if (d.ok) location.reload(); else box.querySelector(".note").textContent = d.error;
+      return;
+    }
     const b = e.target.closest("[data-signout]"); if (!b) return;
     const all = b.dataset.signout === "*";
     if (all && !confirm("Sign out every other device? They'll need the key or Face ID again.")) return;
@@ -9698,8 +9748,21 @@ _DEVICES_JS = """
 
 
 def device_name(d):
-    """'iPhone · Home Screen app' when Settings said so, else from the user agent."""
+    """Your name for it if you gave one, else 'iPhone · Home Screen app' (when
+    Settings said so) or the user agent's guess."""
+    if d.get("name"):
+        return d["name"]
     return d["label"].split(" · ")[0] + " · " + d["app"] if d.get("app") else d["label"]
+
+
+def device_facts(d):
+    """'iPhone · Safari, iOS 26.1 · signed in Oct 23 4:12 AM by key link · near Denver, CO, US'."""
+    kind = d["label"].split(" · ")[0] + " · " + d["app"] if d.get("app") else d["label"]
+    os_ = device_os(d.get("ua"))
+    return " · ".join(p for p in (
+        (kind + (f", {os_}" if os_ else "")) if d.get("name") else os_,
+        f"signed in {datetime.fromtimestamp(d['made'], hub_tz()):%b %d} {_clock(datetime.fromtimestamp(d['made'], hub_tz()))} by {d['how']}",
+        f"near {d['place']}" if d.get("place") else "place unknown") if p)
 
 
 def devices_card(headers):
@@ -9718,9 +9781,13 @@ def devices_card(headers):
         on = d["id"] in by_sess
         why = (f' · <span class="bad-t">{esc(recent_fail["error"])}</span>' if mine and not on and recent_fail else "")
         return (f'<li class="dev"><div class="brow" style="align-items:center"><span><b>{esc(device_name(d))}</b>'
-                + (' <span class="chip">This device</span>' if mine else "") + '</span>'
-                + ('' if mine else f'<button class="btn ghost small" type="button" data-signout="{esc(d["id"])}">Sign out</button>')
-                + f'</div><div class="small"><span class="{"ok-t" if on else "muted"}">'
+                + (' <span class="chip">This device</span>' if mine else "")
+                + ('' if d.get("name") or mine else ' <span class="chip bad-t">Not named</span>') + '</span><span>'
+                + f'<button class="btn ghost small" type="button" data-name="{esc(d["id"])}" data-cur="{esc(d.get("name", ""))}">'
+                  f'{"Rename" if d.get("name") else "Name it"}</button>'
+                + ('' if mine else f' <button class="btn ghost small" type="button" data-signout="{esc(d["id"])}">Sign out</button>')
+                + f'</span></div><div class="small muted">{esc(device_facts(d))}</div>'
+                  f'<div class="small"><span class="{"ok-t" if on else "muted"}">'
                   f'{"Notifications on" if on else "Notifications off"}</span>{why}'
                   f'<span class="muted"> · active {_when(d["seen"])}</span></div></li>')
     rows = "".join(row(d) for d in devs)
@@ -9737,15 +9804,22 @@ def devices_card(headers):
                        f'{esc(f["error"])}</li>' for f in reversed(r["push_fails"]))
     details += "".join(f'<li class="small">Face ID failed ({_when(f["at"])}, {esc(f["device"])}): {esc(f["error"])}</li>'
                        for f in reversed(r["pk_fails"]))
+    gone = list(reversed(_meta_json("sessions:out", [])))
+    gone_list = "".join(f'<li class="small"><b>{esc(device_name(d))}</b> · signed out {_when(d["out_at"])}'
+                        f'<div class="muted">{esc(device_facts(d))}, IP {esc(d.get("ip") or "?")}</div></li>' for d in gone)
     return ('<section class="card stack" id="devices" aria-label="Devices"><div class="brow"><h2>Devices</h2>'
             + (f'<button class="btn ghost small" type="button" data-signout="*">Sign out all others</button>'
                if len(devs) > 1 else "") + '</div>'
-            '<p class="muted small">Everything signed in to Theta. Sign out anything you don\'t recognize.</p>'
+            '<p class="muted small">Everything signed in to Theta. Name your own devices, so anything '
+            'marked <b>Not named</b> is one you should look at; sign out anything you don\'t recognize. '
+            'Phones don\'t tell websites their names, so the hub only sees the kind of device and where it is.</p>'
             f'<ul class="list">{rows or "<li class=empty>None yet.</li>"}</ul>'
             + (f'<details class="small"><summary class="muted">Details: where and how each signed in</summary>'
                f'<p class="muted small">Locations are rough: phones on cellular data often show the carrier\'s hub. '
                'To cut off anything not listed, change <code>DASHBOARD_KEY</code> in Vercel and redeploy.</p>'
                f'<ul class="list">{details}</ul></details>' if details else "")
+            + (f'<details class="small"><summary class="muted">Signed out recently ({len(gone)})</summary>'
+               f'<ul class="list">{gone_list}</ul></details>' if gone else "")
             + f'<p class="note"></p><script>{_DEVICES_JS}</script></section>')
 
 
@@ -11710,6 +11784,13 @@ def handle(method, path, query, headers, body):
                 if changed:
                     store().set_meta("push:subs", json.dumps(subs))
             return _json(200, {"ok": True, "changed": changed})
+
+        if path == "/api/devices/name":
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            if not name_device(str(data.get("id") or ""), str(data.get("name") or "")):
+                return _json(404, {"ok": False, "error": "That device isn't signed in any more."})
+            return _json(200, {"ok": True})
 
         if path == "/api/devices/signout":
             if not _auth_dashboard(query, headers):

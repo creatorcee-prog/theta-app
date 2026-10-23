@@ -267,6 +267,29 @@ check("sign out all others keeps this one", s == 200 and json.loads(r)["signed_o
 s, _, _ = call2("POST", "/api/devices/signout", headers={"host": "theta.example"}, body={"id": "*"})
 check("signing out needs to be signed in", s == 401)
 
+# names, details on each row, and a record of what was signed out
+check("OS from the user agent", h.device_os(IPHONE) == "iOS 19.0" and h.device_os(PC) == "Windows"
+      and h.device_os("Mozilla/5.0 (Linux; Android 15; Pixel 9) Chrome/140") == "Android 15")
+gone = h._meta_json("sessions:out", [])
+check("signed-out devices are kept on record, with how and where", len(gone) == 3 and all(d.get("out_at") and d.get("how") for d in gone)
+      and "hub_sess" not in _j.dumps(gone))
+s, r, _ = call2("POST", "/api/devices/name", headers={"host": "theta.example", "cookie": f"hub_sess={tok}"}, body={"id": me_id, "name": "  My   iPhone "})
+check("name your own device", s == 200 and next(iter(h.sessions().values()))["name"] == "My iPhone")
+s, _, _ = call2("POST", "/api/devices/name", headers={"host": "theta.example"}, body={"id": me_id, "name": "x"})
+check("naming needs to be signed in", s == 401)
+s, _, _ = call2("POST", "/api/devices/name", headers={"host": "theta.example", "cookie": f"hub_sess={tok}"}, body={"id": "nope", "name": "x"})
+check("naming a device that's gone says so", s == 404)
+call2("GET", "/", f"key={KEY}", headers={"host": "theta.example", "user-agent": PC, **GEO})
+s, page, _ = call2("GET", "/settings", headers={"host": "theta.example", "cookie": f"hub_sess={tok}"})
+check("Settings: your name for it, the new one marked Not named, details on the row", b"My iPhone" in page and b"Not named" in page
+      and b"by key link" in page and b"near Saint George, UT, US" in page and b"Windows" in page)
+check("Settings lists what was signed out", b"Signed out recently (3)" in page)
+txt = h.devices_text()
+check("QWERTY sees which are named and what was signed out", '"My iPhone" (named by the user)' in txt and "NOT NAMED: Windows PC · Edge, Windows" in txt
+      and "Signed out recently:" in txt)
+call2("POST", "/api/devices/name", headers={"host": "theta.example", "cookie": f"hub_sess={tok}"}, body={"id": me_id, "name": ""})
+check("an empty name clears it", "name" not in next(d for d in h.sessions().values() if d["id"] == me_id))
+
 # Face ID failures are recorded with the browser's reason
 s, _, _ = call2("POST", "/api/passkey/fail", headers={"host": "theta.example", "user-agent": IPHONE_APP, "content-type": "application/json"},
                 body={"stage": "sign-in", "error": "NotAllowedError: The operation either timed out or was not allowed."})
