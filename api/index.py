@@ -1166,6 +1166,26 @@ def _tool_remind(arg, agent):
     return f"Reminder set: {reminder_line(r).split(' ', 1)[1]}"
 
 
+def _tool_cancel(arg, agent):
+    """Remove a reminder by #number, or by its words when only one matches."""
+    num = arg.strip().lstrip("#")
+    if num.isdigit():
+        r = delete_reminder(int(num))
+        if not r:
+            raise ValueError(f"there's no reminder #{num}")
+    else:
+        words = arg.lower().split()
+        hits = [r for r in reminders() if words and all(w in r["what"].lower() for w in words)]
+        if not hits:
+            raise ValueError(f"no reminder matches “{arg}”")
+        if len(hits) > 1:
+            raise ValueError("more than one matches (" + ", ".join(f"#{r['id']} {r['what']}" for r in hits)
+                             + "); cancel one by its number")
+        r = delete_reminder(hits[0]["id"])
+    post_event("remi", f"Remi removed the reminder: {r['what']}")
+    return f"Removed the reminder: {r['what']}"
+
+
 def _tool_check(arg, agent):
     it = daily_add(arg)
     return f"Added to Today's check: {it['text']}"
@@ -1204,7 +1224,8 @@ def _tool_project(arg, agent):
 
 TOOLS = {
     "remember": ("remember | <a fact about the user, like Home: Saint George, UT>", _tool_remember, None),
-    "forget": ("forget | <words in the fact to drop>", _tool_forget, None),
+    "forget": ("forget | <words in a remembered fact to drop> (memory only, not reminders)", _tool_forget, None),
+    "cancel": ("cancel | <#number or words of a reminder to remove>", _tool_cancel, None),
     "remind": ("remind | <when and what, like 6pm call Mom, or 1/22/2027 oil change>", _tool_remind, None),
     "check": ("check | <a daily habit for Today's check>", _tool_check, None),
     "note": ("note | <title> :: <text>   (save a note, list or snippet)", _tool_note, None),
@@ -1388,6 +1409,11 @@ def llm_chat(tier, messages, max_tokens=800):
             return claude_chat(messages, max_tokens)
         except LLMError as e:  # Theta still answers, on the stand-in
             store().set_meta("claude:last_error", json.dumps({"at": time.time(), "error": str(e)[:200]}))
+            note = (f" Right now {MASTER_MODEL} couldn't answer ({str(e)[:120]}), so you're running on the "
+                    f"stand-in model, {TIER_LLM['low_brain'][1]}. If asked which model you are, say that.")
+            messages = ([dict(messages[0], content=messages[0]["content"] + note)] + messages[1:]
+                        if messages and messages[0]["role"] == "system" and isinstance(messages[0]["content"], str)
+                        else messages)
     t = "low_brain" if tier == "master" else tier
     provider, model = TIER_LLM[t]
     try:
@@ -1523,8 +1549,10 @@ def claude_chat(messages, max_tokens):
             model=MASTER_MODEL_ID, max_tokens=max(4000, max_tokens * 4), system=system or anthropic.omit,
             messages=convo, output_config={"effort": MASTER_EFFORT},
             betas=["server-side-fallback-2026-07-01"], fallbacks="default")
-    except anthropic.AuthenticationError:
-        raise LLMError("Anthropic rejected ANTHROPIC_API_KEY: " + anthropic_key_hint())
+    except anthropic.AuthenticationError as e:
+        said = str(getattr(e, "message", "") or "")[:100]
+        raise LLMError("Anthropic rejected ANTHROPIC_API_KEY" + (f" (it said: {said})" if said else "")
+                       + ": " + anthropic_key_hint())
     except anthropic.PermissionDeniedError as e:
         raise LLMError(f"Anthropic refused the request: {e.message[:120]}")
     except anthropic.NotFoundError as e:
@@ -1548,6 +1576,7 @@ def claude_chat(messages, max_tokens):
         cur.update(usd=round(cur["usd"] + usd, 6), calls=cur["calls"] + 1, input=cur["input"] + tin,
                    output=cur["output"] + tout)
         store().set_meta("claude:spend", json.dumps({month: cur}))
+    store().set_meta("claude:last_ok", str(time.time()))
     if resp.stop_reason == "refusal":
         raise LLMError("Claude declined this one")
     text = "".join(b.text for b in resp.content if b.type == "text").strip()
@@ -3985,7 +4014,8 @@ def sec_record_fail(ip, path):
         store().set_meta("sec:fails", json.dumps(dict(list(state.items())[-200:])))
     if newly:
         msg = (f"{len(rec['fails'])} wrong keys from {ip} in {SEC_WINDOW // 60} minutes (last on {path}). "
-               f"Locked out for {SEC_LOCK // 60} minutes. If that was you, wait it out; if not, consider a new "
+               f"Locked out for {SEC_LOCK // 60} minutes. If you just changed DASHBOARD_KEY, this is likely one of "
+               "your own devices still holding the old key; it's cleared now, so sign in again. If not, consider a new "
                "DASHBOARD_KEY.")
         store().add_chat("qwerty", f"Security: {msg}", channel="dev")
         notify("QWERTY", f"Someone's guessing your dashboard key: {msg}", "/settings#security")
@@ -6198,11 +6228,13 @@ def wiring():
                 if spend["usd"] >= MASTER_MONTHLY_CAP:
                     row.update(state="bad", note=f"{MASTER_MODEL}: monthly cap reached, {used}; the low brain stands in "
                                "until the 1st (raise MASTER_MONTHLY_CAP_USD to lift it)")
-                elif last and time.time() - last["at"] < 86400:
+                elif last and time.time() - last["at"] < 86400 and last["at"] > float(store().get_meta("claude:last_ok") or 0):
                     row.update(state="bad", note=f"{MASTER_MODEL} failed {_ago(last['at'])} ago ({last['error']}); "
                                f"the low brain answered. {used}")
                 else:
-                    row.update(state="ok", note=f"{MASTER_MODEL} connected, effort {MASTER_EFFORT}; {used}")
+                    ok_at = float(store().get_meta("claude:last_ok") or 0)
+                    row.update(state="ok", note=f"{MASTER_MODEL} connected, effort {MASTER_EFFORT}"
+                               + (f", last answered {_ago(ok_at)} ago" if ok_at else "") + f"; {used}")
             c = cooling(provider, model) if not (a["tier"] == "master" and master_ready()) else None
             if c:
                 fb_p, fb_m = FALLBACK_LLM.get("low_brain" if a["tier"] == "master" else a["tier"], (None, "off"))
@@ -6943,8 +6975,10 @@ html,body{overflow-x:clip;max-width:100%}
 .md .md-list.tasks{list-style:none;padding-left:0}.md li.task{display:flex;gap:8px;align-items:flex-start}
 .md li.task input{margin-top:4px;flex-shrink:0;accent-color:var(--accent)}
 .md .md-scroll{overflow-x:auto;margin:6px 0;white-space:normal}
-.md .md-table{border-collapse:collapse;font-size:13.5px;font-variant-numeric:tabular-nums;min-width:60%}
-.md .md-table th,.md .md-table td{border:1px solid var(--border);padding:5px 9px;text-align:left;vertical-align:top}
+.md .md-scroll{-webkit-overflow-scrolling:touch;max-width:100%}
+.md .md-table{border-collapse:collapse;font-size:14px;line-height:1.4;font-variant-numeric:tabular-nums;width:100%}
+.md .md-table th,.md .md-table td{border:1px solid var(--border);padding:7px 10px;text-align:left;vertical-align:top;
+ overflow-wrap:normal;word-break:normal;white-space:normal;min-width:5.5em}
 .md .md-table th{background:var(--surface2);font-weight:650}
 .md pre{background:var(--surface2);border:1px solid var(--border);padding:9px 11px;border-radius:10px;overflow-x:auto;font-size:13px;margin:6px 0;white-space:pre}
 .md code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;background:var(--surface2);border-radius:5px;padding:0 4px}
@@ -8662,7 +8696,7 @@ def devices_card(headers):
             + (f'<button class="btn ghost small" type="button" data-signout="*">Sign out all others</button>'
                if len(r["sessions"]) > 1 else "") + '</div>'
             '<p class="muted small">Every browser signed in to Theta, with where it signed in from (roughly, by '
-            'internet address). A new sign-in also pings your phone. Devices on the old sign-in show up the next time '
+            'internet address: phones on cellular data often show a city near the carrier\'s hub, not where you are). A new sign-in also pings your phone. Devices on the old sign-in show up the next time '
             'they open Theta; to cut off anything you can\'t see here, change <code>DASHBOARD_KEY</code> in Vercel and '
             'redeploy.</p>'
             f'<h3>Signed in ({len(r["sessions"])})</h3><ul class="list">{rows or "<li class=empty>None yet.</li>"}</ul>'
@@ -10926,6 +10960,8 @@ def app(environ, start_response):
                      or headers.get("x-bot-key") or _cookie(headers, "hub_key") or path == "/api/passkey/login")
             if status == 401 and _cookie(headers, "hub_sess") and not _REQ.session:
                 _set_cookie("hub_sess", "", 0)  # signed out (or unknown): clear it
+            if status == 401 and _cookie(headers, "hub_key"):
+                _set_cookie("hub_key", "", 0)  # an old saved key (e.g. after DASHBOARD_KEY changed): once is enough
             if status == 401 and tried:  # only a wrong key counts, not a signed-out visit
                 try:
                     sec_record_fail(ip, path)
