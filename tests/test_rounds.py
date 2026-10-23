@@ -56,6 +56,7 @@ if mode == "redis":
     os.environ.update(UPSTASH_REDIS_REST_URL=base + "/redis", UPSTASH_REDIS_REST_TOKEN="t")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "api"))
 import index as h
+h.ROUND_POSTS = "agents"  # these tests read each agent's own round post; test_rounds2 covers the summary
 h.list_models = h._list_models  # these tests swap keys mid-run; a deploy would start fresh
 h.PROVIDERS = {"groq": (base + "/groq", "GROQ_API_KEY"), "gemini": (base + "/gemini", "GEMINI_API_KEY")}
 from wsgiref.util import setup_testing_defaults

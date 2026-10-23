@@ -217,7 +217,37 @@ check("the desk sees the whole crew's facts and the hub map", "You're the front 
       and "Settings QWERTY can change" in sysp and "ESCALATE:" in sysp)
 CALLS_.clear()
 s, d = post("@lenz what should I watch tonight?")
-check("an @mention still goes to the desk", d["messages"][-1]["from"] == "mistral" and all(c[0] == "mistral" for c in CALLS_))
+check("a message that starts with @Lenz goes to Lenz, not the desk", d["messages"][-1]["from"] == "lenz" and len(CALLS_) == 1
+      and "You're the front desk" not in CALLS_[0][1])
+CALLS_.clear()
+s, d = post("ask the crew: is @lenz still tracking my anime?")
+check("an @ later in a message is only a mention: the desk answers", d["messages"][-1]["from"] == "mistral" and len(CALLS_) == 1
+      and "You're the front desk" in CALLS_[0][1])
+check("leading @'s, highest rank first", h.leading_agents("@lenz @Theta, @glass hi @remi") == ["theta", "glass", "lenz"]
+      and h.leading_agents("hi @theta") == [])
+n = len(h.store().list_chat(500))
+s, d = post("@glass @lenz quick check-in")
+mine = [m["from"] for m in d["messages"] if m.get("kind") != "event"][-2:]
+check("two agents addressed: both answer, the manager before the worker", mine == ["glass", "lenz"])
+before = len(h.store().list_expenses(h.datetime.now(h.hub_tz()).strftime("%Y-%m")))
+post("@Mistral I tried to have @Glass log $42 groceries")
+check("@Glass mid-sentence doesn't run Glass's instant command", len(h.store().list_expenses(h.datetime.now(h.hub_tz()).strftime("%Y-%m"))) == before)
+# higher-ups task the ones below them
+real_reply = h.allchat_reply
+h.allchat_reply = lambda a, t: f"{a} on it: " + t[-1]["text"]
+got = h._tool_ask("Remi | what's on Friday?", "mistral")
+check("Mistral can ask a manager; the answer lands in the chat", got.startswith("Asked Remi") and h.store().list_chat(1)[-1]["from"] == "remi"
+      and "what's on Friday?" in h.store().list_chat(1)[-1]["text"])
+check("Theta can ask a worker", h._tool_ask("lenz | pick a movie", "theta").startswith("Asked Lenz"))
+for args, by in (("theta | help me", "mistral"), ("mistral | help", "mistral"), ("glass | x", "lenz")):
+    try:
+        h._tool_ask(args, by); ok = False
+    except ValueError as e:
+        ok = "only ask someone below" in str(e)
+    check(f"nobody asks up or sideways: {by} -> {args.split('|')[0].strip()}", ok)
+h.allchat_reply = real_reply
+check("Mistral and Theta have the ask tool; workers don't", "ask | <agent below you>" in h.tools_prompt("mistral")
+      and "ask | <agent below you>" in h.tools_prompt("theta") and "ask | <agent below you>" not in h.tools_prompt("lenz"))
 # escalation
 h.master_ready = lambda: True
 PLAN["mistral"] = ["ESCALATE: needs planning across budget and calendar"]; PLAN["theta"] = ["Here's a plan."]
@@ -334,7 +364,7 @@ css = call("GET", "/ui.css")[1].decode()
 check("...and stays out of sight when nobody's working", ".working[hidden]{display:none}" in css)
 h.master_ready = lambda: False; CALLS_.clear()
 s, d = post("@theta are you there?")
-check("'@theta' without Claude: the desk answers as before", d["messages"][-1]["from"] == "mistral")
+check("'@theta' without Claude: Theta still answers (on the stand-in model)", d["messages"][-1]["from"] == "theta")
 # the real request: Haiku without the Opus-only refusal fallback; spend shared with Theta
 os.environ.update(ANTHROPIC_API_KEY="sk-ant-test-0123456789abcdefghijklmnopqrstuvwxyz", ANTHROPIC_BASE_URL=base + "/anthropic")
 G["claude"] = []; h.store().set_meta("claude:last_ok", "")
@@ -351,6 +381,16 @@ REAL_CLAUDE([{"role": "user", "content": "hi"}], 800)
 check("Theta's request still carries the refusal fallback", G["claude"][-1][1]["model"] == h.MASTER_MODEL_ID
       and G["claude"][-1][1].get("fallbacks") == "default")
 for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"): os.environ.pop(k)
+# instant commands are offered in the chat, and each example really is one
+q = h.menu_data()["quick"]
+check("the chat gets the instant commands, each with its agent", len(q) >= 6 and all(x["agent"] in h.AGENTS and x["about"] for x in q))
+for x in q:
+    if x["agent"] in ("glass", "remi", "lenz", "charter") and x["show"] != "@glass undo":
+        got = h.desk_shortcut([{"from": "you", "text": x["show"], "at": h._now()}])
+        check(f"the example '{x['show']}' runs at once with {x['agent']}", got and got[0] == x["agent"])
+js = call("GET", "/chat.js")[1].decode()
+check("the menu offers them on an empty box and as a message starts like one", 'kind: "!"' in js and "quickHit" in js
+      and 'addEventListener("focus", renderMenu)' in js)
 # crew mode still there
 h.CHAT_MODE = "crew"; CALLS_.clear()
 s, d = post("hello family", ch="family")

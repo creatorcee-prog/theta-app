@@ -3,6 +3,7 @@ sys.dont_write_bytecode = True
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer as HTTPServer
 PLAN = {"gemini": [], "groq": []}  # per provider: list of status codes to return, then 200
 HITS = []
+ROOM_LEFT = [None]
 class Fake(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_POST(self):
@@ -17,6 +18,10 @@ class Fake(BaseHTTPRequestHandler):
             self.send_response(200); self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out); return
         if code == 200:
             out = json.dumps({"choices": [{"message": {"content": f"hi from {body['model']}"}}]}).encode()
+            self.send_response(200); self.send_header("Content-Length", str(len(out)))
+            if prov == "groq" and ROOM_LEFT[0] is not None:
+                self.send_header("x-ratelimit-remaining-tokens", str(ROOM_LEFT[0])); self.send_header("x-ratelimit-reset-tokens", "42s")
+            self.end_headers(); self.wfile.write(out); return
         else:
             out = json.dumps([{"error": {"code": code, "message": "This model is currently experiencing high demand.", "status": "UNAVAILABLE"}}]).encode()
         self.send_response(code); self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
@@ -72,4 +77,36 @@ import json as _j
 check("Groq's wording: 'try again in 7.66s' waits ~9s", 8 <= h._quota_wait('Rate limit reached. Please try again in 7.66s.') <= 9.5)
 check("'try again in 1m30s' waits ~91s", 90 <= h._quota_wait('Please try again in 1m30.5s.') <= 92.5)
 check("unknown 429 waits 30s", h._quota_wait('Too many requests') == 30)
+
+# capacity: know before calling whether a model can take it
+BIG = [{"role": "system", "content": "x" * 40000}, {"role": "user", "content": "hi"}]  # ~10k tokens
+def run_msgs(tier, msgs, gemini=(), groq=()):
+    PLAN["gemini"], PLAN["groq"] = list(gemini), list(groq); HITS.clear(); h.store().set_meta("llm:cooldown", "{}")
+    try:
+        return h.llm_chat(tier, msgs), None
+    except h.LLMError as e:
+        return None, str(e)
+check("size estimate", 9500 < h.est_tokens(BIG) < 10500)
+ok, why = h.room_for("groq", "openai/gpt-oss-120b", 10800)
+check("too big for Groq's minute is known before calling", not ok and "more than Groq's 8k a minute" in why)
+r, e = run_msgs("low_brain", BIG, gemini=[503, 503])
+check("low brain: a prompt too big for Groq isn't sent there (no 413 round trip)", r is None and all(p == "gemini" for p, _ in HITS)
+      and "more than Groq's" in e)
+h._ROOM.clear()
+r, e = run_msgs("miner", BIG)
+check("a worker whose models (both Groq) can't take it borrows a manager's: Gemini answers, Groq never called",
+      r == "hi from gemini-3.8-flash" and HITS == [("gemini", "gemini-3.8-flash")])
+check("...and the chat is told", any("The Miner models couldn't take this" in m["text"] and "Manager model (gemini-3.8-flash) helped" in m["text"]
+                                     for m in h.store().list_chat(20)))
+ROOM_LEFT[0] = 300
+run("miner")
+check("Groq's 'tokens left this minute' is remembered", h._ROOM["openai/gpt-oss-20b"]["left"] == 300 and h._ROOM["openai/gpt-oss-20b"]["until"] > time.time() + 30)
+ROOM_LEFT[0] = None
+r, e = run_msgs("miner", [{"role": "user", "content": "y" * 4000}])
+check("...so the next call that won't fit skips that model without trying it", HITS and HITS[0] == ("groq", "openai/gpt-oss-120b")
+      and ("groq", "openai/gpt-oss-20b") not in HITS)
+check("Groq's reset times read", h._reset_secs("7.66s") == 7.66 and h._reset_secs("1m30.5s") == 90.5 and h._reset_secs("120ms") == 0.12)
+h._ROOM.clear()
+r, e = run_msgs("low_brain", BIG, gemini=[503, 503])
+check("the low brain never borrows Theta's model (no surprise Claude spend)", r is None and not any(p == "anthropic" for p, _ in HITS))
 print("done")
