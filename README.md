@@ -215,6 +215,25 @@ who runs in Garage Gym. Settings → **Memory and notes** lists both, each
 with a remove button (`POST /api/memory/remove`, `/api/notes/remove`
 `{"id"}`).
 
+## Home: the Smart Stack
+
+The top of Home is one widget slot you swipe through, like the iPhone's
+Smart Stack, with the most important card first: a reminder that's due or
+waiting on you, a calendar event coming up soon, a budget gone over,
+breaking news, a release you follow that's out today, Today's check late
+in the day, a new upload from Lenz's channels, then the calm defaults.
+Cards come from stored data only (`stack_cards()`), so the stack never
+slows the page. The release tracker stays on Lenz's page and the crew's
+windows stay in their own section.
+
+## Speed
+
+Outside data (feeds, TMDB trending, calendars, the Garage Gym summary) is
+kept in storage for every server process (`shared_fetch`). Pages draw from
+the stored copy at once; a stale copy makes the page ask `POST /api/refresh`
+after it loads, and the 5-minute tick refreshes too. Settings → Speed shows
+real server times per screen.
+
 ## Devices and sign-in
 
 Each browser that signs in (a key link or Face ID) gets its own random

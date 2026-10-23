@@ -7003,6 +7003,18 @@ body.typing .tabbar{display:none}
 .empty{color:var(--muted);font-size:14px;padding:6px 0}
 
 /* KPI tiles with rings */
+.smart{margin:0 0 16px}.sc-track{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;
+ -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}.sc-track::-webkit-scrollbar{display:none}
+.sc{flex:0 0 100%;scroll-snap-align:start;min-height:132px;box-sizing:border-box;display:flex;flex-direction:column;gap:6px;padding:16px 18px;
+ border-radius:22px;background:var(--surface);border:1px solid var(--border);color:var(--text);text-decoration:none}
+.sc:hover{text-decoration:none}.sc:active{transform:scale(.985)}
+.sc-e{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+.sc-e svg{width:16px;height:16px}.sc-t{font-size:21px;font-weight:750;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.sc-s{color:var(--muted);font-size:14px;margin-top:auto}
+.sc.warn .sc-e{color:var(--warn)}.sc.bad .sc-e{color:var(--bad)}
+.sc-dots{display:flex;justify-content:center;gap:6px;margin-top:8px}.sc-dots i{width:6px;height:6px;border-radius:50%;background:var(--border)}
+.sc-dots i.on{background:var(--accent)}
+@media (min-width:900px){.sc{flex-basis:calc(50% - 6px)}}
 .kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 @media (min-width:760px){.kpis{grid-template-columns:repeat(4,minmax(0,1fr))}}
 .kpi{display:flex;align-items:center;gap:12px;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);
@@ -7446,6 +7458,16 @@ _UI_JS_SRC = r'''
     setTimeout(() => { if (!e.defaultPrevented) root.classList.add("nav-wait"); }, 0);
   });
   addEventListener("pageshow", () => root.classList.remove("nav-wait"));
+
+  // Smart stack: the dots follow the card in view.
+  document.querySelectorAll(".smart").forEach(st => {
+    const track = st.querySelector(".sc-track"), dots = st.querySelectorAll(".sc-dots i");
+    if (!track || !dots.length) return;
+    track.addEventListener("scroll", () => {
+      const i = Math.round(track.scrollLeft / (track.firstElementChild.offsetWidth + 12));
+      dots.forEach((d, j) => d.classList.toggle("on", j === i));
+    }, {passive: true});
+  });
 
   // Glass shine on window pictures: follows the cursor over a picture, or
   // the phone's tilt when that's switched on (iPhone asks once, on a tap).
@@ -8074,6 +8096,8 @@ UI_ICONS = {
     "money": '<rect x="3" y="6" width="18" height="13.5" rx="3"/><path d="M3 10.5h18M15.5 15h2.5"/>',
     "settings": '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
     "play": '<path d="M7 5l12 7-12 7z"/>',
+    "bell": '<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
+    "check": '<rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/>',
     "send": '<path d="M5 12l15-7-5 15-2.5-6.5z"/><path d="M12.5 13.5L20 5"/>',
     "photo": '<rect x="3.5" y="5" width="17" height="14" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M4 17l5-4.5 3.5 3 3-2.5L20 17"/>',
     "users": '<circle cx="9" cy="8.5" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 5.2a3.5 3.5 0 0 1 0 6.6M18.5 20a6.5 6.5 0 0 0-2.7-5.3"/>',
@@ -8249,6 +8273,85 @@ def kpi_html(value, label, sub="", frac=None, color="var(--accent)", icon="bolt"
             f'<div class="l">{html.escape(label)}</div>{sub_html}</div></{tag}>')
 
 
+# ---- Smart stack: one widget slot on Home you swipe through, like the
+# iPhone's. Cards come from stored data only (no slow fetches) and are
+# ordered by how much they matter right now.
+def stack_cards(now, todays, status, news, cards):
+    out = []
+
+    def add(score, kind, eyebrow, title, sub, href, tone=""):
+        out.append({"score": score, "kind": kind, "eyebrow": eyebrow, "title": title, "sub": sub, "href": href, "tone": tone})
+    t = now.timestamp()
+    for r in reminders():  # due within the hour, overdue, or waiting to be marked done
+        if r.get("pending") or r["at"] <= t + 3600:
+            late = r["at"] <= t
+            add(100 if late or r.get("pending") else 92, "remind", "Remi · reminder",
+                r["what"], "Waiting for you to mark it done" if r.get("pending") else
+                ("Due now" if late else f"At {_clock(datetime.fromtimestamp(r['at'], hub_tz()))}"), "/calendar#reminders", "warn")
+    timed = [e for e in todays if not e["all_day"] and isinstance(e["start"], datetime) and e["end"] > now]
+    if timed:
+        e = timed[0]
+        mins = (e["start"] - now).total_seconds() / 60
+        add(95 if mins <= 120 else 70, "calendar", "Up next" if mins > 0 else "Happening now", e["title"],
+            (f"{_clock(e['start'])}" + (f" · {e['location']}" if e.get("location") else "")
+             + ((f" · in {int(mins)} min" if mins < 60 else f" · in {int(mins // 60)} h {int(mins % 60)} min")
+                if 0 < mins < 600 else "")), "/calendar")
+    elif todays:
+        add(45, "calendar", "Today", todays[0]["title"], f"{len(todays)} on the calendar today", "/calendar")
+    spent = sum(v["spent"] for v in status.values())
+    budget = sum(v["budget"] or 0 for v in status.values())
+    over = [(c, v) for c, v in status.items() if v["budget"] and v["spent"] >= v["budget"]]
+    if over:
+        c, v = max(over, key=lambda cv: cv[1]["spent"] / cv[1]["budget"])
+        add(88, "money", "Glass · over budget", f"{c}: ${v['spent']:,.0f} of ${v['budget']:,.0f}",
+            f"{len(over)} categor{'y' if len(over) == 1 else 'ies'} over this month", "/money", "bad")
+    elif budget:
+        share = spent / budget
+        add(74 if share >= 0.9 else 30, "money", "Glass · this month", f"{share:.0%} of budget used",
+            f"${spent:,.0f} of ${budget:,.0f}", "/money", "warn" if share >= 0.9 else "")
+    breaking = [w for w in news if w.get("tag")]
+    if breaking:
+        add(84, "news", f"Breaking · {breaking[0]['source']}", breaking[0]["title"], "Tap to read", breaking[0].get("url") or "/#news", "bad")
+    elif news:
+        add(25, "news", f"Top story · {news[0]['source']}", news[0]["title"], f"{len(news)} stories from your outlets", "/#news")
+    today = now.date().isoformat()
+    out_today = [x for x in releases(now.date()) if x["date"] == today and x.get("followed")]
+    if out_today:
+        add(80, "release", "Out today", out_today[0]["title"], f"{RELEASE_KINDS[out_today[0]['kind']].rstrip('s').title()}"
+            + (f" · +{len(out_today) - 1} more" if len(out_today) > 1 else ""), "/lenz")
+    items, done = daily_items(), daily_done()
+    left = [i for i in items if i["id"] not in done]
+    if items:
+        add(66 if left and now.hour >= 18 else 35 if left else 15, "daily", "Today's check",
+            "All done" if not left else f"{len(left)} left: {left[0]['text']}",
+            f"{daily_streak()}-day streak", "/#today", "warn" if left and now.hour >= 18 else "")
+    lz = (cards or {}).get("lenz")
+    if lz and t - lz.get("at", 0) < 6 * 3600:
+        add(55, "watch", f"Lenz · {lz.get('source') or 'new'}", lz["title"], _first_line(lz.get("text", "")), lz.get("url") or "/lenz")
+    return sorted(out, key=lambda c: -c["score"])
+
+
+_STACK_ICONS = {"remind": "bell", "calendar": "calendar", "money": "money", "news": "news", "release": "play",
+                "daily": "check", "watch": "play"}
+
+
+def stack_html(cards):
+    if not cards:
+        return ""
+    esc = html.escape
+
+    def card(c):
+        ext = c["href"].startswith("http")
+        icon = ui_icon(_STACK_ICONS.get(c["kind"], "bolt")) if _STACK_ICONS.get(c["kind"]) in UI_ICONS else ""
+        return (f'<a class="sc {c["tone"]}" href="{esc(c["href"])}"' + (' target="_blank" rel="noopener"' if ext else "")
+                + f'><div class="sc-e">{icon}<span>{esc(c["eyebrow"])}</span></div><div class="sc-t">{esc(c["title"])}</div>'
+                f'<div class="sc-s">{esc(c["sub"])}</div></a>')
+    dots = "".join(f'<i{" class=on" if i == 0 else ""}></i>' for i in range(len(cards)))
+    return (f'<section class="smart" aria-label="Smart stack, most important first"><div class="sc-track">'
+            + "".join(card(c) for c in cards) + f'</div>' + (f'<div class="sc-dots" aria-hidden="true">{dots}</div>' if len(cards) > 1 else "")
+            + '</section>')
+
+
 # ---- Today's check: a short list of daily habits on Home (read the news,
 # read a book or comic...). Ticks reset each day; a streak counts days with
 # everything done; Remi nudges once in the evening if anything's left.
@@ -8401,35 +8504,18 @@ def home_page(headers):
     hello = "Good morning" if 4 <= now.hour < 12 else "Good afternoon" if now.hour < 18 else "Good evening"
     month = now.strftime("%Y-%m")
     status = month_status(month)
-    spent = sum(v["spent"] for v in status.values())
-    budget = sum(v["budget"] or 0 for v in status.values())
-    if budget:
-        share = spent / budget
-        k_money = kpi_html(f"{share:.0%}", "Budget used", f"${spent:,.0f} of ${budget:,.0f}", share,
-                           "var(--bad)" if share >= 1 else "var(--warn)" if share >= 0.9 else "var(--accent)", href="/money")
-    else:
-        k_money = kpi_html(f"${spent:,.0f}", "Spent this month", "No budgets set", icon="money", href="/money")
     todays = []
     if calendar_linked():
         try:
             todays = [o for o in calendar_events(now.date(), now.date())]
         except Exception:
             todays = []
-    k_cal = kpi_html(str(len(todays)) if calendar_linked() else "–", "On today",
-                     (todays[0]["title"] if todays else "Nothing scheduled") if calendar_linked() else "No calendar linked",
-                     icon="calendar", href="/calendar")
-    online = sum(1 for a in statuses if a["online"] and a["bot_id"] in AGENTS)
-    k_crew = kpi_html(f"{online}/{len(AGENTS)}", "Crew online", "in the last 10 min",
-                      online / len(AGENTS), "var(--good)", href="/chat")
-    breaking = sum(1 for w in news if w.get("tag"))
-    k_news = kpi_html(str(breaking) if breaking else str(len(news)), "Breaking" if breaking else "Top stories",
-                      f"from {len({w['source'] for w in news})} outlets", icon="news")
     swipe = lambda ws: "".join(win_html(w) for w in ws)
     body = (
         f'<header class="top tight"><div><p class="eyebrow">{now:%A, %B} {now.day}</p><h1>{hello}</h1></div>'
         f'<button class="btn rr" type="button" data-run-round="round-status" aria-label="Run a round">{ui_icon("play")}'
         f'<span>Run a round</span></button></header><p class="note" id="round-status" style="margin:-8px 0 14px"></p>'
-        f'<section class="kpis" aria-label="Today at a glance">{k_money}{k_cal}{k_crew}{k_news}</section>'
+        + stack_html(stack_cards(now, todays, status, news, cards))
         + daily_card() +
         f'<div class="sect"><h2>Your crew</h2><a href="/chat">Open chat →</a></div>'
         f'<section class="wins" aria-label="Agent windows">{"".join(win_html(w) for w in crew)}</section>'
