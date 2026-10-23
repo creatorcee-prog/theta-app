@@ -25,6 +25,7 @@ class Fake(BaseHTTPRequestHandler):
             elif op == "HMGET": r = [DB.get(k, {}).get(x) for x in a]
             elif op == "HGETALL": r = [x for kv in DB.get(k, {}).items() for x in kv]
             elif op == "SMEMBERS": r = []
+            elif op == "HDEL": r = sum(1 for x in a if DB.get(k, {}).pop(x, None) is not None)
             return self._send(200, {"result": r})
         STATE["last"] = body
         self._send(200, {"choices": [{"message": {"content": "Glass here."}}]})
@@ -124,3 +125,31 @@ s, page = call("GET", "/money", "key=dk"); page = page.decode()
 check("money page: bars, over-budget bar, import control", "<h2>Budgets</h2>" in page and "$153.10 <span class=\"muted\">of $150" in page and 'class="bad"' in page and 'id="csv-import"' in page)
 s, d = call("GET", "/api/glass", "key=dk")
 check("/api/glass returns month status and expenses", s == 200 and d["status"]["Gas"]["budget"] == 150.0 and len(d["expenses"]) >= 8)
+
+# only plain purchases log at once; everything else goes to the desk
+for t in ("@glass $42 groceries", "spent $12 on lunch", "paid $80 for gas", "@Glass $9.50 coffee"):
+    check(f"a purchase logs at once: {t}", h.looks_like_purchase(t))
+for t in ("I'll just tell you what occurred: I attempted to have @Glass set the current balance to $0 but he didn't understand it.",
+          "@Glass set the balance to $0", "@glass $254.05 deposit", "@glass got my paycheck, $1,200", "@glass $0 coffee",
+          "@glass what did I spend on dining? last time it was $40"):
+    check(f"not logged as spending: {t[:50]}", not h.looks_like_purchase(t))
+check("$0 never parses as an expense", h.parse_expense("$0 coffee") is None)
+n = len(h.store().list_expenses(MONTH))
+s, d = call("POST", "/api/allchat", headers=K, body={"text": "@Glass set the balance to $0"})
+check("a balance message isn't logged", len(h.store().list_expenses(MONTH)) == n)
+s, d = call("POST", "/api/allchat", headers=K, body={"text": "@glass $7.25 snacks"})
+check("a plain purchase still logs", len(h.store().list_expenses(MONTH)) == n + 1)
+s, d = call("POST", "/api/allchat", headers=K, body={"text": "@glass undo"})
+undo = [m for m in d["messages"] if m["from"] == "glass"][-1]["text"]
+check("'@glass undo' removes the last chat entry", len(h.store().list_expenses(MONTH)) == n and undo.startswith("Removed $7.25"))
+k, e = next(iter(h.store().expense_items(MONTH).items()))
+s, page = call("GET", "/money", "key=dk")
+check("Money page: a Remove button on each recent expense", f'data-exp-rm="{MONTH}:'.encode() in page)
+s, d = call("POST", "/api/glass/remove", headers=K, body={"month": MONTH, "id": k})
+check("Remove deletes that one expense", s == 200 and k not in h.store().expense_items(MONTH))
+check("removing it again says it's gone", call("POST", "/api/glass/remove", headers=K, body={"month": MONTH, "id": k})[0] == 404)
+check("removing needs the key", call("POST", "/api/glass/remove", body={"month": MONTH, "id": "x"})[0] == 401)
+check("the crew sees when things were said", h.chat_line({"from": "you", "text": "hi", "at": "2026-10-23 15:13:00"}).startswith("[Oct 23 ")
+      and "] You: hi" in h.chat_line({"from": "you", "text": "hi", "at": "2026-10-23 15:13:00"}))
+check("every agent knows QWERTY can't change keys", "QWERTY can't set or rotate them" in h.hub_rules("theta")
+      and "QWERTY can't set or rotate them" in h.hub_rules("qwerty"))

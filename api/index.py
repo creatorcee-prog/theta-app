@@ -87,7 +87,8 @@ MASTER_TIMEOUT = int(os.environ.get("MASTER_TIMEOUT_SECONDS", "40"))
 # connected and under the monthly cap, which they share with Theta; the low
 # brain (Gemini, then Groq) answers otherwise or if Haiku fails. The desk's
 # prompt carries every agent's facts (~17k tokens), more than Groq's free
-# tier takes in a minute. DESK_MODEL=off keeps the desk on the low brain.
+# tier takes in a minute. The managers (Glass, Remi, QWERTY) use it too, for
+# the same reason. DESK_MODEL=off keeps them all on their old models.
 DESK_MODEL = os.environ.get("DESK_MODEL", "claude-haiku-5-5")
 DESK_EFFORT = os.environ.get("DESK_EFFORT", "low")
 MODELS = {t: f"{m} ({p.title()})" for t, (p, m) in TIER_LLM.items()}
@@ -469,6 +470,14 @@ class MemoryStore:
     def list_expenses(self, month):
         return list(self.ledger.get(month, {}).values())
 
+    def expense_items(self, month):
+        """{id: expense} for a month, so one can be removed."""
+        return dict(self.ledger.get(month, {}))
+
+    def remove_expenses(self, month, ids):
+        book = self.ledger.get(month, {})
+        return sum(1 for i in ids if book.pop(i, None) is not None)
+
     def set_meta(self, key, value):
         self.meta[key] = value
 
@@ -640,6 +649,14 @@ class KVStore:
     def list_expenses(self, month):
         flat = self._cmd("HGETALL", f"hub:ledger:{month}") or []
         return [json.loads(v) for v in flat[1::2]]
+
+    def expense_items(self, month):
+        """{id: expense} for a month, so one can be removed."""
+        flat = self._cmd("HGETALL", f"hub:ledger:{month}") or []
+        return {k: json.loads(v) for k, v in zip(flat[::2], flat[1::2])}
+
+    def remove_expenses(self, month, ids):
+        return self._cmd("HDEL", f"hub:ledger:{month}", *ids) or 0 if ids else 0
 
     def set_meta(self, key, value):
         self._cmd("HSET", "hub:meta", key, value)
@@ -1131,7 +1148,7 @@ class LLMError(Exception):
 def agent_model(agent_id):
     """What answers for an agent: its tier's model, or the app it lives in."""
     a = AGENTS[agent_id]
-    if agent_id == DESK and desk_on():
+    if (agent_id == DESK or (a["tier"] == "manager" and not a.get("home"))) and desk_on():
         return f"{DESK_MODEL} (Anthropic); {MODELS[a['tier']]} as backup"
     return f"{a['home']}'s coach model" if a.get("home") else MODELS[a["tier"]]
 
@@ -1623,11 +1640,17 @@ HUB_GUIDE = (
     "the phone. There is no Feeds page, no Custom Scripts area and no 'Add channel' box.")
 
 
+_SECRETS_RULE = (" Keys, tokens and secret links (DASHBOARD_KEY, API keys, CRON_SECRET and the like) are changed only "
+                 "by the user, in Vercel → Environment Variables (marked Sensitive), then a redeploy. QWERTY can't "
+                 "set or rotate them and never will, so never suggest asking him to.")
+
+
 def hub_rules(agent):
     if agent == "qwerty":
         return ("\n\nOnly describe pages, buttons, settings and endpoints on the hub map or in your build notes; "
                 "if it isn't there, say you don't know. You can't edit code, deploy or change anything by yourself: "
-                "you propose a change with the propose tool and it happens only when the user taps Approve.")
+                "you propose a change with the propose tool and it happens only when the user taps Approve."
+                + _SECRETS_RULE)
     ask = (" If something needs changing (a setting, or code), say so and use the ask_qwerty tool: QWERTY "
            "proposes it and the user approves." if agent == "theta" else
            " If something needs changing (a setting, or code), tell the user to ask @QWERTY, who can propose "
@@ -1636,7 +1659,8 @@ def hub_rules(agent):
             "say you don't know or that it doesn't exist; never invent pages, buttons, endpoints, file paths, "
             "scripts or code to paste. You can't write code, deploy, run scripts or change settings, and never "
             "offer to." + ask + " Before raising a security alarm about a sign-in or device, check what the user "
-            "asked the crew to remember (like where their phone shows up); don't repeat an alarm they've answered.")
+            "asked the crew to remember (like where their phone shows up); don't repeat an alarm they've answered."
+            + _SECRETS_RULE)
 
 
 def tools_prompt(agent):
@@ -1846,6 +1870,11 @@ def llm_chat(tier, messages, max_tokens=800):
                         if messages and messages[0]["role"] == "system" and isinstance(messages[0]["content"], str)
                         else messages)
     t = "low_brain" if tier == "master" else tier
+    if t == "manager" and desk_on():  # Groq's free tier can't take the managers' prompts (8k tokens a minute)
+        try:
+            return claude_chat(messages, max_tokens, model=DESK_MODEL, effort=DESK_EFFORT)
+        except LLMError:
+            pass  # Groq, then Gemini, as before
     provider, model = TIER_LLM[t]
     try:
         return _llm_call(provider, model, messages, max_tokens)
@@ -2301,7 +2330,16 @@ def chat_line(m):
     if m.get("kind") == "event":
         return f"[event] {m['text']}"
     pic = " [sent an image]" if (m.get("image") or "").startswith("/upload/") else ""
-    return f"{chat_name(m['from'])}: {m['text']}{pic}"
+    return f"{_chat_clock(m)}{chat_name(m['from'])}: {m['text']}{pic}"
+
+
+def _chat_clock(m):
+    """'[9:13 AM] ' in hub time, so the crew can tell when something was said."""
+    try:
+        at = datetime.strptime(m["at"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).astimezone(hub_tz())
+    except (KeyError, TypeError, ValueError):
+        return ""
+    return f"[{at:%b %d} {_clock(at)}] "
 
 
 def post_event(sender, text):
@@ -2538,7 +2576,9 @@ def desk_shortcut(thread):
 def quick_reply(agent, thread):
     """The no-model replies (logging, reminders, charts, workouts), or None."""
     if agent == "glass" and thread[-1]["from"] == "you":
-        parsed = parse_expense(thread[-1]["text"])
+        if _GLASS_UNDO.match(re.sub(r"@\w+[\s,]*", "", thread[-1]["text"]).strip()):
+            return glass_undo()
+        parsed = parse_expense(thread[-1]["text"]) if looks_like_purchase(thread[-1]["text"]) else None
         if parsed:
             return glass_log_reply(parsed)
     text = thread[-1]["text"].lower()
@@ -3269,7 +3309,7 @@ def ledger_category(raw):
 def _expense(day, amount, category, note, source, salt=""):
     key = hashlib.sha1(f"{day}|{note.lower()}|{amount:.2f}|{source}|{salt}".encode()).hexdigest()[:16]
     return key, {"date": day.isoformat(), "amount": round(amount, 2), "category": ledger_category(category),
-                 "note": note[:120], "source": source}
+                 "note": note[:120], "source": source, "at": time.time()}
 
 
 def add_expense(amount, category, note="", day=None, source="chat"):
@@ -3284,12 +3324,41 @@ def add_expense(amount, category, note="", day=None, source="chat"):
 _AMOUNT = re.compile(r"\$\s?(\d{1,7}(?:,\d{3})*(?:\.\d{1,2})?)")
 
 
+_GLASS_UNDO = re.compile(r"^(?:undo|undo (?:that|the last one|last)|delete (?:that|the last one)|remove (?:that|the last one))[.!]?$", re.I)
+_NOT_SPENDING = re.compile(r"\b(?:deposit\w*|balance|refund\w*|paycheck|income|salary|earned|got paid|transfer\w*|"
+                           r"set|reset|tried|attempted|meant|didn't|did not|happened|explain\w*)\b", re.I)
+
+
+def looks_like_purchase(text):
+    """Log it at once only if it plainly is one: '$42 groceries', 'spent $12 on lunch',
+    'paid $80 for gas'. Anything else (deposits, balances, a story with a dollar sign
+    in it, $0) goes to the desk instead, so it can't land as spending by mistake."""
+    clean = re.sub(r"@\w+[\s,]*", "", text).strip()
+    m = _AMOUNT.search(clean)
+    if not m or float(m.group(1).replace(",", "")) <= 0 or _NOT_SPENDING.search(clean):
+        return False
+    return bool(re.match(r"^(?:\$|(?:i\s+)?(?:spent|paid|bought|got)\b)", clean, re.I)) and len(clean.split()) <= 12
+
+
+def glass_undo():
+    """Remove the last expense logged from chat this month."""
+    month = datetime.now(hub_tz()).strftime("%Y-%m")
+    items = [(k, e) for k, e in store().expense_items(month).items() if e.get("source") == "chat"]
+    if not items:
+        return "Nothing logged from chat this month to undo."
+    k, e = max(items, key=lambda kv: (kv[1]["date"], kv[1].get("at", 0)))
+    store().remove_expenses(month, [k])
+    return f"Removed ${e['amount']:,.2f} for {e['category']} ({e['note']}) from {e['date']}."
+
+
 def parse_expense(text):
     """'@glass $42.50 groceries at Costco' -> (42.5, 'Groceries', 'groceries at Costco'), or None."""
     m = _AMOUNT.search(text)
     if not m:
         return None
     amount = float(m.group(1).replace(",", ""))
+    if amount <= 0:  # "$0" is never spending
+        return None
     rest = re.sub(r"@\w+", "", (text[:m.start()] + text[m.end():])).strip(" ,.-:")
     words = rest.lower()
     names = list(GLASS_BUDGETS) + [v for v in GLASS_CATEGORY_MAP.values()]
@@ -8711,6 +8780,17 @@ _CHAT_JS = r'''
 
 
 _BUDGET_JS = """
+document.addEventListener("click", async e => {
+  const b = e.target.closest("[data-exp-rm]"); if (!b) return;
+  if (!confirm("Remove this expense?")) return;
+  const [month, id] = b.dataset.expRm.split(":");
+  b.disabled = true;
+  try {
+    const d = await (await fetch("/api/glass/remove", {method: "POST", headers: window.THETA_H, body: JSON.stringify({month, id})})).json();
+    if (!d.ok) throw new Error(d.error);
+    location.reload();
+  } catch (err) { b.disabled = false; b.textContent = "Couldn't remove"; }
+});
 document.getElementById("csv-import").onclick = async () => {
   const f = document.getElementById("csv-file").files[0], out = document.getElementById("csv-status");
   if (!f) { out.textContent = "Pick your Rocket Money CSV first."; return; }
@@ -10565,11 +10645,12 @@ def money_page(headers):
     listing = (f'<ul class="list">{"".join(rows)}</ul>' if rows else
                '<p class="empty">No budgets or expenses yet. Set GLASS_BUDGETS in Vercel (like '
                '<code>Groceries:600,Dining:200</code>), tell Glass "$42 groceries" in #money, or import a Rocket Money export.</p>')
-    recent = sorted(store().list_expenses(month), key=lambda e: e["date"], reverse=True)[:12]
+    recent = sorted(store().expense_items(month).items(), key=lambda kv: (kv[1]["date"], kv[1].get("at", 0)), reverse=True)[:12]
     recent_html = "".join(f'<li><div class="brow"><span>{html.escape(e["category"])}'
                           f'{" · " + html.escape(e["note"]) if e.get("note") else ""}</span>'
-                          f'<span>${e["amount"]:,.2f}</span></div><span class="muted small">{e["date"]}</span></li>'
-                          for e in recent) or '<li class="empty">Nothing logged this month.</li>'
+                          f'<span>${e["amount"]:,.2f}</span></div><div class="brow"><span class="muted small">{e["date"]}</span>'
+                          f'<button class="btn ghost small" type="button" data-exp-rm="{month}:{html.escape(k)}">Remove</button></div></li>'
+                          for k, e in recent) or '<li class="empty">Nothing logged this month.</li>'
     charts = [m for m in reversed(store().list_chat(ALLCHAT_KEEP)) if m["from"] == "charter" and m.get("image")][:4]
     charts_html = "".join(f'<figure style="margin:0"><img class="att" src="{html.escape(m["image"])}" alt="">'
                           f'<figcaption class="muted small">{html.escape(_first_line(m["text"]))}</figcaption></figure>'
@@ -11470,7 +11551,8 @@ def handle(method, path, query, headers, body):
             if history[-1]["role"] != "user":
                 return _json(400, {"ok": False, "error": "last message must be from user"})
             try:
-                parsed = parse_expense(history[-1]["content"]) if agent == "glass" else None
+                parsed = (parse_expense(history[-1]["content"])
+                          if agent == "glass" and looks_like_purchase(history[-1]["content"]) else None)
                 chart = charter_reply(history[-1]["content"]) if agent == "charter" else None
                 image = None
                 if chart:
@@ -11591,6 +11673,17 @@ def handle(method, path, query, headers, body):
             post_event("glass", f"Glass logged ${amount:,.2f} for {exp['category']}"
                                 + (f" from {display_name(bot_id)}" if bot_id else ""))
             return _json(200, {"ok": True, "expense": exp})
+
+        if path == "/api/glass/remove":
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            month, item = str(data.get("month") or ""), str(data.get("id") or "")
+            if not re.fullmatch(r"\d{4}-\d{2}", month) or item not in store().expense_items(month):
+                return _json(404, {"ok": False, "error": "That expense isn't there any more."})
+            e = store().expense_items(month)[item]
+            store().remove_expenses(month, [item])
+            post_event("glass", f"You removed ${e['amount']:,.2f} for {e['category']} ({e['note']}) from {e['date']}")
+            return _json(200, {"ok": True})
 
         if path == "/api/glass/import":
             if not _auth_dashboard(query, headers):
