@@ -117,6 +117,26 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
 
 ## Planned
 
+- [ ] Wiring's **Recheck** button that actually checks. Today it only
+      reloads the saved status, so rows that can't be tested stay grey
+      even when the job behind them is set up. Rounds reads "No round has
+      run yet" until its first scheduled run (00, 12 or 18 UTC: 6 pm, 6 am
+      or noon MDT), even though the job is scheduled. Recheck should test
+      what it can live and say "scheduled, first run at …" instead of
+      "not set up".
+- [ ] Get Remi's calendar and Gmail working (setup steps 7 and 4).
+- [ ] Get the job boards working: Adzuna, and optionally USAJOBS (setup step 8).
+- [ ] Consider moving Mistral (`low_brain`) from Gemini to Haiku. Before
+      deciding:
+      - Mistral answers every chat message, so Haiku would cost real money
+        where Gemini Flash may be free.
+      - It would break the rule that Garage Gym questions (`/api/gym/ask`)
+        cost no Claude spend, unless those stay on Gemini.
+      - The Gemini key wouldn't need a new owner: web search
+        (`GEMINI_SEARCH_MODEL`), `/api/gym/ask`'s search and Theta's
+        fallback (`manager`) still use it.
+- [ ] Two new bots, to be defined later: a habit tracker and a video
+      player bot.
 - [ ] Scriptable widgets: Home Screen and Lock Screen. Build on a JSON
       version of the Home windows (`/api/windows`), so the widget shows
       the same short titles and pictures.
