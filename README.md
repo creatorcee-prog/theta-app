@@ -8,10 +8,13 @@ Vercel's serverless model: `api/index.py` is one Python function,
 
 ## The app
 
-Five tabs (a sidebar on wide screens, a tab bar on phones): **Home**,
-**Chat**, **Calendar** (Remi), **Money** (Glass) and **Settings**, plus
-a profile page per agent (`/agent/<id>`) with its latest window,
-persona, abilities, model and recent posts.
+Three primary destinations (a sidebar on wide screens, a bottom bar
+on phones): **Home**, **Diagnostics** and **Settings**. **Chat**,
+**Calendar** (Remi) and **Money** (Glass) keep their routes and are
+reached from the sidebar's Sections list, the Home quick actions and
+the persistent chat bar above the bottom bar, plus a profile page
+per agent (`/agent/<id>`) with its latest window, persona, abilities,
+model and recent posts.
 
 **Home** shows today at a glance (budget ring, today's events, crew
 online, breaking news), then a **window** per agent: its latest output
@@ -145,7 +148,16 @@ key), `GET|POST /api/allchat` (dashboard key or bot key), `GET /api/bots`,
 plus `/ui.css`, `/ui.js`, `/chat.js`, `/avatar/<id>.svg` and the Home
 Screen app files `/manifest.webmanifest`, `/sw.js` and icons. Every page
 accepts the dashboard key once as `?key=` and then remembers it in a
-cookie.
+cookie. The pages are `/chat` (`?ch=<channel>&to=<agent>&say=<draft>`,
+where `say` prefills the composer without sending), `/diagnostics`
+(crew status, storage, scheduled work, failures, token use, and the
+live wiring check), `/money` (with a spending donut: actual spending
+by category, reconciling with the month's total), `/calendar`,
+`/settings` and `/agent/<id>`. The chat polls `GET /api/chat/working`
+while a reply is on its way; it reports the working agent, its step,
+the agents already done, elapsed seconds, and a final state
+(`completed`, `failed`, `waiting_approval`), and resumes after a
+refresh from the pending request id.
 
 ## Agents
 

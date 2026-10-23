@@ -1,5 +1,38 @@
 # To-do
 
+## Shipped on redesign/mobile-nav-diagnostics (PR pending, not merged)
+- [x] Bottom bar with three primary destinations (Home, Diagnostics,
+      Settings); Chat, Calendar and Money keep their routes, reached from
+      the sidebar Sections list, Home quick actions and the chat bar.
+- [x] Persistent chat bar above the bottom bar on every main section
+      except Chat itself; a typed draft or a section suggestion travels as
+      `?say=` into the real composer, nothing is sent from the bar.
+- [x] Home: a Needs-attention section (over/near-budget categories, today's
+      events, failed rounds) shown only when there is something to flag,
+      plus quick actions to Chat, Calendar, Money and Diagnostics.
+- [x] Diagnostics page (`/diagnostics`): crew status, storage mode,
+      scheduled work (round jobs, 5-minute tick), recent failures and
+      errors, Claude monthly spend, and the live wiring check. Gemini/Groq
+      per-model token totals are labeled "not tracked yet", not healthy.
+- [x] Money: a spending donut of actual spending by category, reconciling
+      with the month's total; budgets stay limits, never spending.
+- [x] Working indicator: notes keep their first-seen time and a final
+      state; the chat shows elapsed time, a stale note ("still working"),
+      and completed / failed / waiting-for-approval states, and resumes
+      after a refresh. Unknown request ids still return exactly `{"ok": true}`.
+- [x] `api/tools.py`: page fetch refuses private/loopback/link-local/
+      reserved/multicast hosts and redirects to them (SSRF guard); tool
+      results use `{status, data, sources, error, duration_ms}`; the task
+      ledger records agent, status, steps, results, sources, blockers and
+      approvals. Covered by `tests/test_toolbox.py`.
+- [ ] Still to do: wire `api/tools.py` into `api/index.py` (agent prompts
+      and an ACTION bridge) so agents can actually use web search, page
+      fetch and the task ledger in chat.
+- [ ] Still to do: a browser worker for operating websites. It needs an
+      always-on host, not Vercel serverless, and must stay read-only
+      without approval for consequential actions. Nothing here claims
+      agents can operate arbitrary websites yet.
+
 ## Setup checklist
 
 **Settings → Wiring** shows which of these are working. All keys go in
