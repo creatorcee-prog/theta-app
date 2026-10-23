@@ -83,6 +83,8 @@ check("system is two blocks: the stable part cached, then the clock (uncached)",
 check("the cached part has no clock in it, and the crew's facts are in it",
       "Right now it's" not in body["system"][0]["text"] and "Settings QWERTY can change" in body["system"][0]["text"])
 check("thinking stays on in normal chat", "thinking" not in body)
+check("the reply carries its tokens and who worked on it", d["messages"][-1]["tokens"] == {"in": 17300, "out": 120}
+      and d["messages"][-1]["trail"] == ["mistral"])
 spend = h.claude_spend()
 check("cache reads and writes are counted", h._meta_json("claude:spend", {}) and
       list(h._meta_json("claude:spend", {}).values())[0].get("cache_write") == 17000)

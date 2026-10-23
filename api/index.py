@@ -445,8 +445,8 @@ class MemoryStore:
         if activity is not None:
             self.activity[bot_id] = activity
 
-    def add_chat(self, sender, text, kind="message", image=None, channel=None, buttons=None):
-        item = {"id": self._next_id(), "from": sender, "text": text, "kind": kind, "at": _now()}
+    def add_chat(self, sender, text, kind="message", image=None, channel=None, buttons=None, extra=None):
+        item = {"id": self._next_id(), "from": sender, "text": text, "kind": kind, "at": _now(), **(extra or {})}
         if image:
             item["image"] = image
         if channel:
@@ -608,8 +608,8 @@ class KVStore:
         if activity is not None:
             self._cmd("HSET", "hub:activity", bot_id, activity)
 
-    def add_chat(self, sender, text, kind="message", image=None, channel=None, buttons=None):
-        item = {"id": self._next_id(), "from": sender, "text": text, "kind": kind, "at": _now()}
+    def add_chat(self, sender, text, kind="message", image=None, channel=None, buttons=None, extra=None):
+        item = {"id": self._next_id(), "from": sender, "text": text, "kind": kind, "at": _now(), **(extra or {})}
         if image:
             item["image"] = image
         if channel:
@@ -2121,6 +2121,7 @@ def claude_record(resp, model=None):
     """Count a response toward this month's Claude spend (the cap Theta and
     the desk share); returns its dollars."""
     usd, tin, tout = _usage_cost(resp.usage, resp.model)
+    count_tokens(tin, tout)
     c_read = getattr(resp.usage, "cache_read_input_tokens", 0) or 0
     c_write = getattr(resp.usage, "cache_creation_input_tokens", 0) or 0
     month = datetime.now(hub_tz()).strftime("%Y-%m")
@@ -2186,6 +2187,8 @@ def _llm_call(provider, model, messages, max_tokens):
         with urllib.request.urlopen(req, timeout=LLM_TIMEOUT) as resp:
             out = json.loads(resp.read())
         text = out["choices"][0]["message"].get("content") or ""
+        u = out.get("usage") or {}
+        count_tokens(u.get("prompt_tokens"), u.get("completion_tokens"))
     except urllib.error.HTTPError as e:
         raw = e.read()[:4000].decode("utf-8", "replace")
         if e.code == 429:
@@ -2354,16 +2357,35 @@ WORKING_KEEP = 180  # seconds a "who's working" note is kept for the chat to pol
 def working(agent, step=""):
     """Note who's working on the message being answered right now (and on
     what), so the chat can show "Mistral is thinking..." while it waits."""
+    trail = getattr(_REQ, "trail", None)
+    if trail is not None and (not trail or trail[-1] != agent):
+        trail.append(agent)
     rid = getattr(_REQ, "rid", None)
     if not rid:
         return
     try:
         now = time.time()
         notes = {k: v for k, v in _meta_json("chat:working", {}).items() if now - v["at"] < WORKING_KEEP}
-        notes[rid] = {"agent": agent, "name": AGENTS.get(agent, {}).get("name", agent), "step": step[:80], "at": now}
+        notes[rid] = {"agent": agent, "name": AGENTS.get(agent, {}).get("name", agent), "step": step[:80], "at": now,
+                      "done": [a for a in dict.fromkeys(trail or []) if a != agent]}
         store().set_meta("chat:working", json.dumps(notes))
     except Exception:
         pass  # never let a status note cost a reply
+
+
+def count_tokens(tin, tout):
+    """Add a model call's tokens to this request's total (shown on the reply)."""
+    tok = getattr(_REQ, "tok", None)
+    if tok is not None:
+        tok[0] += tin or 0
+        tok[1] += tout or 0
+
+
+def reply_extra():
+    """Who worked on the reply being posted, in order, and the tokens it took."""
+    trail = list(dict.fromkeys(getattr(_REQ, "trail", None) or []))
+    tok = getattr(_REQ, "tok", None) or [0, 0]
+    return {**({"trail": trail} if trail else {}), **({"tokens": {"in": tok[0], "out": tok[1]}} if tok[0] or tok[1] else {})}
 
 
 def activity(sender, text):
@@ -7973,7 +7995,15 @@ html,body{overflow-x:clip;max-width:100%}
 .daysep{display:flex;align-items:center;gap:10px;margin:14px 16px 6px;font-size:11.5px;font-weight:700;color:var(--muted)}
 .daysep::before,.daysep::after{content:"";flex:1;height:1px;background:var(--border)}
 .composer{position:relative;padding:8px 12px calc(10px + env(safe-area-inset-bottom) * 0);flex:none}
-.working{display:flex;align-items:center;gap:10px;padding:2px 6px 8px;color:var(--accent);font-size:15px;font-weight:600}
+.working{display:flex;flex-direction:column;gap:6px;padding:2px 6px 8px;color:var(--accent);font-size:15px;font-weight:600}
+.working .wline{display:flex;align-items:center;gap:10px}
+.working .wline .av{border-radius:8px}
+.trail{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.trail .av{border-radius:6px;opacity:.9}
+.trail .sep{color:var(--muted);font-size:11px;font-weight:600}
+.trail:empty{display:none}
+.msg .trail{margin:2px 0 4px}
+.meta .tok{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
 .working .wdots{display:inline-flex;gap:5px}
 .working .wdots i{width:6px;height:6px;border-radius:50%;background:currentColor;animation:wdot 1.2s infinite ease-in-out}
 .working .wdots i:nth-child(2){animation-delay:.2s}.working .wdots i:nth-child(3){animation-delay:.4s}
@@ -8580,8 +8610,21 @@ _CHAT_JS = r'''
         meta.append(ch);
       }
       meta.append(time);
+      if (m.tokens) {
+        const k = n => n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(n);
+        const tok = document.createElement("span");
+        tok.className = "tok"; tok.textContent = k(m.tokens.in) + " in · " + k(m.tokens.out) + " out";
+        tok.title = "Tokens this reply used, all the agents together";
+        meta.append(tok);
+      }
       const agentMsg = a && m.from !== "you" && m.from !== "hub";
-      body.append(meta, fresh && agentMsg ? typed(m) : richText(m.text, m));
+      body.append(meta);
+      if (m.trail && m.trail.length) {
+        const tr = trailRow(m.trail, document.createElement("div"));
+        tr.className = "trail"; tr.setAttribute("aria-label", "Worked on by " + m.trail.map(id => (C.agents[id] || {}).name || id).join(", "));
+        body.append(tr);
+      }
+      body.append(fresh && agentMsg ? typed(m) : richText(m.text, m));
       if (m.image) {
         const img = document.createElement("img");
         img.src = m.image; img.alt = m.text.split("\n")[0] || "Image"; img.className = "att"; img.loading = "lazy";
@@ -8770,9 +8813,21 @@ _CHAT_JS = r'''
                  lenz: ["browsing"], charter: ["drawing"], red: ["reading the news"], blue: ["reading the news"],
                  gray: ["reading the news"], james: ["asking Garage Gym"]};
   const wBox = document.getElementById("chat-working"), wText = document.getElementById("chat-working-text");
+  const wAv = document.getElementById("chat-working-av"), wDone = document.getElementById("chat-working-done");
   let wTimer = null, wPoll = null;
-  function showWorking(who, name, step) {
+  // A row of small icons, in order, for the agents that worked on something.
+  function trailRow(ids, row) {
+    row.replaceChildren();
+    ids.forEach((id, i) => {
+      if (i) { const sep = document.createElement("span"); sep.className = "sep"; sep.textContent = "›"; row.append(sep); }
+      const av = avatar(id, 18); av.title = (C.agents[id] || {}).name || id; row.append(av);
+    });
+    return row;
+  }
+  function showWorking(who, name, step, done) {
     wBox.hidden = false;
+    wAv.replaceChildren(avatar(who, 22));
+    trailRow(done || [], wDone);
     let n = 0;
     const say = () => { const v = VERBS[who] || ["working"]; wText.textContent = name + " is " + (step || v[n++ % v.length]) + "..."; };
     clearInterval(wTimer); say(); if (!step) wTimer = setInterval(say, 3000);
@@ -8783,12 +8838,12 @@ _CHAT_JS = r'''
     wPoll = setInterval(async () => {
       try {
         const d = await (await fetch("/api/chat/working?rid=" + rid, {headers: H})).json();
-        const key = d.agent ? d.agent + "|" + d.step : "";
-        if (d.ok && d.agent && key !== seen) { seen = key; showWorking(d.agent, d.name, d.step); }
+        const key = d.agent ? d.agent + "|" + d.step + "|" + (d.done || []).join() : "";
+        if (d.ok && d.agent && key !== seen) { seen = key; showWorking(d.agent, d.name, d.step, d.done); }
       } catch (_) {}
     }, 1500);
   }
-  function stopWorking() { clearInterval(wTimer); clearInterval(wPoll); wBox.hidden = true; }
+  function stopWorking() { clearInterval(wTimer); clearInterval(wPoll); wBox.hidden = true; wDone.replaceChildren(); }
 
   form.onsubmit = async e => {
     e.preventDefault();
@@ -9349,8 +9404,9 @@ def chat_page(headers, query):
         f'<nav class="chiprow" aria-label="Channels">{chips}</nav>'
         '<div class="msgs" id="msgs" role="log" aria-live="polite"></div>'
         '<form class="composer" id="chat-form"><ul id="chat-menu" role="listbox" hidden></ul>'
-        '<div class="working" id="chat-working" role="status" aria-live="polite" hidden><span class="wdots" aria-hidden="true">'
-        '<i></i><i></i><i></i></span><span id="chat-working-text"></span></div>'
+        '<div class="working" id="chat-working" role="status" aria-live="polite" hidden><div class="trail" id="chat-working-done"></div>'
+        '<div class="wline"><span id="chat-working-av"></span><span class="wdots" aria-hidden="true"><i></i><i></i><i></i></span>'
+        '<span id="chat-working-text"></span></div></div>'
         '<div class="attach" id="chat-attach" hidden><img alt="Image to send"><button type="button" class="dx" '
         'aria-label="Remove image">×</button></div>'
         f'<div class="box"><label class="btn ghost pick" aria-label="Attach an image">{ui_icon("photo")}'
@@ -11678,12 +11734,13 @@ def handle(method, path, query, headers, body):
                 except (LLMError, ValueError, KeyError) as e:
                     errors[AGENTS[DESK]["name"]] = str(e)
                 else:
+                    extra = reply_extra()
                     if isinstance(reply, tuple):  # Charter's (caption, chart url)
-                        st.add_chat(who, reply[0], image=reply[1], channel=ch)
+                        st.add_chat(who, reply[0], image=reply[1], channel=ch, extra=extra)
                     elif isinstance(reply, dict):
-                        st.add_chat(who, reply["text"][:4000], channel=ch, buttons=reply.get("buttons"))
+                        st.add_chat(who, reply["text"][:4000], channel=ch, buttons=reply.get("buttons"), extra=extra)
                     elif reply:
-                        st.add_chat(who, reply.strip()[:4000], channel=ch)
+                        st.add_chat(who, reply.strip()[:4000], channel=ch, extra=extra)
                     if who == "theta":
                         routed = [who]
                 return _json(200, {"ok": True, "messages": allchat_view(channel=ch), "errors": errors,
@@ -12326,7 +12383,7 @@ def handle(method, path, query, headers, body):
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
         note = _meta_json("chat:working", {}).get(query.get("rid", [""])[0])
-        return _json(200, {"ok": True, **({k: note[k] for k in ("agent", "name", "step")} if note else {})})
+        return _json(200, {"ok": True, **({k: note.get(k, []) for k in ("agent", "name", "step", "done")} if note else {})})
 
     if path == "/api/wiring":
         if not _auth_dashboard(query, headers):
@@ -12421,6 +12478,7 @@ def app(environ, start_response):
     ip = client_ip(environ)
     _REQ.cookies, _REQ.session, _REQ.quiet, _REQ.meta, _REQ.calls = [], None, False, {}, 0
     _REQ.stale, _REQ.refreshing, _REQ.ch, _REQ.rid = False, False, None, None
+    _REQ.trail, _REQ.tok = [], [0, 0]  # who worked on this request's reply, and its tokens (in, out)
     t0 = time.time()
     _REQ.page = method == "GET" and not path.startswith("/api/")
     try:

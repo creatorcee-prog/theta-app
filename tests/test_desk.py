@@ -314,7 +314,12 @@ s, w, _ = call("GET", "/api/chat/working", "rid=abc123", headers=K)
 check("the chat can see who worked on its message", s == 200 and w["agent"] == "theta" and w["name"] == "Theta")
 PLAN["mistral"] = ["ESCALATE: big one"]; PLAN["theta"] = ["On it."]
 call("POST", "/api/allchat", headers=K, body={"text": "plan my whole month", "channel": "all", "rid": "esc1"})
-check("after a hand-off it names Theta", call("GET", "/api/chat/working", "rid=esc1", headers=K)[1]["agent"] == "theta")
+w = call("GET", "/api/chat/working", "rid=esc1", headers=K)[1]
+check("after a hand-off it names Theta, with Mistral done above him", w["agent"] == "theta" and w["done"] == ["mistral"])
+last = [m for m in h.allchat_view(50) if m["from"] == "theta"][-1]
+check("the reply shows who worked on it, in order", last["trail"] == ["mistral", "theta"])
+js_ = call("GET", "/chat.js")[1].decode()
+check("the chat draws the icons under the header and the tokens in it", "trailRow(m.trail" in js_ and '" in · "' in js_ and "chat-working-av" in js_)
 check("an unknown message id: nobody working", call("GET", "/api/chat/working", "rid=nope", headers=K)[1] == {"ok": True})
 check("checking needs to be signed in", call("GET", "/api/chat/working", "rid=abc123")[0] == 401)
 call("POST", "/api/allchat", headers=K, body={"text": "hello", "channel": "all"})
