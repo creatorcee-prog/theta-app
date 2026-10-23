@@ -125,7 +125,7 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
       what it can live and say "scheduled, first run at …" instead of
       "not set up".
 - [ ] Get Remi's calendar and Gmail working (setup steps 7 and 4).
-- [ ] Get the job boards working: Adzuna, and optionally USAJOBS (setup step 8).
+- [ ] Get the job boards working: Adzuna and USAJOBS (setup step 8).
 - [ ] Consider moving Mistral (`low_brain`) from Gemini to Haiku. Before
       deciding:
       - Mistral answers every chat message, so Haiku would cost real money
