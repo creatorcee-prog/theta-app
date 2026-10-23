@@ -8411,6 +8411,31 @@ select.field{width:auto;flex:1;min-width:120px}
 }
 .tbl{min-width:620px}
 .monthnav{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+/* Persistent mini chat bar above the tab bar (phones only) */
+.minibar{position:fixed;left:0;right:0;bottom:var(--tabh);z-index:39;background:color-mix(in srgb,var(--surface) 92%,transparent);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);border-top:1px solid var(--border);padding:8px 12px}
+.minichips{display:flex;gap:6px;overflow-x:auto;padding:0 0 8px;scrollbar-width:none}
+.minichips::-webkit-scrollbar{display:none}
+.minichips a{flex:none;font-size:12.5px;font-weight:600;color:var(--text);background:var(--surface2);border:1px solid var(--border);border-radius:999px;padding:6px 11px;text-decoration:none;white-space:nowrap}
+.minibox{display:flex;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:999px;padding:5px 5px 5px 16px}
+.minibox input{flex:1;border:0;background:transparent;outline:none;font-size:16px;min-width:0;color:var(--text)}
+.minibox .btn.send{width:38px;height:38px;border-radius:50%;padding:0;display:grid;place-items:center;flex:none}
+@media (min-width:900px){.minibar{display:none}}
+@media (max-width:899px){
+ .minibar:focus-within .minichips{display:none}
+ body.hasminibar .main{padding-bottom:calc(var(--tabh) + 138px)}
+}
+/* Home quick actions + attention */
+.quickactions{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}
+.quickactions a{font-weight:650;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:9px 14px;text-decoration:none}
+.attention{border-color:color-mix(in srgb,var(--warn) 55%,var(--border))}
+.attention li{margin:4px 0}
+.attention a{font-weight:650}
+/* Spending donut */
+.donut{display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.donut .legend{flex:1;min-width:180px}
+.donut .legend li{display:flex;align-items:center;gap:8px;margin:6px 0}
+.donut .legend .sw{width:10px;height:10px;border-radius:3px;flex:none}
+.donut .legend .amt{margin-left:auto;font-weight:650;white-space:nowrap}
 '''
 
 _UI_JS_SRC = r'''
@@ -8719,7 +8744,7 @@ _UI_JS_SRC = r'''
 _CHAT_JS = r'''
 (() => {
   // Discord-style chat over the All Agents thread. HUB_CHAT: {channel,
-  // channels, agents: {id: {name, color, tier}}, to}; HUB_MENU: @ and / lists.
+  // channels, agents: {id: {name, color, tier}}, to, draft}; HUB_MENU: @ and / lists.
   const C = window.HUB_CHAT, H = window.THETA_H;
   const box = document.getElementById("msgs"), form = document.getElementById("chat-form");
   const msg = document.getElementById("chat-msg"), btn = document.getElementById("chat-send");
@@ -9213,6 +9238,7 @@ _CHAT_JS = r'''
   if (scrim) scrim.onclick = () => toggle(false);
 
   if (C.to && C.agents[C.to]) { msg.value = "@" + C.agents[C.to].name + " "; grow(); }
+  if (C.draft) { msg.value = C.draft; grow(); }  // draft from the mini bar (?say=): prefilled, not sent
   thread = C.initial || [];
   render();
   load();
@@ -9266,8 +9292,11 @@ UI_ICONS = {
     "news": '<path d="M5 4.5h11v15H6.5A1.5 1.5 0 0 1 5 18z"/><path d="M16 8.5h3v9.5a1.5 1.5 0 0 1-3 0M8 8.5h5M8 12h5M8 15.5h3"/>',
     "arrow": '<path d="M5 12h14M13 6l6 6-6 6"/>',
 }
-NAV = [("/", "Home", "home"), ("/chat", "Chat", "chat"), ("/calendar", "Calendar", "calendar"),
-       ("/money", "Money", "money"), ("/settings", "Settings", "settings")]
+# Primary destinations in the bottom bar. Chat, Calendar and Money keep
+# their routes and are reached from the sidebar Sections list, the Home
+# quick actions and the persistent chat bar; nothing was removed.
+NAV = [("/", "Home", "home"), ("/diagnostics", "Diagnostics", "bolt"), ("/settings", "Settings", "settings")]
+NAV_MORE = [("/chat", "Chat", "chat"), ("/calendar", "Calendar", "calendar"), ("/money", "Money", "money")]
 
 
 def ui_icon(name):
@@ -9301,6 +9330,29 @@ def _json_script(name, obj):
     return f"<script>window.{name} = {safe};</script>"
 
 
+MINIBAR_SUGGESTIONS = {
+    "/": ["What's new today?", "Summarize my day", "What needs my attention?"],
+    "/diagnostics": ["What's broken right now?", "Which models are down?", "Check the crew's wiring"],
+    "/settings": ["Help me set up reminders", "How do I add a budget?", "Change the color scheme"],
+    "/calendar": ["What's on today?", "What do I have tomorrow?", "Remind me about something"],
+    "/money": ["How much have I spent this month?", "What's over budget?", "Log an expense"],
+}
+
+
+def minibar_html(active):
+    """Persistent chat bar above the tab bar. Tapping it opens the full
+    chat interface; nothing is sent from here. A typed draft (or a
+    suggestion chip) travels as ?say= and lands in the real composer,
+    so there is no second chat implementation and no lost draft."""
+    sugg = MINIBAR_SUGGESTIONS.get(active, MINIBAR_SUGGESTIONS["/"])
+    chips = "".join(f'<a href="/chat?say={quote(s)}">{html.escape(s)}</a>' for s in sugg)
+    return (f'<div class="minibar"><div class="minichips">{chips}</div>'
+            f'<form class="minibox" action="/chat" method="get" role="search">'
+            f'<input type="text" name="say" maxlength="300" placeholder="Message the crew\u2026" aria-label="Message the crew" '
+            f'enterkeyhint="send" autocomplete="off">'
+            f'<button class="btn send" type="submit" aria-label="Open chat">{ui_icon("send")}</button></form></div>')
+
+
 def page(headers, title, active, body, body_class="", statuses=None, chat=None):
     """A full page in the app shell: sidebar on wide screens, tab bar on phones."""
     theme, mode, layout = ui_prefs(headers)
@@ -9320,6 +9372,11 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
     nav = "".join(f'<a href="{href}" class="{"on" if href == active else ""}" aria-label="{label}" title="{label}"'
                   f'{" aria-current=page" if href == active else ""}>{ui_icon(icon)}<span>{label}</span></a>'
                   for href, label, icon in NAV)
+    more = "".join(f'<a href="{href}" class="{"on" if href == active else ""}" aria-label="{label}" title="{label}"'
+                   f'{" aria-current=page" if href == active else ""}>{ui_icon(icon)}<span>{label}</span></a>'
+                   for href, label, icon in NAV_MORE)
+    show_minibar = body_class != "chatpage"  # the chat page already has the full composer
+    body_cls = ("hasminibar " + body_class).strip() if show_minibar else body_class
     return (
         f'<!doctype html><html lang="en" data-theme="{theme}" data-mode="{mode}" data-layout="{layout}"{flags}>'
         '<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
@@ -9333,10 +9390,12 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
         '<script>window.THETA_H = {"Content-Type": "application/json", "x-dashboard-key": '
         'new URLSearchParams(location.search).get("key") || ""};'
         + ('window.THETA_LOCK = true;' if (current_session(headers) or {}).get("lock") else '') + '</script></head>'
-        f'<body class="{body_class}"><div class="app"><aside class="rail" aria-label="Sidebar">'
+        f'<body class="{body_cls}"><div class="app"><aside class="rail" aria-label="Sidebar">'
         f'<a class="brand" href="/">{avatar_img("theta", 32)}{APP_NAME}</a><nav aria-label="Main">{nav}</nav>'
+        f'<div class="label">Sections</div><nav aria-label="Sections">{more}</nav>'
         f'<div class="label">Crew</div>{crew}</aside><main class="main">{body}</main></div>'
-        f'<nav class="tabbar" aria-label="Main">{nav}</nav>'
+        + (minibar_html(active) if show_minibar else "")
+        + f'<nav class="tabbar" aria-label="Main">{nav}</nav>'
         + _json_script("THETA_LATEST", latest_by_channel(chat))
         + f'<script src="/ui.js?v={_ASSET_V}"></script>'
         # Some of what's shown was stale: fetch new data now, for the next load (you don't wait on it).
@@ -9425,6 +9484,41 @@ def ring_svg(frac, size=46, color="var(--accent)"):
             f'<circle cx="{size / 2}" cy="{size / 2}" r="{r:.1f}" fill="none" stroke="{color}" stroke-width="6" '
             f'stroke-linecap="round" stroke-dasharray="{circ * frac:.1f} {circ:.1f}" '
             f'transform="rotate(-90 {size / 2} {size / 2})"/></svg>')
+
+
+_DONUT_COLORS = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#14b8a6",
+                 "#ec4899", "#84cc16", "#f97316", "#6366f1"]
+
+
+def donut_svg(cats, total, size=180):
+    """A spending donut: one segment per category with actual spending.
+
+    cats is [(label, spent), ...] with spent > 0; total is their sum, so the
+    legend always reconciles with the header total. Budgets are limits,
+    not spending, and never enter the total."""
+    r = (size - 28) / 2
+    circ = 2 * 3.14159 * r
+    segs, off = [], 0.0
+    for i, (label, spent) in enumerate(cats):
+        frac = spent / total if total else 0
+        segs.append(f'<circle cx="{size / 2}" cy="{size / 2}" r="{r:.1f}" fill="none" '
+                    f'stroke="{_DONUT_COLORS[i % len(_DONUT_COLORS)]}" stroke-width="22" '
+                    f'stroke-dasharray="{circ * frac:.1f} {circ:.1f}" stroke-dashoffset="{-off:.1f}" '
+                    f'transform="rotate(-90 {size / 2} {size / 2})"/>')
+        off += circ * frac
+    legend = "".join(
+        f'<li><span class="sw" style="background:{_DONUT_COLORS[i % len(_DONUT_COLORS)]}"></span>'
+        f'{html.escape(label)}<span class="amt">${spent:,.2f} \u00b7 {spent / total:.0%}</span></li>'
+        for i, (label, spent) in enumerate(cats))
+    return (f'<div class="donut"><svg width="{size}" height="{size}" viewBox="0 0 {size} {size}" '
+            f'role="img" aria-label="Spending by category, ${total:,.2f} total">'
+            f'<circle cx="{size / 2}" cy="{size / 2}" r="{r:.1f}" fill="none" stroke="var(--surface2)" stroke-width="22"/>'
+            + "".join(segs)
+            + f'<text x="{size / 2}" y="{size / 2 - 2}" text-anchor="middle" font-size="22" font-weight="700" '
+            f'style="fill:var(--text)">${total:,.0f}</text>'
+            + f'<text x="{size / 2}" y="{size / 2 + 20}" text-anchor="middle" font-size="12" '
+            f'style="fill:var(--muted)">spent</text></svg>'
+            f'<ul class="legend">{legend}</ul></div>')
 
 
 def kpi_html(value, label, sub="", frac=None, color="var(--accent)", icon="bolt", href=None):
@@ -9673,14 +9767,32 @@ def home_page(headers):
         except Exception:
             todays = []
     swipe = lambda ws: "".join(win_html(w) for w in ws)
+    attn = []
+    for cat, v in sorted(status.items(), key=lambda kv: -kv[1]["spent"]):
+        if v["budget"]:
+            share = v["spent"] / v["budget"]
+            if share >= 1:
+                attn.append((f"{cat} is ${v['spent'] - v['budget']:,.2f} over its ${v['budget']:,.0f} budget", "/money"))
+            elif share >= 0.9:
+                attn.append((f"{cat} is at {share:.0%} of its ${v['budget']:,.0f} budget", "/money"))
+    if todays:
+        attn.append((f"{len(todays)} event{'s' if len(todays) != 1 else ''} today", "/calendar"))
+    for a, err in _meta_json("round:failures", {}).items():
+        attn.append((f"Last round failed for {AGENTS.get(a, {}).get('name', a)}: {str(err)[:80]}", "/diagnostics"))
+    attention_html = (f'<section class="card attention"><h2>Needs attention</h2><ul>'
+                      + "".join(f'<li><a href="{href}">{html.escape(text)}</a></li>' for text, href in attn)
+                      + '</ul></section>' if attn else "")
     body = (
         f'<header class="top tight"><div><p class="eyebrow">{now:%A, %B} {now.day}</p><h1>{hello}</h1></div>'
         f'<button class="btn rr" type="button" data-run-round="round-status" aria-label="Run a round">{ui_icon("play")}'
         f'<span>Run a round</span></button></header><p class="note" id="round-status" style="margin:-8px 0 14px"></p>'
+        + attention_html
         + stack_html(stack_cards(now, todays, status, news, cards))
         + daily_card() +
         f'<div class="sect"><h2>Your crew</h2><a href="/chat">Open chat →</a></div>'
         f'<section class="wins" aria-label="Agent windows">{"".join(win_html(w) for w in crew)}</section>'
+        f'<nav class="quickactions" aria-label="Quick actions"><a href="/chat">Chat</a><a href="/calendar">Calendar</a>'
+        f'<a href="/money">Money</a><a href="/diagnostics">Diagnostics</a></nav>'
         f'<div class="sect" id="news"><h2>Top stories</h2><span class="muted small">{len(NEWS_FEEDS)} outlets, {NEWS_TOP} top + up to {NEWS_BREAKING_MAX} breaking</span></div>'
         + (f'<section class="wins swipe" aria-label="Top stories">{swipe(news)}</section>' if news else
            '<p class="empty">No headlines right now.</p>')
@@ -9718,7 +9830,8 @@ def chat_page(headers, query):
                   "tier": TIER_LABELS[v["tier"]]} for a, v in AGENTS.items()}
     agents["hub"] = {"name": "Hub", "color": AGENT_LOOKS["hub"][0], "tier": ""}
     data = {"channel": ch, "channelNames": {x["id"]: x["name"] for x in CHANNELS}, "agents": agents,
-            "to": query.get("to", [""])[0], "initial": allchat_view(80, ch)}
+            "to": query.get("to", [""])[0], "draft": (query.get("say", [""])[0] or "")[:300],
+            "initial": allchat_view(80, ch)}
     body = (
         '<div class="chat">'
         f'<aside class="chans" aria-label="Channels"><div class="brand" style="padding-left:10px;font-size:18px">{APP_NAME} crew</div>'
@@ -11136,6 +11249,10 @@ def money_page(headers):
                           f'<figcaption class="muted small">{html.escape(_first_line(m["text"]))}</figcaption></figure>'
                           for m in charts) or '<p class="empty">Ask in #money: "@charter chart my spending".</p>'
     share = spent / budget if budget else None
+    donut_cats = [(cat, v["spent"]) for cat, v in sorted(status.items(), key=lambda kv: -kv[1]["spent"]) if v["spent"] > 0]
+    donut_card = (f'<section class="card" style="margin-top:14px"><h2>Spending</h2>'
+                  f'<p class="muted small">Actual spending this month. Budgets are limits, not spending.</p>'
+                  f'{donut_svg(donut_cats, spent)}</section>' if donut_cats else "")
     body = (
         f'<header class="top"><div class="hero">{avatar_img("glass", 56)}<div><p class="eyebrow">Glass · {now:%B %Y}</p>'
         f'<h1>${spent:,.2f} spent</h1></div></div><a class="btn ghost" href="/chat?ch=money">{ui_icon("chat")}Ask Glass</a></header>'
@@ -11144,7 +11261,7 @@ def money_page(headers):
                     "var(--bad)" if share >= 1 else "var(--warn)" if share >= 0.9 else "var(--accent)") if budget else
            kpi_html("–", "No budgets set", "GLASS_BUDGETS in Vercel", icon="money"))
         + kpi_html(str(len(store().list_expenses(month))), "Expenses logged", "this month", icon="money")
-        + '</div><div class="grid2" style="margin-top:14px">'
+        + '</div>' + donut_card + '<div class="grid2" style="margin-top:14px">'
         f'<section class="card"><h2>Budgets</h2>{listing}</section>'
         f'<section class="card"><h2>Recent</h2><ul class="list">{recent_html}</ul></section></div>'
         + stocks_card()
@@ -11154,6 +11271,97 @@ def money_page(headers):
         '<p><input id="csv-file" type="file" accept=".csv,text/csv"> <button class="btn" id="csv-import" type="button">Import</button></p>'
         f'<p class="note" id="csv-status"></p></section><script>{_BUDGET_JS}</script>')
     return page(headers, "Money", "/money", body)
+
+
+
+_DIAG_JS = r"""
+(() => {
+  const H = window.THETA_H, rows = document.getElementById("diag-wiring-rows");
+  const MARK = {ok: ["Wired", "var(--good)"], bad: ["Not wired", "var(--bad)"], off: ["Not set up", "var(--warn)"]};
+  const cell = (text, style) => { const td = document.createElement("td"); td.textContent = text; if (style) td.style.cssText = style; return td; };
+  async function load() {
+    const note = document.getElementById("diag-wiring-note");
+    note.textContent = "Checking...";
+    try {
+      const d = await (await fetch("/api/wiring", {headers: H})).json();
+      if (!d.ok) throw new Error(d.error);
+      rows.replaceChildren(...d.agents.map(a => {
+        const tr = document.createElement("tr");
+        const [label, color] = MARK[a.state] || ["Unknown", "var(--muted)"];
+        tr.append(cell(a.name, "font-weight:650"), cell(a.model, "font-family:ui-monospace,monospace;font-size:12px"),
+                  cell(label, "font-weight:700;color:" + color), cell(a.note, "color:var(--muted)"));
+        return tr;
+      }));
+      note.textContent = "Checked " + new Date().toLocaleTimeString() + ".";
+    } catch (err) { note.textContent = "Couldn't check wiring: " + err.message; }
+  }
+  document.getElementById("diag-wiring-recheck").onclick = load;
+  load();
+})();
+"""
+
+
+def diagnostics_page(headers):
+    """System health from real data only. Anything unmeasured is labeled
+    as such, never shown as healthy."""
+    st = store()
+    now = time.time()
+    statuses = agent_statuses()
+    crew_rows = "".join(
+        f'<tr><td style="font-weight:650">{html.escape(a["name"])}</td><td>{html.escape(a["tier"])}</td>'
+        f'<td style="font-weight:700;color:{"var(--good)" if a["online"] else "var(--muted)"}">{"Online" if a["online"] else "Offline"}</td>'
+        f'<td class="muted">{html.escape(a["activity"])}</td></tr>' for a in statuses)
+    last_round = _meta_json("round:last", {})
+    round_rows = "".join(
+        f'<tr><td style="font-weight:650">{html.escape(AGENTS[a]["name"] if a in AGENTS else a)}</td>'
+        f'<td class="muted">{"ran " + _ago(ts) + " ago" if ts else "never ran"}</td></tr>'
+        for a, ts in sorted(last_round.items())) or '<tr><td colspan="2" class="muted">No round has run yet.</td></tr>'
+    last_tick = float(st.get_meta("tick:last") or 0)
+    if not last_tick:
+        tick_note = "Never ran (the 5-minute tick is scheduled in Supabase Cron; see TODO)."
+    elif now - last_tick > 900:
+        tick_note = f"Last ran {_ago(last_tick)} ago; expected every 5 minutes."
+    else:
+        tick_note = f"Ran {_ago(last_tick)} ago."
+    failures = _meta_json("round:failures", {})
+    fail_html = ("".join(f'<li>{html.escape(AGENTS[a]["name"] if a in AGENTS else a)}: {html.escape(str(e)[:160])}</li>'
+                          for a, e in failures.items())
+                 if failures else '<li class="muted">None recorded.</li>')
+    errs = []
+    claude_err = _meta_json("claude:last_error", {})
+    if claude_err.get("error"):
+        when = f"{_ago(claude_err['at'])} ago" if claude_err.get("at") else "at an unknown time"
+        errs.append(f"Claude: {html.escape(str(claude_err['error'])[:160])} ({when})")
+    push_err = st.get_meta("push:last_error")
+    if push_err:
+        errs.append(f"Push notifications: {html.escape(push_err[:160])}")
+    err_html = ("".join(f"<li>{e}</li>" for e in errs) if errs else '<li class="muted">None recorded.</li>')
+    try:
+        spend = claude_spend()
+        claude_row = (f"Claude (Theta's high brain): ${spend['usd']:.2f} of ${MASTER_MONTHLY_CAP:.0f} this month "
+                      f"({spend['calls']} calls)")
+    except Exception:
+        claude_row = "Claude: couldn't read this month's use."
+    storage_note = ("Upstash Redis is connected." if STORAGE_MODE.startswith("upstash")
+                    else "Memory store only: data resets between requests. Connect Upstash Redis in Vercel and redeploy.")
+    body = (
+        f'<header class="top"><div><p class="eyebrow">System health</p><h1>Diagnostics</h1></div></header>'
+        f'<p class="muted">From real data. Anything unmeasured is labeled as such, never shown as healthy.</p>'
+        f'<div class="grid2">'
+        f'<section class="card"><h2>Crew</h2><div class="scrollx"><table class="tbl"><thead><tr><th>Agent</th><th>Tier</th><th>Status</th><th>Activity</th></tr></thead><tbody>{crew_rows}</tbody></table></div></section>'
+        f'<section class="card"><h2>Storage</h2><p><b>{html.escape(STORAGE_MODE)}</b></p><p class="muted small">{html.escape(storage_note)}</p></section>'
+        f'</div><div class="grid2" style="margin-top:14px">'
+        f'<section class="card"><h2>Scheduled work</h2><div class="scrollx"><table class="tbl"><thead><tr><th>Job</th><th>Last run</th></tr></thead>'
+        f'<tbody>{round_rows}<tr><td style="font-weight:650">5-minute tick</td><td class="muted">{html.escape(tick_note)}</td></tr></tbody></table></div></section>'
+        f'<section class="card"><h2>Recent failures</h2><ul>{fail_html}</ul><h2 style="margin-top:14px">Recent errors</h2><ul>{err_html}</ul></section>'
+        f'</div><section class="card" style="margin-top:14px"><h2>Token use</h2><ul><li>{claude_row}</li>'
+        f'<li class="muted">Gemini and Groq per-model totals: not tracked yet. Replies show their tokens, but no totals are stored (see TODO).</li></ul></section>'
+        f'<section class="card stack" style="margin-top:14px"><div><h2>Models &amp; providers</h2><p class="muted small">Live check, same as Settings → Wiring. <a href="/settings#wiring">Open in Settings</a></p></div>'
+        f'<div class="scrollx"><table class="tbl"><thead><tr><th>Agent</th><th>Model</th><th>Status</th><th>Details</th></tr></thead>'
+        f'<tbody id="diag-wiring-rows"></tbody></table></div>'
+        f'<p><button class="btn ghost small" id="diag-wiring-recheck" type="button">Recheck</button> <span class="note" id="diag-wiring-note"></span></p></section>'
+        f'<script>{_DIAG_JS}</script>')
+    return page(headers, "Diagnostics", "/diagnostics", body)
 
 
 _LENZ_JS = r"""
@@ -12639,7 +12847,8 @@ def handle(method, path, query, headers, body):
         return 200, "text/html; charset=utf-8", home_page(headers).encode(), _login_cookie(query)
 
     pages = {"/chat": lambda: chat_page(headers, query), "/calendar": lambda: calendar_page(headers, query),
-             "/lenz": lambda: lenz_page(headers), "/mail": lambda: mail_page(headers),
+             "/diagnostics": lambda: diagnostics_page(headers), "/lenz": lambda: lenz_page(headers),
+             "/mail": lambda: mail_page(headers),
              "/money": lambda: money_page(headers), "/settings": lambda: settings_page(headers)}
     agent_path = path.startswith("/agent/") and path[len("/agent/"):] in AGENTS
     if path in pages or agent_path:

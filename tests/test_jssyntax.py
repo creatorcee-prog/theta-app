@@ -197,7 +197,7 @@ def syntax_ok(src, name):
         print(name, r.stderr[:400])
     return r.returncode == 0
 h.add_reminder("tomorrow at 9am test")
-pages = {"/": None, "/chat": None, "/settings": None, "/calendar": None, "/money": None, "/agent/remi": None}
+pages = {"/": None, "/chat": None, "/settings": None, "/calendar": None, "/money": None, "/diagnostics": None, "/agent/remi": None}
 bad = []
 for path in pages:
     s_, html_, _ = call("GET", path, headers=K)
