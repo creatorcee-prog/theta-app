@@ -8039,6 +8039,7 @@ html,body{overflow-x:clip;max-width:100%}
 .daysep::before,.daysep::after{content:"";flex:1;height:1px;background:var(--border)}
 .composer{position:relative;padding:8px 12px calc(10px + env(safe-area-inset-bottom) * 0);flex:none}
 .working{display:flex;flex-direction:column;gap:6px;padding:2px 6px 8px;color:var(--accent);font-size:15px;font-weight:600}
+.working[hidden]{display:none}
 .working .wline{display:flex;align-items:center;gap:10px}
 .working .wline .av{border-radius:8px}
 .trail{display:flex;align-items:center;gap:4px;flex-wrap:wrap}

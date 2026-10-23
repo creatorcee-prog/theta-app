@@ -330,6 +330,8 @@ check("the chat shows who's working while it waits", "chat/working?rid=" in js
       and "went through, but the reply took too long" in js)
 s_, page_, _ = call("GET", "/chat", headers=K)
 check("the indicator sits above the message box", b'id="chat-working"' in page_ and b"wdots" in page_)
+css = call("GET", "/ui.css")[1].decode()
+check("...and stays out of sight when nobody's working", ".working[hidden]{display:none}" in css)
 h.master_ready = lambda: False; CALLS_.clear()
 s, d = post("@theta are you there?")
 check("'@theta' without Claude: the desk answers as before", d["messages"][-1]["from"] == "mistral")
