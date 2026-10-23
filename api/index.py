@@ -1408,7 +1408,7 @@ def llm_chat(tier, messages, max_tokens=800):
         try:
             return claude_chat(messages, max_tokens)
         except LLMError as e:  # Theta still answers, on the stand-in
-            store().set_meta("claude:last_error", json.dumps({"at": time.time(), "error": str(e)[:200]}))
+            store().set_meta("claude:last_error", json.dumps({"at": time.time(), "error": str(e)[:200], "fp": _key_fp()}))
             note = (f" Right now {MASTER_MODEL} couldn't answer ({str(e)[:120]}), so you're running on the "
                     f"stand-in model, {TIER_LLM['low_brain'][1]}. If asked which model you are, say that.")
             messages = ([dict(messages[0], content=messages[0]["content"] + note)] + messages[1:]
@@ -1530,6 +1530,64 @@ _WORKSPACE_HINT = ("this key isn't tied to one workspace, so Anthropic needs to 
                    "or make a new key scoped to a workspace, then redeploy")
 
 
+CLAUDE_CHECK_SECONDS = 600
+
+
+def _anthropic_said(e):
+    """Anthropic's own error message, without the SDK's 'Error code: 401 - {...}' wrapping."""
+    body = getattr(e, "body", None)
+    if isinstance(body, dict):
+        msg = (body.get("error") or {}).get("message") if isinstance(body.get("error"), dict) else body.get("message")
+        if msg:
+            return str(msg)[:120]
+    return re.sub(r"^Error code: \d+ - ", "", str(getattr(e, "message", "") or ""))[:120]
+
+
+def _key_fp():
+    """A short hash of the current Anthropic key: notices a new key, reveals nothing about it."""
+    return hashlib.sha256(_clean_secret(os.environ.get("ANTHROPIC_API_KEY", "")).encode()).hexdigest()[:12]
+
+
+def _anthropic_client():
+    import anthropic
+    workspace = _clean_secret(os.environ.get("ANTHROPIC_WORKSPACE_ID", ""))
+    return anthropic.Anthropic(api_key=_clean_secret(os.environ.get("ANTHROPIC_API_KEY", "")),
+                               timeout=MASTER_TIMEOUT, max_retries=1,
+                               default_headers={"anthropic-workspace-id": workspace} if workspace else None)
+
+
+def claude_key_check(force=False):
+    """(ok, detail) for the key as it is right now, from a free model lookup
+    (no tokens). Cached 10 minutes, and redone at once when the key changes.
+    ok is None when Anthropic couldn't be reached."""
+    try:
+        import anthropic
+    except ImportError:
+        return None, "the anthropic library isn't installed (requirements.txt)"
+    fp = _key_fp()
+    cached = _meta_json("claude:check", {})
+    if not force and cached.get("fp") == fp and time.time() - cached.get("at", 0) < CLAUDE_CHECK_SECONDS:
+        return cached["ok"], cached["detail"]
+    try:
+        _anthropic_client().models.retrieve(MASTER_MODEL_ID)
+        ok, detail = True, f"key accepted and {MASTER_MODEL_ID} available"
+    except anthropic.AuthenticationError as e:
+        said = _anthropic_said(e)
+        ok, detail = False, ("Anthropic rejects ANTHROPIC_API_KEY" + (f" (it said: {said})" if said else "")
+                             + ": " + anthropic_key_hint())
+    except anthropic.NotFoundError as e:
+        ok, detail = False, ("Anthropic can't find that workspace for this key: check ANTHROPIC_WORKSPACE_ID"
+                             if "workspace" in str(e.message).lower() else
+                             f"this key can't use {MASTER_MODEL_ID} (MASTER_MODEL_ID)")
+    except anthropic.APIStatusError as e:
+        ok, detail = False, ("Anthropic needs a workspace: " + _WORKSPACE_HINT if "anthropic-workspace-id" in str(e.message)
+                             else f"Anthropic returned {e.status_code}: {str(e.message)[:120]}")
+    except anthropic.APIConnectionError as e:
+        return None, f"Anthropic unreachable just now: {e!r}"[:160]  # not cached: try again next time
+    store().set_meta("claude:check", json.dumps({"fp": fp, "at": time.time(), "ok": ok, "detail": detail}))
+    return ok, detail
+
+
 def claude_chat(messages, max_tokens):
     """Theta on Claude. Thinking is always on for Opus 5.5 and counts as
     output, so the token ceiling is roomier than the visible reply needs.
@@ -1540,17 +1598,14 @@ def claude_chat(messages, max_tokens):
              for m in messages if m["role"] in ("user", "assistant")]
     if not convo or convo[0]["role"] != "user":
         convo.insert(0, {"role": "user", "content": "(continue)"})
-    workspace = _clean_secret(os.environ.get("ANTHROPIC_WORKSPACE_ID", ""))
-    client = anthropic.Anthropic(api_key=_clean_secret(os.environ.get("ANTHROPIC_API_KEY", "")),
-                                 timeout=MASTER_TIMEOUT, max_retries=1,
-                                 default_headers={"anthropic-workspace-id": workspace} if workspace else None)
+    client = _anthropic_client()
     try:
         resp = client.beta.messages.create(
             model=MASTER_MODEL_ID, max_tokens=max(4000, max_tokens * 4), system=system or anthropic.omit,
             messages=convo, output_config={"effort": MASTER_EFFORT},
             betas=["server-side-fallback-2026-07-01"], fallbacks="default")
     except anthropic.AuthenticationError as e:
-        said = str(getattr(e, "message", "") or "")[:100]
+        said = _anthropic_said(e)
         raise LLMError("Anthropic rejected ANTHROPIC_API_KEY" + (f" (it said: {said})" if said else "")
                        + ": " + anthropic_key_hint())
     except anthropic.PermissionDeniedError as e:
@@ -6228,13 +6283,19 @@ def wiring():
                 if spend["usd"] >= MASTER_MONTHLY_CAP:
                     row.update(state="bad", note=f"{MASTER_MODEL}: monthly cap reached, {used}; the low brain stands in "
                                "until the 1st (raise MASTER_MONTHLY_CAP_USD to lift it)")
-                elif last and time.time() - last["at"] < 86400 and last["at"] > float(store().get_meta("claude:last_ok") or 0):
+                elif (check := claude_key_check())[0] is False:
+                    when = _ago(_meta_json("claude:check", {}).get("at", time.time()))
+                    row.update(state="bad", note=f"{MASTER_MODEL} isn't connected: {check[1]}. The low brain answers "
+                               f"for Theta meanwhile (checked {'just now' if when == 'now' else when + ' ago'}). {used}")
+                elif (last and time.time() - last["at"] < 86400 and last.get("fp") == _key_fp()
+                      and last["at"] > float(store().get_meta("claude:last_ok") or 0)):
                     row.update(state="bad", note=f"{MASTER_MODEL} failed {_ago(last['at'])} ago ({last['error']}); "
                                f"the low brain answered. {used}")
                 else:
                     ok_at = float(store().get_meta("claude:last_ok") or 0)
                     row.update(state="ok", note=f"{MASTER_MODEL} connected, effort {MASTER_EFFORT}"
-                               + (f", last answered {_ago(ok_at)} ago" if ok_at else "") + f"; {used}")
+                               + (f", last answered {'just now' if _ago(ok_at) == 'now' else _ago(ok_at) + ' ago'}"
+                                  if ok_at else "") + f"; {used}")
             c = cooling(provider, model) if not (a["tier"] == "master" and master_ready()) else None
             if c:
                 fb_p, fb_m = FALLBACK_LLM.get("low_brain" if a["tier"] == "master" else a["tier"], (None, "off"))
