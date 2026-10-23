@@ -19,6 +19,16 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
 - [ ] Face ID still failing? Settings → Devices → Recent Face ID failures
       shows the reason; a passkey made on another address needs adding again.
 
+### 1c. Let QWERTY apply approved changes (optional)
+- [ ] Vercel → Account Settings → Tokens → create a token → `VERCEL_TOKEN`
+      (Sensitive). It can change any of your Vercel projects, so treat it
+      like a password; QWERTY only uses it for approved, non-secret settings.
+- [ ] `VERCEL_PROJECT`: the project's name (or ID) from its Settings page.
+      `VERCEL_TEAM_ID` too if the project belongs to a team.
+- [ ] Project → Settings → Git → Deploy Hooks → create one for `main` →
+      `VERCEL_DEPLOY_HOOK` (Sensitive) so approved changes redeploy on their own.
+- [ ] Redeploy, then ask: "@QWERTY add https://www.youtube.com/@veritasium to my YouTube channels".
+
 ### 2. Schedules (Supabase SQL editor; any Supabase project)
 - [ ] `CRON_SECRET` in Vercel (any long random string), redeploy.
 - [ ] Run `supabase/cron.sql.example` with your hub address and secret
