@@ -215,6 +215,44 @@ who runs in Garage Gym. Settings → **Memory and notes** lists both, each
 with a remove button (`POST /api/memory/remove`, `/api/notes/remove`
 `{"id"}`).
 
+## James asks the hub (from Garage Gym)
+
+When James, inside Garage Gym, gets a question he can't answer from his own
+knowledge, Garage Gym forwards it to `POST /api/gym/ask` (header
+`x-hub-secret`, the same secret as `GARAGE_GYM_SECRET`). Garage Gym is used
+by family, so this is locked down: Mistral answers from general knowledge and
+a web search, with none of the hub owner's data (budget, calendar, memory,
+notes, home), no tools and no Theta, at most `GYM_ASK_DAILY` (40) a day. The
+answer and its sources go back to James. The hub's chat shows that a question
+came in, but not what it was. A wrong secret counts toward the wrong-key lockout.
+
+## Tests
+
+`tests/` has the whole suite: 31 standalone scripts that drive the app with
+fake providers (models, Redis, Gmail, push, feeds), each run with in-memory
+storage and with a fake Upstash Redis. Run them all with
+`tests/run_all.sh` (or `tests/run_all.sh path/to/python`). One file:
+`python3 tests/test_desk.py memory`. GitHub runs the suite on every pull
+request (`.github/workflows/tests.yml`), so a build is tested before it's
+merged. `test_jssyntax.py` needs Node, to check every page's scripts parse.
+
+## Chat: the front desk
+
+By default (`CHAT_MODE=desk`) Mistral answers every chat message, @mentions
+included, with the whole crew's facts in front of him: Glass's budgets,
+Remi's calendar and reminders, Lenz's library and channels, Charter's charts,
+James's training, the settings QWERTY can change, and the hub map. He has
+every tool (log spending, reminders, notes, charts, workouts for James,
+projects, ask QWERTY for a change). A hard question (setting up or fixing
+the hub, planning across several parts, money decisions) he hands to Theta
+with `ESCALATE:`, and Theta answers instead when Claude is connected.
+
+Plain commands still run instantly with no model call: `$42 groceries`,
+`remind me…`, `@lenz I finished X 9/10`, `@charter chart spending`,
+`@james bench 185 4x8`. The crew still posts its own agendas, alerts,
+uploads, news takes and round reports. `CHAT_MODE=crew` brings back each
+agent answering (Mistral picks who).
+
 ## QWERTY makes changes, with your approval
 
 No agent can edit code, deploy or change settings by itself. QWERTY can
