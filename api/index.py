@@ -1497,7 +1497,8 @@ def _tool_chart(arg, agent):
     if not got:
         raise ValueError("Charter can chart: spending, daily spending, calendar busyness, news coverage, chat activity")
     caption, url = got
-    store().add_chat("charter", caption, image=url)
+    activity(agent, f"{AGENTS[agent]['name']} asked Charter for a chart: {arg.strip()[:80]}")
+    store().add_chat("charter", caption, image=url, channel=getattr(_REQ, "ch", None))
     return f"Charter posted the chart: {caption}"
 
 
@@ -1506,15 +1507,17 @@ def _tool_workout(arg, agent):
     r = james_workout(arg)
     if not r:
         raise ValueError("that isn't a workout command James knows (like: bench 185 4x8, done, undo, today)")
-    store().add_chat("james", r["text"][:4000], buttons=r.get("buttons"))
+    activity(agent, f"{AGENTS[agent]['name']} sent a workout to James: {arg.strip()[:80]}")
+    store().add_chat("james", r["text"][:4000], buttons=r.get("buttons"), channel=getattr(_REQ, "ch", None))
     return "Sent to James; his reply is in the chat" + (" with buttons" if r.get("buttons") else "")
 
 
 def _tool_ask_qwerty(arg, agent):
     """Theta asks QWERTY to propose a change; QWERTY's proposal is posted for the user."""
+    activity(agent, f"{AGENTS[agent]['name']} asked QWERTY: {arg.strip()[:160]}")
     r = allchat_reply("qwerty", [{"from": agent, "text": "@QWERTY " + arg.strip()[:800], "at": time.time()}])
     text, buttons = (r["text"], r.get("buttons")) if isinstance(r, dict) else (r, None)
-    store().add_chat("qwerty", text.strip()[:4000], buttons=buttons)
+    store().add_chat("qwerty", text.strip()[:4000], buttons=buttons, channel=getattr(_REQ, "ch", None))
     return "Asked QWERTY; his answer is in the chat" + (", with Approve / Decline" if buttons else "")
 
 
@@ -1596,14 +1599,17 @@ def run_actions(agent, reply):
         if not tool or (tool[2] is not None and agent not in tool[2]):
             receipts.append(f"✗ {name}: not a tool I have")
             continue
+        who = AGENTS.get(agent, {}).get("name", agent)
         try:
             got = tool[1](arg, agent)
             if isinstance(got, tuple):  # a proposal: text plus Approve / Decline
                 got, more = got
                 buttons += more
             receipts.append("✓ " + got)
+            activity(agent, f"{who} used {name}: {got}")
         except (ValueError, CommandError, LLMError) as e:
             receipts.append(f"✗ {name}: {e}")
+            activity(agent, f"{who} tried {name}, but it didn't work: {e}")
     if receipts:
         out = (text + "\n\n" if text else "") + "\n".join(receipts)
         return {"text": out, "buttons": buttons[:2]} if buttons else out
@@ -2176,6 +2182,15 @@ def post_event(sender, text):
     store().add_chat(sender, text[:1500], kind="event")
 
 
+def activity(sender, text):
+    """A small line in the current conversation's channel showing what an agent
+    did behind the scenes (handed off, searched, asked QWERTY, used a tool)."""
+    try:
+        store().add_chat(sender, text[:300], kind="event", channel=getattr(_REQ, "ch", None))
+    except Exception:
+        pass  # never let a status line cost a reply
+
+
 def _gist(payload):
     if isinstance(payload, dict) and payload.get("title"):
         return str(payload["title"])[:120]
@@ -2268,11 +2283,15 @@ def desk_reply(thread):
 
     agent = DESK
     system, ask, reply = ask_as(agent)
-    if re.match(r"^\s*ESCALATE:", reply.strip(), re.I):
+    esc = re.match(r"^\s*ESCALATE:\s*(.*)$", reply.strip(), re.I | re.S)
+    if esc:
+        why = " ".join(esc.group(1).split())[:140]
         if master_ready():
+            activity(DESK, f"Mistral passed this to Theta" + (f": {why}" if why else ""))
             agent = "theta"
             system, ask, reply = ask_as(agent)
         else:  # no Claude this month: Mistral answers as best he can
+            activity(DESK, "Mistral wanted Theta for this, but Claude isn't available, so he's answering himself")
             system, ask, reply = ask_as(DESK, " Theta isn't available right now, so don't escalate: answer it "
                                               "yourself as best you can, and say plainly what you're unsure of.")
             if re.match(r"^\s*ESCALATE:", reply.strip(), re.I):
@@ -2366,6 +2385,7 @@ def answer_with_search(agent, system, ask, query):
     Only the search's own sources may appear as links; anything else the
     model writes as a link is removed. One search per reply, so a web
     page can't steer the agent into fetching something else."""
+    activity(agent, f"{AGENTS[agent]['name']} searched the web: {query[:120]}")
     found, sources = "", []
     if _search_budget(1):
         try:
@@ -11141,6 +11161,7 @@ def handle(method, path, query, headers, body):
             thread = (st.list_chat(CHAT_HISTORY) if ch == "all" else
                       [m for m in st.list_chat(ALLCHAT_KEEP) if message_channel(m) == ch][-CHAT_HISTORY:])
             errors, routed = {}, []
+            _REQ.ch = ch if ch != "all" else None  # activity lines land in this conversation
             if CHAT_MODE != "crew":  # the front desk answers (Theta for hard ones); plain commands run at once
                 try:
                     who, reply = desk_shortcut(thread) or desk_reply(thread)
@@ -11837,7 +11858,7 @@ def app(environ, start_response):
     body = environ["wsgi.input"].read(length) if length > 0 else b""
     ip = client_ip(environ)
     _REQ.cookies, _REQ.session, _REQ.quiet, _REQ.meta, _REQ.calls = [], None, False, {}, 0
-    _REQ.stale, _REQ.refreshing = False, False
+    _REQ.stale, _REQ.refreshing, _REQ.ch = False, False, None
     t0 = time.time()
     _REQ.page = method == "GET" and not path.startswith("/api/")
     try:

@@ -217,6 +217,9 @@ CALLS_.clear()
 s, d = post("help me plan next month around my budget and calendar")
 check("hard question: Mistral hands it to Theta, who answers", d["messages"][-1]["from"] == "theta" and d["messages"][-1]["text"] == "Here's a plan."
       and d["routed"] == ["Theta"] and [c[0] for c in CALLS_] == ["mistral", "theta"])
+ev = [m for m in d["messages"] if m.get("kind") == "event"]
+check("an activity line shows the hand-off, before Theta's reply", ev and ev[-1]["text"] == "Mistral passed this to Theta: needs planning across budget and calendar"
+      and d["messages"].index(ev[-1]) < len(d["messages"]) - 1)
 check("Theta isn't told to escalate further", "ESCALATE:" not in CALLS_[1][1] and "You're the front desk" in CALLS_[1][1])
 h.master_ready = lambda: False
 PLAN["mistral"] = ["ESCALATE: tricky", "My best try."]
@@ -241,6 +244,8 @@ check("ordinary talk isn't mistaken for a command", d["messages"][-1]["from"] ==
 # the desk's tools
 PLAN["mistral"] = ["Here you go.\nACTION: chart | spending"]
 s, d = post("show me where my money went")
+check("activity lines show Mistral asking Charter and using the tool", any(m.get("kind") == "event" and m["text"].startswith("Mistral asked Charter for a chart") for m in d["messages"])
+      and any(m.get("kind") == "event" and m["text"].startswith("Mistral used chart") for m in d["messages"]))
 check("chart tool: Charter posts the chart", any(m["from"] == "charter" and m.get("image") for m in d["messages"][-3:]))
 PLAN["mistral"] = ["I'll get QWERTY on it.\nACTION: ask_qwerty | add @veritasium to LENZ_YOUTUBE"]
 real = h.allchat_reply
@@ -248,7 +253,12 @@ h.allchat_reply = lambda a, t: {"text": "✓ Proposed: Set LENZ_YOUTUBE ...", "b
 s, d = post("add veritasium to my youtube channels")
 h.allchat_reply = real
 q = [m for m in d["messages"] if m["from"] == "qwerty"]
+check("an activity line shows Mistral asking QWERTY", any(m.get("kind") == "event" and m["text"].startswith("Mistral asked QWERTY:") for m in d["messages"]))
 check("the desk asks QWERTY, whose proposal comes with Approve", q and q[-1].get("buttons"))
+PLAN["mistral"] = ["Got it.\nACTION: remind | sometime maybe"]
+s, d = post("ping me eventually", ch="family")
+evs = [m for m in d["messages"] if m.get("kind") == "event"]
+check("a failed tool shows as an activity line, in the conversation's channel", evs and "tried remind, but it didn't work" in evs[-1]["text"] and evs[-1].get("ch") == "family")
 # crew mode still there
 h.CHAT_MODE = "crew"; CALLS_.clear()
 s, d = post("hello family", ch="family")
