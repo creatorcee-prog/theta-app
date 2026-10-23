@@ -9962,7 +9962,15 @@ def release_strip():
 # YouTube channels and Twitch going live are pushed; subreddits get a daily
 # digest of their top posts, and any post naming something you follow is
 # pushed right away.
-LENZ_YOUTUBE = [c.strip() for c in os.environ.get("LENZ_YOUTUBE", "").split(",") if c.strip()]  # UC... ids or @handles
+def _yt_entry(c):
+    """A channel from LENZ_YOUTUBE: a UC... id, an @handle, or a channel link
+    copied from YouTube (youtube.com/@name or youtube.com/channel/UC...)."""
+    c = c.strip()
+    m = re.search(r"youtube\.com/(?:channel/(UC[\w-]{20,})|(@[\w.-]+))", c)
+    return (m.group(1) or m.group(2)) if m else c
+
+
+LENZ_YOUTUBE = [_yt_entry(c) for c in os.environ.get("LENZ_YOUTUBE", "").split(",") if c.strip()]  # UC... ids, @handles or links
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")  # only to turn @handles into channel ids
 LENZ_SUBREDDITS = [c.strip().removeprefix("r/") for c in os.environ.get("LENZ_SUBREDDITS", "").split(",") if c.strip()]
 LENZ_TWITCH = [c.strip().lower() for c in os.environ.get("LENZ_TWITCH", "").split(",") if c.strip()]
