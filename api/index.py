@@ -465,6 +465,12 @@ class MemoryStore:
     def set_meta(self, key, value):
         self.meta[key] = value
 
+    def get_meta_many(self, keys):
+        return {k: self.meta.get(k) for k in keys}
+
+    def set_meta_many(self, pairs):
+        self.meta.update(pairs)
+
     def list_chat(self, limit):
         return list(reversed(self.allchat[:limit]))  # oldest first
 
@@ -634,6 +640,15 @@ class KVStore:
         if cache is not None:
             cache[key] = (value, time.time())
 
+    def get_meta_many(self, keys):
+        """{key: value} in one round trip."""
+        keys = list(keys)
+        return dict(zip(keys, self._cmd("HMGET", "hub:meta", *keys))) if keys else {}
+
+    def set_meta_many(self, pairs):
+        if pairs:
+            self._cmd("HSET", "hub:meta", *[x for kv in pairs.items() for x in kv])
+
     def list_chat(self, limit):
         rows = self._cmd("LRANGE", "hub:allchat", "0", str(limit - 1))
         return [json.loads(r) for r in reversed(rows)]  # oldest first
@@ -658,7 +673,7 @@ _STORE = None
 
 
 META_CACHE_SECONDS = 3
-_BIG_META = ("upload:", "chart:", "vision:")  # big values: never fetched in the batch
+_BIG_META = ("upload:", "chart:", "vision:", "snap:")  # big values: never fetched in the batch
 # Values most pages read, fetched together; grows with what this process sees.
 _HOT_META = {"briefs", "cards", "cards:img", "cards:short", "chat:pressed", "daily:history", "daily:items",
              "gmail:flash", "gmail:token", "hub:origin", "key:users", "lenz:feeds:at", "lenz:lib", "llm:cooldown",
@@ -785,18 +800,109 @@ def _parse_apple_json(data):
     return out
 
 
-def feed_items(url):
+# ---- Shared snapshots: outside data (feeds, trending, calendars, Garage
+# Gym) is kept in storage for every server process, not just the one that
+# fetched it. Vercel keeps starting fresh processes, which used to refetch
+# everything while you waited. A page shows what's stored at once; when
+# it's stale, the page asks /api/refresh in the background and the next
+# load has new data. Only with nothing stored yet does a page wait.
+SNAP_REFRESH_EVERY = 60  # seconds between background refreshes
+SNAP_KEEP_ON_FAILURE = 86400  # show the last good copy this long when a source stops answering
+
+
+def snapshot_failing(prefix, url):
+    """True when the last try to refresh this source failed."""
+    try:
+        snap = json.loads(store().get_meta("snap:" + prefix + _snap_key(url)) or "null")
+    except ValueError:
+        return False
+    return bool(snap and snap.get("failed", 0) > snap["at"])
+
+
+def shared_fetch(name, ttl, fetch):
+    """(value, fetched_at) for name: stored copy, else fetch() and store it."""
+    try:
+        snap = json.loads(store().get_meta("snap:" + name) or "null")
+    except ValueError:
+        snap = None
+    if snap and (time.time() - snap["at"] < ttl or not getattr(_REQ, "refreshing", False)):
+        if time.time() - snap["at"] >= ttl:
+            _REQ.stale = True  # the page will ask for a refresh
+        return snap["v"], snap["at"]
+    try:
+        value = fetch()
+    except Exception:
+        if snap:  # keep showing what we had
+            return snap["v"], snap["at"]
+        raise
     now = time.time()
-    hit = _FEED_CACHE.get(url)
-    if hit and now - hit[0] < WIDGET_CACHE_SECONDS:
-        return hit[1]
+    store().set_meta("snap:" + name, json.dumps({"at": now, "v": value}))
+    return value, now
+
+
+def _snap_key(url):
+    return hashlib.sha1(url.encode()).hexdigest()[:12]
+
+
+def refresh_shared():
+    """Fetch whatever outside data has gone stale, so pages stay instant."""
+    _REQ.refreshing = True
+    try:
+        _fetch_feeds(list(dict.fromkeys(NEWS_FEEDS + ENTERTAINMENT_FEEDS + [u for us in SIDE_FEEDS.values() for u in us])))
+        if REMI_CALENDAR_URLS:
+            _calendar_sources(REMI_CALENDAR_URLS)
+        try:
+            tmdb_trending()
+        except LLMError:
+            pass
+        james_summary()
+    finally:
+        _REQ.refreshing = False
+
+
+def shared_fetch_many(prefix, urls, ttl, fetch):
+    """[(value, fetched_at)] for each url, like shared_fetch: stored copies are
+    read in one round trip, and only missing (or, when refreshing, expired)
+    ones are fetched, in parallel."""
+    names = {u: "snap:" + prefix + _snap_key(u) for u in urls}
+    raw = store().get_meta_many(names.values()) if urls else {}
+    out, todo = {}, []
+    refreshing = getattr(_REQ, "refreshing", False)
+    for u in urls:
+        try:
+            snap = json.loads(raw.get(names[u]) or "null")
+        except ValueError:
+            snap = None
+        if snap and (time.time() - snap["at"] < ttl or not refreshing):
+            if time.time() - snap["at"] >= ttl:
+                _REQ.stale = True
+            out[u] = (snap["v"], snap["at"])
+        else:
+            todo.append((u, snap))
+    if todo:
+        got = _fetch_feeds_with(lambda us: fetch(us[0]), todo)
+        now, fresh = time.time(), {}
+        for (u, snap), value in zip(todo, got):
+            if value is None and snap and now - snap["at"] < SNAP_KEEP_ON_FAILURE:
+                out[u] = (snap["v"], snap["at"])  # couldn't fetch: keep what we had (for a while), and say so
+                fresh[names[u]] = json.dumps(dict(snap, failed=now))
+                continue
+            out[u] = (value, now)
+            fresh[names[u]] = json.dumps({"at": now, "v": value})
+        store().set_meta_many(fresh)
+    return [out[u] for u in urls]
+
+
+def _feed_fetch(url):
     try:
         raw = _fetch_url(url)
-        items = _parse_apple_json(raw) if url.endswith(".json") else _parse_rss(raw)
+        return _parse_apple_json(raw) if url.endswith(".json") else _parse_rss(raw)
     except Exception:
-        items = []  # a dead feed never breaks the dashboard
-    _FEED_CACHE[url] = (now, items)
-    return items
+        return []  # a dead feed never breaks the dashboard
+
+
+def feed_items(url):
+    return _fetch_feeds([url])[0]
 
 
 def _fetch_feeds_with(fn, urls):
@@ -808,7 +914,14 @@ def _fetch_feeds_with(fn, urls):
 
 
 def _fetch_feeds(urls):
-    return _fetch_feeds_with(feed_items, urls)
+    now, refreshing = time.time(), getattr(_REQ, "refreshing", False)
+    hits = {u: _FEED_CACHE[u][1] for u in urls if u in _FEED_CACHE
+            and now - _FEED_CACHE[u][0] < WIDGET_CACHE_SECONDS and not refreshing}
+    rest = [u for u in dict.fromkeys(urls) if u not in hits]
+    for u, (items, at) in zip(rest, shared_fetch_many("feed:", rest, WIDGET_CACHE_SECONDS, _feed_fetch)):
+        _FEED_CACHE[u] = (at, items)
+        hits[u] = items
+    return [hits[u] for u in urls]
 
 
 def widget_items(feeds):
@@ -850,8 +963,15 @@ def tmdb_trending():
     rating, url}), cached 30 min. Raises LLMError when TMDB refuses."""
     if not TMDB_API_KEY:
         return []
-    if _TMDB_CACHE["items"] is not None and time.time() - _TMDB_CACHE["at"] < 1800:
+    if (_TMDB_CACHE["items"] is not None and time.time() - _TMDB_CACHE["at"] < 1800
+            and not getattr(_REQ, "refreshing", False)):
         return _TMDB_CACHE["items"]
+    items, at = shared_fetch("tmdb:trending", 1800, _tmdb_trending_fetch)
+    _TMDB_CACHE.update(at=at, items=items)
+    return items
+
+
+def _tmdb_trending_fetch():
     bearer = TMDB_API_KEY.startswith("eyJ")  # v4 tokens are JWTs
     url = TMDB_BASE + "/trending/all/week" + ("" if bearer else f"?api_key={TMDB_API_KEY}")
     headers = {"User-Agent": "bot-hub/1.0", "Accept": "application/json"}
@@ -1125,10 +1245,11 @@ def james_summary(now=None):
     if not (GARAGE_GYM_URL and GARAGE_GYM_SECRET):
         return None
     c = _JAMES_CACHE
-    if now - c["at"] < c["ttl"]:
+    if now - c["at"] < c["ttl"] and not getattr(_REQ, "refreshing", False):
         return c["value"]
     try:
-        value, ttl = _garage_gym("GET", timeout=8), 300
+        value, _ = shared_fetch("gym:summary", 300, lambda: _garage_gym("GET", timeout=8))
+        ttl = 300
     except LLMError:
         value, ttl = None, 60
     c.update(at=now, ttl=ttl, value=value)
@@ -2179,18 +2300,30 @@ def _rrule_dates(first, rule, last_day):
     return out
 
 
-def _calendar_source(url):
-    """Parsed events for one calendar, cached; None if it couldn't be read."""
-    hit = _CAL_CACHE.get(url)
-    if hit and time.time() - hit[0] < CALENDAR_CACHE_SECONDS:
-        return hit[1]
+def _calendar_text(url):
     try:
-        events = parse_ics(_fetch_url(url, timeout=8).decode("utf-8", "replace"))
+        return _fetch_url(url, timeout=8).decode("utf-8", "replace")
     except Exception as e:  # a bad link shouldn't break the dashboard
         print(f"calendar fetch failed: {e!r}")
-        events = None
-    _CAL_CACHE[url] = (time.time(), events)
-    return events
+        return None
+
+
+def _calendar_sources(urls):
+    """Parsed events per calendar (None if it couldn't be read), from this
+    process's cache, then the stored copy, then the calendar itself."""
+    now, refreshing = time.time(), getattr(_REQ, "refreshing", False)
+    hits = {u: _CAL_CACHE[u][1] for u in urls if u in _CAL_CACHE
+            and now - _CAL_CACHE[u][0] < CALENDAR_CACHE_SECONDS and not refreshing}
+    rest = [u for u in urls if u not in hits]
+    for u, (text, at) in zip(rest, shared_fetch_many("cal:", rest, CALENDAR_CACHE_SECONDS, _calendar_text)):
+        events = parse_ics(text) if text else None
+        _CAL_CACHE[u] = (at, events)
+        hits[u] = events
+    return [hits[u] for u in urls]
+
+
+def _calendar_source(url):
+    return _calendar_sources([url])[0]
 
 
 def calendar_events(first_day, last_day):
@@ -2199,7 +2332,7 @@ def calendar_events(first_day, last_day):
     aware datetimes in hub_tz(); all-day ones are dates (end exclusive)."""
     tz = hub_tz()
     occ = []
-    sources = _fetch_feeds_with(_calendar_source, REMI_CALENDAR_URLS)
+    sources = _calendar_sources(REMI_CALENDAR_URLS)
     for events in sources:
         if not events:
             continue
@@ -2266,7 +2399,8 @@ def calendar_linked():
 
 def calendar_problems():
     """Calendar links that couldn't be read last time (for wiring)."""
-    return [i + 1 for i, u in enumerate(REMI_CALENDAR_URLS) if _calendar_source(u) is None]
+    return [i + 1 for i, u in enumerate(REMI_CALENDAR_URLS)
+            if _calendar_source(u) is None or snapshot_failing("cal:", u)]
 
 
 def _clock(dt):
@@ -6506,7 +6640,7 @@ def speakable(text):
 # carrying it is moved to a session the next time it opens Theta (and
 # listed then). Only a hash of each session token is stored.
 SESSION_KEEP = 40
-SESSION_IDLE_DAYS = 180
+SESSION_IDLE_DAYS = 45
 SESSION_SEEN_EVERY = 300  # seconds between "last seen" writes per device
 _SESS_LOCK = threading.Lock()
 _REQ = threading.local()  # per request: cookies to set, session made
@@ -6625,6 +6759,10 @@ def sign_out_device(dev_id, keep=None):
         out = {k: v for k, v in live.items()
                if (v["id"] != dev_id if dev_id != "*" else v["id"] == keep)}
         store().set_meta("sessions", json.dumps(out))
+    gone = {v["id"] for v in live.values()} - {v["id"] for v in out.values()}
+    subs = push_subs()
+    if gone and any(x.get("sess") in gone for x in subs):  # a signed-out device stops getting notifications
+        store().set_meta("push:subs", json.dumps([x for x in subs if x.get("sess") not in gone]))
     return len(live) - len(out)
 
 
@@ -6865,6 +7003,18 @@ body.typing .tabbar{display:none}
 .empty{color:var(--muted);font-size:14px;padding:6px 0}
 
 /* KPI tiles with rings */
+.smart{margin:0 0 16px}.sc-track{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;
+ -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}.sc-track::-webkit-scrollbar{display:none}
+.sc{flex:0 0 100%;scroll-snap-align:start;min-height:132px;box-sizing:border-box;display:flex;flex-direction:column;gap:6px;padding:16px 18px;
+ border-radius:22px;background:var(--surface);border:1px solid var(--border);color:var(--text);text-decoration:none}
+.sc:hover{text-decoration:none}.sc:active{transform:scale(.985)}
+.sc-e{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+.sc-e svg{width:16px;height:16px}.sc-t{font-size:21px;font-weight:750;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.sc-s{color:var(--muted);font-size:14px;margin-top:auto}
+.sc.warn .sc-e{color:var(--warn)}.sc.bad .sc-e{color:var(--bad)}
+.sc-dots{display:flex;justify-content:center;gap:6px;margin-top:8px}.sc-dots i{width:6px;height:6px;border-radius:50%;background:var(--border)}
+.sc-dots i.on{background:var(--accent)}
+@media (min-width:900px){.sc{flex-basis:calc(50% - 6px)}}
 .kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 @media (min-width:760px){.kpis{grid-template-columns:repeat(4,minmax(0,1fr))}}
 .kpi{display:flex;align-items:center;gap:12px;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);
@@ -7078,7 +7228,8 @@ body.typing .chat{height:100dvh}
 .dcheck input:checked+span{color:var(--muted);text-decoration:line-through}
 .daily .dx{display:none;border:0;background:none;color:var(--muted);font-size:20px;cursor:pointer;padding:4px 8px}
 .daily.editing .dx{display:block}.daily .dadd{display:none;padding:5px 5px 5px 14px}.daily.editing .dadd{display:flex}
-.mem li{justify-content:space-between}.mem .dx{border:0;background:none;color:var(--muted);font-size:20px;cursor:pointer;padding:4px 8px}
+.mem li{justify-content:space-between}.ok-t{color:var(--good);font-weight:600}.bad-t{color:var(--bad)}
+#devices li.dev{display:block;padding:10px 0}#devices details summary{cursor:pointer;padding:4px 0}.mem .dx{border:0;background:none;color:var(--muted);font-size:20px;cursor:pointer;padding:4px 8px}
 .daily .dadd input{flex:1;min-width:0;border:0;background:transparent;outline:none;padding:8px 0;font:inherit}
 .linkbtn{border:0;background:none;color:var(--accent);font:inherit;cursor:pointer;padding:0}
 /* Phones: iOS zooms the page when a field's text is under 16px, and the page then drifts. Keep fields at 16px and
@@ -7307,6 +7458,16 @@ _UI_JS_SRC = r'''
     setTimeout(() => { if (!e.defaultPrevented) root.classList.add("nav-wait"); }, 0);
   });
   addEventListener("pageshow", () => root.classList.remove("nav-wait"));
+
+  // Smart stack: the dots follow the card in view.
+  document.querySelectorAll(".smart").forEach(st => {
+    const track = st.querySelector(".sc-track"), dots = st.querySelectorAll(".sc-dots i");
+    if (!track || !dots.length) return;
+    track.addEventListener("scroll", () => {
+      const i = Math.round(track.scrollLeft / (track.firstElementChild.offsetWidth + 12));
+      dots.forEach((d, j) => d.classList.toggle("on", j === i));
+    }, {passive: true});
+  });
 
   // Glass shine on window pictures: follows the cursor over a picture, or
   // the phone's tilt when that's switched on (iPhone asks once, on a tap).
@@ -7935,6 +8096,8 @@ UI_ICONS = {
     "money": '<rect x="3" y="6" width="18" height="13.5" rx="3"/><path d="M3 10.5h18M15.5 15h2.5"/>',
     "settings": '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
     "play": '<path d="M7 5l12 7-12 7z"/>',
+    "bell": '<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
+    "check": '<rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/>',
     "send": '<path d="M5 12l15-7-5 15-2.5-6.5z"/><path d="M12.5 13.5L20 5"/>',
     "photo": '<rect x="3.5" y="5" width="17" height="14" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M4 17l5-4.5 3.5 3 3-2.5L20 17"/>',
     "users": '<circle cx="9" cy="8.5" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 5.2a3.5 3.5 0 0 1 0 6.6M18.5 20a6.5 6.5 0 0 0-2.7-5.3"/>',
@@ -8013,7 +8176,11 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
         f'<div class="label">Crew</div>{crew}</aside><main class="main">{body}</main></div>'
         f'<nav class="tabbar" aria-label="Main">{nav}</nav>'
         + _json_script("THETA_LATEST", latest_by_channel(chat))
-        + f'<script src="/ui.js?v={_ASSET_V}"></script></body></html>')
+        + f'<script src="/ui.js?v={_ASSET_V}"></script>'
+        # Some of what's shown was stale: fetch new data now, for the next load (you don't wait on it).
+        + ('<script>setTimeout(() => fetch("/api/refresh", {method: "POST", headers: window.THETA_H, body: "{}"})'
+           '.catch(() => {}), 1200);</script>' if getattr(_REQ, "stale", False) else "")
+        + '</body></html>')
 
 
 def _ago(ts, now=None):
@@ -8104,6 +8271,85 @@ def kpi_html(value, label, sub="", frac=None, color="var(--accent)", icon="bolt"
     sub_html = f'<div class="s">{html.escape(sub)}</div>' if sub else ""
     return (f'<{tag} class="kpi"{attrs}>{lead}<div><div class="v">{html.escape(value)}</div>'
             f'<div class="l">{html.escape(label)}</div>{sub_html}</div></{tag}>')
+
+
+# ---- Smart stack: one widget slot on Home you swipe through, like the
+# iPhone's. Cards come from stored data only (no slow fetches) and are
+# ordered by how much they matter right now.
+def stack_cards(now, todays, status, news, cards):
+    out = []
+
+    def add(score, kind, eyebrow, title, sub, href, tone=""):
+        out.append({"score": score, "kind": kind, "eyebrow": eyebrow, "title": title, "sub": sub, "href": href, "tone": tone})
+    t = now.timestamp()
+    for r in reminders():  # due within the hour, overdue, or waiting to be marked done
+        if r.get("pending") or r["at"] <= t + 3600:
+            late = r["at"] <= t
+            add(100 if late or r.get("pending") else 92, "remind", "Remi · reminder",
+                r["what"], "Waiting for you to mark it done" if r.get("pending") else
+                ("Due now" if late else f"At {_clock(datetime.fromtimestamp(r['at'], hub_tz()))}"), "/calendar#reminders", "warn")
+    timed = [e for e in todays if not e["all_day"] and isinstance(e["start"], datetime) and e["end"] > now]
+    if timed:
+        e = timed[0]
+        mins = (e["start"] - now).total_seconds() / 60
+        add(95 if mins <= 120 else 70, "calendar", "Up next" if mins > 0 else "Happening now", e["title"],
+            (f"{_clock(e['start'])}" + (f" · {e['location']}" if e.get("location") else "")
+             + ((f" · in {int(mins)} min" if mins < 60 else f" · in {int(mins // 60)} h {int(mins % 60)} min")
+                if 0 < mins < 600 else "")), "/calendar")
+    elif todays:
+        add(45, "calendar", "Today", todays[0]["title"], f"{len(todays)} on the calendar today", "/calendar")
+    spent = sum(v["spent"] for v in status.values())
+    budget = sum(v["budget"] or 0 for v in status.values())
+    over = [(c, v) for c, v in status.items() if v["budget"] and v["spent"] >= v["budget"]]
+    if over:
+        c, v = max(over, key=lambda cv: cv[1]["spent"] / cv[1]["budget"])
+        add(88, "money", "Glass · over budget", f"{c}: ${v['spent']:,.0f} of ${v['budget']:,.0f}",
+            f"{len(over)} categor{'y' if len(over) == 1 else 'ies'} over this month", "/money", "bad")
+    elif budget:
+        share = spent / budget
+        add(74 if share >= 0.9 else 30, "money", "Glass · this month", f"{share:.0%} of budget used",
+            f"${spent:,.0f} of ${budget:,.0f}", "/money", "warn" if share >= 0.9 else "")
+    breaking = [w for w in news if w.get("tag")]
+    if breaking:
+        add(84, "news", f"Breaking · {breaking[0]['source']}", breaking[0]["title"], "Tap to read", breaking[0].get("url") or "/#news", "bad")
+    elif news:
+        add(25, "news", f"Top story · {news[0]['source']}", news[0]["title"], f"{len(news)} stories from your outlets", "/#news")
+    today = now.date().isoformat()
+    out_today = [x for x in releases(now.date()) if x["date"] == today and x.get("followed")]
+    if out_today:
+        add(80, "release", "Out today", out_today[0]["title"], f"{RELEASE_KINDS[out_today[0]['kind']].rstrip('s').title()}"
+            + (f" · +{len(out_today) - 1} more" if len(out_today) > 1 else ""), "/lenz")
+    items, done = daily_items(), daily_done()
+    left = [i for i in items if i["id"] not in done]
+    if items:
+        add(66 if left and now.hour >= 18 else 35 if left else 15, "daily", "Today's check",
+            "All done" if not left else f"{len(left)} left: {left[0]['text']}",
+            f"{daily_streak()}-day streak", "/#today", "warn" if left and now.hour >= 18 else "")
+    lz = (cards or {}).get("lenz")
+    if lz and t - lz.get("at", 0) < 6 * 3600:
+        add(55, "watch", f"Lenz · {lz.get('source') or 'new'}", lz["title"], _first_line(lz.get("text", "")), lz.get("url") or "/lenz")
+    return sorted(out, key=lambda c: -c["score"])
+
+
+_STACK_ICONS = {"remind": "bell", "calendar": "calendar", "money": "money", "news": "news", "release": "play",
+                "daily": "check", "watch": "play"}
+
+
+def stack_html(cards):
+    if not cards:
+        return ""
+    esc = html.escape
+
+    def card(c):
+        ext = c["href"].startswith("http")
+        icon = ui_icon(_STACK_ICONS.get(c["kind"], "bolt")) if _STACK_ICONS.get(c["kind"]) in UI_ICONS else ""
+        return (f'<a class="sc {c["tone"]}" href="{esc(c["href"])}"' + (' target="_blank" rel="noopener"' if ext else "")
+                + f'><div class="sc-e">{icon}<span>{esc(c["eyebrow"])}</span></div><div class="sc-t">{esc(c["title"])}</div>'
+                f'<div class="sc-s">{esc(c["sub"])}</div></a>')
+    dots = "".join(f'<i{" class=on" if i == 0 else ""}></i>' for i in range(len(cards)))
+    return (f'<section class="smart" aria-label="Smart stack, most important first"><div class="sc-track">'
+            + "".join(card(c) for c in cards) + f'</div>' + (f'<div class="sc-dots" aria-hidden="true">{dots}</div>' if len(cards) > 1 else "")
+            + '</section>')
 
 
 # ---- Today's check: a short list of daily habits on Home (read the news,
@@ -8258,35 +8504,18 @@ def home_page(headers):
     hello = "Good morning" if 4 <= now.hour < 12 else "Good afternoon" if now.hour < 18 else "Good evening"
     month = now.strftime("%Y-%m")
     status = month_status(month)
-    spent = sum(v["spent"] for v in status.values())
-    budget = sum(v["budget"] or 0 for v in status.values())
-    if budget:
-        share = spent / budget
-        k_money = kpi_html(f"{share:.0%}", "Budget used", f"${spent:,.0f} of ${budget:,.0f}", share,
-                           "var(--bad)" if share >= 1 else "var(--warn)" if share >= 0.9 else "var(--accent)", href="/money")
-    else:
-        k_money = kpi_html(f"${spent:,.0f}", "Spent this month", "No budgets set", icon="money", href="/money")
     todays = []
     if calendar_linked():
         try:
             todays = [o for o in calendar_events(now.date(), now.date())]
         except Exception:
             todays = []
-    k_cal = kpi_html(str(len(todays)) if calendar_linked() else "–", "On today",
-                     (todays[0]["title"] if todays else "Nothing scheduled") if calendar_linked() else "No calendar linked",
-                     icon="calendar", href="/calendar")
-    online = sum(1 for a in statuses if a["online"] and a["bot_id"] in AGENTS)
-    k_crew = kpi_html(f"{online}/{len(AGENTS)}", "Crew online", "in the last 10 min",
-                      online / len(AGENTS), "var(--good)", href="/chat")
-    breaking = sum(1 for w in news if w.get("tag"))
-    k_news = kpi_html(str(breaking) if breaking else str(len(news)), "Breaking" if breaking else "Top stories",
-                      f"from {len({w['source'] for w in news})} outlets", icon="news")
     swipe = lambda ws: "".join(win_html(w) for w in ws)
     body = (
         f'<header class="top tight"><div><p class="eyebrow">{now:%A, %B} {now.day}</p><h1>{hello}</h1></div>'
         f'<button class="btn rr" type="button" data-run-round="round-status" aria-label="Run a round">{ui_icon("play")}'
         f'<span>Run a round</span></button></header><p class="note" id="round-status" style="margin:-8px 0 14px"></p>'
-        f'<section class="kpis" aria-label="Today at a glance">{k_money}{k_cal}{k_crew}{k_news}</section>'
+        + stack_html(stack_cards(now, todays, status, news, cards))
         + daily_card() +
         f'<div class="sect"><h2>Your crew</h2><a href="/chat">Open chat →</a></div>'
         f'<section class="wins" aria-label="Agent windows">{"".join(win_html(w) for w in crew)}</section>'
@@ -8783,50 +9012,75 @@ _DEVICES_JS = """
     if (!d.ok) { note.textContent = d.error; return; }
     if (all) location.reload(); else b.closest("li").remove();
   });
+  // Tell the hub what this device is (the Home Screen app?) and which
+  // notification sign-up it holds, so the list pairs them up.
+  (async () => {
+    let endpoint = null;
+    try {
+      const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
+      const sub = reg && await reg.pushManager.getSubscription();
+      endpoint = sub ? sub.endpoint : null;
+    } catch (_) {}
+    const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+    try {
+      const d = await (await fetch("/api/devices/hello", {method: "POST", headers: window.THETA_H,
+        body: JSON.stringify({standalone, endpoint})})).json();
+      if (d.changed) location.reload();
+    } catch (_) {}
+  })();
 })();
 """
 
 
+def device_name(d):
+    """'iPhone · Home Screen app' when Settings said so, else from the user agent."""
+    return d["label"].split(" · ")[0] + " · " + d["app"] if d.get("app") else d["label"]
+
+
 def devices_card(headers):
+    """One list: each device, whether it's this one, and whether it gets notifications."""
     r, me = devices_report(), current_session(headers) or getattr(_REQ, "session", None) or {}
     esc = html.escape
-    rows = "".join(
-        f'<li><div class="brow" style="align-items:center"><span><b>{esc(d["label"])}</b>'
-        + (' <span class="chip">This device</span>' if d["id"] == me.get("id") else "")
-        + '</span>' + ('' if d["id"] == me.get("id") else
-                       f'<button class="btn ghost small" type="button" data-signout="{esc(d["id"])}">Sign out</button>')
-        + f'</div><div class="muted small">{esc(d["how"])} · {esc(d.get("place") or "place unknown")} · IP {esc(d.get("ip") or "?")}'
-          f'<br>Signed in {_when(d["made"])} · last seen {_when(d["seen"])}</div></li>'
-        for d in r["sessions"])
-    last = (_meta_json("push:last", {}) or {})
-    lastline = (f'<p class="muted small">Last push ({_when(last["at"])}): ' + "; ".join(
-        ("✓ " if x["ok"] else "✗ ") + esc(x["device"]) + ("" if x["ok"] else f' ({esc(x.get("why") or "")})')
-        for x in last.get("results", [])) + '</p>') if last.get("results") else ""
-    push = "".join(f'<li><div class="brow" style="align-items:center"><span>{esc(x["service"])}</span>'
-                   f'<button class="btn ghost small" type="button" data-pushrm="{esc(x["id"])}">Remove</button></div>'
-                   f'<div class="muted small">{esc(x["device"])}'
-                   + (f' · {esc(x["place"])}' if x["place"] else "") + (f' · added {_when(x["made"])}' if x["made"] else "")
-                   + '</div></li>' for x in r["push"])
-    keys = "".join(f'<li>{esc(k["label"])} <span class="muted small">via {esc(k["via"])}</span><div class="muted small">'
-                   f'{esc(k.get("place") or "?")} · IP {esc(k.get("ip") or "?")} · {k["uses"]}× · last {_when(k["seen"])}</div></li>'
-                   for k in r["key_users"])
-    fails = "".join(f'<li class="small">{_when(f["at"])} · {esc(f["stage"])} on {esc(f["device"])} at {esc(f["site"])}: '
-                    f'{esc(f["error"])}</li>' for f in reversed(r["pk_fails"]))
-    pfails = "".join(f'<li class="small">{_when(f["at"])} · {esc(f["stage"])} on {esc(f["device"])} '
-                     f'({"Home Screen app" if f["standalone"] else "in the browser"}): {esc(f["error"])}</li>'
-                     for f in reversed(r["push_fails"]))
+    subs = push_subs()
+    by_sess = {x.get("sess") for x in subs if x.get("sess")}
+    ids = {d["id"] for d in r["sessions"]}
+    loose = [x for x in subs if x.get("sess") not in ids]  # notifications not tied to a signed-in device
+    devs = sorted(r["sessions"], key=lambda d: (d["id"] != me.get("id"), -d["seen"]))
+    recent_fail = next((f for f in reversed(r["push_fails"]) if time.time() - f["at"] < 86400), None)
+
+    def row(d):
+        mine = d["id"] == me.get("id")
+        on = d["id"] in by_sess
+        why = (f' · <span class="bad-t">{esc(recent_fail["error"])}</span>' if mine and not on and recent_fail else "")
+        return (f'<li class="dev"><div class="brow" style="align-items:center"><span><b>{esc(device_name(d))}</b>'
+                + (' <span class="chip">This device</span>' if mine else "") + '</span>'
+                + ('' if mine else f'<button class="btn ghost small" type="button" data-signout="{esc(d["id"])}">Sign out</button>')
+                + f'</div><div class="small"><span class="{"ok-t" if on else "muted"}">'
+                  f'{"Notifications on" if on else "Notifications off"}</span>{why}'
+                  f'<span class="muted"> · active {_when(d["seen"])}</span></div></li>')
+    rows = "".join(row(d) for d in devs)
+    rows += "".join(f'<li class="dev"><div class="brow" style="align-items:center"><span><b>{esc(x["device"])}</b></span>'
+                    f'<button class="btn ghost small" type="button" data-pushrm="{esc(x["id"])}">Remove</button></div>'
+                    f'<div class="small"><span class="ok-t">Notifications on</span><span class="muted"> · not signed in '
+                    f'here (open Settings on that device to link it)</span></div></li>'
+                    for x in r["push"] if any(hashlib.sha1(y.get("endpoint", "").encode()).hexdigest()[:10] == x["id"] for y in loose))
+    details = "".join(f'<li class="small">{esc(device_name(d))}: {esc(d["how"])}, signed in {_when(d["made"])}, '
+                      f'{esc(d.get("place") or "place unknown")}, IP {esc(d.get("ip") or "?")}</li>' for d in devs)
+    details += "".join(f'<li class="small">Used the key directly: {esc(k["label"])} via {esc(k["via"])}, '
+                       f'{k["uses"]}×, last {_when(k["seen"])}, IP {esc(k.get("ip") or "?")}</li>' for k in r["key_users"])
+    details += "".join(f'<li class="small">Notifications didn\'t turn on ({_when(f["at"])}, {esc(f["device"])}): '
+                       f'{esc(f["error"])}</li>' for f in reversed(r["push_fails"]))
+    details += "".join(f'<li class="small">Face ID failed ({_when(f["at"])}, {esc(f["device"])}): {esc(f["error"])}</li>'
+                       for f in reversed(r["pk_fails"]))
     return ('<section class="card stack" id="devices" aria-label="Devices"><div class="brow"><h2>Devices</h2>'
             + (f'<button class="btn ghost small" type="button" data-signout="*">Sign out all others</button>'
-               if len(r["sessions"]) > 1 else "") + '</div>'
-            '<p class="muted small">Every browser signed in to Theta, with where it signed in from (roughly, by '
-            'internet address: phones on cellular data often show a city near the carrier\'s hub, not where you are). A new sign-in also pings your phone. Devices on the old sign-in show up the next time '
-            'they open Theta; to cut off anything you can\'t see here, change <code>DASHBOARD_KEY</code> in Vercel and '
-            'redeploy.</p>'
-            f'<h3>Signed in ({len(r["sessions"])})</h3><ul class="list">{rows or "<li class=empty>None yet.</li>"}</ul>'
-            f'<h3>Getting notifications ({len(r["push"])})</h3>{lastline}<ul class="list">{push or "<li class=empty>None.</li>"}</ul>'
-            + (f'<h3>Used the key directly</h3><ul class="list">{keys}</ul>' if keys else "")
-            + (f'<h3>Why notifications didn\'t turn on</h3><ul class="list">{pfails}</ul>' if pfails else "")
-            + (f'<h3>Recent Face ID failures</h3><ul class="list">{fails}</ul>' if fails else "")
+               if len(devs) > 1 else "") + '</div>'
+            '<p class="muted small">Everything signed in to Theta. Sign out anything you don\'t recognize.</p>'
+            f'<ul class="list">{rows or "<li class=empty>None yet.</li>"}</ul>'
+            + (f'<details class="small"><summary class="muted">Details: where and how each signed in</summary>'
+               f'<p class="muted small">Locations are rough: phones on cellular data often show the carrier\'s hub. '
+               'To cut off anything not listed, change <code>DASHBOARD_KEY</code> in Vercel and redeploy.</p>'
+               f'<ul class="list">{details}</ul></details>' if details else "")
             + f'<p class="note"></p><script>{_DEVICES_JS}</script></section>')
 
 
@@ -10593,7 +10847,8 @@ def handle(method, path, query, headers, body):
                 return _json(400, {"ok": False, "error": "not a push subscription"})
             subs = [x for x in push_subs() if x.get("endpoint") != sub["endpoint"]]
             subs.append({"endpoint": sub["endpoint"], "keys": {"p256dh": sub["keys"]["p256dh"], "auth": sub["keys"]["auth"]},
-                         "made": time.time(), "device": device_label(headers.get("user-agent")), "place": _place(headers)})
+                         "made": time.time(), "device": device_label(headers.get("user-agent")), "place": _place(headers),
+                         "sess": (current_session(headers) or _REQ.session or {}).get("id")})
             store().set_meta("push:subs", json.dumps(subs[-10:]))
             store().set_meta("push:last_error", "")
             post_event("mistral", "Mistral will now send phone notifications to a new device")
@@ -10705,6 +10960,31 @@ def handle(method, path, query, headers, body):
             store().add_chat("james", r["text"][:4000], channel=ch, buttons=r["buttons"])
             return _json(200, {"ok": True, "messages": allchat_view(channel=str(data.get("channel") or ch)),
                                "latest": latest_by_channel()})
+
+        if path == "/api/devices/hello":  # Settings says what this device is: Home Screen app? its notification sign-up?
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            me = current_session(headers) or _REQ.session
+            if not me:
+                return _json(200, {"ok": True, "changed": False})
+            changed = False
+            app = "Home Screen app" if data.get("standalone") else None
+            with _SESS_LOCK:
+                live = sessions()
+                for v in live.values():
+                    if v["id"] == me["id"] and app and v.get("app") != app:
+                        v["app"], changed = app, True
+                if changed:
+                    store().set_meta("sessions", json.dumps(live))
+            endpoint = str(data.get("endpoint") or "")
+            if endpoint:
+                subs = push_subs()
+                for x in subs:
+                    if x.get("endpoint") == endpoint and x.get("sess") != me["id"]:
+                        x["sess"], changed = me["id"], True
+                if changed:
+                    store().set_meta("push:subs", json.dumps(subs))
+            return _json(200, {"ok": True, "changed": changed})
 
         if path == "/api/devices/signout":
             if not _auth_dashboard(query, headers):
@@ -10838,7 +11118,22 @@ def handle(method, path, query, headers, body):
             cron = bool(CRON_SECRET) and headers.get("authorization") == f"Bearer {CRON_SECRET}"
             if not (cron or (DASHBOARD_KEY and _auth_dashboard(query, headers))):
                 return _json(401, {"ok": False, "error": "CRON_SECRET or dashboard key required"})
-            return _json(200, {"ok": True, **run_tick()})
+            out = run_tick()
+            try:
+                refresh_shared()  # keep feeds, trending and calendars fresh for the next page
+            except Exception as e:
+                print(f"refresh during tick failed: {e!r}")
+            return _json(200, {"ok": True, **out})
+
+        if path == "/api/refresh":  # a page saw stale data and asked for new, after it loaded
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            last = float(store().get_meta("refresh:at") or 0)
+            if time.time() - last < SNAP_REFRESH_EVERY:
+                return _json(200, {"ok": True, "skipped": "refreshed moments ago"})
+            store().set_meta("refresh:at", str(time.time()))
+            refresh_shared()
+            return _json(200, {"ok": True})
 
         if path == "/api/reminders" or path.startswith("/api/reminders/"):
             if not _auth_dashboard(query, headers):
@@ -11140,6 +11435,7 @@ def app(environ, start_response):
     body = environ["wsgi.input"].read(length) if length > 0 else b""
     ip = client_ip(environ)
     _REQ.cookies, _REQ.session, _REQ.quiet, _REQ.meta, _REQ.calls = [], None, False, {}, 0
+    _REQ.stale, _REQ.refreshing = False, False
     t0 = time.time()
     _REQ.page = method == "GET" and not path.startswith("/api/")
     try:
