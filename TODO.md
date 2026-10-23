@@ -94,8 +94,11 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
 - [ ] Merge and deploy Garage Gym's hub-commands change so James can log.
 
 ### 10. High brain (Theta on Claude)
-- [ ] console.anthropic.com → API keys → create one → Vercel
-      `ANTHROPIC_API_KEY` (Sensitive), redeploy.
+- [ ] platform.claude.com/settings/keys → Create key → Vercel
+      `ANTHROPIC_API_KEY` (Sensitive), redeploy. A personal key
+      (`sk-ant-usr…`, Linked account: you) works. If the key isn't scoped to
+      one workspace, also set `ANTHROPIC_WORKSPACE_ID` (the `wrkspc_…` ID
+      on the Console's Workspaces page). Wiring says what's wrong if it fails.
 - [ ] Console → Limits → set a $15 monthly spend limit (the hub also
       stops at `MASTER_MONTHLY_CAP_USD`, 15 by default).
 - [ ] Settings → Wiring → Theta should read "connected".

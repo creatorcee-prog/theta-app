@@ -1485,13 +1485,23 @@ def anthropic_key_hint():
     notes = []
     if key != raw:
         notes.append("it had spaces, a line break or quotes around it (now ignored)")
-    if not key.startswith("sk-ant-api"):
-        notes.append("it doesn't start with sk-ant-api, so it may be the wrong value "
-                     "(an admin key, a key ID or a Claude.ai login won't work)")
+    if key.startswith("sk-ant-admin"):
+        notes.append("it's an Admin API key, which can't send messages; make a regular key "
+                     "(Linked account: you, or a service account)")
+    elif key.startswith("sk-ant-oat"):
+        notes.append("it's a sign-in token from a Claude subscription, not a Console API key")
+    elif not key.startswith("sk-ant-"):
+        notes.append("it doesn't start with sk-ant-, so it may be the wrong value (a key's name or ID won't work)")
     elif len(key) < 40:
         notes.append(f"it's only {len(key)} characters, so it may be cut off")
-    return ("; ".join(notes) + ". " if notes else "its shape looks right, so it was likely revoked, expired, "
-            "or deleted in the Console. ") + "Make a new key at console.anthropic.com, update it in Vercel, then redeploy"
+    return ("; ".join(notes) + ". " if notes else "its shape looks right, so it has likely expired or been disabled "
+            "or deleted in the Console (expired keys can't be turned back on). ") + (
+        "Make a new key at platform.claude.com/settings/keys, update it in Vercel, then redeploy")
+
+
+_WORKSPACE_HINT = ("this key isn't tied to one workspace, so Anthropic needs to be told which to use: set "
+                   "ANTHROPIC_WORKSPACE_ID in Vercel (the wrkspc_... ID from the Console's Workspaces page), "
+                   "or make a new key scoped to a workspace, then redeploy")
 
 
 def claude_chat(messages, max_tokens):
@@ -1504,8 +1514,10 @@ def claude_chat(messages, max_tokens):
              for m in messages if m["role"] in ("user", "assistant")]
     if not convo or convo[0]["role"] != "user":
         convo.insert(0, {"role": "user", "content": "(continue)"})
+    workspace = _clean_secret(os.environ.get("ANTHROPIC_WORKSPACE_ID", ""))
     client = anthropic.Anthropic(api_key=_clean_secret(os.environ.get("ANTHROPIC_API_KEY", "")),
-                                 timeout=MASTER_TIMEOUT, max_retries=1)
+                                 timeout=MASTER_TIMEOUT, max_retries=1,
+                                 default_headers={"anthropic-workspace-id": workspace} if workspace else None)
     try:
         resp = client.beta.messages.create(
             model=MASTER_MODEL_ID, max_tokens=max(4000, max_tokens * 4), system=system or anthropic.omit,
@@ -1515,11 +1527,16 @@ def claude_chat(messages, max_tokens):
         raise LLMError("Anthropic rejected ANTHROPIC_API_KEY: " + anthropic_key_hint())
     except anthropic.PermissionDeniedError as e:
         raise LLMError(f"Anthropic refused the request: {e.message[:120]}")
-    except anthropic.NotFoundError:
+    except anthropic.NotFoundError as e:
+        if "workspace" in str(e.message).lower():
+            raise LLMError("Anthropic can't find that workspace for this key: check ANTHROPIC_WORKSPACE_ID "
+                           "(and that the key's owner has access to it)")
         raise LLMError(f"Anthropic doesn't know {MASTER_MODEL_ID} (MASTER_MODEL_ID)")
     except anthropic.RateLimitError:
         raise LLMError("Anthropic rate limit or spend limit reached")
     except anthropic.APIStatusError as e:
+        if "anthropic-workspace-id" in str(e.message):
+            raise LLMError("Anthropic needs a workspace: " + _WORKSPACE_HINT)
         raise LLMError(f"Anthropic returned {e.status_code}: {str(e.message)[:120]}")
     except anthropic.APIConnectionError as e:
         raise LLMError(f"Anthropic unreachable: {e!r}"[:160])
