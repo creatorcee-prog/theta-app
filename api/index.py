@@ -1391,7 +1391,7 @@ def _tool_project(arg, agent):
 SETTABLE = {"LENZ_YOUTUBE", "LENZ_SUBREDDITS", "LENZ_TWITCH", "LENZ_FEEDS_MINUTES", "GLASS_HOLDINGS", "GLASS_WATCHLIST",
             "GLASS_BUDGETS", "GLASS_MOVE_ALERT", "GLASS_BENCHMARK", "BIRTHDAYS", "DIGEST_TIME", "DAILY_NUDGE_TIME",
             "HUB_TIMEZONE", "HOME_LOCATION", "GMAIL_IMPORTANT", "GMAIL_ARCHIVE", "MASTER_MONTHLY_CAP_USD",
-            "VISION_MODEL", "LOW_BRAIN_MODEL", "WIDGET_CACHE_SECONDS", "NEWS_FEEDS", "ENTERTAINMENT_FEEDS"}
+            "VISION_MODEL", "LOW_BRAIN_MODEL", "WIDGET_CACHE_SECONDS", "NEWS_FEEDS", "ENTERTAINMENT_FEEDS", "CHAT_MODE"}
 VERCEL_TOKEN = os.environ.get("VERCEL_TOKEN", "")
 VERCEL_PROJECT = os.environ.get("VERCEL_PROJECT", "")
 VERCEL_TEAM_ID = os.environ.get("VERCEL_TEAM_ID", "")
@@ -1491,6 +1491,25 @@ def apply_proposal(pid, yes):
         return f"✗ Couldn't do it: {e}"
 
 
+def _tool_chart(arg, agent):
+    """Charter draws a chart from real hub data and posts it."""
+    got = charter_reply("chart " + arg)
+    if not got:
+        raise ValueError("Charter can chart: spending, daily spending, calendar busyness, news coverage, chat activity")
+    caption, url = got
+    store().add_chat("charter", caption, image=url)
+    return f"Charter posted the chart: {caption}"
+
+
+def _tool_workout(arg, agent):
+    """Hand a workout to James (Garage Gym), who posts it with his own buttons."""
+    r = james_workout(arg)
+    if not r:
+        raise ValueError("that isn't a workout command James knows (like: bench 185 4x8, done, undo, today)")
+    store().add_chat("james", r["text"][:4000], buttons=r.get("buttons"))
+    return "Sent to James; his reply is in the chat" + (" with buttons" if r.get("buttons") else "")
+
+
 def _tool_ask_qwerty(arg, agent):
     """Theta asks QWERTY to propose a change; QWERTY's proposal is posted for the user."""
     r = allchat_reply("qwerty", [{"from": agent, "text": "@QWERTY " + arg.strip()[:800], "at": time.time()}])
@@ -1512,7 +1531,10 @@ TOOLS = {
     "propose": ("propose | KEY = value, or KEY += more, for a setting; or issue <title> - <details> for a code change. "
                 "Only happens when the user taps Approve", _tool_propose, {"qwerty"}),
     "ask_qwerty": ("ask_qwerty | <the change you want made>   (QWERTY proposes it; the user approves)",
-                   _tool_ask_qwerty, {"theta"}),
+                   _tool_ask_qwerty, {"theta", "mistral"}),
+    "chart": ("chart | spending, daily, calendar, coverage or activity   (Charter posts it)", _tool_chart, {"theta", "mistral"}),
+    "workout": ("workout | <sets like bench 185 4x8, or done, undo, today>   (James logs it in Garage Gym)",
+                _tool_workout, {"theta", "mistral"}),
 }
 
 
@@ -2173,8 +2195,117 @@ def mentioned_agents(text):
     return out[:ALLCHAT_MENTIONS]
 
 
-def allchat_reply(agent, thread):
-    """One agent's reply to the latest message, with the thread as context."""
+# ---- Front desk: one agent answers every chat message (CHAT_MODE=desk, the
+# default). Mistral answers with the whole crew's facts and tools in front
+# of him, and hands hard questions to Theta. The crew still posts its own
+# rounds, alerts and updates; CHAT_MODE=crew brings back each agent answering.
+CHAT_MODE = os.environ.get("CHAT_MODE", "desk").strip().lower()
+DESK = "mistral"
+
+
+def crew_facts():
+    """What every agent knows, for the front desk (exact data; no model calls)."""
+    parts = []
+    for name, fn in (("Glass (money)", glass_context), ("Remi (family calendar and reminders)", remi_context),
+                     ("Lenz (watch, play, read)", lenz_context), ("Charter (charts)", charter_context)):
+        try:
+            got = fn()
+        except Exception as e:  # one broken source shouldn't cost the answer
+            got = f" (couldn't read it: {e!r})"[:120]
+        if got and got.strip():
+            parts.append(f"\n\n## {name}{got}")
+    try:
+        j = james_summary()
+        if j:
+            parts.append("\n\n## James (Garage Gym training, exact)\n" + json.dumps(j)[:1500])
+    except Exception:
+        pass
+    settable = ", ".join(f"{k}={os.environ.get(k, '') or '(not set)'}" for k in sorted(SETTABLE))
+    parts.append(f"\n\n## Settings QWERTY can change on approval (exact)\n{settable}")
+    return "".join(parts)
+
+
+def desk_system(agent):
+    others = ", ".join(f"{v['name']} ({TIER_LABELS[v['tier']]})" for k, v in AGENTS.items() if k != agent)
+    role = ("\n\nYou're the front desk: you answer every message in the chat, for the whole crew ("
+            + others + "). The user may @mention someone; you still answer, using that agent's facts below, and "
+            "you can say whose area it is (\"Remi's calendar shows…\"). Give one clear answer. Use only the "
+            "facts below, the hub map and the chat; if something isn't there, say you don't know. Use the tools "
+            "for anything that changes something.")
+    if agent == DESK:
+        role += (" If the question needs careful thought (setting up or fixing the hub, planning across several "
+                 "parts, money decisions) or you're not sure, reply with exactly one line, ESCALATE: <why>, and "
+                 "Theta will answer instead.")
+    return system_prompt(agent, tools=True) + role + crew_facts()
+
+
+def desk_reply(thread):
+    """(agent who answered, reply) for the latest message."""
+    can_search = bool(os.environ.get("GEMINI_API_KEY"))
+    search = (" If answering well needs current facts from the web that you don't have, reply with exactly one "
+              "line, SEARCH: <query>, and nothing else; you'll get the results." if can_search else "")
+    transcript = "\n".join(chat_line(m) for m in thread[-CHAT_HISTORY:])
+    last = thread[-1]
+    pic = last["from"] == "you" and (last.get("image") or "").startswith("/upload/")
+
+    def prompt_for(agent, extra=""):
+        system = desk_system(agent) + search + extra
+        ask = (f"The chat so far:\n{transcript}\n\nAnswer the latest message as {AGENTS[agent]['name']}. "
+               "Write only your message, without your name in front.")
+        content = ask
+        if pic:
+            data = upload_data(last["image"])
+            if agent == "theta" and master_ready() and data:
+                content = [{"type": "text", "text": ask + "\n\nThe user's image is attached."}, image_part(data)]
+            else:
+                ask = content = ask + seen_note(last)
+        return system, ask, content
+
+    def ask_as(agent, extra=""):
+        system, ask, content = prompt_for(agent, extra)
+        return system, ask, llm_chat(AGENTS[agent]["tier"], [{"role": "system", "content": system},
+                                                              {"role": "user", "content": content}])
+
+    agent = DESK
+    system, ask, reply = ask_as(agent)
+    if re.match(r"^\s*ESCALATE:", reply.strip(), re.I):
+        if master_ready():
+            agent = "theta"
+            system, ask, reply = ask_as(agent)
+        else:  # no Claude this month: Mistral answers as best he can
+            system, ask, reply = ask_as(DESK, " Theta isn't available right now, so don't escalate: answer it "
+                                              "yourself as best you can, and say plainly what you're unsure of.")
+            if re.match(r"^\s*ESCALATE:", reply.strip(), re.I):
+                reply = ("That one needs Theta, and he isn't available right now (Claude is off or over this "
+                         "month's cap). Ask me again later, or check Settings → Wiring.")
+    m = re.match(r"^\s*SEARCH:\s*(.+)$", reply.strip(), re.I)
+    if m and can_search:
+        reply = answer_with_search(agent, system, ask, m.group(1).strip()[:200])
+    return agent, run_actions(agent, reply)
+
+
+def desk_shortcut(thread):
+    """(agent, reply) when the message is a plain command another agent runs
+    instantly with no model call (@glass $42 dining, remind me..., I finished
+    X 9/10, @james bench 185 4x8, @charter chart spending), else None."""
+    last = thread[-1]
+    if last["from"] != "you":
+        return None
+    clean = re.sub(r"@\w+[\s,]*", "", last["text"]).strip()
+    named = mentioned_agents(last["text"])
+    implied = (["glass"] if re.match(r"^(?:spent\s+)?\$\d", clean, re.I) else []) + \
+              (["remi"] if re.match(r"^remind me\b", clean, re.I) else []) + \
+              (["lenz"] if _WATCHED_RE.search(clean) and re.search(r"\d\s*(?:/\s*10|out of 10)", clean) else [])
+    for a in dict.fromkeys(named + implied):
+        if a in ("glass", "remi", "lenz", "charter") or (a == "james" and a in named):
+            got = quick_reply(a, thread)
+            if got:
+                return a, got
+    return None
+
+
+def quick_reply(agent, thread):
+    """The no-model replies (logging, reminders, charts, workouts), or None."""
     if agent == "glass" and thread[-1]["from"] == "you":
         parsed = parse_expense(thread[-1]["text"])
         if parsed:
@@ -2183,7 +2314,7 @@ def allchat_reply(agent, thread):
     if agent == "charter" and ("@charter" in text or any(w in text for w in ("chart", "graph", "plot", "visual"))):
         chart = charter_reply(thread[-1]["text"])
         if chart:
-            return chart  # (caption, image url): the caller posts it with the image
+            return chart
     if agent == "lenz" and thread[-1]["from"] == "you":
         quick = lenz_quick_reply(thread[-1]["text"])
         if quick:
@@ -2192,11 +2323,17 @@ def allchat_reply(agent, thread):
         quick = remi_quick_reply(thread[-1]["text"])
         if quick:
             return quick
-    if agent == "james":  # Garage Gym: a workout command, else a question
-        if thread[-1]["from"] == "you":
-            workout = james_workout(thread[-1]["text"])
-            if workout:
-                return workout
+    if agent == "james" and thread[-1]["from"] == "you":
+        return james_workout(thread[-1]["text"])
+    return None
+
+
+def allchat_reply(agent, thread):
+    """One agent's reply to the latest message, with the thread as context."""
+    quick = quick_reply(agent, thread)  # Charter's comes back as (caption, image url)
+    if quick:
+        return quick
+    if agent == "james":  # Garage Gym: not a workout command, so a question
         return james_ask([{"role": "user", "content": thread[-1]["text"]}])
     transcript = "\n".join(chat_line(m) for m in thread[-CHAT_HISTORY:])
     name = AGENTS[agent]["name"]
@@ -2291,9 +2428,9 @@ def pick_responders(thread, candidates=None):
 # own posts (round jobs post to their home channel).
 CHANNELS = [
     {"id": "all", "name": "all-agents", "members": [],
-     "about": "Everyone. Messages without an @mention go to whoever Mistral picks."},
+     "about": "Everyone. Mistral answers you here (Theta takes the hard ones)."},
     {"id": "news", "name": "news", "members": ["red", "blue", "gray"],
-     "about": "Red, Blue and Gray take on the day's stories. All three answer here."},
+     "about": "Red, Blue and Gray take on the day's stories."},
     {"id": "money", "name": "money", "members": ["glass", "charter"],
      "about": "Glass's budgets and Charter's charts."},
     {"id": "family", "name": "family", "members": ["remi"],
@@ -10993,9 +11130,25 @@ def handle(method, path, query, headers, body):
             st.add_chat("you", text.strip()[:2000], image=image, channel=ch)
             thread = (st.list_chat(CHAT_HISTORY) if ch == "all" else
                       [m for m in st.list_chat(ALLCHAT_KEEP) if message_channel(m) == ch][-CHAT_HISTORY:])
+            errors, routed = {}, []
+            if CHAT_MODE != "crew":  # the front desk answers (Theta for hard ones); plain commands run at once
+                try:
+                    who, reply = desk_shortcut(thread) or desk_reply(thread)
+                except (LLMError, ValueError, KeyError) as e:
+                    errors[AGENTS[DESK]["name"]] = str(e)
+                else:
+                    if isinstance(reply, tuple):  # Charter's (caption, chart url)
+                        st.add_chat(who, reply[0], image=reply[1], channel=ch)
+                    elif isinstance(reply, dict):
+                        st.add_chat(who, reply["text"][:4000], channel=ch, buttons=reply.get("buttons"))
+                    elif reply:
+                        st.add_chat(who, reply.strip()[:4000], channel=ch)
+                    if who == "theta":
+                        routed = [who]
+                return _json(200, {"ok": True, "messages": allchat_view(channel=ch), "errors": errors,
+                                   "routed": [AGENTS[a]["name"] for a in routed], "latest": latest_by_channel()})
             agents = mentioned_agents(text)
             members = CHANNEL_IDS[ch]["members"]
-            errors, routed = {}, []
             if not agents and ch == "news":
                 agents = list(members)  # the debate channel: all three weigh in
             elif not agents and len(members) == 1:

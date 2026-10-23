@@ -215,6 +215,23 @@ who runs in Garage Gym. Settings → **Memory and notes** lists both, each
 with a remove button (`POST /api/memory/remove`, `/api/notes/remove`
 `{"id"}`).
 
+## Chat: the front desk
+
+By default (`CHAT_MODE=desk`) Mistral answers every chat message, @mentions
+included, with the whole crew's facts in front of him: Glass's budgets,
+Remi's calendar and reminders, Lenz's library and channels, Charter's charts,
+James's training, the settings QWERTY can change, and the hub map. He has
+every tool (log spending, reminders, notes, charts, workouts for James,
+projects, ask QWERTY for a change). A hard question (setting up or fixing
+the hub, planning across several parts, money decisions) he hands to Theta
+with `ESCALATE:`, and Theta answers instead when Claude is connected.
+
+Plain commands still run instantly with no model call: `$42 groceries`,
+`remind me…`, `@lenz I finished X 9/10`, `@charter chart spending`,
+`@james bench 185 4x8`. The crew still posts its own agendas, alerts,
+uploads, news takes and round reports. `CHAT_MODE=crew` brings back each
+agent answering (Mistral picks who).
+
 ## QWERTY makes changes, with your approval
 
 No agent can edit code, deploy or change settings by itself. QWERTY can
