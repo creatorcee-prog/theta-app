@@ -2,6 +2,7 @@ import sys, json, threading, os, io, time, re
 sys.dont_write_bytecode = True
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 DB, CLAUDE, LOW = {}, [], []
+CUT = [0]  # how many next Claude replies run out of room before writing anything
 class Fake(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def _send(self, code, obj):
@@ -23,6 +24,11 @@ class Fake(BaseHTTPRequestHandler):
                 text = "On it.\nACTION: remind | friday 3pm | car registration"
             else:
                 text = "Here's what I see."
+            if CUT[0]:
+                CUT[0] -= 1
+                return self._send(200, {"id": "msg_c", "type": "message", "role": "assistant", "model": body["model"],
+                                        "content": [{"type": "thinking", "thinking": "", "signature": "x"}], "stop_reason": "max_tokens",
+                                        "stop_sequence": None, "usage": {"input_tokens": 300, "output_tokens": body["max_tokens"]}})
             first = len(CLAUDE) == 1
             usage = {"input_tokens": 300, "output_tokens": 40 if off else 120,
                      "cache_creation_input_tokens": 17000 if first else 0, "cache_read_input_tokens": 0 if first else 17000}
@@ -107,6 +113,17 @@ h.master_ready = lambda: False
 h.llm_chat("manager", [{"role": "user", "content": "status?"}])
 check("without Claude, the managers stay on Groq", len(CLAUDE) == n + 1 and LOW and LOW[-1][0] == "/groq")
 h.master_ready = lambda: True
+
+# a Claude reply that ran out of room before answering gets one more try, with more room
+CUT[0] = 1; n = len(CLAUDE)
+out = h.claude_chat([{"role": "user", "content": "hi"}], 800, model="claude-haiku-5-5", effort="low")
+check("out of room before answering: retried once with more room", out and len(CLAUDE) == n + 2 and CLAUDE[-1]["max_tokens"] > CLAUDE[-2]["max_tokens"])
+CUT[0] = 2
+try:
+    h.claude_chat([{"role": "user", "content": "hi"}], 800, model="claude-haiku-5-5", effort="low"); ok = False
+except h.LLMError as e:
+    ok = "max_tokens" in str(e)
+check("...only once: then it says why", ok)
 
 # the benchmark
 check("GET with nothing run yet", call("GET", "/api/bench", headers=K) == (200, {"ok": True}))

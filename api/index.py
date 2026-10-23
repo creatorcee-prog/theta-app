@@ -446,6 +446,8 @@ class MemoryStore:
             self.activity[bot_id] = activity
 
     def add_chat(self, sender, text, kind="message", image=None, channel=None, buttons=None, extra=None):
+        if _round_capture(sender, text, kind, image, buttons):
+            return {"id": 0, "from": sender, "text": text, "kind": kind, "at": _now()}
         item = {"id": self._next_id(), "from": sender, "text": text, "kind": kind, "at": _now(), **(extra or {})}
         if image:
             item["image"] = image
@@ -609,6 +611,8 @@ class KVStore:
             self._cmd("HSET", "hub:activity", bot_id, activity)
 
     def add_chat(self, sender, text, kind="message", image=None, channel=None, buttons=None, extra=None):
+        if _round_capture(sender, text, kind, image, buttons):
+            return {"id": 0, "from": sender, "text": text, "kind": kind, "at": _now()}
         item = {"id": self._next_id(), "from": sender, "text": text, "kind": kind, "at": _now(), **(extra or {})}
         if image:
             item["image"] = image
@@ -1468,7 +1472,7 @@ def _tool_project(arg, agent):
 SETTABLE = {"LENZ_YOUTUBE", "LENZ_SUBREDDITS", "LENZ_TWITCH", "LENZ_FEEDS_MINUTES", "GLASS_HOLDINGS", "GLASS_WATCHLIST",
             "GLASS_BUDGETS", "GLASS_MOVE_ALERT", "GLASS_BENCHMARK", "BIRTHDAYS", "DIGEST_TIME", "DAILY_NUDGE_TIME",
             "HUB_TIMEZONE", "HOME_LOCATION", "GMAIL_IMPORTANT", "GMAIL_ARCHIVE", "MASTER_MONTHLY_CAP_USD",
-            "VISION_MODEL", "LOW_BRAIN_MODEL", "DESK_MODEL", "WIDGET_CACHE_SECONDS", "NEWS_FEEDS", "ENTERTAINMENT_FEEDS", "CHAT_MODE"}
+            "VISION_MODEL", "LOW_BRAIN_MODEL", "DESK_MODEL", "ROUND_POSTS", "WIDGET_CACHE_SECONDS", "NEWS_FEEDS", "ENTERTAINMENT_FEEDS", "CHAT_MODE"}
 VERCEL_TOKEN = os.environ.get("VERCEL_TOKEN", "")
 VERCEL_PROJECT = os.environ.get("VERCEL_PROJECT", "")
 VERCEL_TEAM_ID = os.environ.get("VERCEL_TEAM_ID", "")
@@ -1589,6 +1593,28 @@ def _tool_workout(arg, agent):
     return "Sent to James; his reply is in the chat" + (" with buttons" if r.get("buttons") else "")
 
 
+def _tool_ask(arg, agent):
+    """A higher-up gives someone below them a task or question; their answer is
+    posted in the chat. Only downward: nobody answers a lower-ranked agent."""
+    who, _, ask = arg.partition("|")
+    names = {a: a for a in AGENTS} | {v["name"].lower(): a for a, v in AGENTS.items()}
+    target = names.get(who.strip().lstrip("@").lower())
+    if not target or not ask.strip():
+        raise ValueError("use ask | <agent> | <what you need from them>")
+    if rank(target) <= rank(agent):
+        raise ValueError(f"{AGENTS[agent]['name']} can only ask someone below them, not {AGENTS[target]['name']}")
+    if target == "qwerty":
+        return _tool_ask_qwerty(ask, agent)
+    activity(agent, f"{AGENTS[agent]['name']} asked {AGENTS[target]['name']}: {ask.strip()[:160]}")
+    r = allchat_reply(target, [{"from": agent, "text": f"@{AGENTS[target]['name']} {ask.strip()[:800]}", "at": time.time()}])
+    if isinstance(r, tuple):  # Charter's (caption, chart url)
+        store().add_chat(target, r[0], image=r[1], channel=getattr(_REQ, "ch", None))
+        return f"Asked {AGENTS[target]['name']}; the chart is in the chat"
+    text, buttons = (r["text"], r.get("buttons")) if isinstance(r, dict) else (r, None)
+    store().add_chat(target, str(text).strip()[:4000], buttons=buttons, channel=getattr(_REQ, "ch", None))
+    return f"Asked {AGENTS[target]['name']}; their answer is in the chat"
+
+
 def _tool_ask_qwerty(arg, agent):
     """Theta asks QWERTY to propose a change; QWERTY's proposal is posted for the user."""
     activity(agent, f"{AGENTS[agent]['name']} asked QWERTY: {arg.strip()[:160]}")
@@ -1613,6 +1639,7 @@ TOOLS = {
                 "Only happens when the user taps Approve", _tool_propose, {"qwerty"}),
     "ask_qwerty": ("ask_qwerty | <the change you want made>   (QWERTY proposes it; the user approves)",
                    _tool_ask_qwerty, {"theta", "mistral"}),
+    "ask": ("ask | <agent below you> | <what you need from them>   (they answer in the chat)", _tool_ask, {"theta", "mistral"}),
     "chart": ("chart | spending, daily, calendar, coverage or activity   (Charter posts it)", _tool_chart, {"theta", "mistral"}),
     "workout": ("workout | <sets like bench 185 4x8, or done, undo, today>   (James logs it in Garage Gym)",
                 _tool_workout, {"theta", "mistral"}),
@@ -1876,33 +1903,125 @@ def llm_chat(tier, messages, max_tokens=800):
             return claude_chat(messages, max_tokens, model=DESK_MODEL, effort=DESK_EFFORT)
         except LLMError:
             pass  # Groq, then Gemini, as before
+    need = est_tokens(messages) + max_tokens
     provider, model = TIER_LLM[t]
-    try:
-        return _llm_call(provider, model, messages, max_tokens)
-    except LLMError as e:
-        if not e.retryable:
-            raise
-        first = e
-    if not first.timed_out:
-        time.sleep(LLM_RETRY_DELAY)
+    tried = {(provider, model)} | ({("anthropic", DESK_MODEL)} if t == "manager" and desk_on() else set())
+    fits, why = room_for(provider, model, need)
+    if not fits:  # don't send what it would refuse: straight to the next model
+        first = LLMError(f"{provider} {model}: {why}", retryable=True, timed_out=True)
+    else:
         try:
             return _llm_call(provider, model, messages, max_tokens)
         except LLMError as e:
             if not e.retryable:
                 raise
+            first = e
+        if not first.timed_out:
+            time.sleep(LLM_RETRY_DELAY)
+            try:
+                return _llm_call(provider, model, messages, max_tokens)
+            except LLMError as e:
+                if not e.retryable:
+                    raise
     fb_provider, fb_model = FALLBACK_LLM.get(t, (None, "off"))
-    if fb_model == "off" or not os.environ.get(PROVIDERS[fb_provider][1]):
-        raise first
+    err = first
+    if fb_model != "off" and os.environ.get(PROVIDERS[fb_provider][1]):
+        tried.add((fb_provider, fb_model))
+        fits, why = room_for(fb_provider, fb_model, need)
+        try:
+            if not fits:
+                raise LLMError(f"{fb_provider} {fb_model}: {why}")
+            text = _llm_call(fb_provider, fb_model, messages, max_tokens)
+        except LLMError as e:
+            err = LLMError(f"{first} (and the fallback, {fb_model}, failed too: {e})")
+        else:
+            try:
+                store().set_meta("llm:fallback", json.dumps({"tier": t, "at": time.time(), "why": str(first)[:160],
+                                                             "model": fb_model}))
+            except Exception:
+                pass  # noting it must never cost the reply
+            return text
+    got = borrow_help(t, messages, max_tokens, need, tried, str(first))
+    if got is not None:
+        return got
+    raise err
+
+
+# ---- Capacity: know before a call whether a model can take it. Groq's free
+# tier allows GROQ_TPM tokens a minute (prompt plus room to answer) and says
+# what's left after each call; Gemini's quota pauses are in cooling(). A
+# tier whose own models can't take a request borrows the tier above's:
+# workers a manager's model, managers the low brain's. Never Theta's (that
+# would spend Claude money unasked), and the low brain doesn't borrow.
+GROQ_TPM = int(os.environ.get("GROQ_TPM", "8000"))
+_ROOM = {}  # model -> {"left": tokens, "until": when the minute resets}, from Groq's headers (per process)
+_HELP_UP = {"miner": "manager", "manager": "low_brain"}
+
+
+def est_tokens(messages):
+    """A prompt's size in tokens, near enough (about 4 characters a token)."""
+    n = 0
+    for m in messages:
+        c = m.get("content")
+        n += len(c) if isinstance(c, str) else sum(len(p.get("text", "")) if p.get("type") == "text" else 4000 for p in c or [])
+    return n // 4 + 20 * len(messages)
+
+
+def _reset_secs(v):
+    """Groq's reset times: '7.66s', '1m30.5s', '120ms'."""
+    m = re.fullmatch(r"(?:(\d+)m(?!s))?(?:(\d+(?:\.\d+)?)s)?(?:(\d+(?:\.\d+)?)ms)?", (v or "").strip())
+    if not m or not any(m.groups()):
+        return 60.0
+    return 60 * int(m.group(1) or 0) + float(m.group(2) or 0) + float(m.group(3) or 0) / 1000
+
+
+def note_room(model, headers):
     try:
-        text = _llm_call(fb_provider, fb_model, messages, max_tokens)
-    except LLMError as e:
-        raise LLMError(f"{first} (and the fallback, {fb_model}, failed too: {e})")
-    try:
-        store().set_meta("llm:fallback", json.dumps({"tier": t, "at": time.time(), "why": str(first)[:160],
-                                                     "model": fb_model}))
-    except Exception:
-        pass  # noting it must never cost the reply
-    return text
+        left = int(headers.get("x-ratelimit-remaining-tokens"))
+    except (TypeError, ValueError):
+        return
+    _ROOM[model] = {"left": left, "until": time.time() + _reset_secs(headers.get("x-ratelimit-reset-tokens"))}
+
+
+def room_for(provider, model, need):
+    """(True, "") if the model can take a request of `need` tokens right now,
+    else (False, why)."""
+    c = cooling(provider, model)
+    if c:
+        return False, f"out of free quota until {_clock(datetime.fromtimestamp(c['until'], hub_tz()))}"
+    if provider == "groq":
+        if need > GROQ_TPM:
+            return False, f"{need / 1000:.1f}k tokens is more than Groq's {GROQ_TPM / 1000:g}k a minute"
+        r = _ROOM.get(model)
+        if r and time.time() < r["until"] and need > r["left"]:
+            return False, f"Groq has {r['left']} tokens left this minute; this needs {need}"
+    return True, ""
+
+
+def borrow_help(t, messages, max_tokens, need, tried, why):
+    """A model from the tier above takes the request (see _HELP_UP), or None."""
+    h = _HELP_UP.get(t)
+    while h:
+        cands = ([("anthropic", DESK_MODEL)] if desk_on() else []) + [TIER_LLM[h], FALLBACK_LLM.get(h, (None, "off"))]
+        for p, m in cands:
+            if m == "off" or (p, m) in tried:
+                continue
+            tried.add((p, m))
+            if p != "anthropic" and (not os.environ.get(PROVIDERS[p][1]) or not room_for(p, m, need)[0]):
+                continue
+            try:
+                text = (claude_chat(messages, max_tokens, model=m, effort=DESK_EFFORT) if p == "anthropic"
+                        else _llm_call(p, m, messages, max_tokens))
+            except LLMError:
+                continue
+            asker = (getattr(_REQ, "trail", None) or ["hub"])[-1]
+            activity(asker, f"The {TIER_LABELS[t]} models couldn't take this ({why[:90]}), so the {TIER_LABELS[h]} "
+                            f"model ({m}) helped")
+            if h == "low_brain":
+                working(DESK, "helping")
+            return text
+        h = _HELP_UP.get(h)
+    return None
 
 
 def desk_on():
@@ -2154,6 +2273,9 @@ def claude_chat(messages, max_tokens, model=None, effort=None):
     server-side to another Claude model ("default")."""
     resp = claude_request(messages, max_tokens, model, effort)
     claude_record(resp, model)
+    if resp.stop_reason == "max_tokens" and not any(getattr(b, "text", "").strip() for b in resp.content if b.type == "text"):
+        resp = claude_request(messages, max_tokens * 3, model, effort)  # it ran out of room before answering: once, with more
+        claude_record(resp, model)
     return claude_text(resp)
 
 
@@ -2185,6 +2307,8 @@ def _llm_call(provider, model, messages, max_tokens):
                  "User-Agent": "bot-hub/1.0"}, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=LLM_TIMEOUT) as resp:
+            if provider == "groq":
+                note_room(model, resp.headers)
             out = json.loads(resp.read())
         text = out["choices"][0]["message"].get("content") or ""
         u = out.get("usage") or {}
@@ -2404,6 +2528,27 @@ def _gist(payload):
     return text if len(text) <= 120 else text[:117] + "..."
 
 
+TIER_ORDER = {"master": 0, "low_brain": 1, "manager": 2, "miner": 3}  # Theta, Mistral, managers, workers
+
+
+def rank(agent):
+    return TIER_ORDER.get(AGENTS.get(agent, {}).get("tier"), 9)
+
+
+def leading_agents(text):
+    """Agents @'d at the very start of a message: the ones it's addressed to,
+    highest rank first. An @ later in a sentence is only a mention."""
+    names = {a: a for a in AGENTS} | {v["name"].lower(): a for a, v in AGENTS.items()}
+    out = []
+    for word in (text or "").split():
+        if not word.startswith("@"):
+            break
+        a = names.get(word[1:].strip(".,!?:;").lower())
+        if a and a not in out:
+            out.append(a)
+    return sorted(out, key=rank)
+
+
 def mentioned_agents(text):
     """Agent ids @mentioned in `text` (by id or name), in order, deduped."""
     names = {a: a for a in AGENTS} | {v["name"].lower(): a for a, v in AGENTS.items()}
@@ -2443,14 +2588,20 @@ def crew_facts():
         pass
     settable = ", ".join(f"{k}={os.environ.get(k, '') or '(not set)'}" for k in sorted(SETTABLE))
     parts.append(f"\n\n## Settings QWERTY can change on approval (exact)\n{settable}")
+    last = _meta_json("round:reports", {})
+    if last.get("reports"):  # what the crew found in their last round, word for word
+        parts.append(f"\n\n## The crew's last round reports ({datetime.fromtimestamp(last['at'], hub_tz()):%b %d %H:%M})\n"
+                     + "\n".join(f"- {AGENTS.get(a, {}).get('name', a)}: {t[:700]}" for a, t in last["reports"].items()))
     return "".join(parts)
 
 
 def desk_system(agent, now=True):
     others = ", ".join(f"{v['name']} ({TIER_LABELS[v['tier']]})" for k, v in AGENTS.items() if k != agent)
     role = ("\n\nYou're the front desk: you answer every message in the chat, for the whole crew ("
-            + others + "). The user may @mention someone; you still answer, using that agent's facts below, and "
-            "you can say whose area it is (\"Remi's calendar shows…\"). Give one clear answer. Use only the "
+            + others + "). A message that starts with someone else's @ goes to them, not you; an @ later in a "
+            "message is only a mention, so you still answer, using that agent's facts below, and you can say whose area "
+            "it is (\"Remi's calendar shows…\"). When an answer needs a specialist's own work, give it to them with the "
+            "ask tool; they answer in the chat. Only ask agents below you (managers and workers). Give one clear answer. Use only the "
             "facts below, the hub map and the chat; if something isn't there, say you don't know. Use the tools "
             "for anything that changes something.")
     if agent == DESK:
@@ -2460,8 +2611,27 @@ def desk_system(agent, now=True):
     return system_prompt(agent, tools=True, now=now) + role + crew_facts()
 
 
-def desk_reply(thread):
-    """(agent who answered, reply) for the latest message."""
+def desk_replies(thread):
+    """([(agent, reply, extra)], errors) for the latest message. Mistral answers
+    unless it starts with @'s: then each agent addressed answers, highest rank
+    first (Theta and Mistral through the desk; anyone else in their own voice)."""
+    last = thread[-1]
+    to = leading_agents(last["text"]) if last["from"] == "you" else []
+    out, errors = [], {}
+    for a in to or [DESK]:
+        _REQ.trail, _REQ.tok = [], [0, 0]  # each reply shows its own workers and tokens
+        try:
+            who, reply = desk_reply(thread, to=a) if a in (DESK, "theta") else (a, allchat_reply(a, thread))
+        except (LLMError, ValueError, KeyError) as e:
+            errors[AGENTS[a]["name"]] = str(e)
+            continue
+        out.append((who, reply, reply_extra()))
+    return out, errors
+
+
+def desk_reply(thread, to=None):
+    """(agent who answered, reply) for the latest message: Mistral's desk, or
+    Theta when it's addressed to him."""
     can_search = bool(os.environ.get("GEMINI_API_KEY"))
     search = (" If answering well needs current facts from the web that you don't have, reply with exactly one "
               "line, SEARCH: <query>, and nothing else; you'll get the results." if can_search else "")
@@ -2490,8 +2660,8 @@ def desk_reply(thread):
         return system, ask, desk_chat(msgs) if agent == DESK else llm_chat(AGENTS[agent]["tier"], msgs)
 
     agent = DESK
-    if last["from"] == "you" and "theta" in mentioned_agents(last["text"]) and master_ready():
-        agent = "theta"  # asked for by name: straight to him, not through the desk
+    if to == "theta":
+        agent = "theta"  # addressed to him: straight to him, not through the desk
         system, ask, reply = ask_as(agent)
     else:
         try:
@@ -2603,7 +2773,7 @@ def desk_shortcut(thread):
     if last["from"] != "you":
         return None
     clean = re.sub(r"@\w+[\s,]*", "", last["text"]).strip()
-    named = mentioned_agents(last["text"])
+    named = leading_agents(last["text"])  # "@Mistral I asked @Glass to..." is for Mistral, not Glass
     implied = (["glass"] if re.match(r"^(?:spent\s+)?\$\d", clean, re.I) else []) + \
               (["remi"] if re.match(r"^remind me\b", clean, re.I) else []) + \
               (["lenz"] if _WATCHED_RE.search(clean) and re.search(r"\d\s*(?:/\s*10|out of 10)", clean) else [])
@@ -5162,6 +5332,38 @@ ROUND_JOBS = {
 _NEWS_AGENTS = {"red", "blue", "gray"}
 
 
+def round_summary(posts):
+    """Mistral posts one update from what the crew reported this round, and
+    keeps their reports in his facts for follow-up questions. Charts and
+    pictures come along as his own posts."""
+    reports = {}
+    for p in posts:
+        reports.setdefault(p["from"], []).append(p["text"])
+    store().set_meta("round:reports", json.dumps({"at": time.time(), "reports": {a: "\n\n".join(t)[:3000] for a, t in reports.items()}}))
+    who = sorted(reports, key=rank)
+    listing = "\n\n".join(f"## {AGENTS[a]['name']}\n" + "\n\n".join(reports[a]) for a in who)
+    _REQ.trail, _REQ.tok = [], [0, 0]
+    try:
+        working(DESK)
+        text = desk_chat([
+            {"role": "system", "content": system_prompt(DESK) + " You're posting the crew's round update for the user. "
+             "Use only the reports below; never add facts, numbers or events. Lead with anything that needs the user, "
+             "then one short line (or a few bullets) per agent with what they found. Name who each part is from."},
+            {"role": "user", "content": "The crew's reports from this round (exact):\n\n" + listing}], 900).strip()
+    except LLMError:
+        text = "Round update from the crew:\n\n" + "\n\n".join(f"**{AGENTS[a]['name']}:** " + " ".join(reports[a])[:600] for a in who)
+    _REQ.trail = who + [DESK]
+    store().add_chat(DESK, text[:4000], extra=reply_extra())
+    for p in posts:
+        if p.get("image"):
+            store().add_chat(DESK, f"From {AGENTS[p['from']]['name']}: {_first_line(p['text'])}", image=p["image"])
+
+
+# summary: the crew report to Mistral, who posts one update (and keeps their
+# reports in his facts); agents: each agent posts its own round, as before.
+ROUND_POSTS = os.environ.get("ROUND_POSTS", "summary").lower()
+
+
 def run_round(force=False, now=None, only=None):
     """Run every agent's job that is due (or all, with force; or just `only`),
     in parallel, and post one Hub line saying what each did."""
@@ -5182,11 +5384,17 @@ def run_round(force=False, now=None, only=None):
             except LLMError:
                 ctx["brief"] = None
 
+    posts = []  # what the crew would have posted: Mistral sums it up
+
     def run(a):
+        _RT.capture = [] if ROUND_POSTS != "agents" else None
         try:
             return a, ROUND_JOBS[a](ctx), None
         except (LLMError, ValueError, KeyError) as e:
             return a, None, str(e)[:160]
+        finally:
+            posts.extend(_RT.capture or [])
+            _RT.capture = None
     results = {}
     with ThreadPoolExecutor(max_workers=max(1, len(due))) as ex:
         for a, done, err in ex.map(run, due):
@@ -5218,6 +5426,11 @@ def run_round(force=False, now=None, only=None):
             note = f"couldn't refresh ({str(e)[:80]})"
         if note:
             parts.append(f"Windows: {note}")
+    if posts:
+        try:
+            round_summary(posts)
+        except Exception as e:  # the reports are kept even if the summary fails
+            print(f"round summary failed: {e!r}")
     if results:
         post_event("hub", "Round: " + "; ".join(parts) + ".")
         try:
@@ -7109,12 +7322,32 @@ def run_command(text):
         raise CommandError(str(e))
 
 
+# Instant commands: plain messages an agent acts on at once, no model call.
+# The chat offers them as you start typing (or tap an empty box), so they
+# don't have to be remembered. keys: how a message starting with one begins.
+QUICK_COMMANDS = [
+    {"agent": "glass", "show": "$42 groceries", "about": "Glass logs what you spent", "insert": "$",
+     "keys": ["$", "spent", "paid", "bought"]},
+    {"agent": "glass", "show": "@glass undo", "about": "Glass removes the last thing he logged", "insert": "@glass undo",
+     "keys": ["undo", "@glass u"]},
+    {"agent": "remi", "show": "remind me tomorrow at 9am to call the dentist", "about": "Remi sets a reminder",
+     "insert": "remind me ", "keys": ["remind"]},
+    {"agent": "lenz", "show": "I finished Frieren, 9/10", "about": "Lenz logs something you finished, with your rating",
+     "insert": "I finished ", "keys": ["i finished", "finished"]},
+    {"agent": "charter", "show": "@charter chart spending", "about": "Charter posts a chart (spending, daily, calendar…)",
+     "insert": "@charter chart ", "keys": ["chart", "@charter"]},
+    {"agent": "james", "show": "@james bench 185 4x8", "about": "James logs a workout in Garage Gym", "insert": "@james ",
+     "keys": ["@james", "bench", "squat", "deadlift", "workout"]},
+]
+
+
 def menu_data():
-    """What the "@" and "/" menus list."""
+    """What the "@", "/" and instant-command menus list."""
     online = {a["bot_id"]: a["online"] for a in agent_statuses()}
     return {"agents": [{"id": a, "name": v["name"], "tier": TIER_LABELS[v["tier"]], "online": online.get(a, False)}
                        for a, v in AGENTS.items()],
-            "commands": [{k: c[k] for k in ("name", "args", "about")} for c in COMMANDS]}
+            "commands": [{k: c[k] for k in ("name", "args", "about")} for c in COMMANDS],
+            "quick": [q for q in QUICK_COMMANDS if q["agent"] in AGENTS]}
 
 
 # ---- Wiring: is each agent's model actually reachable?
@@ -7341,6 +7574,20 @@ SESSION_KEEP = 40
 SESSION_IDLE_DAYS = 45
 SESSION_SEEN_EVERY = 300  # seconds between "last seen" writes per device
 _SESS_LOCK = threading.Lock()
+_RT = threading.local()  # per round job thread: where that agent's posts go instead of the chat
+
+
+def _round_capture(sender, text, kind, image, buttons):
+    """During a round, an agent's chat posts go to Mistral (who posts one
+    summary) instead of the chat. Posts with buttons stay, since Approve
+    and the like only work on the agent's own message."""
+    bucket = getattr(_RT, "capture", None)
+    if bucket is None or kind != "message" or buttons or sender in ("mistral", "theta", "hub", "you"):
+        return False
+    bucket.append({"from": sender, "text": text, "image": image})
+    return True
+
+
 _REQ = threading.local()  # per request: cookies to set, session made
 
 
@@ -8789,6 +9036,10 @@ _CHAT_JS = r'''
     if (m) return {kind: "@", q: m[2].toLowerCase(), start: before.length - m[2].length - 1};
     m = before.match(/^\/(\w*)$/);
     if (m) return {kind: "/", q: m[1].toLowerCase(), start: 0};
+    // Instant commands: offered on an empty box and while a message starts like one.
+    const lead = before.trimStart().toLowerCase();
+    if (msg.value.length === before.length && lead.length <= 14 && (HUB_MENU.quick || []).some(x => quickHit(x, lead)))
+      return {kind: "!", q: lead, start: 0, bare: true};
     // A bare name ("rem", "theta") offers the @mention too; only a tap or Tab takes it, so
     // "I like red" still sends as typed.
     m = before.match(/(^|\s)([A-Za-z]{3,})$/);
@@ -8796,13 +9047,15 @@ _CHAT_JS = r'''
       return {kind: "@", q: m[2].toLowerCase(), start: before.length - m[2].length, bare: true};
     return null;
   }
+  const quickHit = (x, t) => !t || x.keys.some(k => k.startsWith(t) || t.startsWith(k));
   function closeMenu() { menu.hidden = true; items = []; range = null; msg.removeAttribute("aria-activedescendant"); }
   function renderMenu() {
     const q = query();
     if (!q) return closeMenu();
     const src = q.kind === "@" ? HUB_MENU.agents : HUB_MENU.commands;
     const key = x => x.name.toLowerCase();
-    items = q.bare ? src.filter(x => key(x).startsWith(q.q)).slice(0, 4) :
+    items = q.kind === "!" ? HUB_MENU.quick.filter(x => quickHit(x, q.q)).slice(0, 6) :
+      q.bare ? src.filter(x => key(x).startsWith(q.q)).slice(0, 4) :
       src.filter(x => key(x).startsWith(q.q) || (q.kind === "@" && x.id.startsWith(q.q)))
       .concat(src.filter(x => !key(x).startsWith(q.q) && key(x).includes(q.q) && q.q)).slice(0, 12);
     if (!items.length) return closeMenu();
@@ -8813,7 +9066,13 @@ _CHAT_JS = r'''
       li.setAttribute("aria-selected", String(i === active));
       const b = document.createElement("b"), small = document.createElement("span");
       small.className = "muted";
-      if (q.kind === "@") {
+      if (q.kind === "!") {
+        b.textContent = x.show; small.textContent = x.about;
+        const txt = document.createElement("span"); txt.style.minWidth = "0";
+        txt.append(b, document.createElement("br"), small);
+        const w = document.createElement("span"); w.className = "avw"; w.append(avatar(x.agent, 26));
+        li.append(w, txt);
+      } else if (q.kind === "@") {
         const w = document.createElement("span"), dot = document.createElement("span");
         w.className = "avw"; dot.className = "dot" + (x.online ? " on" : "");
         w.append(avatar(x.id, 26), dot);
@@ -8837,6 +9096,11 @@ _CHAT_JS = r'''
   function pick(i) {
     const x = items[i], q = range;
     if (!x || !q) return;
+    if (q.kind === "!") {  // fill in the command's start (keeps what's typed if it's already past that)
+      if (x.insert.toLowerCase().startsWith(msg.value.trimStart().toLowerCase())) msg.value = x.insert;
+      msg.setSelectionRange(msg.value.length, msg.value.length); msg.focus();
+      active = 0; closeMenu(); grow(); return;
+    }
     const insert = (q.kind === "@" ? "@" : "/") + x.name + " ";
     const end = msg.selectionStart;
     msg.value = msg.value.slice(0, q.start) + insert + msg.value.slice(end);
@@ -8846,6 +9110,7 @@ _CHAT_JS = r'''
   }
   msg.addEventListener("input", () => { active = 0; renderMenu(); });
   msg.addEventListener("click", renderMenu);
+  msg.addEventListener("focus", renderMenu);
   msg.addEventListener("blur", () => setTimeout(closeMenu, 150));
   msg.addEventListener("keydown", e => {
     if (!menu.hidden) {
@@ -11826,11 +12091,11 @@ def handle(method, path, query, headers, body):
             _REQ.ch = ch if ch != "all" else None  # activity lines land in this conversation
             if CHAT_MODE != "crew":  # the front desk answers (Theta for hard ones); plain commands run at once
                 try:
-                    who, reply = desk_shortcut(thread) or desk_reply(thread)
+                    quick = desk_shortcut(thread)
+                    replies, errors = ([(quick[0], quick[1], reply_extra())], {}) if quick else desk_replies(thread)
                 except (LLMError, ValueError, KeyError) as e:
-                    errors[AGENTS[DESK]["name"]] = str(e)
-                else:
-                    extra = reply_extra()
+                    replies, errors = [], {AGENTS[DESK]["name"]: str(e)}
+                for who, reply, extra in replies:
                     if isinstance(reply, tuple):  # Charter's (caption, chart url)
                         st.add_chat(who, reply[0], image=reply[1], channel=ch, extra=extra)
                     elif isinstance(reply, dict):
