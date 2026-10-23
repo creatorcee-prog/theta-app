@@ -465,6 +465,12 @@ class MemoryStore:
     def set_meta(self, key, value):
         self.meta[key] = value
 
+    def get_meta_many(self, keys):
+        return {k: self.meta.get(k) for k in keys}
+
+    def set_meta_many(self, pairs):
+        self.meta.update(pairs)
+
     def list_chat(self, limit):
         return list(reversed(self.allchat[:limit]))  # oldest first
 
@@ -634,6 +640,15 @@ class KVStore:
         if cache is not None:
             cache[key] = (value, time.time())
 
+    def get_meta_many(self, keys):
+        """{key: value} in one round trip."""
+        keys = list(keys)
+        return dict(zip(keys, self._cmd("HMGET", "hub:meta", *keys))) if keys else {}
+
+    def set_meta_many(self, pairs):
+        if pairs:
+            self._cmd("HSET", "hub:meta", *[x for kv in pairs.items() for x in kv])
+
     def list_chat(self, limit):
         rows = self._cmd("LRANGE", "hub:allchat", "0", str(limit - 1))
         return [json.loads(r) for r in reversed(rows)]  # oldest first
@@ -658,7 +673,7 @@ _STORE = None
 
 
 META_CACHE_SECONDS = 3
-_BIG_META = ("upload:", "chart:", "vision:")  # big values: never fetched in the batch
+_BIG_META = ("upload:", "chart:", "vision:", "snap:")  # big values: never fetched in the batch
 # Values most pages read, fetched together; grows with what this process sees.
 _HOT_META = {"briefs", "cards", "cards:img", "cards:short", "chat:pressed", "daily:history", "daily:items",
              "gmail:flash", "gmail:token", "hub:origin", "key:users", "lenz:feeds:at", "lenz:lib", "llm:cooldown",
@@ -785,18 +800,109 @@ def _parse_apple_json(data):
     return out
 
 
-def feed_items(url):
+# ---- Shared snapshots: outside data (feeds, trending, calendars, Garage
+# Gym) is kept in storage for every server process, not just the one that
+# fetched it. Vercel keeps starting fresh processes, which used to refetch
+# everything while you waited. A page shows what's stored at once; when
+# it's stale, the page asks /api/refresh in the background and the next
+# load has new data. Only with nothing stored yet does a page wait.
+SNAP_REFRESH_EVERY = 60  # seconds between background refreshes
+SNAP_KEEP_ON_FAILURE = 86400  # show the last good copy this long when a source stops answering
+
+
+def snapshot_failing(prefix, url):
+    """True when the last try to refresh this source failed."""
+    try:
+        snap = json.loads(store().get_meta("snap:" + prefix + _snap_key(url)) or "null")
+    except ValueError:
+        return False
+    return bool(snap and snap.get("failed", 0) > snap["at"])
+
+
+def shared_fetch(name, ttl, fetch):
+    """(value, fetched_at) for name: stored copy, else fetch() and store it."""
+    try:
+        snap = json.loads(store().get_meta("snap:" + name) or "null")
+    except ValueError:
+        snap = None
+    if snap and (time.time() - snap["at"] < ttl or not getattr(_REQ, "refreshing", False)):
+        if time.time() - snap["at"] >= ttl:
+            _REQ.stale = True  # the page will ask for a refresh
+        return snap["v"], snap["at"]
+    try:
+        value = fetch()
+    except Exception:
+        if snap:  # keep showing what we had
+            return snap["v"], snap["at"]
+        raise
     now = time.time()
-    hit = _FEED_CACHE.get(url)
-    if hit and now - hit[0] < WIDGET_CACHE_SECONDS:
-        return hit[1]
+    store().set_meta("snap:" + name, json.dumps({"at": now, "v": value}))
+    return value, now
+
+
+def _snap_key(url):
+    return hashlib.sha1(url.encode()).hexdigest()[:12]
+
+
+def refresh_shared():
+    """Fetch whatever outside data has gone stale, so pages stay instant."""
+    _REQ.refreshing = True
+    try:
+        _fetch_feeds(list(dict.fromkeys(NEWS_FEEDS + ENTERTAINMENT_FEEDS + [u for us in SIDE_FEEDS.values() for u in us])))
+        if REMI_CALENDAR_URLS:
+            _calendar_sources(REMI_CALENDAR_URLS)
+        try:
+            tmdb_trending()
+        except LLMError:
+            pass
+        james_summary()
+    finally:
+        _REQ.refreshing = False
+
+
+def shared_fetch_many(prefix, urls, ttl, fetch):
+    """[(value, fetched_at)] for each url, like shared_fetch: stored copies are
+    read in one round trip, and only missing (or, when refreshing, expired)
+    ones are fetched, in parallel."""
+    names = {u: "snap:" + prefix + _snap_key(u) for u in urls}
+    raw = store().get_meta_many(names.values()) if urls else {}
+    out, todo = {}, []
+    refreshing = getattr(_REQ, "refreshing", False)
+    for u in urls:
+        try:
+            snap = json.loads(raw.get(names[u]) or "null")
+        except ValueError:
+            snap = None
+        if snap and (time.time() - snap["at"] < ttl or not refreshing):
+            if time.time() - snap["at"] >= ttl:
+                _REQ.stale = True
+            out[u] = (snap["v"], snap["at"])
+        else:
+            todo.append((u, snap))
+    if todo:
+        got = _fetch_feeds_with(lambda us: fetch(us[0]), todo)
+        now, fresh = time.time(), {}
+        for (u, snap), value in zip(todo, got):
+            if value is None and snap and now - snap["at"] < SNAP_KEEP_ON_FAILURE:
+                out[u] = (snap["v"], snap["at"])  # couldn't fetch: keep what we had (for a while), and say so
+                fresh[names[u]] = json.dumps(dict(snap, failed=now))
+                continue
+            out[u] = (value, now)
+            fresh[names[u]] = json.dumps({"at": now, "v": value})
+        store().set_meta_many(fresh)
+    return [out[u] for u in urls]
+
+
+def _feed_fetch(url):
     try:
         raw = _fetch_url(url)
-        items = _parse_apple_json(raw) if url.endswith(".json") else _parse_rss(raw)
+        return _parse_apple_json(raw) if url.endswith(".json") else _parse_rss(raw)
     except Exception:
-        items = []  # a dead feed never breaks the dashboard
-    _FEED_CACHE[url] = (now, items)
-    return items
+        return []  # a dead feed never breaks the dashboard
+
+
+def feed_items(url):
+    return _fetch_feeds([url])[0]
 
 
 def _fetch_feeds_with(fn, urls):
@@ -808,7 +914,14 @@ def _fetch_feeds_with(fn, urls):
 
 
 def _fetch_feeds(urls):
-    return _fetch_feeds_with(feed_items, urls)
+    now, refreshing = time.time(), getattr(_REQ, "refreshing", False)
+    hits = {u: _FEED_CACHE[u][1] for u in urls if u in _FEED_CACHE
+            and now - _FEED_CACHE[u][0] < WIDGET_CACHE_SECONDS and not refreshing}
+    rest = [u for u in dict.fromkeys(urls) if u not in hits]
+    for u, (items, at) in zip(rest, shared_fetch_many("feed:", rest, WIDGET_CACHE_SECONDS, _feed_fetch)):
+        _FEED_CACHE[u] = (at, items)
+        hits[u] = items
+    return [hits[u] for u in urls]
 
 
 def widget_items(feeds):
@@ -850,8 +963,15 @@ def tmdb_trending():
     rating, url}), cached 30 min. Raises LLMError when TMDB refuses."""
     if not TMDB_API_KEY:
         return []
-    if _TMDB_CACHE["items"] is not None and time.time() - _TMDB_CACHE["at"] < 1800:
+    if (_TMDB_CACHE["items"] is not None and time.time() - _TMDB_CACHE["at"] < 1800
+            and not getattr(_REQ, "refreshing", False)):
         return _TMDB_CACHE["items"]
+    items, at = shared_fetch("tmdb:trending", 1800, _tmdb_trending_fetch)
+    _TMDB_CACHE.update(at=at, items=items)
+    return items
+
+
+def _tmdb_trending_fetch():
     bearer = TMDB_API_KEY.startswith("eyJ")  # v4 tokens are JWTs
     url = TMDB_BASE + "/trending/all/week" + ("" if bearer else f"?api_key={TMDB_API_KEY}")
     headers = {"User-Agent": "bot-hub/1.0", "Accept": "application/json"}
@@ -1125,10 +1245,11 @@ def james_summary(now=None):
     if not (GARAGE_GYM_URL and GARAGE_GYM_SECRET):
         return None
     c = _JAMES_CACHE
-    if now - c["at"] < c["ttl"]:
+    if now - c["at"] < c["ttl"] and not getattr(_REQ, "refreshing", False):
         return c["value"]
     try:
-        value, ttl = _garage_gym("GET", timeout=8), 300
+        value, _ = shared_fetch("gym:summary", 300, lambda: _garage_gym("GET", timeout=8))
+        ttl = 300
     except LLMError:
         value, ttl = None, 60
     c.update(at=now, ttl=ttl, value=value)
@@ -2179,18 +2300,30 @@ def _rrule_dates(first, rule, last_day):
     return out
 
 
-def _calendar_source(url):
-    """Parsed events for one calendar, cached; None if it couldn't be read."""
-    hit = _CAL_CACHE.get(url)
-    if hit and time.time() - hit[0] < CALENDAR_CACHE_SECONDS:
-        return hit[1]
+def _calendar_text(url):
     try:
-        events = parse_ics(_fetch_url(url, timeout=8).decode("utf-8", "replace"))
+        return _fetch_url(url, timeout=8).decode("utf-8", "replace")
     except Exception as e:  # a bad link shouldn't break the dashboard
         print(f"calendar fetch failed: {e!r}")
-        events = None
-    _CAL_CACHE[url] = (time.time(), events)
-    return events
+        return None
+
+
+def _calendar_sources(urls):
+    """Parsed events per calendar (None if it couldn't be read), from this
+    process's cache, then the stored copy, then the calendar itself."""
+    now, refreshing = time.time(), getattr(_REQ, "refreshing", False)
+    hits = {u: _CAL_CACHE[u][1] for u in urls if u in _CAL_CACHE
+            and now - _CAL_CACHE[u][0] < CALENDAR_CACHE_SECONDS and not refreshing}
+    rest = [u for u in urls if u not in hits]
+    for u, (text, at) in zip(rest, shared_fetch_many("cal:", rest, CALENDAR_CACHE_SECONDS, _calendar_text)):
+        events = parse_ics(text) if text else None
+        _CAL_CACHE[u] = (at, events)
+        hits[u] = events
+    return [hits[u] for u in urls]
+
+
+def _calendar_source(url):
+    return _calendar_sources([url])[0]
 
 
 def calendar_events(first_day, last_day):
@@ -2199,7 +2332,7 @@ def calendar_events(first_day, last_day):
     aware datetimes in hub_tz(); all-day ones are dates (end exclusive)."""
     tz = hub_tz()
     occ = []
-    sources = _fetch_feeds_with(_calendar_source, REMI_CALENDAR_URLS)
+    sources = _calendar_sources(REMI_CALENDAR_URLS)
     for events in sources:
         if not events:
             continue
@@ -2266,7 +2399,8 @@ def calendar_linked():
 
 def calendar_problems():
     """Calendar links that couldn't be read last time (for wiring)."""
-    return [i + 1 for i, u in enumerate(REMI_CALENDAR_URLS) if _calendar_source(u) is None]
+    return [i + 1 for i, u in enumerate(REMI_CALENDAR_URLS)
+            if _calendar_source(u) is None or snapshot_failing("cal:", u)]
 
 
 def _clock(dt):
@@ -8013,7 +8147,11 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
         f'<div class="label">Crew</div>{crew}</aside><main class="main">{body}</main></div>'
         f'<nav class="tabbar" aria-label="Main">{nav}</nav>'
         + _json_script("THETA_LATEST", latest_by_channel(chat))
-        + f'<script src="/ui.js?v={_ASSET_V}"></script></body></html>')
+        + f'<script src="/ui.js?v={_ASSET_V}"></script>'
+        # Some of what's shown was stale: fetch new data now, for the next load (you don't wait on it).
+        + ('<script>setTimeout(() => fetch("/api/refresh", {method: "POST", headers: window.THETA_H, body: "{}"})'
+           '.catch(() => {}), 1200);</script>' if getattr(_REQ, "stale", False) else "")
+        + '</body></html>')
 
 
 def _ago(ts, now=None):
@@ -10838,7 +10976,22 @@ def handle(method, path, query, headers, body):
             cron = bool(CRON_SECRET) and headers.get("authorization") == f"Bearer {CRON_SECRET}"
             if not (cron or (DASHBOARD_KEY and _auth_dashboard(query, headers))):
                 return _json(401, {"ok": False, "error": "CRON_SECRET or dashboard key required"})
-            return _json(200, {"ok": True, **run_tick()})
+            out = run_tick()
+            try:
+                refresh_shared()  # keep feeds, trending and calendars fresh for the next page
+            except Exception as e:
+                print(f"refresh during tick failed: {e!r}")
+            return _json(200, {"ok": True, **out})
+
+        if path == "/api/refresh":  # a page saw stale data and asked for new, after it loaded
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            last = float(store().get_meta("refresh:at") or 0)
+            if time.time() - last < SNAP_REFRESH_EVERY:
+                return _json(200, {"ok": True, "skipped": "refreshed moments ago"})
+            store().set_meta("refresh:at", str(time.time()))
+            refresh_shared()
+            return _json(200, {"ok": True})
 
         if path == "/api/reminders" or path.startswith("/api/reminders/"):
             if not _auth_dashboard(query, headers):
@@ -11140,6 +11293,7 @@ def app(environ, start_response):
     body = environ["wsgi.input"].read(length) if length > 0 else b""
     ip = client_ip(environ)
     _REQ.cookies, _REQ.session, _REQ.quiet, _REQ.meta, _REQ.calls = [], None, False, {}, 0
+    _REQ.stale, _REQ.refreshing = False, False
     t0 = time.time()
     _REQ.page = method == "GET" and not path.startswith("/api/")
     try:
