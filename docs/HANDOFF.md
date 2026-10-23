@@ -92,6 +92,8 @@ Last updated: 2026-10-23.
 - **Mistral's chat replies run on Claude Haiku** (`DESK_MODEL`, effort `DESK_EFFORT=low`) while Claude is connected and under `MASTER_MONTHLY_CAP_USD`, which Haiku shares with Theta. Gemini, then Groq, are his backup (`desk_chat`). Why: the desk prompt is ~17.5k tokens; Gemini 503'd ("high demand") and Groq's free tier refuses anything over 8k tokens a minute (413). `DESK_MODEL=off` goes back to Gemini.
 - **"@Theta" goes straight to Theta** when Claude is up, and **Theta answers when Mistral can't** (activity line says so). Without Claude, both behave as before.
 - An empty Gemini reply now goes to the fallback instead of failing.
+- **Prompt caching (Claude only):** the desk prompt is sent as two system messages, the stable part (rules, tools, crew facts; no clock) then `now_line()`. `claude_request` caches every system block but the last; a single system prompt isn't cached. Other providers get them merged (`_one_system`). Keep anything that changes per minute out of `system_prompt(..., now=False)` and `crew_facts()`, or the cache never hits. Spend now also counts `cache_read` / `cache_write`.
+- **Mistral benchmark** (Settings, `POST /api/bench`): six messages on the real desk prompt, Haiku with thinking on vs off, scored on whether he answered / used remind / searched / escalated, with time, tokens, cache reads and cost. Nothing is posted, no tools run. ~12 calls.
 - **Default `CHAT_MODE=desk`:**
   - `desk_shortcut` runs plain commands (`$42 groceries`, `remind me…`) with no model call.
   - Everything else goes to `desk_reply`: Mistral, with every agent's facts from `crew_facts()` and every tool.
