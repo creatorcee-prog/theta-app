@@ -215,6 +215,29 @@ who runs in Garage Gym. Settings → **Memory and notes** lists both, each
 with a remove button (`POST /api/memory/remove`, `/api/notes/remove`
 `{"id"}`).
 
+## QWERTY makes changes, with your approval
+
+No agent can edit code, deploy or change settings by itself. QWERTY can
+**propose** a change (`ACTION: propose | KEY = value`, `KEY += more`, or
+`issue <title> - <details>`). It's posted with **Approve** / **Decline**, and
+nothing happens until you tap Approve. Theta can ask QWERTY to propose
+something (`ask_qwerty`). Other agents point you to @QWERTY.
+
+- Settings are Vercel environment variables from `SETTABLE` only: channel
+  lists, budgets, holdings, birthdays, times, the time zone, home, feeds,
+  model names. Never keys, tokens or private links like the calendar
+  address, and values that look like secrets are refused. QWERTY sees their
+  current values.
+- Applying needs `VERCEL_TOKEN` and `VERCEL_PROJECT` (plus `VERCEL_TEAM_ID`
+  for a team project). With `VERCEL_DEPLOY_HOOK` it also redeploys.
+- Code changes become GitHub issues (needs `GITHUB_TOKEN`).
+
+Every chat prompt has the hub map (`HUB_GUIDE`): the real pages and
+sections. Agents are told to describe only what's on it and never invent
+pages, endpoints or code, and replies that promise to deploy or build
+something get a note that they can't. Lenz sees his own channel settings.
+Checklists in chat can be ticked, and the ticks are saved.
+
 ## Home: the Smart Stack
 
 The top of Home is one widget slot you swipe through, like the iPhone's

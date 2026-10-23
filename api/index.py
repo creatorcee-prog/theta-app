@@ -1263,6 +1263,10 @@ def james_summary(now=None):
 MEMORY_MAX, NOTES_MAX = 60, 100
 _TOOL_LOCK = threading.Lock()
 _ACTION_RE = re.compile(r"^\s*\**ACTION\**\s*:\s*([a-z_]+)\s*\|\s*(.+?)\s*$", re.I | re.M)
+_PROMISE_RE = re.compile(r"\b(?:i(?:'ll| will| can| could)|let me)\s+(?:\w+\s+){0,2}?(?:push|deploy|commit|write|draft|"
+                         r"set up|setup|create|build|configure|install|run|schedule|hook up|wire up)\b[^.\n]{0,80}?"
+                         r"\b(?:repo|repository|code|function|script|cron|endpoint|deploy\w*|vercel|feeds?|setting|"
+                         r"variable|env\w*|integration)\b", re.I)
 _CLAIM_RE = re.compile(r"\b(?:i(?:'ve| have)? (?:now )?(?:logged|saved|set|created|stored|recorded|added|scheduled|updated|"
                        r"noted|changed|booked|sent)|(?:all )?(?:actions|tasks) (?:are |have been )?(?:completed|done)|"
                        r"(?:has|have) been (?:logged|saved|set|created|stored|recorded|added|scheduled|updated)|"
@@ -1300,15 +1304,22 @@ def _tool_remember(arg, agent):
 
 
 def _tool_forget(arg, agent):
+    """Drop remembered facts, and notes whose title has these words."""
     words = arg.lower().split()
+    if not words:
+        raise ValueError("forget what?")
     with _TOOL_LOCK:
-        mem = memory()
+        mem, ns = memory(), notes()
         keep = [m for m in mem if not all(w in m["text"].lower() for w in words)]
+        keep_n = [n for n in ns if not all(w in n["title"].lower() for w in words)]
         store().set_meta("memory", json.dumps(keep))
-    gone = len(mem) - len(keep)
-    if not gone:
-        raise ValueError(f"nothing remembered matches “{arg}”")
-    return f"Forgot {gone} thing{'s' if gone != 1 else ''}"
+        store().set_meta("notes", json.dumps(keep_n))
+    facts, gone_n = len(mem) - len(keep), len(ns) - len(keep_n)
+    if not facts and not gone_n:
+        raise ValueError(f"nothing remembered and no note matches “{arg}”")
+    bits = ([f"{facts} remembered fact{'s' if facts != 1 else ''}"] if facts else []) + \
+           ([f"{gone_n} note{'s' if gone_n != 1 else ''}"] if gone_n else [])
+    return "Forgot " + " and ".join(bits)
 
 
 def _tool_remind(arg, agent):
@@ -1372,9 +1383,125 @@ def _tool_project(arg, agent):
     return start_project(arg)
 
 
+# ---- QWERTY's changes: he proposes, you approve. A proposal is posted with
+# Approve / Decline buttons and nothing happens until Approve is tapped.
+# Settings are Vercel environment variables from SETTABLE only (never keys,
+# tokens or private links); applying one needs VERCEL_TOKEN + VERCEL_PROJECT,
+# and VERCEL_DEPLOY_HOOK to redeploy. Code changes become GitHub issues.
+SETTABLE = {"LENZ_YOUTUBE", "LENZ_SUBREDDITS", "LENZ_TWITCH", "LENZ_FEEDS_MINUTES", "GLASS_HOLDINGS", "GLASS_WATCHLIST",
+            "GLASS_BUDGETS", "GLASS_MOVE_ALERT", "GLASS_BENCHMARK", "BIRTHDAYS", "DIGEST_TIME", "DAILY_NUDGE_TIME",
+            "HUB_TIMEZONE", "HOME_LOCATION", "GMAIL_IMPORTANT", "GMAIL_ARCHIVE", "MASTER_MONTHLY_CAP_USD",
+            "VISION_MODEL", "LOW_BRAIN_MODEL", "WIDGET_CACHE_SECONDS", "NEWS_FEEDS", "ENTERTAINMENT_FEEDS"}
+VERCEL_TOKEN = os.environ.get("VERCEL_TOKEN", "")
+VERCEL_PROJECT = os.environ.get("VERCEL_PROJECT", "")
+VERCEL_TEAM_ID = os.environ.get("VERCEL_TEAM_ID", "")
+VERCEL_DEPLOY_HOOK = os.environ.get("VERCEL_DEPLOY_HOOK", "")
+
+
+def proposals():
+    return _meta_json("proposals", {})
+
+
+def _tool_propose(arg, agent):
+    arg = arg.strip()
+    m = re.match(r"^(?:set\s+)?([A-Z][A-Z0-9_]+)\s*(\+?=)\s*(.*)$", arg, re.S)
+    if m:
+        key, op, val = m.group(1), m.group(2), " ".join(m.group(3).split()).strip(" '\"`")
+        if key not in SETTABLE:
+            raise ValueError(f"{key} isn't one I can change; keys, tokens and private links stay with you in Vercel")
+        if op == "+=":
+            val = ",".join(x for x in (os.environ.get(key, "").strip(), val) if x)
+        if not val or len(val) > 2000:
+            raise ValueError("the new value is empty or too long")
+        if redact_secrets(val)[1]:
+            raise ValueError("that looks like a secret; add secrets in Vercel yourself")
+        prop = {"kind": "setting", "key": key, "value": val, "summary": f"Set {key} to: {val}"}
+    else:
+        im = re.match(r"^issue\s+(.+)$", arg, re.I | re.S)
+        if not im:
+            raise ValueError("propose `KEY = value`, `KEY += value`, or `issue <title> - <details>`")
+        title, _, details = im.group(1).partition(" - ")
+        prop = {"kind": "issue", "title": title.strip()[:200], "details": details.strip()[:2000],
+                "summary": f"File a GitHub issue: {title.strip()[:200]}"}
+    pid = hashlib.sha1(f"{time.time_ns()}{arg}".encode()).hexdigest()[:8]
+    with _TOOL_LOCK:
+        ps = proposals()
+        ps[pid] = dict(prop, id=pid, by=agent, at=time.time(), status="open")
+        store().set_meta("proposals", json.dumps(dict(list(ps.items())[-40:])))
+    return (f"Proposed: {prop['summary']}. Nothing changes until you tap Approve.",
+            [{"id": f"qp:{pid}:yes", "label": "Approve", "style": "primary"}, {"id": f"qp:{pid}:no", "label": "Decline"}])
+
+
+def vercel_set_env(key, value):
+    if not (VERCEL_TOKEN and VERCEL_PROJECT):
+        raise LLMError("I can't change settings yet: add VERCEL_TOKEN and VERCEL_PROJECT in Vercel (see TODO)")
+    from urllib.parse import quote
+    url = (f"https://api.vercel.com/v10/projects/{quote(VERCEL_PROJECT, safe='')}/env?upsert=true"
+           + (f"&teamId={quote(VERCEL_TEAM_ID)}" if VERCEL_TEAM_ID else ""))
+    req = urllib.request.Request(url, method="POST", data=json.dumps(
+        {"key": key, "value": value, "type": "encrypted", "target": ["production"]}).encode(),
+        headers={"Authorization": f"Bearer {VERCEL_TOKEN}", "Content-Type": "application/json", "User-Agent": "Theta-hub"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            out = json.loads(resp.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        raise LLMError(f"Vercel returned {e.code}" + (": check VERCEL_TOKEN" if e.code in (401, 403) else ""))
+    except (urllib.error.URLError, TimeoutError) as e:
+        raise LLMError(f"Vercel unreachable: {e!r}")
+    if out.get("failed"):
+        raise LLMError("Vercel refused: " + str((out["failed"][0].get("error") or {}).get("message", "?"))[:160])
+
+
+def vercel_redeploy():
+    """True when the deploy hook was called."""
+    if not VERCEL_DEPLOY_HOOK:
+        return False
+    try:
+        urllib.request.urlopen(urllib.request.Request(VERCEL_DEPLOY_HOOK, method="POST", data=b""), timeout=15).close()
+        return True
+    except (urllib.error.URLError, TimeoutError):
+        return False
+
+
+def apply_proposal(pid, yes):
+    """Approve or decline a proposal; returns QWERTY's line about it."""
+    with _TOOL_LOCK:
+        ps = proposals()
+        p = ps.get(pid)
+        if not p or p["status"] != "open":
+            raise ValueError("That proposal is already settled.")
+        p["status"] = "approved" if yes else "declined"
+        store().set_meta("proposals", json.dumps(ps))
+    if not yes:
+        return f"Declined, nothing changed: {p['summary']}"
+    try:
+        if p["kind"] == "setting":
+            vercel_set_env(p["key"], p["value"])
+            post_event("qwerty", f"QWERTY set {p['key']} (you approved)")
+            return (f"✓ Set {p['key']}. " + ("Redeploying now; it takes effect in about a minute." if vercel_redeploy()
+                                            else "Redeploy in Vercel for it to take effect (or add VERCEL_DEPLOY_HOOK so I can)."))
+        url, _ = file_issue(p["title"], p.get("details", ""))
+        return f"✓ Filed the issue: {url}" if url else "✗ I wrote the issue but couldn't file it: GITHUB_TOKEN isn't set."
+    except LLMError as e:
+        with _TOOL_LOCK:
+            ps = proposals()
+            if pid in ps:
+                ps[pid]["status"] = "open"  # failed: can be tried again
+                store().set_meta("proposals", json.dumps(ps))
+        return f"✗ Couldn't do it: {e}"
+
+
+def _tool_ask_qwerty(arg, agent):
+    """Theta asks QWERTY to propose a change; QWERTY's proposal is posted for the user."""
+    r = allchat_reply("qwerty", [{"from": agent, "text": "@QWERTY " + arg.strip()[:800], "at": time.time()}])
+    text, buttons = (r["text"], r.get("buttons")) if isinstance(r, dict) else (r, None)
+    store().add_chat("qwerty", text.strip()[:4000], buttons=buttons)
+    return "Asked QWERTY; his answer is in the chat" + (", with Approve / Decline" if buttons else "")
+
+
 TOOLS = {
     "remember": ("remember | <a fact about the user, like Home: Saint George, UT>", _tool_remember, None),
-    "forget": ("forget | <words in a remembered fact to drop> (memory only, not reminders)", _tool_forget, None),
+    "forget": ("forget | <words in a remembered fact or a note's title to delete> (not reminders)", _tool_forget, None),
     "cancel": ("cancel | <#number or words of a reminder to remove>", _tool_cancel, None),
     "remind": ("remind | <when and what, like 6pm call Mom, or 1/22/2027 oil change>", _tool_remind, None),
     "check": ("check | <a daily habit for Today's check>", _tool_check, None),
@@ -1382,7 +1509,49 @@ TOOLS = {
     "spend": ("spend | $42 groceries", _tool_spend, None),
     "watched": ("watched | <title>, <rating 1-10>   (log something finished)", _tool_watched, None),
     "project": ("project | <what to find>   (the whole crew searches the web)", _tool_project, {"theta", "mistral"}),
+    "propose": ("propose | KEY = value, or KEY += more, for a setting; or issue <title> - <details> for a code change. "
+                "Only happens when the user taps Approve", _tool_propose, {"qwerty"}),
+    "ask_qwerty": ("ask_qwerty | <the change you want made>   (QWERTY proposes it; the user approves)",
+                   _tool_ask_qwerty, {"theta"}),
 }
+
+
+# The hub map: what really exists, so agents describe the real thing or
+# say they don't know. Keep it in step with the pages (NAV, page routes).
+HUB_GUIDE = (
+    "The hub map (the only pages, sections and settings that exist; anything not here doesn't exist):\n"
+    "- Home (/): the Smart Stack (swipe; most important card first), Today's check, Your crew (one window per "
+    "agent), Top stories, Watch & listen.\n"
+    "- Chat (/chat): channels #all-agents, #news, #money, #family, #watch-and-listen, #gym, #command, "
+    "#dev-and-security; an image button; @name to ask someone; / for commands (/help lists them).\n"
+    "- Calendar (/calendar): the family calendar (read-only, from REMI_CALENDAR_URLS) and Reminders.\n"
+    "- Money (/money): Budgets, Recent spending, Charter's charts, Import from Rocket Money, Stocks.\n"
+    "- Settings (/settings): Color scheme (light/dark, Glass shine, Home layout), Phone notifications (Turn on, "
+    "Send a test), Security and health, Sign in with Face ID, Devices, Gmail, Memory and notes, Voice commands "
+    "(Siri), Speed, Rounds, Wiring (what's connected), Standing orders.\n"
+    "- Lenz's page (/lenz): the library (watched, playing, reading, ratings) and the Release calendar. "
+    "Email (/mail): Remi's sorted inbox and drafted replies. Each agent has a page at /agent/<name>.\n"
+    "- Settings that change how the hub works are environment variables in Vercel (Project → Settings → "
+    "Environment Variables), and need a redeploy to take effect. Lenz's channels are LENZ_YOUTUBE (YouTube "
+    "channel links, @handles or UC… ids, comma-separated), LENZ_SUBREDDITS and LENZ_TWITCH; new uploads, "
+    "go-lives and subreddit picks are posted in #watch-and-listen, shown in Lenz's window on Home and pushed to "
+    "the phone. There is no Feeds page, no Custom Scripts area and no 'Add channel' box.")
+
+
+def hub_rules(agent):
+    if agent == "qwerty":
+        return ("\n\nOnly describe pages, buttons, settings and endpoints on the hub map or in your build notes; "
+                "if it isn't there, say you don't know. You can't edit code, deploy or change anything by yourself: "
+                "you propose a change with the propose tool and it happens only when the user taps Approve.")
+    ask = (" If something needs changing (a setting, or code), say so and use the ask_qwerty tool: QWERTY "
+           "proposes it and the user approves." if agent == "theta" else
+           " If something needs changing (a setting, or code), tell the user to ask @QWERTY, who can propose "
+           "the change for them to approve.")
+    return ("\n\nOnly describe pages, buttons, settings and features that are on the hub map. If it isn't there, "
+            "say you don't know or that it doesn't exist; never invent pages, buttons, endpoints, file paths, "
+            "scripts or code to paste. You can't write code, deploy, run scripts or change settings, and never "
+            "offer to." + ask + " Before raising a security alarm about a sign-in or device, check what the user "
+            "asked the crew to remember (like where their phone shows up); don't repeat an alarm they've answered.")
 
 
 def tools_prompt(agent):
@@ -1399,20 +1568,28 @@ def run_actions(agent, reply):
     receipts in their place, plus a note when it claims an action it didn't take."""
     found = _ACTION_RE.findall(reply)
     text = _ACTION_RE.sub("", reply).strip()
-    receipts = []
+    receipts, buttons = [], []
     for name, arg in found[:3]:
         tool = TOOLS.get(name.lower())
         if not tool or (tool[2] is not None and agent not in tool[2]):
             receipts.append(f"✗ {name}: not a tool I have")
             continue
         try:
-            receipts.append("✓ " + tool[1](arg, agent))
+            got = tool[1](arg, agent)
+            if isinstance(got, tuple):  # a proposal: text plus Approve / Decline
+                got, more = got
+                buttons += more
+            receipts.append("✓ " + got)
         except (ValueError, CommandError, LLMError) as e:
             receipts.append(f"✗ {name}: {e}")
     if receipts:
-        return (text + "\n\n" if text else "") + "\n".join(receipts)
+        out = (text + "\n\n" if text else "") + "\n".join(receipts)
+        return {"text": out, "buttons": buttons[:2]} if buttons else out
     if _CLAIM_RE.search(text):
         return text + "\n\n_(Nothing was actually saved: no tool was used.)_"
+    if _PROMISE_RE.search(text):
+        return text + ("\n\n_(Agents can't do that themselves. QWERTY can propose a change, and it happens only "
+                       "when you tap Approve.)_")
     return text
 
 
@@ -1467,7 +1644,8 @@ def system_prompt(agent_id, tools=False):
             f"Stay in character{brevity}. The chat shows markdown: when it helps, use a table for things compared "
             "across columns (a header row, then |---| ), bullet or numbered lists for several items, - [ ] for "
             "to-dos, and **bold** sparingly; show an image only with ![alt](https link) for a link you were given."
-            f"{extra}{now_line()}{memory_prompt()}{tools_prompt(agent_id) if tools and not a.get('home') else ''}")
+            f"{extra}{now_line()}{memory_prompt()}"
+            f"{chr(10) * 2 + HUB_GUIDE + hub_rules(agent_id) + tools_prompt(agent_id) if tools and not a.get('home') else ''}")
 
 
 def provider_extra(provider, model):
@@ -2158,8 +2336,10 @@ def allchat_view(limit=50, channel="all"):
     else:
         rows = [m for m in store().list_chat(ALLCHAT_KEEP) if message_channel(m) == channel][-limit:]
     pressed = set(_meta_json("chat:pressed", []))
+    checks = _meta_json("chat:checks", {})
     return [{**{k: v for k, v in m.items() if not (k == "buttons" and m["id"] in pressed)},
-             "name": chat_name(m["from"]), "ch": message_channel(m)} for m in rows]
+             "name": chat_name(m["from"]), "ch": message_channel(m),
+             **({"checks": checks[str(m["id"])]} if str(m["id"]) in checks else {})} for m in rows]
 
 
 # ---- Remi's calendar: Google Calendar "secret address in iCal format"
@@ -4419,7 +4599,14 @@ def qwerty_context():
         devs = devices_text()
     except Exception as e:
         devs = f"(couldn't read the device list: {e!r})"
-    return ("\n\n" + HUB_MAP + "\n\nWhat you see right now (exact):\n"
+    settable = "\n".join(f"- {k} = {os.environ.get(k, '') or '(not set)'}" for k in sorted(SETTABLE))
+    can = ("Settings changes apply on approval" + (" and redeploy automatically." if VERCEL_DEPLOY_HOOK else
+                                                    "; the user redeploys (VERCEL_DEPLOY_HOOK isn't set).")
+           if VERCEL_TOKEN and VERCEL_PROJECT else
+           "Settings changes can't be applied yet: VERCEL_TOKEN and VERCEL_PROJECT aren't set (you can still "
+           "propose; tell the user what to add).")
+    return ("\n\n" + HUB_MAP + "\n\nSettings you can propose changing (current values, exact):\n" + settable
+            + "\n" + can + "\n\nWhat you see right now (exact):\n"
             + ("\n".join(f"- [{s}] {t}" for s, t in findings) if findings else "- all clear")
             + "\n\nWhat's connected (exact; this is all the hub can know):\n" + devs
             + "\n\nServer speed, last 20 loads (usual ms / slowest ms / storage trips / loads, cold starts):\n"
@@ -4857,12 +5044,29 @@ _MAL_STATUS = {"watching": "current", "reading": "current", "completed": "done",
                "dropped": "dropped", "plan_to_watch": "queue", "plan_to_read": "queue"}
 
 
+def lenz_channels_context():
+    """Lenz's own channel setup, exactly as the hub sees it."""
+    last = float(store().get_meta("lenz:feeds:at") or 0)
+    known = _meta_json("lenz:yt:ids", {})
+    yt = [c + ("" if c.startswith("UC") or c in known else
+               " (not looked up yet" + ("" if YOUTUBE_API_KEY else ": YOUTUBE_API_KEY isn't set") + ")")
+          for c in LENZ_YOUTUBE]
+    return ("\n\nYour channels (exact, from the hub's settings):\n"
+            f"- YouTube (LENZ_YOUTUBE): {', '.join(yt) if yt else 'none set'}\n"
+            f"- Subreddits (LENZ_SUBREDDITS): {', '.join(LENZ_SUBREDDITS) or 'none set'}\n"
+            f"- Twitch (LENZ_TWITCH): {', '.join(LENZ_TWITCH) or 'none set'}"
+            + ("" if not LENZ_TWITCH or (TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET) else
+               " (TWITCH_CLIENT_ID/SECRET not set, so not checked)") + "\n"
+            f"- Last checked: {_when(last) if last else 'never yet'}; checked every {LENZ_FEEDS_MINUTES} min. "
+            "The first check only records what's there; new posts show from the next one.")
+
+
 def lenz_context():
     """The user's library, for Lenz's prompt: what they're on, waiting for,
     their favorites and ratings, so his picks fit their taste."""
     lib = library()
     if not lib:
-        return ""
+        return lenz_channels_context()
     by = lambda st: [x for x in lib if x["status"] == st]
     fmt = lambda x: x["title"] + (f" ({KIND_LABELS.get(x.get('kind'), '')}, {x['progress']})" if x.get("progress") else
                                   f" ({KIND_LABELS.get(x.get('kind'), '')})" if x.get("kind") else "")
@@ -4878,7 +5082,7 @@ def lenz_context():
     if prof["genres"]:
         parts.append("Genres they rate highest: " + ", ".join(prof["genres"]))
     parts.append(f"Up next: {len(by('queue'))} titles. Finished: {prof['finished']}, {prof['rated']} rated.")
-    return "\n".join(p for p in parts if not p.endswith(": "))
+    return "\n".join(p for p in parts if not p.endswith(": ")) + lenz_channels_context()
 
 
 def mal_entries():
@@ -7239,7 +7443,8 @@ html,body{overflow-x:clip;max-width:100%}
 .md>div:empty.md-gap{height:.5em}.md .md-h{font-weight:700;margin-top:4px}
 .md .md-list{margin:2px 0;padding-left:1.3em;white-space:normal}.md .md-list li{margin:2px 0}
 .md .md-list.tasks{list-style:none;padding-left:0}.md li.task{display:flex;gap:8px;align-items:flex-start}
-.md li.task input{margin-top:4px;flex-shrink:0;accent-color:var(--accent)}
+.md li.task input{margin-top:4px;flex-shrink:0;accent-color:var(--accent);width:18px;height:18px;cursor:pointer}
+.md li.task>span{flex:1;min-width:0}
 .md .md-scroll{overflow-x:auto;margin:6px 0;white-space:normal}
 .md .md-scroll{-webkit-overflow-scrolling:touch;max-width:100%}
 .md .md-table{border-collapse:collapse;font-size:14px;line-height:1.4;font-variant-numeric:tabular-nums;width:100%}
@@ -7688,7 +7893,8 @@ _CHAT_JS = r'''
   // and checklists, code blocks, headings, **bold**, *italic*, `code` and
   // https images. Built from nodes, never innerHTML, so nothing in a
   // message can run as code.
-  function richText(text) {
+  function richText(text, m) {
+    let taskN = 0;  // checklist items are numbered so ticks can be saved per message
     const root = document.createElement("div");
     root.className = "text md";
     if (!text) return root;
@@ -7758,8 +7964,16 @@ _CHAT_JS = r'''
           if (!ITEM.test(lines[i])) { list.lastChild.append(el("br"), inline(lines[i].trim())); continue; }
           const body = lines[i].replace(ITEM, ""), task = body.match(/^\[([ xX])\]\s+(.*)$/), li = el("li");
           if (task) {
-            const cb = el("input"); cb.type = "checkbox"; cb.disabled = true; cb.checked = task[1] !== " ";
-            li.className = "task"; li.append(cb, inline(task[2]));
+            const cb = el("input"), label = el("span"), n = taskN++;
+            cb.type = "checkbox"; cb.checked = task[1] !== " ";
+            if (m && m.id && m.id !== "pending") {
+              if (m.checks && n in m.checks) cb.checked = m.checks[n];
+              cb.setAttribute("aria-label", task[2]);
+              cb.onchange = () => fetch("/api/chat/check", {method: "POST", headers: H,
+                body: JSON.stringify({msg: m.id, index: n, on: cb.checked})}).catch(() => {});
+            } else cb.disabled = true;
+            label.append(inline(task[2]));  // one block, so bold and code stay inline
+            li.className = "task"; li.append(cb, label);
             list.classList.add("tasks");
           } else li.append(inline(body));
           list.append(li);
@@ -7778,7 +7992,7 @@ _CHAT_JS = r'''
   // the whole message.
   const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
   function typed(m) {
-    const full = richText(m.text);
+    const full = richText(m.text, m);
     if (reduceMotion || m.text.length < 2) return full;
     const wrap = document.createElement("div"), shown = document.createElement("span"), caret = document.createElement("span"),
       sr = document.createElement("span");
@@ -7844,7 +8058,7 @@ _CHAT_JS = r'''
       }
       meta.append(time);
       const agentMsg = a && m.from !== "you" && m.from !== "hub";
-      body.append(meta, fresh && agentMsg ? typed(m) : richText(m.text));
+      body.append(meta, fresh && agentMsg ? typed(m) : richText(m.text, m));
       if (m.image) {
         const img = document.createElement("img");
         img.src = m.image; img.alt = m.text.split("\n")[0] || "Image"; img.className = "att"; img.loading = "lazy";
@@ -10737,6 +10951,9 @@ def handle(method, path, query, headers, body):
                 else:
                     reply = run_actions(agent, llm_chat(AGENTS[agent]["tier"], [
                         {"role": "system", "content": system_prompt(agent, tools=True)}] + history))
+                    if isinstance(reply, dict):  # a proposal: its buttons live in Chat
+                        store().add_chat(agent, reply["text"][:4000], buttons=reply["buttons"])
+                        reply = reply["text"] + "\n\n(Approve or decline it in Chat.)"
             except LLMError as e:
                 return _json(502, {"ok": False, "error": str(e)})
             return _json(200, {"ok": True, "agent": agent, "name": AGENTS[agent]["name"],
@@ -10939,6 +11156,18 @@ def handle(method, path, query, headers, body):
             store().set_meta("notify:rounds", "on" if data.get("rounds") else "off")
             return _json(200, {"ok": True})
 
+        if path == "/api/chat/check":  # ticking a checklist item in a chat message
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            try:
+                mid, idx = int(data.get("msg")), int(data.get("index"))
+            except (TypeError, ValueError):
+                return _json(400, {"ok": False, "error": "msg and index required"})
+            checks = _meta_json("chat:checks", {})
+            checks.setdefault(str(mid), {})[str(idx)] = bool(data.get("on"))
+            store().set_meta("chat:checks", json.dumps(dict(list(checks.items())[-300:])))
+            return _json(200, {"ok": True})
+
         if path == "/api/chat/press":  # a button on an agent's message (James's workout buttons)
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
@@ -10946,11 +11175,21 @@ def handle(method, path, query, headers, body):
             m = next((x for x in store().list_chat(ALLCHAT_KEEP) if x["id"] == mid), None)
             b = next((x for x in (m or {}).get("buttons") or [] if x["id"] == bid and x.get("value") == data.get("value")), None)
             pressed = _meta_json("chat:pressed", [])
-            if not m or not b or m["from"] != "james":
+            if not m or not b or m["from"] not in ("james", "qwerty"):
                 return _json(400, {"ok": False, "error": "That button is gone."})
             if mid in pressed:
                 return _json(409, {"ok": False, "error": "Already done."})
             store().set_meta("chat:pressed", json.dumps((pressed + [mid])[-300:]))  # one press per message, like Discord
+            if m["from"] == "qwerty":  # Approve / Decline on a proposal
+                pm = re.match(r"^qp:([0-9a-f]{8}):(yes|no)$", bid)
+                try:
+                    line = apply_proposal(pm.group(1), pm.group(2) == "yes") if pm else "That button is gone."
+                except ValueError as e:
+                    line = str(e)
+                ch = message_channel(m)
+                store().add_chat("qwerty", line, channel=ch)
+                return _json(200, {"ok": True, "messages": allchat_view(channel=str(data.get("channel") or ch)),
+                                   "latest": latest_by_channel()})
             try:
                 r = james_command(component=bid, values=[b["value"]] if b.get("value") else [])
             except LLMError as e:
