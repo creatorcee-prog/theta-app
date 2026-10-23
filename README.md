@@ -215,6 +215,17 @@ who runs in Garage Gym. Settings → **Memory and notes** lists both, each
 with a remove button (`POST /api/memory/remove`, `/api/notes/remove`
 `{"id"}`).
 
+## James asks the hub (from Garage Gym)
+
+When James, inside Garage Gym, gets a question he can't answer from his own
+knowledge, Garage Gym forwards it to `POST /api/gym/ask` (header
+`x-hub-secret`, the same secret as `GARAGE_GYM_SECRET`). Garage Gym is used
+by family, so this is locked down: Mistral answers from general knowledge and
+a web search, with none of the hub owner's data (budget, calendar, memory,
+notes, home), no tools and no Theta, at most `GYM_ASK_DAILY` (40) a day. The
+answer and its sources go back to James. The hub's chat shows that a question
+came in, but not what it was. A wrong secret counts toward the wrong-key lockout.
+
 ## Tests
 
 `tests/` has the whole suite: 31 standalone scripts that drive the app with
