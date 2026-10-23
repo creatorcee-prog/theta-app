@@ -12,6 +12,9 @@ class Fake(BaseHTTPRequestHandler):
         code = PLAN[prov].pop(0) if PLAN[prov] else 200
         if code == "sleep":
             time.sleep(3); code = 200
+        if code == "empty":
+            out = json.dumps({"choices": [{"message": {"content": None}}]}).encode()
+            self.send_response(200); self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out); return
         if code == 200:
             out = json.dumps({"choices": [{"message": {"content": f"hi from {body['model']}"}}]}).encode()
         else:
@@ -54,6 +57,8 @@ r, e = run("low_brain", gemini=[503, 503], groq=[503])
 check("both busy: one message naming both", r is None and "gemini returned 503" in e and "fallback, openai/gpt-oss-120b, failed too" in e)
 t0 = time.time(); r, e = run("low_brain", gemini=["sleep"])
 check("timeout: straight to the fallback, no same-model retry", r == "hi from openai/gpt-oss-120b" and [p for p, _ in HITS] == ["gemini", "groq"] and time.time() - t0 < 2.5)
+r, e = run("low_brain", gemini=["empty"])
+check("empty reply (spent on thinking): straight to the fallback", r == "hi from openai/gpt-oss-120b" and [p for p, _ in HITS] == ["gemini", "groq"])
 h.FALLBACK_LLM["low_brain"] = ("groq", "off")
 r, e = run("low_brain", gemini=[503, 503])
 check("fallback 'off': the error comes through", r is None and e.startswith("gemini returned 503"))

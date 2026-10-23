@@ -194,6 +194,14 @@ def fake_chat(tier, messages, max_tokens=None, **kw):
     CALLS_.append((who, messages[0]["content"]))
     return PLAN[who].pop(0) if PLAN[who] else f"{who} answer"
 h.llm_chat = fake_chat
+CLAUDE_CALLS, CLAUDE_FAIL = [], [None]
+REAL_CLAUDE = h.claude_chat
+def fake_claude(messages, max_tokens, model=None, effort=None):
+    CLAUDE_CALLS.append((model, effort))
+    if CLAUDE_FAIL[0] and model == h.DESK_MODEL:
+        raise h.LLMError(CLAUDE_FAIL[0])
+    return fake_chat("low_brain" if model == h.DESK_MODEL else "master", messages)
+h.claude_chat = fake_claude
 h.notify = lambda *a, **k: 0
 def post(text, ch="all"):
     s_, d_, _ = call("POST", "/api/allchat", headers=K, body={"text": text, "channel": ch})
@@ -259,6 +267,67 @@ PLAN["mistral"] = ["Got it.\nACTION: remind | sometime maybe"]
 s, d = post("ping me eventually", ch="family")
 evs = [m for m in d["messages"] if m.get("kind") == "event"]
 check("a failed tool shows as an activity line, in the conversation's channel", evs and "tried remind, but it didn't work" in evs[-1]["text"] and evs[-1].get("ch") == "family")
+# Mistral on Haiku while Claude is up; Gemini (the low brain) as his backup
+h.master_ready = lambda: True
+CLAUDE_CALLS.clear(); CALLS_.clear()
+s, d = post("what's on today?")
+check("with Claude up, Mistral answers on Haiku at low effort", d["messages"][-1]["from"] == "mistral"
+      and CLAUDE_CALLS == [("claude-haiku-5-5", "low")])
+check("Wiring names Haiku for Mistral, Gemini as backup", h.agent_model("mistral").startswith("claude-haiku-5-5 (Anthropic)")
+      and "gemini" in h.agent_model("mistral"))
+real_llm = h.llm_chat
+LOW = []
+h.llm_chat = lambda tier, messages, max_tokens=None, **kw: LOW.append(tier) or "gemini answer"
+CLAUDE_FAIL[0] = "Anthropic returned 529: overloaded"
+s, d = post("what's on today?")
+check("Haiku fails: Gemini answers for Mistral", d["messages"][-1]["from"] == "mistral" and d["messages"][-1]["text"] == "gemini answer"
+      and LOW == ["low_brain"])
+check("the fallback is noted for Wiring", json.loads(h.store().get_meta("llm:fallback"))["why"].startswith("Anthropic returned 529"))
+def low_down(tier, messages, max_tokens=None, **kw):
+    if tier == "low_brain":
+        raise h.LLMError("gemini returned 503: high demand (and the fallback failed too: groq returned 413)")
+    return "Theta covering."
+h.llm_chat = low_down
+s, d = post("what's on today?")
+ev = [m for m in d["messages"] if m.get("kind") == "event"]
+check("Mistral can't answer at all: Theta takes it instead of an error", s == 200 and not d["errors"]
+      and d["messages"][-1]["from"] == "theta" and d["messages"][-1]["text"] == "Theta covering.")
+check("an activity line says Theta took it", ev and ev[-1]["text"].startswith("Mistral couldn't answer (gemini returned 503"))
+h.master_ready = lambda: False
+s, d = post("what's on today?")
+check("no Claude: the error still shows when Mistral can't answer", d["errors"].get("Mistral", "").startswith("gemini returned 503"))
+CLAUDE_FAIL[0] = None; h.llm_chat = real_llm
+CLAUDE_CALLS.clear(); CALLS_.clear()
+s, d = post("what's on today?")
+check("no Claude: Mistral stays on the low brain", not CLAUDE_CALLS and CALLS_ and CALLS_[-1][0] == "mistral")
+h.DESK_MODEL = "off"; h.master_ready = lambda: True; CLAUDE_CALLS.clear()
+s, d = post("what's on today?")
+check("DESK_MODEL=off keeps Mistral on the low brain", not CLAUDE_CALLS)
+h.DESK_MODEL = "claude-haiku-5-5"
+# @Theta goes straight to Theta
+CALLS_.clear(); CLAUDE_CALLS.clear(); PLAN["theta"] = ["Theta here, directly."]
+s, d = post("@theta are you there?")
+check("'@theta' goes straight to Theta, without Mistral", d["messages"][-1]["from"] == "theta"
+      and d["messages"][-1]["text"] == "Theta here, directly." and [c[0] for c in CALLS_] == ["theta"])
+h.master_ready = lambda: False; CALLS_.clear()
+s, d = post("@theta are you there?")
+check("'@theta' without Claude: the desk answers as before", d["messages"][-1]["from"] == "mistral")
+# the real request: Haiku without the Opus-only refusal fallback; spend shared with Theta
+os.environ.update(ANTHROPIC_API_KEY="sk-ant-test-0123456789abcdefghijklmnopqrstuvwxyz", ANTHROPIC_BASE_URL=base + "/anthropic")
+G["claude"] = []; h.store().set_meta("claude:last_ok", "")
+before = h.claude_spend()["calls"]
+out = REAL_CLAUDE([{"role": "system", "content": "You're Mistral."}, {"role": "user", "content": "hi"}], 800,
+                  model="claude-haiku-5-5", effort="low")
+hd, body = G["claude"][-1]
+check("Haiku request: its model, low effort, no refusal fallback", out == "Theta here, on Claude." and body["model"] == "claude-haiku-5-5"
+      and body["output_config"] == {"effort": "low"} and "fallbacks" not in body
+      and "server-side-fallback" not in (hd.get("anthropic-beta") or hd.get("Anthropic-Beta") or ""))
+check("Haiku's spend counts toward the shared monthly cap", h.claude_spend()["calls"] == before + 1)
+check("a Haiku reply doesn't count as Theta answering on Wiring", not h.store().get_meta("claude:last_ok"))
+REAL_CLAUDE([{"role": "user", "content": "hi"}], 800)
+check("Theta's request still carries the refusal fallback", G["claude"][-1][1]["model"] == h.MASTER_MODEL_ID
+      and G["claude"][-1][1].get("fallbacks") == "default")
+for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"): os.environ.pop(k)
 # crew mode still there
 h.CHAT_MODE = "crew"; CALLS_.clear()
 s, d = post("hello family", ch="family")

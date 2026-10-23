@@ -90,7 +90,7 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
 - [ ] Free Adzuna key: developer.adzuna.com → register (for "website", use
       your hub's address, `https://<project>.vercel.app`) → `ADZUNA_APP_ID`
       and `ADZUNA_APP_KEY` (`ADZUNA_COUNTRY` if not `us`).
-- [ ] Optional, government jobs: developer.usajobs.gov → request an API key
+- [ ] Government jobs (USAJOBS): developer.usajobs.gov → request an API key
       → `USAJOBS_API_KEY` and `USAJOBS_EMAIL` (the email you used).
 
 ### 9. Lenz's channels, Siri and James
@@ -117,6 +117,33 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
 
 ## Planned
 
+- [ ] Wiring's **Recheck** button that actually checks. Today it only
+      reloads the saved status, so rows that can't be tested stay grey
+      even when the job behind them is set up. Rounds reads "No round has
+      run yet" until its first scheduled run (00, 12 or 18 UTC: 6 pm, 6 am
+      or noon MDT), even though the job is scheduled. Recheck should test
+      what it can live and say "scheduled, first run at …" instead of
+      "not set up".
+- [ ] Get Remi's calendar and Gmail working (setup steps 7 and 4).
+- [ ] Get the job boards working: Adzuna and USAJOBS (setup step 8).
+- [ ] Token use you can see (asked 2026-10-23; checked: doable).
+      - **In chat:** each reply shows its tokens next to the name, tag and
+        time (e.g. "17.6k in · 240 out"). Gemini and Groq return `usage`
+        on every reply, and Claude returns `usage` too, so the call that
+        answered records it on the message.
+      - **In Settings:** per model, tokens and calls today and this
+        month, and when each limit resets:
+        - Claude: the hub's own monthly cap, resets on the 1st.
+        - Gemini: daily quota resets at midnight Pacific
+          ([Google](https://ai.google.dev/gemini-api/docs/rate-limits)).
+          Google doesn't send what's left, so show what we used.
+        - Groq: sends what's left and when it resets in its
+          `x-ratelimit-*` headers
+          ([Groq](https://console.groq.com/docs/rate-limits)), so show
+          those.
+      - Cost: none for the counting; a few small writes per reply.
+- [ ] Two new bots, to be defined later: a habit tracker and a video
+      player bot.
 - [ ] Scriptable widgets: Home Screen and Lock Screen. Build on a JSON
       version of the Home windows (`/api/windows`), so the widget shows
       the same short titles and pictures.
@@ -132,6 +159,32 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
 
 ## Ideas (not built yet)
 
+- [ ] **One-tap merge** (a consideration, not needed yet; worth it once
+      more updates are automated and checking them by hand takes too long).
+      - The 5-minute tick checks both repos for open PRs from the owner's own
+        branches only (never forks: `fitness-tracker` is public, so anyone
+        can open a PR there), waits for tests to pass, then pushes "PR #N:
+        title. Merge / Not now". Merge merges it; Vercel deploys as usual.
+      - Not a merge-everything bot: that would ship unreviewed code, or a
+        stranger's, straight to production.
+      - Needs a fine-grained GitHub token limited to the two repos (pull
+        requests and contents: read and write), set in Vercel as Sensitive.
+- [ ] **World news + a translator bot.**
+      - World news: feeds from outlets in other countries and languages,
+        translated, so the news crew isn't only US sources.
+      - Translator: translate anything in chat on request; maybe language
+        teaching too (daily words, short quizzes, correcting what you write).
+      - Decide: one new bot, or give it to Red/Blue/Gray plus a tutor.
+- [ ] **Searcher miners** (miner tier: cheap models doing legwork).
+      - Searcher: runs longer web searches for the crew and hands back sources.
+      - Buyer: finds the best price for something you want. It must never
+        pay on its own: it proposes, you approve each purchase (like QWERTY),
+        with a spending cap. It would need no card details until that's
+        designed properly.
+      - Dark (Tor-only search): can't run on Vercel (no Tor there), so it
+        needs an always-on host with Tor. Risks to settle first: illegal or
+        scam content, malware in fetched pages, and keeping it away from
+        Buyer entirely. Read-only search results, never downloads.
 - [ ] Video and image rippers: grab a page's main image for reference.
       Downloading videos breaks most sites' terms and is too heavy for
       Vercel, so links only for now.
