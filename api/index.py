@@ -7569,6 +7569,8 @@ body.typing .chat{height:100dvh}
 .dcheck input:checked+span{color:var(--muted);text-decoration:line-through}
 .daily .dx{display:none;border:0;background:none;color:var(--muted);font-size:20px;cursor:pointer;padding:4px 8px}
 .daily.editing .dx{display:block}.daily .dadd{display:none;padding:5px 5px 5px 14px}.daily.editing .dadd{display:flex}
+.via{font-size:11.5px;font-weight:700;color:var(--n);border:1px solid color-mix(in srgb,var(--n) 45%,transparent);
+ background:color-mix(in srgb,var(--n) 12%,transparent);border-radius:999px;padding:1px 8px;line-height:1.5}
 .mem li{justify-content:space-between}.ok-t{color:var(--good);font-weight:600}.bad-t{color:var(--bad)}
 #devices li.dev{display:block;padding:10px 0}#devices details summary{cursor:pointer;padding:4px 0}.mem .dx{border:0;background:none;color:var(--muted);font-size:20px;cursor:pointer;padding:4px 8px}
 .daily .dadd input{flex:1;min-width:0;border:0;background:transparent;outline:none;padding:8px 0;font:inherit}
@@ -8177,17 +8179,25 @@ _CHAT_JS = r'''
       row.className = "msg" + (cont ? " cont" : "") + (fresh ? " new" : "");
       const avcol = document.createElement("div");
       avcol.className = "avcol";
-      avcol.append(avatar(m.from, 40));
+      const a = C.agents[m.from], th = C.agents.theta;
+      // Every agent speaks as Theta; a tag after the name says who it's really from.
+      const asTheta = a && th && m.from !== "you" && m.from !== "hub";
+      avcol.append(avatar(asTheta ? "theta" : m.from, 40));
       const body = document.createElement("div");
       body.style.minWidth = "0";
       const meta = document.createElement("div"), name = document.createElement("span"), time = document.createElement("time");
       meta.className = "meta"; name.className = "name";
-      const a = C.agents[m.from];
-      name.textContent = m.name || (a && a.name) || m.from;
-      name.style.setProperty("--n", a ? a.color : "var(--text)");
+      name.textContent = asTheta ? th.name : (m.name || (a && a.name) || m.from);
+      name.style.setProperty("--n", asTheta ? th.color : a ? a.color : "var(--text)");
       time.textContent = clock(d); time.dateTime = d.toISOString();
       meta.append(name);
-      if (a && a.tier) { const tier = document.createElement("span"); tier.className = "tier"; tier.textContent = a.tier; meta.append(tier); }
+      if (asTheta && m.from !== "theta") {
+        const via = document.createElement("span");
+        via.className = "via"; via.textContent = a.name; via.title = "From " + a.name + (a.tier ? " (" + a.tier + ")" : "");
+        via.style.setProperty("--n", a.color);
+        name.setAttribute("aria-label", th.name + ", from " + a.name);
+        meta.append(via);
+      } else if (a && a.tier && !asTheta) { const tier = document.createElement("span"); tier.className = "tier"; tier.textContent = a.tier; meta.append(tier); }
       if (C.channel === "all" && m.ch && m.ch !== "all" && C.channelNames[m.ch]) {
         const ch = document.createElement("a");
         ch.href = "/chat?ch=" + m.ch; ch.className = "muted small"; ch.textContent = "#" + C.channelNames[m.ch];
