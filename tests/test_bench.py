@@ -83,6 +83,8 @@ check("system is two blocks: the stable part cached, then the clock (uncached)",
 check("the cached part has no clock in it, and the crew's facts are in it",
       "Right now it's" not in body["system"][0]["text"] and "Settings QWERTY can change" in body["system"][0]["text"])
 check("thinking stays on in normal chat", "thinking" not in body)
+check("the reply carries its tokens and who worked on it", d["messages"][-1]["tokens"] == {"in": 17300, "out": 120}
+      and d["messages"][-1]["trail"] == ["mistral"])
 spend = h.claude_spend()
 check("cache reads and writes are counted", h._meta_json("claude:spend", {}) and
       list(h._meta_json("claude:spend", {}).values())[0].get("cache_write") == 17000)
@@ -95,6 +97,16 @@ before = len(CLAUDE)
 h.master_ready = lambda: True
 h.claude_chat([{"role": "system", "content": "You are Theta."}, {"role": "user", "content": "hi"}], 100)
 check("a single system prompt isn't marked for caching (no write fee for nothing)", CLAUDE[-1]["system"] == "You are Theta.")
+
+# the managers (QWERTY, Glass, Remi) on Haiku while Claude is up; Groq when it isn't
+h.master_ready = lambda: True; LOW.clear(); n = len(CLAUDE)
+out = h.llm_chat("manager", [{"role": "system", "content": "You are QWERTY."}, {"role": "user", "content": "status?"}])
+check("QWERTY's tier answers on Haiku", len(CLAUDE) == n + 1 and CLAUDE[-1]["model"] == "claude-haiku-5-5" and not LOW)
+check("Wiring names Haiku for QWERTY, not for James", h.agent_model("qwerty").startswith("claude-haiku-5-5") and "coach" in h.agent_model("james"))
+h.master_ready = lambda: False
+h.llm_chat("manager", [{"role": "user", "content": "status?"}])
+check("without Claude, the managers stay on Groq", len(CLAUDE) == n + 1 and LOW and LOW[-1][0] == "/groq")
+h.master_ready = lambda: True
 
 # the benchmark
 check("GET with nothing run yet", call("GET", "/api/bench", headers=K) == (200, {"ok": True}))

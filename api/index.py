@@ -87,7 +87,8 @@ MASTER_TIMEOUT = int(os.environ.get("MASTER_TIMEOUT_SECONDS", "40"))
 # connected and under the monthly cap, which they share with Theta; the low
 # brain (Gemini, then Groq) answers otherwise or if Haiku fails. The desk's
 # prompt carries every agent's facts (~17k tokens), more than Groq's free
-# tier takes in a minute. DESK_MODEL=off keeps the desk on the low brain.
+# tier takes in a minute. The managers (Glass, Remi, QWERTY) use it too, for
+# the same reason. DESK_MODEL=off keeps them all on their old models.
 DESK_MODEL = os.environ.get("DESK_MODEL", "claude-haiku-5-5")
 DESK_EFFORT = os.environ.get("DESK_EFFORT", "low")
 MODELS = {t: f"{m} ({p.title()})" for t, (p, m) in TIER_LLM.items()}
@@ -444,8 +445,8 @@ class MemoryStore:
         if activity is not None:
             self.activity[bot_id] = activity
 
-    def add_chat(self, sender, text, kind="message", image=None, channel=None, buttons=None):
-        item = {"id": self._next_id(), "from": sender, "text": text, "kind": kind, "at": _now()}
+    def add_chat(self, sender, text, kind="message", image=None, channel=None, buttons=None, extra=None):
+        item = {"id": self._next_id(), "from": sender, "text": text, "kind": kind, "at": _now(), **(extra or {})}
         if image:
             item["image"] = image
         if channel:
@@ -468,6 +469,14 @@ class MemoryStore:
 
     def list_expenses(self, month):
         return list(self.ledger.get(month, {}).values())
+
+    def expense_items(self, month):
+        """{id: expense} for a month, so one can be removed."""
+        return dict(self.ledger.get(month, {}))
+
+    def remove_expenses(self, month, ids):
+        book = self.ledger.get(month, {})
+        return sum(1 for i in ids if book.pop(i, None) is not None)
 
     def set_meta(self, key, value):
         self.meta[key] = value
@@ -599,8 +608,8 @@ class KVStore:
         if activity is not None:
             self._cmd("HSET", "hub:activity", bot_id, activity)
 
-    def add_chat(self, sender, text, kind="message", image=None, channel=None, buttons=None):
-        item = {"id": self._next_id(), "from": sender, "text": text, "kind": kind, "at": _now()}
+    def add_chat(self, sender, text, kind="message", image=None, channel=None, buttons=None, extra=None):
+        item = {"id": self._next_id(), "from": sender, "text": text, "kind": kind, "at": _now(), **(extra or {})}
         if image:
             item["image"] = image
         if channel:
@@ -640,6 +649,14 @@ class KVStore:
     def list_expenses(self, month):
         flat = self._cmd("HGETALL", f"hub:ledger:{month}") or []
         return [json.loads(v) for v in flat[1::2]]
+
+    def expense_items(self, month):
+        """{id: expense} for a month, so one can be removed."""
+        flat = self._cmd("HGETALL", f"hub:ledger:{month}") or []
+        return {k: json.loads(v) for k, v in zip(flat[::2], flat[1::2])}
+
+    def remove_expenses(self, month, ids):
+        return self._cmd("HDEL", f"hub:ledger:{month}", *ids) or 0 if ids else 0
 
     def set_meta(self, key, value):
         self._cmd("HSET", "hub:meta", key, value)
@@ -1131,7 +1148,7 @@ class LLMError(Exception):
 def agent_model(agent_id):
     """What answers for an agent: its tier's model, or the app it lives in."""
     a = AGENTS[agent_id]
-    if agent_id == DESK and desk_on():
+    if (agent_id == DESK or (a["tier"] == "manager" and not a.get("home"))) and desk_on():
         return f"{DESK_MODEL} (Anthropic); {MODELS[a['tier']]} as backup"
     return f"{a['home']}'s coach model" if a.get("home") else MODELS[a["tier"]]
 
@@ -1575,6 +1592,7 @@ def _tool_workout(arg, agent):
 def _tool_ask_qwerty(arg, agent):
     """Theta asks QWERTY to propose a change; QWERTY's proposal is posted for the user."""
     activity(agent, f"{AGENTS[agent]['name']} asked QWERTY: {arg.strip()[:160]}")
+    working("qwerty")
     r = allchat_reply("qwerty", [{"from": agent, "text": "@QWERTY " + arg.strip()[:800], "at": time.time()}])
     text, buttons = (r["text"], r.get("buttons")) if isinstance(r, dict) else (r, None)
     store().add_chat("qwerty", text.strip()[:4000], buttons=buttons, channel=getattr(_REQ, "ch", None))
@@ -1623,11 +1641,17 @@ HUB_GUIDE = (
     "the phone. There is no Feeds page, no Custom Scripts area and no 'Add channel' box.")
 
 
+_SECRETS_RULE = (" Keys, tokens and secret links (DASHBOARD_KEY, API keys, CRON_SECRET and the like) are changed only "
+                 "by the user, in Vercel → Environment Variables (marked Sensitive), then a redeploy. QWERTY can't "
+                 "set or rotate them and never will, so never suggest asking him to.")
+
+
 def hub_rules(agent):
     if agent == "qwerty":
         return ("\n\nOnly describe pages, buttons, settings and endpoints on the hub map or in your build notes; "
                 "if it isn't there, say you don't know. You can't edit code, deploy or change anything by yourself: "
-                "you propose a change with the propose tool and it happens only when the user taps Approve.")
+                "you propose a change with the propose tool and it happens only when the user taps Approve."
+                + _SECRETS_RULE)
     ask = (" If something needs changing (a setting, or code), say so and use the ask_qwerty tool: QWERTY "
            "proposes it and the user approves." if agent == "theta" else
            " If something needs changing (a setting, or code), tell the user to ask @QWERTY, who can propose "
@@ -1636,7 +1660,8 @@ def hub_rules(agent):
             "say you don't know or that it doesn't exist; never invent pages, buttons, endpoints, file paths, "
             "scripts or code to paste. You can't write code, deploy, run scripts or change settings, and never "
             "offer to." + ask + " Before raising a security alarm about a sign-in or device, check what the user "
-            "asked the crew to remember (like where their phone shows up); don't repeat an alarm they've answered.")
+            "asked the crew to remember (like where their phone shows up); don't repeat an alarm they've answered."
+            + _SECRETS_RULE)
 
 
 def tools_prompt(agent):
@@ -1846,6 +1871,11 @@ def llm_chat(tier, messages, max_tokens=800):
                         if messages and messages[0]["role"] == "system" and isinstance(messages[0]["content"], str)
                         else messages)
     t = "low_brain" if tier == "master" else tier
+    if t == "manager" and desk_on():  # Groq's free tier can't take the managers' prompts (8k tokens a minute)
+        try:
+            return claude_chat(messages, max_tokens, model=DESK_MODEL, effort=DESK_EFFORT)
+        except LLMError:
+            pass  # Groq, then Gemini, as before
     provider, model = TIER_LLM[t]
     try:
         return _llm_call(provider, model, messages, max_tokens)
@@ -2091,6 +2121,7 @@ def claude_record(resp, model=None):
     """Count a response toward this month's Claude spend (the cap Theta and
     the desk share); returns its dollars."""
     usd, tin, tout = _usage_cost(resp.usage, resp.model)
+    count_tokens(tin, tout)
     c_read = getattr(resp.usage, "cache_read_input_tokens", 0) or 0
     c_write = getattr(resp.usage, "cache_creation_input_tokens", 0) or 0
     month = datetime.now(hub_tz()).strftime("%Y-%m")
@@ -2156,6 +2187,8 @@ def _llm_call(provider, model, messages, max_tokens):
         with urllib.request.urlopen(req, timeout=LLM_TIMEOUT) as resp:
             out = json.loads(resp.read())
         text = out["choices"][0]["message"].get("content") or ""
+        u = out.get("usage") or {}
+        count_tokens(u.get("prompt_tokens"), u.get("completion_tokens"))
     except urllib.error.HTTPError as e:
         raw = e.read()[:4000].decode("utf-8", "replace")
         if e.code == 429:
@@ -2301,12 +2334,58 @@ def chat_line(m):
     if m.get("kind") == "event":
         return f"[event] {m['text']}"
     pic = " [sent an image]" if (m.get("image") or "").startswith("/upload/") else ""
-    return f"{chat_name(m['from'])}: {m['text']}{pic}"
+    return f"{_chat_clock(m)}{chat_name(m['from'])}: {m['text']}{pic}"
+
+
+def _chat_clock(m):
+    """'[9:13 AM] ' in hub time, so the crew can tell when something was said."""
+    try:
+        at = datetime.strptime(m["at"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).astimezone(hub_tz())
+    except (KeyError, TypeError, ValueError):
+        return ""
+    return f"[{at:%b %d} {_clock(at)}] "
 
 
 def post_event(sender, text):
     """A templated All Agents line for something an agent did. No tokens."""
     store().add_chat(sender, text[:1500], kind="event")
+
+
+WORKING_KEEP = 180  # seconds a "who's working" note is kept for the chat to poll
+
+
+def working(agent, step=""):
+    """Note who's working on the message being answered right now (and on
+    what), so the chat can show "Mistral is thinking..." while it waits."""
+    trail = getattr(_REQ, "trail", None)
+    if trail is not None and (not trail or trail[-1] != agent):
+        trail.append(agent)
+    rid = getattr(_REQ, "rid", None)
+    if not rid:
+        return
+    try:
+        now = time.time()
+        notes = {k: v for k, v in _meta_json("chat:working", {}).items() if now - v["at"] < WORKING_KEEP}
+        notes[rid] = {"agent": agent, "name": AGENTS.get(agent, {}).get("name", agent), "step": step[:80], "at": now,
+                      "done": [a for a in dict.fromkeys(trail or []) if a != agent]}
+        store().set_meta("chat:working", json.dumps(notes))
+    except Exception:
+        pass  # never let a status note cost a reply
+
+
+def count_tokens(tin, tout):
+    """Add a model call's tokens to this request's total (shown on the reply)."""
+    tok = getattr(_REQ, "tok", None)
+    if tok is not None:
+        tok[0] += tin or 0
+        tok[1] += tout or 0
+
+
+def reply_extra():
+    """Who worked on the reply being posted, in order, and the tokens it took."""
+    trail = list(dict.fromkeys(getattr(_REQ, "trail", None) or []))
+    tok = getattr(_REQ, "tok", None) or [0, 0]
+    return {**({"trail": trail} if trail else {}), **({"tokens": {"in": tok[0], "out": tok[1]}} if tok[0] or tok[1] else {})}
 
 
 def activity(sender, text):
@@ -2404,6 +2483,7 @@ def desk_reply(thread):
         return system, ask, content
 
     def ask_as(agent, extra=""):
+        working(agent)
         system, ask, content = prompt_for(agent, extra)
         msgs = [{"role": "system", "content": system}, {"role": "system", "content": now_line()},
                 {"role": "user", "content": content}]
@@ -2538,7 +2618,9 @@ def desk_shortcut(thread):
 def quick_reply(agent, thread):
     """The no-model replies (logging, reminders, charts, workouts), or None."""
     if agent == "glass" and thread[-1]["from"] == "you":
-        parsed = parse_expense(thread[-1]["text"])
+        if _GLASS_UNDO.match(re.sub(r"@\w+[\s,]*", "", thread[-1]["text"]).strip()):
+            return glass_undo()
+        parsed = parse_expense(thread[-1]["text"]) if looks_like_purchase(thread[-1]["text"]) else None
         if parsed:
             return glass_log_reply(parsed)
     text = thread[-1]["text"].lower()
@@ -2561,6 +2643,7 @@ def quick_reply(agent, thread):
 
 def allchat_reply(agent, thread):
     """One agent's reply to the latest message, with the thread as context."""
+    working(agent)
     quick = quick_reply(agent, thread)  # Charter's comes back as (caption, image url)
     if quick:
         return quick
@@ -2598,6 +2681,7 @@ def answer_with_search(agent, system, ask, query):
     model writes as a link is removed. One search per reply, so a web
     page can't steer the agent into fetching something else."""
     activity(agent, f"{AGENTS[agent]['name']} searched the web: {query[:120]}")
+    working(agent, "searching the web")
     found, sources = "", []
     if _search_budget(1):
         try:
@@ -3269,7 +3353,7 @@ def ledger_category(raw):
 def _expense(day, amount, category, note, source, salt=""):
     key = hashlib.sha1(f"{day}|{note.lower()}|{amount:.2f}|{source}|{salt}".encode()).hexdigest()[:16]
     return key, {"date": day.isoformat(), "amount": round(amount, 2), "category": ledger_category(category),
-                 "note": note[:120], "source": source}
+                 "note": note[:120], "source": source, "at": time.time()}
 
 
 def add_expense(amount, category, note="", day=None, source="chat"):
@@ -3284,12 +3368,41 @@ def add_expense(amount, category, note="", day=None, source="chat"):
 _AMOUNT = re.compile(r"\$\s?(\d{1,7}(?:,\d{3})*(?:\.\d{1,2})?)")
 
 
+_GLASS_UNDO = re.compile(r"^(?:undo|undo (?:that|the last one|last)|delete (?:that|the last one)|remove (?:that|the last one))[.!]?$", re.I)
+_NOT_SPENDING = re.compile(r"\b(?:deposit\w*|balance|refund\w*|paycheck|income|salary|earned|got paid|transfer\w*|"
+                           r"set|reset|tried|attempted|meant|didn't|did not|happened|explain\w*)\b", re.I)
+
+
+def looks_like_purchase(text):
+    """Log it at once only if it plainly is one: '$42 groceries', 'spent $12 on lunch',
+    'paid $80 for gas'. Anything else (deposits, balances, a story with a dollar sign
+    in it, $0) goes to the desk instead, so it can't land as spending by mistake."""
+    clean = re.sub(r"@\w+[\s,]*", "", text).strip()
+    m = _AMOUNT.search(clean)
+    if not m or float(m.group(1).replace(",", "")) <= 0 or _NOT_SPENDING.search(clean):
+        return False
+    return bool(re.match(r"^(?:\$|(?:i\s+)?(?:spent|paid|bought|got)\b)", clean, re.I)) and len(clean.split()) <= 12
+
+
+def glass_undo():
+    """Remove the last expense logged from chat this month."""
+    month = datetime.now(hub_tz()).strftime("%Y-%m")
+    items = [(k, e) for k, e in store().expense_items(month).items() if e.get("source") == "chat"]
+    if not items:
+        return "Nothing logged from chat this month to undo."
+    k, e = max(items, key=lambda kv: (kv[1]["date"], kv[1].get("at", 0)))
+    store().remove_expenses(month, [k])
+    return f"Removed ${e['amount']:,.2f} for {e['category']} ({e['note']}) from {e['date']}."
+
+
 def parse_expense(text):
     """'@glass $42.50 groceries at Costco' -> (42.5, 'Groceries', 'groceries at Costco'), or None."""
     m = _AMOUNT.search(text)
     if not m:
         return None
     amount = float(m.group(1).replace(",", ""))
+    if amount <= 0:  # "$0" is never spending
+        return None
     rest = re.sub(r"@\w+", "", (text[:m.start()] + text[m.end():])).strip(" ,.-:")
     words = rest.lower()
     names = list(GLASS_BUDGETS) + [v for v in GLASS_CATEGORY_MAP.values()]
@@ -7339,6 +7452,7 @@ def current_session(headers):
     dev = sessions().get(key)
     if not dev:
         return None
+    _REQ.sess_key = key
     now = time.time()
     if now - dev["seen"] > SESSION_SEEN_EVERY:
         with _SESS_LOCK:
@@ -7351,6 +7465,43 @@ def current_session(headers):
 
 
 SIGNED_OUT_KEEP = 15  # signed-out devices remembered on Settings → Devices
+# Face ID lock (per device, Settings → Face ID): when the app goes to the
+# background it tells the hub; back after more than LOCK_GRACE seconds, the
+# hub refuses everything from that device until Face ID passes again.
+LOCK_GRACE = int(os.environ.get("LOCK_GRACE_SECONDS", "15"))  # a glance at a notification doesn't lock it
+
+
+def update_session(key, **fields):
+    """Change a signed-in device's record; a None value removes that field."""
+    with _SESS_LOCK:
+        live = sessions()
+        if key not in live:
+            return None
+        for k, v in fields.items():
+            if v is None:
+                live[key].pop(k, None)
+            else:
+                live[key][k] = v
+        store().set_meta("sessions", json.dumps(live))
+        return live[key]
+
+
+def lock_check(dev, key):
+    """True when this device's Face ID lock is closed. Back within the grace,
+    it carries on (and the away mark is cleared); later, it stays locked
+    until Face ID passes, however soon after it's used again."""
+    if not dev.get("lock"):
+        return False
+    if dev.get("locked"):
+        return True
+    if dev.get("hidden"):
+        if time.time() - dev["hidden"] > LOCK_GRACE:
+            update_session(key, locked=True, hidden=None)
+            dev["locked"] = True
+            return True
+        update_session(key, hidden=None)
+        dev.pop("hidden", None)
+    return False
 
 
 def name_device(dev_id, name):
@@ -7410,8 +7561,13 @@ def _auth_dashboard(query, headers):
     a session."""
     if not DASHBOARD_KEY:
         return True
-    if getattr(_REQ, "session", None) or current_session(headers):
+    if getattr(_REQ, "session", None):
         return True
+    sess = current_session(headers)
+    if sess:
+        if not lock_check(sess, _REQ.sess_key):
+            return True
+        _REQ.locked = True  # signed in, but locked until Face ID: the key still works, as it would anywhere
     if _same(query.get("key", [None])[0], DASHBOARD_KEY):
         if getattr(_REQ, "page", False):  # a page opened from a key link signs the browser in
             new_session(headers, "key link")
@@ -7882,6 +8038,21 @@ html,body{overflow-x:clip;max-width:100%}
 .daysep{display:flex;align-items:center;gap:10px;margin:14px 16px 6px;font-size:11.5px;font-weight:700;color:var(--muted)}
 .daysep::before,.daysep::after{content:"";flex:1;height:1px;background:var(--border)}
 .composer{position:relative;padding:8px 12px calc(10px + env(safe-area-inset-bottom) * 0);flex:none}
+.working{display:flex;flex-direction:column;gap:6px;padding:2px 6px 8px;color:var(--accent);font-size:15px;font-weight:600}
+.working[hidden]{display:none}
+.working .wline{display:flex;align-items:center;gap:10px}
+.working .wline .av{border-radius:8px}
+.trail{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.trail .av{border-radius:6px;opacity:.9}
+.trail .sep{color:var(--muted);font-size:11px;font-weight:600}
+.trail:empty{display:none}
+.msg .trail{margin:2px 0 4px}
+.meta .tok{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.working .wdots{display:inline-flex;gap:5px}
+.working .wdots i{width:6px;height:6px;border-radius:50%;background:currentColor;animation:wdot 1.2s infinite ease-in-out}
+.working .wdots i:nth-child(2){animation-delay:.2s}.working .wdots i:nth-child(3){animation-delay:.4s}
+@keyframes wdot{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
+@media (prefers-reduced-motion:reduce){.working .wdots i{animation:none;opacity:.7}}
 .box{display:flex;align-items:flex-end;gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:18px;padding:5px 5px 5px 14px}
 .box:focus-within{border-color:color-mix(in srgb,var(--accent) 60%,var(--border))}
 .box textarea{flex:1;border:0;background:transparent;resize:none;outline:none;max-height:168px;padding:8px 0;line-height:1.4;min-width:0}
@@ -8009,6 +8180,22 @@ _UI_JS_SRC = r'''
     const u = new URL(location.href);
     u.searchParams.delete("key");
     history.replaceState(null, "", u.pathname + u.search + u.hash);
+  }
+  // Face ID lock (window.THETA_LOCK, set when it's on for this device): going
+  // to the background hides the page and tells the hub; coming back, the hub
+  // says whether Face ID is needed, and if so the page reloads to the lock.
+  if (window.THETA_LOCK) {
+    const away = () => { root.classList.add("veiled");
+      try { navigator.sendBeacon("/api/lock/away", new Blob(["{}"], {type: "application/json"})); } catch (_) {} };
+    const back = async () => {
+      try {
+        const d = await (await fetch("/api/lock/status", {cache: "no-store"})).json();
+        if (d.locked) { location.reload(); return; }
+      } catch (_) { location.reload(); return; }
+      root.classList.remove("veiled");
+    };
+    document.addEventListener("visibilitychange", () => document.hidden ? away() : back());
+    window.addEventListener("pageshow", e => { if (e.persisted) back(); });
   }
   const dark = matchMedia("(prefers-color-scheme: dark)");
   function metaColors() {
@@ -8483,8 +8670,21 @@ _CHAT_JS = r'''
         meta.append(ch);
       }
       meta.append(time);
+      if (m.tokens) {
+        const k = n => n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(n);
+        const tok = document.createElement("span");
+        tok.className = "tok"; tok.textContent = k(m.tokens.in) + " in · " + k(m.tokens.out) + " out";
+        tok.title = "Tokens this reply used, all the agents together";
+        meta.append(tok);
+      }
       const agentMsg = a && m.from !== "you" && m.from !== "hub";
-      body.append(meta, fresh && agentMsg ? typed(m) : richText(m.text, m));
+      body.append(meta);
+      if (m.trail && m.trail.length) {
+        const tr = trailRow(m.trail, document.createElement("div"));
+        tr.className = "trail"; tr.setAttribute("aria-label", "Worked on by " + m.trail.map(id => (C.agents[id] || {}).name || id).join(", "));
+        body.append(tr);
+      }
+      body.append(fresh && agentMsg ? typed(m) : richText(m.text, m));
       if (m.image) {
         const img = document.createElement("img");
         img.src = m.image; img.alt = m.text.split("\n")[0] || "Image"; img.className = "att"; img.loading = "lazy";
@@ -8666,19 +8866,61 @@ _CHAT_JS = r'''
     if (e.key === "Enter" && !e.shiftKey && !touch) { e.preventDefault(); form.requestSubmit(); }
   });
 
+  // "Mistral is thinking..." while a reply is on its way: the hub notes who's
+  // working on this message (and on what) and the chat asks every 1.5 s.
+  const VERBS = {mistral: ["thinking", "reading the chat", "working it out"], theta: ["pondering", "ruminating", "weighing it up"],
+                 qwerty: ["checking", "scanning"], glass: ["counting", "tallying"], remi: ["checking the calendar"],
+                 lenz: ["browsing"], charter: ["drawing"], red: ["reading the news"], blue: ["reading the news"],
+                 gray: ["reading the news"], james: ["asking Garage Gym"]};
+  const wBox = document.getElementById("chat-working"), wText = document.getElementById("chat-working-text");
+  const wAv = document.getElementById("chat-working-av"), wDone = document.getElementById("chat-working-done");
+  let wTimer = null, wPoll = null;
+  // A row of small icons, in order, for the agents that worked on something.
+  function trailRow(ids, row) {
+    row.replaceChildren();
+    ids.forEach((id, i) => {
+      if (i) { const sep = document.createElement("span"); sep.className = "sep"; sep.textContent = "›"; row.append(sep); }
+      const av = avatar(id, 18); av.title = (C.agents[id] || {}).name || id; row.append(av);
+    });
+    return row;
+  }
+  function showWorking(who, name, step, done) {
+    wBox.hidden = false;
+    wAv.replaceChildren(avatar(who, 22));
+    trailRow(done || [], wDone);
+    let n = 0;
+    const say = () => { const v = VERBS[who] || ["working"]; wText.textContent = name + " is " + (step || v[n++ % v.length]) + "..."; };
+    clearInterval(wTimer); say(); if (!step) wTimer = setInterval(say, 3000);
+  }
+  function startWorking(rid, who) {
+    let seen = "";
+    showWorking(who, (C.agents[who] || {}).name || "Mistral");
+    wPoll = setInterval(async () => {
+      try {
+        const d = await (await fetch("/api/chat/working?rid=" + rid, {headers: H})).json();
+        const key = d.agent ? d.agent + "|" + d.step + "|" + (d.done || []).join() : "";
+        if (d.ok && d.agent && key !== seen) { seen = key; showWorking(d.agent, d.name, d.step, d.done); }
+      } catch (_) {}
+    }, 1500);
+  }
+  function stopWorking() { clearInterval(wTimer); clearInterval(wPoll); wBox.hidden = true; wDone.replaceChildren(); }
+
   form.onsubmit = async e => {
     e.preventDefault();
     const text = msg.value.trim(), image = pic;
     if (!text && !image) return;
     msg.value = ""; grow(); setPic(null); btn.disabled = true; closeMenu();
     const isCmd = text.startsWith("/") && !image;
-    status.textContent = isCmd ? "Running " + text.split(" ")[0] + "..." : "Waiting for replies...";
+    const rid = Math.random().toString(36).slice(2, 12);
+    status.textContent = isCmd ? "Running " + text.split(" ")[0] + "..." : "";
+    if (!isCmd) startWorking(rid, /@theta\b/i.test(text) ? "theta" : "mistral");
     if (!isCmd) {
       thread = [...thread, {id: "pending", from: "you", name: "You", text, image, kind: "message", at: new Date().toISOString().slice(0, 19).replace("T", " "), ch: C.channel}];
       render(); box.scrollTop = box.scrollHeight;
     }
     try {
-      const d = await (await fetch("/api/allchat", {method: "POST", headers: H, body: JSON.stringify(image ? {text, image, channel: C.channel} : {text, channel: C.channel})})).json();
+      const d = await (await fetch("/api/allchat", {method: "POST", headers: H, body: JSON.stringify(image ? {text, image, channel: C.channel, rid} : {text, channel: C.channel, rid})})).json();
+      stopWorking();
       if (!d.ok) throw new Error(d.error);
       thread = d.messages; render(); box.scrollTop = box.scrollHeight;
       thetaLatest(d.latest);
@@ -8689,9 +8931,12 @@ _CHAT_JS = r'''
         status.textContent = [routed, ...errs].filter(Boolean).join(" | ");
       }
     } catch (err) {
-      if (!isCmd) { thread = thread.filter(m => m.id !== "pending"); render(); }
-      msg.value = text; grow(); setPic(image);
-      status.textContent = "Error: " + err.message;
+      stopWorking();
+      // A dropped connection doesn't mean the hub didn't get it: look before putting the text back.
+      thread = thread.filter(m => m.id !== "pending"); await load();
+      const arrived = !isCmd && thread.slice(-8).some(m => m.from === "you" && m.text === text.slice(0, 2000));
+      if (arrived) status.textContent = "Your message went through, but the reply took too long to load. It'll show up here when it's ready.";
+      else { render(); msg.value = text; grow(); setPic(image); status.textContent = "Couldn't send: " + err.message; }
     }
     btn.disabled = false;
   };
@@ -8711,6 +8956,17 @@ _CHAT_JS = r'''
 
 
 _BUDGET_JS = """
+document.addEventListener("click", async e => {
+  const b = e.target.closest("[data-exp-rm]"); if (!b) return;
+  if (!confirm("Remove this expense?")) return;
+  const [month, id] = b.dataset.expRm.split(":");
+  b.disabled = true;
+  try {
+    const d = await (await fetch("/api/glass/remove", {method: "POST", headers: window.THETA_H, body: JSON.stringify({month, id})})).json();
+    if (!d.ok) throw new Error(d.error);
+    location.reload();
+  } catch (err) { b.disabled = false; b.textContent = "Couldn't remove"; }
+});
 document.getElementById("csv-import").onclick = async () => {
   const f = document.getElementById("csv-file").files[0], out = document.getElementById("csv-status");
   if (!f) { out.textContent = "Pick your Rocket Money CSV first."; return; }
@@ -8754,7 +9010,7 @@ def ui_icon(name):
             f'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{UI_ICONS[name]}</svg>')
 
 
-_UI_CSS = theme_css() + "\n" + _BASE_CSS
+_UI_CSS = theme_css() + "\n" + _BASE_CSS + "\nhtml.veiled .app,html.veiled .tabbar{visibility:hidden}"
 _UI_JS = _UI_JS_SRC.replace("__THEMES__", json.dumps(
     {n: {"glass": bool(t.get("glass")), "mono": bool(t.get("mono")), "light": t["light"]["bg"],
          "dark": t["dark"]["bg"]} for n, t in THEMES.items()}))
@@ -8810,7 +9066,8 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
         f'{metas}<link rel="stylesheet" href="/ui.css?v={_ASSET_V}">'
         # Request headers for page scripts, defined before any of them runs.
         '<script>window.THETA_H = {"Content-Type": "application/json", "x-dashboard-key": '
-        'new URLSearchParams(location.search).get("key") || ""};</script></head>'
+        'new URLSearchParams(location.search).get("key") || ""};'
+        + ('window.THETA_LOCK = true;' if (current_session(headers) or {}).get("lock") else '') + '</script></head>'
         f'<body class="{body_class}"><div class="app"><aside class="rail" aria-label="Sidebar">'
         f'<a class="brand" href="/">{avatar_img("theta", 32)}{APP_NAME}</a><nav aria-label="Main">{nav}</nav>'
         f'<div class="label">Crew</div>{crew}</aside><main class="main">{body}</main></div>'
@@ -9208,6 +9465,9 @@ def chat_page(headers, query):
         f'<nav class="chiprow" aria-label="Channels">{chips}</nav>'
         '<div class="msgs" id="msgs" role="log" aria-live="polite"></div>'
         '<form class="composer" id="chat-form"><ul id="chat-menu" role="listbox" hidden></ul>'
+        '<div class="working" id="chat-working" role="status" aria-live="polite" hidden><div class="trail" id="chat-working-done"></div>'
+        '<div class="wline"><span id="chat-working-av"></span><span class="wdots" aria-hidden="true"><i></i><i></i><i></i></span>'
+        '<span id="chat-working-text"></span></div></div>'
         '<div class="attach" id="chat-attach" hidden><img alt="Image to send"><button type="button" class="dx" '
         'aria-label="Remove image">×</button></div>'
         f'<div class="box"><label class="btn ghost pick" aria-label="Attach an image">{ui_icon("photo")}'
@@ -9551,10 +9811,11 @@ _SIGNIN_JS = r"""
       const o = await opts();
       const cred = await navigator.credentials.get({publicKey: {challenge: b64(o.challenge), rpId: o.rpId, userVerification: "required", timeout: 60000}});
       const r = cred.response;
-      const d = await (await fetch("/api/passkey/login", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(
+      const unlock = document.getElementById("si-face").dataset.unlock;
+      const d = await (await fetch(unlock ? "/api/passkey/unlock" : "/api/passkey/login", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(
         {id: cred.id, clientDataJSON: u(r.clientDataJSON), authenticatorData: u(r.authenticatorData), signature: u(r.signature)})})).json();
       if (!d.ok) throw new Error(d.error);
-      out.textContent = "Signed in."; location.reload();
+      out.textContent = unlock ? "Unlocked." : "Signed in."; location.reload();
     } catch (e) { out.textContent = "Couldn't sign in: " + why(e, "sign-in"); }
   };
   document.getElementById("si-key").onsubmit = e => { e.preventDefault(); const k = document.getElementById("si-keyin").value.trim(); if (k) location.href = location.pathname + "?key=" + encodeURIComponent(k); };
@@ -9587,6 +9848,26 @@ _PASSKEY_JS = r"""
     return async () => { if (!o || Date.now() - at > 240000) await load(); const x = o; o = null; load(); if (!x) throw new Error("Couldn't reach Theta. Check your connection."); return x; };
   };
   if (!window.PublicKeyCredential) { add.disabled = true; out.textContent = "This browser can't make passkeys."; }
+  const lockBtn = document.getElementById("lock-set"), lockOut = document.getElementById("lock-status");
+  const lockOpts = lockBtn && lockBtn.dataset.on === "1" && window.PublicKeyCredential ? ready("/api/passkey/options?type=login", H) : null;
+  if (lockBtn) lockBtn.onclick = async () => {
+    const on = lockBtn.dataset.on === "1";
+    lockBtn.disabled = true;
+    try {
+      let assertion = null;
+      if (on) {
+        if (!lockOpts) throw new Error("This browser can't use Face ID here.");
+        lockOut.textContent = "Look at your phone...";
+        const o = await lockOpts();
+        const cred = await navigator.credentials.get({publicKey: {challenge: b64(o.challenge), rpId: o.rpId, userVerification: "required", timeout: 60000}});
+        const r = cred.response;
+        assertion = {id: cred.id, clientDataJSON: u(r.clientDataJSON), authenticatorData: u(r.authenticatorData), signature: u(r.signature)};
+      }
+      const d = await (await fetch("/api/lock/set", {method: "POST", headers: H, body: JSON.stringify({on, assertion})})).json();
+      if (!d.ok) throw new Error(d.error);
+      location.reload();
+    } catch (e) { lockOut.textContent = on ? "Couldn't turn it on: " + why(e, "lock") : "Couldn't turn it off: " + (e.message || e); lockBtn.disabled = false; }
+  };
   const opts = window.PublicKeyCredential ? ready("/api/passkey/options?type=register", H) : null;
   add.onclick = async () => {
     out.textContent = "Follow your device's prompt...";
@@ -9614,12 +9895,16 @@ _PASSKEY_JS = r"""
 
 
 def signin_page(headers):
-    """What you see without the key: Face ID, or type the key."""
+    """What you see without the key: Face ID, or type the key. A device whose
+    Face ID lock has closed gets the same page as a lock: Unlock with Face ID."""
     has = bool(passkeys())
+    locked = getattr(_REQ, "locked", False)
     body = (
         f'<div style="max-width:420px;margin:12vh auto 0" class="card stack"><div class="hero">{avatar_img("theta", 56)}'
-        f'<div><p class="eyebrow">{APP_NAME}</p><h1>Sign in</h1></div></div>'
-        + ('<button class="btn" id="si-face" type="button">Sign in with Face ID</button>' if has else
+        f'<div><p class="eyebrow">{APP_NAME}</p><h1>{"Locked" if locked else "Sign in"}</h1></div></div>'
+        + ('<p class="muted small">Theta was in the background, so it needs Face ID again.</p>'
+           '<button class="btn" id="si-face" type="button" data-unlock="1">Unlock with Face ID</button>' if locked and has else
+           '<button class="btn" id="si-face" type="button">Sign in with Face ID</button>' if has else
            '<p class="muted small">Open Theta once with your key, then add Face ID sign-in in Settings.</p>'
            '<button class="btn" id="si-face" type="button" hidden></button>')
         + '<form id="si-key" class="box" style="padding:5px 5px 5px 14px"><input id="si-keyin" type="password" '
@@ -9824,6 +10109,7 @@ def devices_card(headers):
 
 
 def passkeys_card(headers=None):
+    lock_on = bool((current_session(headers or {}) or {}).get("lock"))
     rows = "".join(
         f'<li><div class="brow" style="align-items:center"><span>{html.escape(k["name"])}</span>'
         f'<button class="btn ghost small" type="button" data-pk-remove="{html.escape(k["id"])}">Remove</button></div>'
@@ -9841,7 +10127,16 @@ def passkeys_card(headers=None):
             '<div style="display:flex;gap:8px;flex-wrap:wrap"><input id="pk-name" class="field" style="flex:1;min-width:160px" '
             'placeholder="Name, like iPhone" aria-label="Device name"><button class="btn" id="pk-add" type="button">'
             'Add this device</button></div><p class="note" id="pk-status"></p>'
-            f'<ul class="list">{rows or "<li class=empty>No devices yet.</li>"}</ul></section>'
+            f'<ul class="list">{rows or "<li class=empty>No devices yet.</li>"}</ul>'
+            + ((f'<div class="stack" style="gap:6px"><h3>Face ID lock on this device</h3><p class="muted small">Asks for Face ID '
+                f'every time Theta comes back after being in the background (a glance of under {LOCK_GRACE} seconds, like '
+                'checking a notification, doesn\'t count). Until it passes, Theta shows nothing and the hub answers nothing '
+                'from this device.</p>'
+                + ('<p><span class="chip ok-t">On</span> <button class="btn ghost small" id="lock-set" type="button" data-on="0">'
+                   'Turn off</button></p>' if lock_on else
+                   '<p><button class="btn" id="lock-set" type="button" data-on="1">Ask for Face ID when Theta opens</button></p>')
+                + '<p class="note" id="lock-status"></p></div>') if rows else "")
+            + '</section>'
             f"<script>{_PASSKEY_JS}</script>")
 
 
@@ -10565,11 +10860,12 @@ def money_page(headers):
     listing = (f'<ul class="list">{"".join(rows)}</ul>' if rows else
                '<p class="empty">No budgets or expenses yet. Set GLASS_BUDGETS in Vercel (like '
                '<code>Groceries:600,Dining:200</code>), tell Glass "$42 groceries" in #money, or import a Rocket Money export.</p>')
-    recent = sorted(store().list_expenses(month), key=lambda e: e["date"], reverse=True)[:12]
+    recent = sorted(store().expense_items(month).items(), key=lambda kv: (kv[1]["date"], kv[1].get("at", 0)), reverse=True)[:12]
     recent_html = "".join(f'<li><div class="brow"><span>{html.escape(e["category"])}'
                           f'{" · " + html.escape(e["note"]) if e.get("note") else ""}</span>'
-                          f'<span>${e["amount"]:,.2f}</span></div><span class="muted small">{e["date"]}</span></li>'
-                          for e in recent) or '<li class="empty">Nothing logged this month.</li>'
+                          f'<span>${e["amount"]:,.2f}</span></div><div class="brow"><span class="muted small">{e["date"]}</span>'
+                          f'<button class="btn ghost small" type="button" data-exp-rm="{month}:{html.escape(k)}">Remove</button></div></li>'
+                          for k, e in recent) or '<li class="empty">Nothing logged this month.</li>'
     charts = [m for m in reversed(store().list_chat(ALLCHAT_KEEP)) if m["from"] == "charter" and m.get("image")][:4]
     charts_html = "".join(f'<figure style="margin:0"><img class="att" src="{html.escape(m["image"])}" alt="">'
                           f'<figcaption class="muted small">{html.escape(_first_line(m["text"]))}</figcaption></figure>'
@@ -11470,7 +11766,8 @@ def handle(method, path, query, headers, body):
             if history[-1]["role"] != "user":
                 return _json(400, {"ok": False, "error": "last message must be from user"})
             try:
-                parsed = parse_expense(history[-1]["content"]) if agent == "glass" else None
+                parsed = (parse_expense(history[-1]["content"])
+                          if agent == "glass" and looks_like_purchase(history[-1]["content"]) else None)
                 chart = charter_reply(history[-1]["content"]) if agent == "charter" else None
                 image = None
                 if chart:
@@ -11498,6 +11795,7 @@ def handle(method, path, query, headers, body):
                 text = ""
             if not isinstance(text, str) or not (text.strip() or pic):
                 return _json(400, {"ok": False, "error": "text required"})
+            _REQ.rid = re.sub(r"[^\w-]", "", str(data.get("rid") or ""))[:24] or None  # for "who's working" notes
             if bot_id:  # a bot posting: no replies, so agents can't loop
                 if not _auth_bot(bot_id, headers):
                     return _json(401, {"ok": False, "error": "bad bot_id or key"})
@@ -11532,12 +11830,13 @@ def handle(method, path, query, headers, body):
                 except (LLMError, ValueError, KeyError) as e:
                     errors[AGENTS[DESK]["name"]] = str(e)
                 else:
+                    extra = reply_extra()
                     if isinstance(reply, tuple):  # Charter's (caption, chart url)
-                        st.add_chat(who, reply[0], image=reply[1], channel=ch)
+                        st.add_chat(who, reply[0], image=reply[1], channel=ch, extra=extra)
                     elif isinstance(reply, dict):
-                        st.add_chat(who, reply["text"][:4000], channel=ch, buttons=reply.get("buttons"))
+                        st.add_chat(who, reply["text"][:4000], channel=ch, buttons=reply.get("buttons"), extra=extra)
                     elif reply:
-                        st.add_chat(who, reply.strip()[:4000], channel=ch)
+                        st.add_chat(who, reply.strip()[:4000], channel=ch, extra=extra)
                     if who == "theta":
                         routed = [who]
                 return _json(200, {"ok": True, "messages": allchat_view(channel=ch), "errors": errors,
@@ -11591,6 +11890,17 @@ def handle(method, path, query, headers, body):
             post_event("glass", f"Glass logged ${amount:,.2f} for {exp['category']}"
                                 + (f" from {display_name(bot_id)}" if bot_id else ""))
             return _json(200, {"ok": True, "expense": exp})
+
+        if path == "/api/glass/remove":
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            month, item = str(data.get("month") or ""), str(data.get("id") or "")
+            if not re.fullmatch(r"\d{4}-\d{2}", month) or item not in store().expense_items(month):
+                return _json(404, {"ok": False, "error": "That expense isn't there any more."})
+            e = store().expense_items(month)[item]
+            store().remove_expenses(month, [item])
+            post_event("glass", f"You removed ${e['amount']:,.2f} for {e['category']} ({e['note']}) from {e['date']}")
+            return _json(200, {"ok": True})
 
         if path == "/api/glass/import":
             if not _auth_dashboard(query, headers):
@@ -11785,6 +12095,30 @@ def handle(method, path, query, headers, body):
                     store().set_meta("push:subs", json.dumps(subs))
             return _json(200, {"ok": True, "changed": changed})
 
+        if path == "/api/lock/away":  # sent (beacon) when the app goes to the background
+            sess = current_session(headers)
+            if sess and sess.get("lock") and not sess.get("locked") and not sess.get("hidden"):
+                update_session(_REQ.sess_key, hidden=time.time())
+            return _json(200, {"ok": True})
+
+        if path == "/api/lock/set":
+            if not _auth_dashboard(query, headers) or not _REQ.sess_key:
+                return _json(401, {"ok": False, "error": "Sign in on this device first."})
+            me = sessions().get(_REQ.sess_key, {})
+            if data.get("on"):
+                rp_id, origin = _rp(headers)
+                try:  # proves this device can unlock before it can be locked
+                    verify_passkey(data.get("assertion") or {}, rp_id, origin)
+                except (ValueError, KeyError, TypeError) as e:
+                    passkey_fail(headers, "lock", str(e), rp_id)
+                    return _json(400, {"ok": False, "error": f"Face ID didn't pass ({str(e)[:120]}), so the lock is still off."})
+                update_session(_REQ.sess_key, lock=True, locked=None, hidden=None, unlocked=time.time())
+                post_event("qwerty", f"Face ID lock turned on for {device_name(me)}")
+            else:
+                update_session(_REQ.sess_key, lock=None, locked=None, hidden=None)
+                post_event("qwerty", f"Face ID lock turned off for {device_name(me)}")
+            return _json(200, {"ok": True})
+
         if path == "/api/devices/name":
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
@@ -11893,6 +12227,17 @@ def handle(method, path, query, headers, body):
 
         if path.startswith("/api/passkey/"):
             rp_id, origin = _rp(headers)
+            if path == "/api/passkey/unlock":  # Face ID lock: open this device again
+                sess = current_session(headers)
+                if not sess:
+                    return _json(401, {"ok": False, "error": "This device isn't signed in any more. Sign in instead."})
+                try:
+                    verify_passkey(data, rp_id, origin)
+                except (ValueError, KeyError, TypeError) as e:
+                    passkey_fail(headers, "unlock", str(e), rp_id)
+                    return _json(401, {"ok": False, "error": str(e)[:160]})
+                update_session(_REQ.sess_key, locked=None, hidden=None, unlocked=time.time())
+                return _json(200, {"ok": True})
             if path == "/api/passkey/login":
                 try:
                     pk = verify_passkey(data, rp_id, origin)
@@ -12165,6 +12510,17 @@ def handle(method, path, query, headers, body):
             return _json(401, {"ok": False, "error": "dashboard key required"})
         return _json(200, {"ok": True, **_meta_json("bench:last", {})})
 
+    if path == "/api/lock/status":  # the app asks when it comes back to the front
+        sess = current_session(headers)
+        locked = bool(sess) and lock_check(sess, _REQ.sess_key)
+        return _json(200, {"ok": True, "on": bool(sess and sess.get("lock")), "locked": locked})
+
+    if path == "/api/chat/working":  # the chat polls this while it waits for a reply
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        note = _meta_json("chat:working", {}).get(query.get("rid", [""])[0])
+        return _json(200, {"ok": True, **({k: note.get(k, []) for k in ("agent", "name", "step", "done")} if note else {})})
+
     if path == "/api/wiring":
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
@@ -12257,7 +12613,9 @@ def app(environ, start_response):
     body = environ["wsgi.input"].read(length) if length > 0 else b""
     ip = client_ip(environ)
     _REQ.cookies, _REQ.session, _REQ.quiet, _REQ.meta, _REQ.calls = [], None, False, {}, 0
-    _REQ.stale, _REQ.refreshing, _REQ.ch = False, False, None
+    _REQ.stale, _REQ.refreshing, _REQ.ch, _REQ.rid = False, False, None, None
+    _REQ.trail, _REQ.tok = [], [0, 0]  # who worked on this request's reply, and its tokens (in, out)
+    _REQ.sess_key, _REQ.locked = None, False
     t0 = time.time()
     _REQ.page = method == "GET" and not path.startswith("/api/")
     try:
@@ -12269,7 +12627,7 @@ def app(environ, start_response):
             tried = (query.get("key") or headers.get("x-dashboard-key") or headers.get("x-ask-key")
                      or headers.get("x-bot-key") or headers.get("x-hub-secret") or _cookie(headers, "hub_key")
                      or path == "/api/passkey/login")
-            if status == 401 and _cookie(headers, "hub_sess") and not _REQ.session:
+            if status == 401 and _cookie(headers, "hub_sess") and not _REQ.session and not _REQ.locked:
                 _set_cookie("hub_sess", "", 0)  # signed out (or unknown): clear it
             if status == 401 and _cookie(headers, "hub_key"):
                 _set_cookie("hub_key", "", 0)  # an old saved key (e.g. after DASHBOARD_KEY changed): once is enough
