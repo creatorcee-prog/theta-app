@@ -1,5 +1,39 @@
 # To-do
 
+## Stage 1a: chat submission hardening + Diagnostics clipping (branch stage1a/chat-submit-diagnostics, PR unmerged)
+- Main composer (_CHAT_JS): explicit `sending` in-flight guard in
+  form.onsubmit (set synchronously after the empty check, released
+  in a finally). Button clicks and keyboard Enter both funnel
+  through onsubmit, so one guard covers rapid taps, repeated Enter,
+  and overlapping handlers; Shift+Enter newline, mobile multiline,
+  image attach, optimistic display, rid, working poll, and failure
+  restore are untouched.
+- Mini bar (_UI_JS_SRC, runs on every page): Send now POSTs to
+  /api/allchat with {text, channel: "all", rid} and its own guard +
+  finally release; success clears the input and shows "Sent — see
+  it in Chat" (or the command result for "/" input); failure
+  restores the text and shows the error. The pending rid is set so
+  chat can resume the working indicator, and cleared on failure.
+  Without JS the form still GETs to /chat with ?say= as a draft.
+  Suggestion chips are unchanged (drafts, not sends).
+- Diagnostics clipping (_BASE_CSS only, no global layout change):
+  `.grid2 > .card{min-width:0}` (grid blowout: .card had no
+  min-width), `.tbl td` and `.card li` get
+  `overflow-wrap:break-word` for long identifiers/URLs; tables
+  stay in their existing .scrollx scrollers. Pre-existing nit
+  found, not fixed here (belongs to 1b consolidation): the
+  Diagnostics link to /settings#wiring is a dead anchor — the
+  Settings wiring section has no id="wiring" (its table is
+  #wiring-rows).
+- Tests: tests/test_stage1a.py (26 checks, both modes) covers the
+  shipped /chat.js guard, /ui.js mini bar handler, home markup,
+  the real /api/allchat payload path, served CSS rules,
+  diagnostics table/scroller structure, and scope guards proving
+  wiring consolidation, Security/Speed moves, and the release
+  calendar move are NOT in this PR. No browser/DOM harness exists,
+  so click/tap behavior is verified by shipped-source + WSGI
+  checks, not by driving a browser — stated in the PR, not claimed.
+
 ## Bridge hub reference (fix/bridge-hub-ref, PR unmerged)
 - Fragility: tool_bridge.py's _store() did a plain `import index`,
   which only works if the hub module happens to be importable under
