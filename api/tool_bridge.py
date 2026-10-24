@@ -31,8 +31,31 @@ except Exception as e:  # recorded, not swallowed: see tools_diag()
     agent_tools = None
 
 
+# Set by api/index.py's loader to its own store() the moment it loads
+# this bridge. That is the primary path: it is a reference to the
+# already-loaded hub module, so the bridge never needs to import the
+# hub at all — no sys.path dependence, no second copy of the hub
+# module under Vercel's file-path loading, and no circular import
+# (the reference is resolved at tool-call time, after index.py has
+# finished loading and defined store()).
+HUB_STORE = None
+
+
 def _store():
-    """Lazy import of the hub store to avoid circular imports at load time."""
+    """Return the hub store, preferring the already-loaded hub module.
+
+    Order: (1) the HUB_STORE reference injected by index.py's loader;
+    (2) an already-imported "index" module in sys.modules (same object,
+    never a fresh import); (3) a plain `import index` as a last resort
+    for standalone use of this bridge, where no hub is loaded yet so
+    the import creates the first copy, not a second one.
+    """
+    if HUB_STORE is not None:
+        return HUB_STORE()
+    import sys
+    h = sys.modules.get("index")
+    if h is not None:
+        return h.store()
     import index as h
     return h.store()
 

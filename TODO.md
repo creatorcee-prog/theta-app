@@ -1,5 +1,33 @@
 # To-do
 
+## Bridge hub reference (fix/bridge-hub-ref, PR unmerged)
+- Fragility: tool_bridge.py's _store() did a plain `import index`,
+  which only works if the hub module happens to be importable under
+  that name. Under Vercel's file-path loading it may not be (tools
+  fail) or it may load a SECOND copy of the hub with its own store
+  (a task created through the bridge lands in a different store
+  than the hub reads). The nopath test did not catch this because it
+  registers the loaded module as "index" in sys.modules.
+- Fix: index.py's loader hands the bridge its own store()
+  (_tb.HUB_STORE = _bridge_store; the lookup is deferred to call
+  time, after store() is defined, so no circular import and no
+  second copy). _store() now prefers HUB_STORE, then an
+  already-imported "index" in sys.modules (same object, never a
+  fresh import), then a plain import as a last resort for standalone
+  bridge use (first copy, not a second one).
+- Regression test tests/test_bridge_hubref.py: clean subprocess
+  loads index.py by path under a non-"index" name, api/ scrubbed
+  from sys.path, "index" never in sys.modules; requires the injected
+  reference to be the hub's own function returning the hub's own
+  store, no "index" module appearing before or after tool runs, a
+  real task_create + task_list through run_actions, and tools_diag
+  healthy. Negative control with the old bridge fails the same
+  setup. Memory store in the child (loading, not storage, is under
+  test), so identical in both run_all.sh modes.
+- Base note: this branch is current main, which now includes PR #47
+  (merged fb43b5a1); the battery below therefore also runs
+  test_internal_error.
+
 ## Internal-error diagnosis (fix/internal-error-diag, PR unmerged)
 - Symptom, on deployed main 923011e1 (PR #46 merged): a task_create
   request failed with "internal error". Evidence first: that literal

@@ -83,6 +83,23 @@ except Exception as e:  # recorded, not swallowed: see tools_diag()
     BRIDGE_TOOLS = {}
     BRIDGE_TOOLS_LAYER_ERROR = BRIDGE_TOOLS_LAYER_ERROR or "bridge import failed"
 
+# Give the bridge a direct reference to this module's store() so it
+# never needs `import index`: under Vercel's file-path loading the hub
+# module may not be importable as "index" at all, or importing it
+# could load a second copy with its own store. _bridge_store looks
+# store() up in this module's globals at call time (tools run long
+# after loading), so it works whichever branch above loaded the
+# bridge. If the bridge failed to load, _tb is undefined and this
+# assignment is a no-op.
+def _bridge_store():
+    return store()
+
+
+try:
+    _tb.HUB_STORE = _bridge_store
+except Exception:
+    pass
+
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from http.cookies import SimpleCookie
