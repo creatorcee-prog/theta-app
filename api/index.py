@@ -8531,10 +8531,12 @@ html,body{overflow-x:clip;max-width:100%}
 .lo small{display:block;color:var(--muted);font-size:11.5px;line-height:1.3}
 .tbl{width:100%;border-collapse:collapse;font-size:13.5px}
 .tbl th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:750;padding:6px 8px;border-bottom:1px solid var(--border)}
-.tbl td{padding:8px;border-bottom:1px solid var(--border);vertical-align:top}
+.tbl td{padding:8px;border-bottom:1px solid var(--border);vertical-align:top;overflow-wrap:break-word}
 .tbl tr:last-child td{border-bottom:0}
 .scrollx{overflow-x:auto}
 .grid2{display:grid;gap:14px}
+.grid2 > .card{min-width:0}
+.card li{overflow-wrap:break-word}
 @media (min-width:1000px){.grid2{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 /* Budget bars */
@@ -8606,6 +8608,7 @@ select.field{width:auto;flex:1;min-width:120px}
 .minibox{display:flex;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:999px;padding:5px 5px 5px 16px}
 .minibox input{flex:1;border:0;background:transparent;outline:none;font-size:16px;min-width:0;color:var(--text)}
 .minibox .btn.send{width:38px;height:38px;border-radius:50%;padding:0;display:grid;place-items:center;flex:none}
+.minibar-status{font-size:12px;color:var(--muted);text-align:center;padding:6px 4px 0}
 @media (min-width:900px){.minibar{display:none}}
 @media (max-width:899px){
  .minibar:focus-within .minichips{display:none}
@@ -8924,6 +8927,43 @@ _UI_JS_SRC = r'''
   window.thetaLatest = obj => { Object.assign(LATEST, obj || {}); paintDots(); };
   window.thetaPaintDots = paintDots;
   paintDots();
+
+  // Persistent mini chat bar: Send submits through /api/allchat, the
+  // same endpoint and payload the full composer uses, instead of only
+  // opening chat with a draft. Replies land in channel "all" and show
+  // up when the user opens chat; a pending rid lets chat resume the
+  // working indicator. Without JS the form still GETs to /chat with
+  // ?say=, so nothing is lost.
+  const mb = document.querySelector(".minibar form.minibox");
+  if (mb) {
+    const input = mb.querySelector("input"), send = mb.querySelector("button[type=submit]");
+    const status = mb.parentNode.querySelector(".minibar-status");
+    let sending = false;
+    input.addEventListener("input", () => { if (status) status.hidden = true; });
+    mb.addEventListener("submit", async e => {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text || sending) return;
+      sending = true; send.disabled = true;
+      const rid = Math.random().toString(36).slice(2, 12);
+      try { sessionStorage.setItem("theta-pending-rid", rid); } catch (_) {}
+      try {
+        const d = await (await fetch("/api/allchat", {method: "POST", headers: window.THETA_H, body: JSON.stringify({text, channel: "all", rid})})).json();
+        if (!d.ok) throw new Error(d.error || "couldn't send");
+        input.value = "";
+        if (status) {
+          status.replaceChildren();
+          if (d.command) status.textContent = d.result || "Done.";
+          else { status.append("Sent — "); const a = document.createElement("a"); a.href = "/chat"; a.textContent = "see it in Chat"; status.append(a); }
+          status.hidden = false;
+        }
+      } catch (err) {
+        try { sessionStorage.removeItem("theta-pending-rid"); } catch (_) {}
+        input.value = text;
+        if (status) { status.textContent = "Couldn't send: " + (err.message || "network error"); status.hidden = false; }
+      } finally { sending = false; send.disabled = false; }
+    });
+  }
 })();
 '''
 
@@ -8935,6 +8975,7 @@ _CHAT_JS = r'''
   const C = window.HUB_CHAT, H = window.THETA_H;
   const box = document.getElementById("msgs"), form = document.getElementById("chat-form");
   const msg = document.getElementById("chat-msg"), btn = document.getElementById("chat-send");
+  let sending = false;  // explicit in-flight guard: a disabled button alone does not stop Enter resubmits
   const status = document.getElementById("chat-status");
   let thread = [], lastIds = new Set(), first = true;
   const touch = matchMedia("(pointer: coarse)").matches;
@@ -9401,6 +9442,7 @@ _CHAT_JS = r'''
     e.preventDefault();
     const text = msg.value.trim(), image = pic;
     if (!text && !image) return;
+    if (sending) return; sending = true;  // button and keyboard both land here, so one guard covers both
     msg.value = ""; grow(); setPic(null); btn.disabled = true; closeMenu();
     const isCmd = text.startsWith("/") && !image;
     const rid = Math.random().toString(36).slice(2, 12);
@@ -9432,8 +9474,7 @@ _CHAT_JS = r'''
         ? "The hub hit an error: " + err.message + ". Your message is saved. Before sending it again, check whether anything it asked for already happened, so it doesn't run twice."
         : "Your message went through, but the reply didn't arrive. It may still show up here — if it does, don't resend it. If it doesn't, check what already happened (like a task it created) before sending it again, so it doesn't run twice.";
       else { render(); msg.value = text; grow(); setPic(image); status.textContent = "Couldn't send: " + err.message; }
-    }
-    btn.disabled = false;
+    } finally { sending = false; btn.disabled = false; }
   };
 
   // Members sheet on phones
@@ -9556,17 +9597,19 @@ MINIBAR_SUGGESTIONS = {
 
 
 def minibar_html(active):
-    """Persistent chat bar above the tab bar. Tapping it opens the full
-    chat interface; nothing is sent from here. A typed draft (or a
-    suggestion chip) travels as ?say= and lands in the real composer,
-    so there is no second chat implementation and no lost draft."""
+    """Persistent chat bar above the tab bar. Its Send button submits
+    through /api/allchat (the same endpoint and payload the full
+    composer uses); without JS the form still GETs to /chat with ?say=
+    as a draft, so no message is lost. Suggestion chips still open
+    chat with a draft; they are not sends."""
     sugg = MINIBAR_SUGGESTIONS.get(active, MINIBAR_SUGGESTIONS["/"])
     chips = "".join(f'<a href="/chat?say={quote(s)}">{html.escape(s)}</a>' for s in sugg)
     return (f'<div class="minibar"><div class="minichips">{chips}</div>'
             f'<form class="minibox" action="/chat" method="get" role="search">'
             f'<input type="text" name="say" maxlength="300" placeholder="Message the crew\u2026" aria-label="Message the crew" '
             f'enterkeyhint="send" autocomplete="off">'
-            f'<button class="btn send" type="submit" aria-label="Open chat">{ui_icon("send")}</button></form></div>')
+            f'<button class="btn send" type="submit" aria-label="Send">{ui_icon("send")}</button></form>'
+            f'<p class="minibar-status" role="status" hidden></p></div>')
 
 
 def page(headers, title, active, body, body_class="", statuses=None, chat=None):
