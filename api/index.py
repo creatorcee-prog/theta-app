@@ -10058,6 +10058,7 @@ def home_page(headers):
         + '<div class="sect"><h2>Watch &amp; listen</h2><a href="/agent/lenz">Lenz →</a></div>'
         + (f'<section class="wins swipe" aria-label="Trending">{swipe(trend)}</section>' if trend else
            '<p class="empty">Nothing trending right now.</p>')
+        + release_strip()
         + '<footer class="foot">'
         + (f"<p>{TMDB_NOTICE}</p>" if TMDB_API_KEY else "")
         + ("<p>Storage: memory (not persistent). Connect Upstash Redis in Vercel and redeploy.</p>"

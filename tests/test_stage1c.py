@@ -200,7 +200,7 @@ check("all Security pointers now target Diagnostics",
 # --- Scope guards: later work not leaked in, Stage 1a intact ---
 s, home = call("GET", "/", headers=K)
 home = home.decode() if isinstance(home, bytes) else home
-check("release calendar is NOT on Home yet", 'id="releases"' not in home)
+check("release calendar IS on Home now (Stage 1d)", 'id="releases"' in home)
 check("no storage meter invented", 'id="storage-meter"' not in diag)
 s, chat_js = call("GET", "/chat.js")
 chat_js = chat_js.decode()

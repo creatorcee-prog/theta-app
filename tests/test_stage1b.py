@@ -157,7 +157,7 @@ check("Security/Health and Speed ARE in diagnostics now (Stage 1c)",
       'id="security"' in diag and 'id="speed"' in diag)
 s, home = call("GET", "/", headers=K)
 home = home.decode() if isinstance(home, bytes) else home
-check("release calendar is NOT on Home yet", 'id="releases"' not in home)
+check("release calendar IS on Home now (Stage 1d)", 'id="releases"' in home)
 check("no storage meter invented", 'id="storage-meter"' not in diag)
 s, chat_js = call("GET", "/chat.js")
 chat_js = chat_js.decode()

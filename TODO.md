@@ -1,5 +1,22 @@
 # To-do
 
+## Stage 1d: Release Calendar on Home (branch stage1d/release-calendar-home, based on main c535e8d3 which includes merged PRs #50 and #52)
+- The existing Release Calendar (release_strip(), id=releases) is added
+  to Home after the Watch & listen section and before the footer; it
+  stays on the Lenz page unchanged. This is a call-site move only:
+  the same component and cached data path are reused, no second
+  calendar implementation, no new endpoint, no extra fetch, and no
+  refresh-behavior change (the cache still fills on Lenz's round).
+- No duplicate IDs or handlers: Home has exactly one #releases, and
+  the filter script scopes to its own page's strip
+  (getElementById("releases")). The strip reuses the existing card +
+  rstrip horizontal scroller (overflow-x:auto), so it cannot clip or
+  overflow on narrow screens.
+- Prior release-calendar guards in test_stage1a/b/c are updated to the
+  moved state (they asserted the strip was NOT on Home yet); no
+  assertion was weakened, and test_today's releases data-path and
+  Lenz-strip checks are untouched.
+
 ## Stage 1c: Security/Health and Speed in Diagnostics (branch stage1c/diagnostics-security-speed-v2, replacement PR for #51, based on main b772656d which includes merged PR #50)
 - Security/Health (id=security, QWERTY hero, security_rows()) and Speed
   (id=speed, speed_card()) are moved by call site from Settings into
