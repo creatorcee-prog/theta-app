@@ -150,8 +150,9 @@ Screen app files `/manifest.webmanifest`, `/sw.js` and icons. Every page
 accepts the dashboard key once as `?key=` and then remembers it in a
 cookie. The pages are `/chat` (`?ch=<channel>&to=<agent>&say=<draft>`,
 where `say` prefills the composer without sending), `/diagnostics`
-(crew status, storage, scheduled work, failures, token use, and the
-live wiring check, and tool-layer status (deployed commit, bridge import, tools.py layer status, and whether Mistral's prompt includes the six Phase 4 tools). Chat replies are bounded by a 50s request deadline (ALLCHAT_DEADLINE_SECONDS) so a slow model chain cannot run past Vercel's 60s function wall and lose the reply; tools that would not finish in the remaining budget are skipped with a note. Chat requests log one sanitized diag line per stage (request id, model, tools, persistence), and a tool or reply-save failure returns a specific error instead of the generic "internal error". The bridge uses the already-loaded hub module's store() (injected by the hub loader), so it never depends on `import index` working under the serverless loader.) Stage 1a: the chat composer has an explicit in-flight send guard (button and keyboard share it), the mini chat bar's Send submits through /api/allchat instead of only opening a draft, and Diagnostics cards and tables shrink and wrap instead of clipping on the right. Stage 1b: Models & providers is the single wiring UI in Diagnostics (with per-agent Test); the duplicate Settings Wiring section is removed and its links repoint to /diagnostics#wiring., `/money` (with a spending donut: actual spending
+(crew status, storage, Speed, scheduled work, failures, token use, Security
+and health, and the
+live wiring check, and tool-layer status (deployed commit, bridge import, tools.py layer status, and whether Mistral's prompt includes the six Phase 4 tools). Chat replies are bounded by a 50s request deadline (ALLCHAT_DEADLINE_SECONDS) so a slow model chain cannot run past Vercel's 60s function wall and lose the reply; tools that would not finish in the remaining budget are skipped with a note. Chat requests log one sanitized diag line per stage (request id, model, tools, persistence), and a tool or reply-save failure returns a specific error instead of the generic "internal error". The bridge uses the already-loaded hub module's store() (injected by the hub loader), so it never depends on `import index` working under the serverless loader.) Stage 1a: the chat composer has an explicit in-flight send guard (button and keyboard share it), the mini chat bar's Send submits through /api/allchat instead of only opening a draft, and Diagnostics cards and tables shrink and wrap instead of clipping on the right. Stage 1b: Models & providers is the single wiring UI in Diagnostics (with per-agent Test); the duplicate Settings Wiring section is removed and its links repoint to /diagnostics#wiring. Stage 1c: Security and health plus Speed move from Settings into Diagnostics (Speed beside Storage on desktop, stacked on narrow screens); Settings keeps passkeys, devices, Gmail, memory, and Siri., `/money` (with a spending donut: actual spending
 by category, reconciling with the month's total), `/calendar`,
 `/settings` and `/agent/<id>`. The chat polls `GET /api/chat/working`
 while a reply is on its way; it reports the working agent, its step,
@@ -304,7 +305,7 @@ windows stay in their own section.
 Outside data (feeds, TMDB trending, calendars, the Garage Gym summary) is
 kept in storage for every server process (`shared_fetch`). Pages draw from
 the stored copy at once; a stale copy makes the page ask `POST /api/refresh`
-after it loads, and the 5-minute tick refreshes too. Settings → Speed shows
+after it loads, and the 5-minute tick refreshes too. Diagnostics → Speed shows
 real server times per screen.
 
 ## Devices and sign-in
@@ -417,7 +418,7 @@ just the status code and device count, never key material.
 phones) and a day-by-day list from your Google Calendar, plus `BIRTHDAYS`. Remi's chat
 answers from the same calendar.
 
-**QWERTY, the watchdog** (#dev-and-security; Settings → Security and health).
+**QWERTY, the watchdog** (#dev-and-security; Diagnostics → Security and health).
 Each round he checks every agent's wiring, failed round jobs, busy models
 that fell back, dead feeds, push errors, storage, the dashboard key's
 strength and `CRON_SECRET`, and posts only when what he sees changes

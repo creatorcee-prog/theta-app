@@ -1745,7 +1745,7 @@ HUB_GUIDE = (
     "- Calendar (/calendar): the family calendar (read-only, from REMI_CALENDAR_URLS) and Reminders.\n"
     "- Money (/money): Budgets, Recent spending, Charter's charts, Import from Rocket Money, Stocks.\n"
     "- Settings (/settings): Color scheme (light/dark, Glass shine, Home layout), Phone notifications (Turn on, "
-    "Send a test), Security and health, Sign in with Face ID, Devices, Gmail, Memory and notes, Voice commands "
+    "Send a test), Sign in with Face ID, Devices, Gmail, Memory and notes, Voice commands "
     "(Siri), Speed, Rounds, Standing orders.\n"
     "- Lenz's page (/lenz): the library (watched, playing, reading, ratings) and the Release calendar. "
     "Email (/mail): Remi's sorted inbox and drafted replies. Each agent has a page at /agent/<name>.\n"
@@ -5273,7 +5273,7 @@ def sec_record_fail(ip, path):
                "your own devices still holding the old key; it's cleared now, so sign in again. If not, consider a new "
                "DASHBOARD_KEY.")
         store().add_chat("qwerty", f"Security: {msg}", channel="dev")
-        notify("QWERTY", f"Someone's guessing your dashboard key: {msg}", "/settings#security")
+        notify("QWERTY", f"Someone's guessing your dashboard key: {msg}", "/diagnostics#security")
 
 
 _SECRET_PATTERNS = [
@@ -5421,7 +5421,7 @@ def _round_qwerty(ctx):
         new_high = [t for s, t in findings if s == "high" and f"high:{t}" not in old_high]
         if new_high:
             notify("QWERTY", " | ".join(new_high[:2]) + (f" (+{len(new_high) - 2} more)" if len(new_high) > 2 else ""),
-                   "/settings#security")
+                   "/diagnostics#security")
         did.append(f"posted a watchdog report ({len(findings)} finding{'s' if len(findings) != 1 else ''})")
     return ", ".join(did)
 
@@ -6724,16 +6724,16 @@ def agent_windows(chat=None, cards=None):
         findings = None
     q1, q2 = AGENT_LOOKS["qwerty"][:2]
     if findings is None:
-        out["qwerty"] = _win("qwerty", "", "Couldn't check just now", href="/settings#security", title="Watchdog")
+        out["qwerty"] = _win("qwerty", "", "Couldn't check just now", href="/diagnostics#security", title="Watchdog")
     else:
         worst = [t for sv, t in findings if sv == "high"] or [t for sv, t in findings if sv == "warn"]
         out["qwerty"] = _win("qwerty", "", worst[0] if worst else "Everything's wired, nothing's failing",
                              _tile_svg(q1, q2, "OK" if not worst else str(len(worst)),
                                        "all clear" if not worst else ("thing to fix" if len(worst) == 1 else "things to fix"),
-                                       "Watchdog"), "/settings#security",
+                                       "Watchdog"), "/diagnostics#security",
                              title="All clear" if not worst else f"{len(worst)} thing{'s' if len(worst) != 1 else ''} to look at",
                              text="\n".join(f"[{sv}] {t}" for sv, t in findings) or "All clear.",
-                             links=[["Open Security", "/settings#security"]])
+                             links=[["Open Security", "/diagnostics#security"]])
     if "lenz" in out:  # Lenz's window opens his library
         now_on = [x for x in library() if x["status"] == "current"]
         out["lenz"].update(href="/lenz", external=False, nosheet=True,
@@ -11403,10 +11403,7 @@ def settings_page(headers):
         'the morning digest, breaking news, budget alerts and birthdays. On iPhone, open Theta from its Home Screen icon.</p></div>'
         '<p><button class="btn" id="push-on" type="button">Turn on</button> <button class="btn ghost" id="push-test" '
         'type="button">Send a test</button></p><p class="note" id="push-status" style="white-space:pre-line"></p></section>'
-        f'<section class="card stack" id="security"><div class="hero" style="gap:12px">{avatar_img("qwerty", 40)}<div><h2>Security and health</h2>'
-        '<p class="muted small">QWERTY checks this every round and tells you in #dev-and-security when it changes.</p></div></div>'
-        f'<ul class="list">{security_rows()}</ul></section>' + passkeys_card(headers) + devices_card(headers) + gmail_card(headers) + memory_card() + siri_card(headers) +
-        speed_card() +
+        + passkeys_card(headers) + devices_card(headers) + gmail_card(headers) + memory_card() + siri_card(headers) +
         '<section class="card stack"><div class="brow"><h2>Rounds</h2></div><p class="muted small">Every agent does its '
         'job three times a day (Supabase Cron). Run one now to refresh the windows.</p>'
         f'<p><button class="btn" type="button" data-run-round="round-status-s">{ui_icon("play")}Run a round now</button></p>'
@@ -11593,9 +11590,10 @@ def diagnostics_page(headers):
     body = (
         f'<header class="top"><div><p class="eyebrow">System health</p><h1>Diagnostics</h1></div></header>'
         f'<p class="muted">From real data. Anything unmeasured is labeled as such, never shown as healthy.</p>'
-        f'<div class="grid2">'
         f'<section class="card"><h2>Crew</h2><div class="scrollx"><table class="tbl"><thead><tr><th>Agent</th><th>Tier</th><th>Status</th><th>Activity</th></tr></thead><tbody>{crew_rows}</tbody></table></div></section>'
+        f'<div class="grid2" style="margin-top:14px">'
         f'<section class="card"><h2>Storage</h2><p><b>{html.escape(STORAGE_MODE)}</b></p><p class="muted small">{html.escape(storage_note)}</p></section>'
+        f'{speed_card()}'
         f'</div><div class="grid2" style="margin-top:14px">'
         f'<section class="card"><h2>Scheduled work</h2><div class="scrollx"><table class="tbl"><thead><tr><th>Job</th><th>Last run</th></tr></thead>'
         f'<tbody>{round_rows}<tr><td style="font-weight:650">5-minute tick</td><td class="muted">{html.escape(tick_note)}</td></tr></tbody></table></div></section>'
@@ -11607,6 +11605,9 @@ def diagnostics_page(headers):
         f'<div class="scrollx"><table class="tbl"><thead><tr><th>Agent</th><th>Model</th><th>Status</th><th>Details</th><th></th></tr></thead>'
         f'<tbody id="diag-wiring-rows"></tbody></table></div>'
         f'<p><button class="btn ghost small" id="diag-wiring-recheck" type="button">Recheck</button> <span class="note" id="diag-wiring-note"></span></p></section>'
+        f'<section class="card stack" id="security" style="margin-top:14px"><div class="hero" style="gap:12px">{avatar_img("qwerty", 40)}<div><h2>Security and health</h2>'
+        '<p class="muted small">QWERTY checks this every round and tells you in #dev-and-security when it changes.</p></div></div>'
+        f'<ul class="list">{security_rows()}</ul></section>'
         f'<script>{_DIAG_JS}</script>')
     return page(headers, "Diagnostics", "/diagnostics", body)
 
