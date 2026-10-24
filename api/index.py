@@ -5414,7 +5414,7 @@ def _round_qwerty(ctx):
     else:
         st.set_meta("round:qwerty:sig", sig)
         icon = {"high": "[!]", "warn": "[~]", "info": "[i]"}
-        st.add_chat("qwerty", ("Watchdog: all clear. Everything's wired, nothing's failing." if not findings else
+        st.add_chat("qwerty", ("Watchdog: all clear. QWERTY's checks flagged nothing." if not findings else
                                "Watchdog report:\n" + "\n".join(f"{icon[s]} {t}" for s, t in findings)
                                + "\nAsk me in #dev-and-security, or /issue to write one up."), channel="dev")
         old_high = {t for t in (before or "").split("|") if t.startswith("high:")}
@@ -6727,7 +6727,7 @@ def agent_windows(chat=None, cards=None):
         out["qwerty"] = _win("qwerty", "", "Couldn't check just now", href="/diagnostics#security", title="Watchdog")
     else:
         worst = [t for sv, t in findings if sv == "high"] or [t for sv, t in findings if sv == "warn"]
-        out["qwerty"] = _win("qwerty", "", worst[0] if worst else "Everything's wired, nothing's failing",
+        out["qwerty"] = _win("qwerty", "", worst[0] if worst else "QWERTY's checks flagged nothing",
                              _tile_svg(q1, q2, "OK" if not worst else str(len(worst)),
                                        "all clear" if not worst else ("thing to fix" if len(worst) == 1 else "things to fix"),
                                        "Watchdog"), "/diagnostics#security",
@@ -10047,7 +10047,7 @@ def home_page(headers):
         if _h: _parts.append(f"{_h} need attention")
         if _w: _parts.append(f"{_w} to look at")
         if _i and not _parts: _parts.append(f"{_i} FYI")
-        _qline = "All clear: everything's wired, nothing's failing, no wrong-key attempts." if not _f else " · ".join(_parts)
+        _qline = "All clear: QWERTY's checks flagged nothing." if not _f else " · ".join(_parts)
     except Exception:
         _qline = "QWERTY couldn't check right now."
     attention_html = (f'<section class="card attention"><h2>Needs attention</h2><ul>'
@@ -10229,7 +10229,7 @@ def security_rows():
     label = {"high": ("Fix now", "var(--bad)"), "warn": ("Look at", "var(--warn)"), "info": ("FYI", "var(--muted)")}
     return "".join(
         f'<li><span class="chip" style="color:{label[sv][1]};border-color:currentColor">{label[sv][0]}</span> {html.escape(t)}</li>'
-        for sv, t in findings) or '<li>All clear: everything\'s wired, nothing\'s failing, no wrong-key attempts.</li>'
+        for sv, t in findings) or '<li>All clear: QWERTY\'s checks flagged nothing.</li>'
 
 
 # ---- Face ID sign-in (passkeys). Your phone checks your face itself; the

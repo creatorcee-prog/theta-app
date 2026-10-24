@@ -158,4 +158,22 @@ check("settings sections intact (benchmark stays; out of scope)",
 check("panels reuse card/stack classes, no fixed widths",
       'class="card stack" id="agent-lenz"' in home and 'width:' not in home[home.index('id="agent-lenz"'):home.index('id="agent-qwerty"')])
 check("summary affordance rule shipped", "details.card summary{cursor:pointer}" in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "api", "index.py")).read())
+# --- All-clear wording is scoped to what the watchdog checks ---
+_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "api", "index.py")).read()
+check("no absolute all-clear claims remain in source",
+      "everything's wired" not in _src and "nothing's failing" not in _src)
+_real_wf = h.watchdog_findings
+h.watchdog_findings = lambda: []
+try:
+    s, home_clear = call("GET", "/", headers=K)
+    home_clear = home_clear.decode() if isinstance(home_clear, bytes) else home_clear
+    check("empty findings show the scoped all-clear wording on Home",
+          "All clear: QWERTY&#x27;s checks flagged nothing." in home_clear)
+    check("empty findings show no absolute claims on Home",
+          "everything's wired" not in home_clear and "everything&#x27;s wired" not in home_clear
+          and "nothing's failing" not in home_clear and "nothing&#x27;s failing" not in home_clear)
+    check("empty findings show the scoped wording in security_rows()",
+          "All clear: QWERTY's checks flagged nothing." in h.security_rows())
+finally:
+    h.watchdog_findings = _real_wf
 print("stage2: all checks passed")
