@@ -48,6 +48,13 @@ import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
+
+# Phase 4: guarded tool layer (web_search, fetch_page, task ledger)
+try:
+    from tool_bridge import BRIDGE_TOOLS
+except ImportError:
+    BRIDGE_TOOLS = {}
+
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from http.cookies import SimpleCookie
@@ -1644,6 +1651,8 @@ TOOLS = {
     "workout": ("workout | <sets like bench 185 4x8, or done, undo, today>   (James logs it in Garage Gym)",
                 _tool_workout, {"theta", "mistral"}),
 }
+TOOLS.update(BRIDGE_TOOLS)  # Phase 4 read-only tools + task ledger
+
 
 
 # The hub map: what really exists, so agents describe the real thing or

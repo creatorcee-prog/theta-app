@@ -1,4 +1,7 @@
-> **Status (applied):** web search is live as a one-search step in chat replies and in projects (Gemini with Google Search, real cited sources only). An agent-chosen `fetch_page` was left out on purpose: with private data in some agents' prompts (Remi's email and calendar), a page could steer an agent into sending it somewhere. `api/tools.py` isn't used; persistent tasks overlap with reminders and projects and aren't wired.
+> **Status (Phase 4 bridge on `feature/phase4-tool-layer`):**  
+> - Gemini `SEARCH:` grounding remains the primary live web search in chat/projects.  
+> - `api/tools.py` is wired into the existing `ACTION:` / `run_actions` path via `api/tool_bridge.py`: agents may use `web_search`, `fetch_page` (SSRF-guarded), and the task ledger (`task_create`, `task_list`, `task_complete`, `task_note`).  
+> - Results are structured in tools.py and returned as ✓/✗ receipts. No browser automation. Consequential writes still require the existing Approve gate.
 
 # Agent Tools: Web Search, Page Fetch & Persistent Tasks
 
