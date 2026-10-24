@@ -270,7 +270,7 @@ h._PERF.clear(); h._PERF_SAVED[0] = 0
 for _ in range(3):
     call("GET", "/chat", headers=K)
 h._PERF_SAVED[0] = 0; call("GET", "/calendar", headers=K)
-page = call("GET", "/settings", headers=K)[1]
+page = call("GET", "/diagnostics", headers=K)[1]
 check("Speed card lists measured screens", b'id="speed"' in page and b"<td>Chat</td>" in page and b"Storage trips" in page)
 rows, _ = h.perf_rows()
 check("speed rows have loads and storage trips", any(p == "/chat" and n >= 3 for p, a, mx, c, n, cold in rows))

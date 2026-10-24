@@ -123,8 +123,8 @@ check("settings wiring section and script are gone",
 check("settings keeps passkeys, devices, Gmail, memory, Siri",
       "Sign in with Face ID" in settings and "Devices" in settings and "Gmail" in settings
       and "Memory and notes" in settings and "Voice commands (Siri)" in settings)
-check("settings keeps Security/Health and Speed (not moved yet)",
-      'id="security"' in settings and 'id="speed"' in settings)
+check("settings no longer keeps Security/Health and Speed (moved by Stage 1c)",
+      'id="security"' not in settings and 'id="speed"' not in settings)
 check("no dead Settings wiring link remains on settings",
       "/settings#wiring" not in settings)
 
@@ -153,8 +153,8 @@ check("models endpoint preserved with key",
       s == 200 and "in_use" in d and "groq" in d)  # note: this endpoint has no ok field
 
 # --- Scope guards: later stages not leaked in, Stage 1a intact ---
-check("Security/Health and Speed are NOT in diagnostics yet",
-      'id="security"' not in diag and 'id="speed"' not in diag)
+check("Security/Health and Speed ARE in diagnostics now (Stage 1c)",
+      'id="security"' in diag and 'id="speed"' in diag)
 s, home = call("GET", "/", headers=K)
 home = home.decode() if isinstance(home, bytes) else home
 check("release calendar is NOT on Home yet", 'id="releases"' not in home)

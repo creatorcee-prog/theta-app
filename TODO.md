@@ -1,6 +1,27 @@
 # To-do
 
-## Stage 1b: Models & providers consolidation (branch stage1b/diagnostics-wiring-consolidation, PR unmerged, base main 4f787089 which includes merged PR #49)
+## Stage 1c: Security/Health and Speed in Diagnostics (branch stage1c/diagnostics-security-speed-v2, replacement PR for #51, based on main b772656d which includes merged PR #50)
+- Security/Health (id=security, QWERTY hero, security_rows()) and Speed
+  (id=speed, speed_card()) are moved by call site from Settings into
+  Diagnostics; both panels are server-rendered and have no JavaScript,
+  event handlers, or endpoints of their own, so nothing was
+  reimplemented and no metric, check, or authorization changed.
+- Layout: the Crew table is unchanged but its container is full-width;
+  Storage and Speed share one grid2, so Speed sits immediately right
+  of Storage at >=1000px (the existing media query) and stacks below
+  it on narrow screens; Speed's table keeps its pre-existing .md-scroll
+  wrapper, so nothing overflows horizontally.
+- Security is appended after the Models & providers panel and keeps
+  its id=security, so every existing /diagnostics#security link works.
+- Settings keeps passkeys/Face ID, devices, Gmail, memory/notes,
+  Siri/voice commands, Rounds, Bench, Standing orders, reports, and
+  About; the moved panels and their scripts are gone from Settings.
+- All five /settings#security pointers (two watchdog notifications,
+  Home watchdog window href, "Open Security" link) now point to
+  /diagnostics#security; the hub map drops Security from the Settings
+  list (it already dropped Wiring via merged Stage 1b).
+
+## Stage 1b: Models & providers consolidation (branch stage1b/diagnostics-wiring-consolidation, PR #50 merged, base main 4f787089 which includes merged PR #49)
 - Diagnostics is now the single home for provider/model wiring status.
   The Settings Wiring section (table #wiring-rows, #wiring-recheck) and
   the Settings-only _WIRING_JS script are removed; _DIAG_JS is the only
