@@ -5383,7 +5383,7 @@ def watchdog_findings():
     if locked:
         out.append(("high", f"Locked out for guessing keys: {', '.join(locked)}."))
     elif recent >= 3:
-        out.append(("warn", f"{recent} wrong-key attempts in the last 15 minutes."))
+        out.append(("warn", f"{recent} wrong-key attempts in the last day."))
     for name, ver, ids in json.loads(store().get_meta("sec:osv") or "[]"):
         out.append(("high", f"{name} {ver} has known vulnerabilities ({', '.join(ids[:3])}). Update requirements.txt."))
     order = {"high": 0, "warn": 1, "info": 2}

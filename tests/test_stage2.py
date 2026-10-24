@@ -176,4 +176,18 @@ try:
           "All clear: QWERTY's checks flagged nothing." in h.security_rows())
 finally:
     h.watchdog_findings = _real_wf
+# --- Wrong-key warning names the window it actually counts ---
+import time as _time
+_real_sec = h._sec_state
+_now = _time.time()
+h._sec_state = lambda fresh=False: {"1.2.3.4": {"fails": [_now - 100, _now - 200, _now - 300], "locked_until": 0}}
+try:
+    _texts = [txt for _sv, txt in h.watchdog_findings()]
+    _wk = [txt for txt in _texts if "wrong-key attempts" in txt]
+    check("wrong-key warning counts a day, not 15 minutes",
+          len(_wk) == 1 and _wk[0] == "3 wrong-key attempts in the last day.")
+    check("no wrong-key text claims 15 minutes",
+          not any("15 minutes" in txt and "wrong-key" in txt for txt in _texts))
+finally:
+    h._sec_state = _real_sec
 print("stage2: all checks passed")
