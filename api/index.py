@@ -8181,7 +8181,7 @@ body.typing .tabbar{display:none}
 .dot.on{background:var(--good)}
 
 /* Building blocks */
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px;box-shadow:var(--shadow)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px;box-shadow:var(--shadow)}details.card summary{cursor:pointer}
 :root[data-glass] .card,:root[data-glass] .win,:root[data-glass] .kpi,:root[data-glass] .sw{-webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%)}
 .stack{display:flex;flex-direction:column;gap:14px}
 .top{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin:2px 0 20px;flex-wrap:wrap}
@@ -10038,6 +10038,18 @@ def home_page(headers):
         attn.append((f"{len(todays)} event{'s' if len(todays) != 1 else ''} today", "/calendar"))
     for a, err in _meta_json("round:failures", {}).items():
         attn.append((f"Last round failed for {AGENTS.get(a, {}).get('name', a)}: {str(err)[:80]}", "/diagnostics"))
+    try:
+        _f = watchdog_findings()
+        _parts = []
+        _h = sum(1 for sv, _ in _f if sv == "high")
+        _w = sum(1 for sv, _ in _f if sv == "warn")
+        _i = sum(1 for sv, _ in _f if sv == "info")
+        if _h: _parts.append(f"{_h} need attention")
+        if _w: _parts.append(f"{_w} to look at")
+        if _i and not _parts: _parts.append(f"{_i} FYI")
+        _qline = "All clear: everything's wired, nothing's failing, no wrong-key attempts." if not _f else " · ".join(_parts)
+    except Exception:
+        _qline = "QWERTY couldn't check right now."
     attention_html = (f'<section class="card attention"><h2>Needs attention</h2><ul>'
                       + "".join(f'<li><a href="{href}">{html.escape(text)}</a></li>' for text, href in attn)
                       + '</ul></section>' if attn else "")
@@ -10050,6 +10062,24 @@ def home_page(headers):
         + daily_card() +
         f'<div class="sect"><h2>Your crew</h2><a href="/chat">Open chat →</a></div>'
         f'<section class="wins" aria-label="Agent windows">{"".join(win_html(w) for w in crew)}</section>'
+        f'<div class="sect"><h2>Agents</h2><span class="muted small">Expand an agent for its controls.</span></div>'
+        f'<details class="card stack" id="agent-lenz" style="margin-top:14px"><summary>Lenz — channels &amp; releases</summary>'
+        '<ul class="list">'
+        + (f'<li>YouTube: {len(LENZ_YOUTUBE)} channel(s)</li>' if LENZ_YOUTUBE else '<li>YouTube: not set</li>')
+        + (f'<li>Reddit: {len(LENZ_SUBREDDITS)} subreddit(s)</li>' if LENZ_SUBREDDITS else '<li>Reddit: not set</li>')
+        + (f'<li>Twitch: {len(LENZ_TWITCH)} channel(s)</li>' if LENZ_TWITCH else '<li>Twitch: not set</li>')
+        + '</ul>'
+        f'<p class="muted small">{"TMDB key set" if TMDB_API_KEY else "TMDB key not set"} · {len(releases())} upcoming in the calendar. Channels are set in Vercel → Environment Variables and need a redeploy.</p>'
+        '<p><a href="/lenz">Open Lenz →</a> · <a href="#releases">Release calendar ↓</a></p></details>'
+        f'<details class="card stack" id="agent-qwerty" style="margin-top:14px"><summary>QWERTY — security &amp; diagnostics</summary>'
+        f'<p>{html.escape(_qline)}</p>'
+        '<p><a href="/diagnostics#security">Open Security in Diagnostics →</a> · <a href="/diagnostics">Diagnostics →</a></p></details>'
+        f'<details class="card stack" id="agent-mistral" style="margin-top:14px"><summary>Mistral — phone notifications</summary>'
+        '<div><h2>Phone notifications</h2><p class="muted small">Mistral sends these: '
+        'the morning digest, breaking news, budget alerts and birthdays. On iPhone, open Theta from its Home Screen icon.</p></div>'
+        '<p><button class="btn" id="push-on" type="button">Turn on</button> <button class="btn ghost" id="push-test" '
+        'type="button">Send a test</button></p><p class="note" id="push-status" style="white-space:pre-line"></p>'
+        f'<script>{_PUSH_JS}</script></details>'
         f'<nav class="quickactions" aria-label="Quick actions"><a href="/chat">Chat</a><a href="/calendar">Calendar</a>'
         f'<a href="/money">Money</a><a href="/diagnostics">Diagnostics</a></nav>'
         f'<div class="sect" id="news"><h2>Top stories</h2><span class="muted small">{len(NEWS_FEEDS)} outlets, {NEWS_TOP} top + up to {NEWS_BREAKING_MAX} breaking</span></div>'
@@ -11400,10 +11430,7 @@ def settings_page(headers):
         '<div class="seg" role="group" aria-label="Shine follows tilt"><button type="button" data-tilt="on">Follow tilt</button>'
         '<button type="button" data-tilt="off">Off</button></div><p class="note small" id="tilt-note"></p></div>'
         f'<div><h3>Home layout</h3><p class="muted small">How the windows on Home are arranged.</p><div class="layouts">{layouts}</div></div></section>'
-        '<section class="card stack"><div><h2>Phone notifications</h2><p class="muted small">Mistral sends these: '
-        'the morning digest, breaking news, budget alerts and birthdays. On iPhone, open Theta from its Home Screen icon.</p></div>'
-        '<p><button class="btn" id="push-on" type="button">Turn on</button> <button class="btn ghost" id="push-test" '
-        'type="button">Send a test</button></p><p class="note" id="push-status" style="white-space:pre-line"></p></section>'
+        '<p class="muted small">Phone notifications now live under Mistral on <a href="/">Home</a>.</p>'
         + passkeys_card(headers) + devices_card(headers) + gmail_card(headers) + memory_card() + siri_card(headers) +
         '<section class="card stack"><div class="brow"><h2>Rounds</h2></div><p class="muted small">Every agent does its '
         'job three times a day (Supabase Cron). Run one now to refresh the windows.</p>'
@@ -11421,7 +11448,7 @@ def settings_page(headers):
         f'<section class="card"><h2>About</h2><p class="muted small">Storage: {html.escape(STORAGE_MODE)}. '
         f'Times in {html.escape(HUB_TIMEZONE)}.</p>' + (f'<p class="muted small">{TMDB_NOTICE}</p>' if TMDB_API_KEY else "")
         + '</section></div>'
-        f"<script>{_PUSH_JS}</script><script>{_BENCH_JS}</script>")
+        f"<script>{_BENCH_JS}</script>")
     return page(headers, "Settings", "/settings", body)
 
 

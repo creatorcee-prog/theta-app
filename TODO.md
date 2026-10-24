@@ -1,5 +1,29 @@
 # To-do
 
+## Stage 2: Home agent organization (branch stage2/home-agent-organization, based on main 8fe5b348 which includes merged PR #53)
+
+- Home gains an Agents section after the Your crew windows: three
+  expandable <details> panels, collapsed by default. Lenz shows its
+  channel status (YouTube/Reddit/Twitch counts) and TMDB status plus
+  links to the Lenz page and the calendar; QWERTY shows a security
+  summary computed from watchdog_findings() plus links to
+  /diagnostics#security; Mistral holds the phone notification controls
+  (Turn on, Send a test, status) moved from Settings with _PUSH_JS.
+- No control is duplicated and no shared section is moved: the full
+  Security panel and the wiring Recheck/Test stay in Diagnostics, the
+  Lenz page keeps its library controls, the Release Calendar stays a
+  top-level Home section (Stage 1d), and Settings keeps a pointer to
+  the moved notification controls. The Mistral benchmark stays in
+  Settings (out of scope). Lenz's channels are env-only, so the Lenz
+  panel surfaces their status rather than inventing a control.
+- Guards updated to the moved state, not weakened: test_mistral's push
+  controls check now fetches Home (with the hub.example.app host, so
+  the later origin check still sees it), and test_fixes' phone
+  failure-report check now reads the script from Home. New
+  tests/test_stage2.py (26 checks, both modes) covers panel
+  placement, collapsed-by-default, correct agent ownership, single
+  control ids, and preservation of shared sections.
+
 ## Stage 1d: Release Calendar on Home (branch stage1d/release-calendar-home, based on main c535e8d3 which includes merged PRs #50 and #52)
 - The existing Release Calendar (release_strip(), id=releases) is added
   to Home after the Watch & listen section and before the footer; it
