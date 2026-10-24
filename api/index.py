@@ -9355,8 +9355,8 @@ _CHAT_JS = r'''
       thread = thread.filter(m => m.id !== "pending"); await load();
       const arrived = !isCmd && thread.slice(-8).some(m => m.from === "you" && m.text === text.slice(0, 2000));
       if (arrived) status.textContent = err.serverError
-        ? "The hub hit an error: " + err.message + ". Your message is saved; send it again and it will retry."
-        : "Your message went through, but the reply took too long to load. It'll show up here when it's ready.";
+        ? "The hub hit an error: " + err.message + ". Your message is saved. Before sending it again, check whether anything it asked for already happened, so it doesn't run twice."
+        : "Your message went through, but the reply didn't arrive. It may still show up here — if it does, don't resend it. If it doesn't, check what already happened (like a task it created) before sending it again, so it doesn't run twice.";
       else { render(); msg.value = text; grow(); setPic(image); status.textContent = "Couldn't send: " + err.message; }
     }
     btn.disabled = false;

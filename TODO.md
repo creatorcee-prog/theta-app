@@ -1,5 +1,14 @@
 # To-do
 
+## Retry-warning follow-on on fix/reply-deadline (same PR #46, still unmerged)
+- The chat error messages told the user to resend without warning that
+  a retry re-runs the whole chain: anything the lost reply already did
+  (a task created before a kill) would happen twice. Both messages now
+  say so plainly: the server-error message says to check what already
+  happened before sending again; the dropped-connection message no
+  longer promises the reply will show up, and says not to resend it if
+  it does show up, and to check first if it does not.
+
 ## Reply deadline (fix/reply-deadline, PR unmerged)
 - Stall investigated after the Phase 4 tool test: Mistral offered to
   begin the test, then the chat showed "your message went through, but
