@@ -1746,7 +1746,7 @@ HUB_GUIDE = (
     "- Money (/money): Budgets, Recent spending, Charter's charts, Import from Rocket Money, Stocks.\n"
     "- Settings (/settings): Color scheme (light/dark, Glass shine, Home layout), Phone notifications (Turn on, "
     "Send a test), Sign in with Face ID, Devices, Gmail, Memory and notes, Voice commands "
-    "(Siri), Speed, Rounds, Wiring (what's connected), Standing orders.\n"
+    "(Siri), Speed, Rounds, Standing orders.\n"
     "- Lenz's page (/lenz): the library (watched, playing, reading, ratings) and the Release calendar. "
     "Email (/mail): Remi's sorted inbox and drafted replies. Each agent has a page at /agent/<name>.\n"
     "- Settings that change how the hub works are environment variables in Vercel (Project → Settings → "
@@ -2202,7 +2202,7 @@ def master_ready():
     if store().get_meta("claude:capped") != month:  # tell you once a month
         store().set_meta("claude:capped", month)
         notify("Theta", f"The high brain hit this month's ${MASTER_MONTHLY_CAP:.0f} cap; "
-               f"{TIER_LLM['low_brain'][1]} stands in until the 1st.", "/settings#wiring")
+               f"{TIER_LLM['low_brain'][1]} stands in until the 1st.", "/diagnostics#wiring")
     return False
 
 
@@ -2871,7 +2871,7 @@ def desk_reply(thread, to=None):
                                               "yourself as best you can, and say plainly what you're unsure of.")
             if re.match(r"^\s*ESCALATE:", reply.strip(), re.I):
                 reply = ("That one needs Theta, and he isn't available right now (Claude is off or over this "
-                         "month's cap). Ask me again later, or check Settings → Wiring.")
+                         "month's cap). Ask me again later, or check Diagnostics → Models & providers.")
     m = re.match(r"^\s*SEARCH:\s*(.+)$", reply.strip(), re.I)
     if m and can_search:
         reply = answer_with_search(agent, system, ask, m.group(1).strip()[:200])
@@ -10190,52 +10190,6 @@ _BENCH_JS = r"""
 })();
 """
 
-_WIRING_JS = r"""
-(() => {
-  const H = window.THETA_H, rows = document.getElementById("wiring-rows");
-  const MARK = {ok: ["Wired", "var(--good)"], bad: ["Not wired", "var(--bad)"], off: ["Not set up", "var(--warn)"]};
-  const cell = (text, style) => { const td = document.createElement("td"); td.textContent = text; if (style) td.style.cssText = style; return td; };
-  async function load() {
-    const note = document.getElementById("wiring-note");
-    note.textContent = "Checking...";
-    try {
-      const d = await (await fetch("/api/wiring", {headers: H})).json();
-      if (!d.ok) throw new Error(d.error);
-      rows.replaceChildren(...d.agents.map(a => {
-        const tr = document.createElement("tr");
-        const [label, color] = MARK[a.state] || ["Unknown", "var(--muted)"];
-        const result = cell(a.note, "color:var(--muted)"), test = document.createElement("td");
-        if (a.testable !== false) {
-          const b = document.createElement("button");
-          b.type = "button"; b.className = "btn ghost small"; b.textContent = "Test";
-          b.onclick = () => testAgent(a.agent, result, b);
-          test.append(b);
-        }
-        tr.append(cell(a.name, "font-weight:650"), cell(a.model, "font-family:ui-monospace,monospace;font-size:12px"),
-                  cell(label, "font-weight:700;color:" + color), result, test);
-        return tr;
-      }));
-      note.textContent = "Checked " + new Date().toLocaleTimeString() + ". Test sends a tiny message and uses a few tokens.";
-    } catch (err) { note.textContent = "Couldn't check wiring: " + err.message; }
-  }
-  async function testAgent(agent, out, b) {
-    b.disabled = true; out.textContent = "Testing..."; out.style.color = "var(--muted)";
-    const t0 = performance.now();
-    try {
-      const d = await (await fetch("/api/chat", {method: "POST", headers: H, body: JSON.stringify(
-        {agent, messages: [{role: "user", content: "Wiring test: reply with just OK."}]})})).json();
-      if (!d.ok) throw new Error(d.error);
-      out.textContent = "Replied in " + ((performance.now() - t0) / 1000).toFixed(1) + " s: " + d.reply.slice(0, 80);
-      out.style.color = "var(--good)";
-    } catch (err) { out.textContent = "Failed: " + err.message; out.style.color = "var(--bad)"; }
-    b.disabled = false;
-  }
-  document.getElementById("wiring-recheck").onclick = load;
-  load();
-})();
-"""
-
-
 def security_rows():
     try:
         findings = watchdog_findings()
@@ -11454,10 +11408,6 @@ def settings_page(headers):
         'job three times a day (Supabase Cron). Run one now to refresh the windows.</p>'
         f'<p><button class="btn" type="button" data-run-round="round-status-s">{ui_icon("play")}Run a round now</button></p>'
         '<p class="note" id="round-status-s"></p></section>'
-        '<section class="card stack"><div><h2>Wiring</h2><p class="muted small">Is each agent\'s model actually reachable?</p></div>'
-        '<div class="scrollx"><table class="tbl"><thead><tr><th>Agent</th><th>Model</th><th>Status</th><th>Details</th><th></th></tr>'
-        '</thead><tbody id="wiring-rows"></tbody></table></div>'
-        '<p><button class="btn ghost small" id="wiring-recheck" type="button">Recheck</button> <span class="note" id="wiring-note"></span></p></section>'
         '<section class="card stack" id="bench"><div><h2>Mistral benchmark</h2><p class="muted small">Six kinds of message, each answered '
         'by Mistral\'s model with thinking on and with it off, on his real prompt. Shows how long each took, whether he did the '
         'right thing (answer, use a tool, search, or hand it to Theta), and what it cost. Nothing is posted and no tools run. '
@@ -11470,7 +11420,7 @@ def settings_page(headers):
         f'<section class="card"><h2>About</h2><p class="muted small">Storage: {html.escape(STORAGE_MODE)}. '
         f'Times in {html.escape(HUB_TIMEZONE)}.</p>' + (f'<p class="muted small">{TMDB_NOTICE}</p>' if TMDB_API_KEY else "")
         + '</section></div>'
-        f"<script>{_PUSH_JS}</script><script>{_WIRING_JS}</script><script>{_BENCH_JS}</script>")
+        f"<script>{_PUSH_JS}</script><script>{_BENCH_JS}</script>")
     return page(headers, "Settings", "/settings", body)
 
 
@@ -11544,12 +11494,31 @@ _DIAG_JS = r"""
       rows.replaceChildren(...d.agents.map(a => {
         const tr = document.createElement("tr");
         const [label, color] = MARK[a.state] || ["Unknown", "var(--muted)"];
+        const result = cell(a.note, "color:var(--muted)"), test = document.createElement("td");
+        if (a.testable !== false) {
+          const b = document.createElement("button");
+          b.type = "button"; b.className = "btn ghost small"; b.textContent = "Test";
+          b.onclick = () => testAgent(a.agent, result, b);
+          test.append(b);
+        }
         tr.append(cell(a.name, "font-weight:650"), cell(a.model, "font-family:ui-monospace,monospace;font-size:12px"),
-                  cell(label, "font-weight:700;color:" + color), cell(a.note, "color:var(--muted)"));
+                  cell(label, "font-weight:700;color:" + color), result, test);
         return tr;
       }));
-      note.textContent = "Checked " + new Date().toLocaleTimeString() + ".";
+      note.textContent = "Checked " + new Date().toLocaleTimeString() + ". Test sends a tiny message and uses a few tokens.";
     } catch (err) { note.textContent = "Couldn't check wiring: " + err.message; }
+  }
+  async function testAgent(agent, out, b) {
+    b.disabled = true; out.textContent = "Testing..."; out.style.color = "var(--muted)";
+    const t0 = performance.now();
+    try {
+      const d = await (await fetch("/api/chat", {method: "POST", headers: H, body: JSON.stringify(
+        {agent, messages: [{role: "user", content: "Wiring test: reply with just OK."}]})})).json();
+      if (!d.ok) throw new Error(d.error);
+      out.textContent = "Replied in " + ((performance.now() - t0) / 1000).toFixed(1) + " s: " + d.reply.slice(0, 80);
+      out.style.color = "var(--good)";
+    } catch (err) { out.textContent = "Failed: " + err.message; out.style.color = "var(--bad)"; }
+    b.disabled = false;
   }
   document.getElementById("diag-wiring-recheck").onclick = load;
   load();
@@ -11632,8 +11601,8 @@ def diagnostics_page(headers):
         f'</div><section class="card" style="margin-top:14px"><h2>Token use</h2><ul><li>{claude_row}</li>'
         f'<li class="muted">Gemini and Groq per-model totals: not tracked yet. Replies show their tokens, but no totals are stored (see TODO).</li></ul></section>'
         f'{tools_card}'
-        f'<section class="card stack" style="margin-top:14px"><div><h2>Models &amp; providers</h2><p class="muted small">Live check, same as Settings → Wiring. <a href="/settings#wiring">Open in Settings</a></p></div>'
-        f'<div class="scrollx"><table class="tbl"><thead><tr><th>Agent</th><th>Model</th><th>Status</th><th>Details</th></tr></thead>'
+        f'<section class="card stack" id="wiring" style="margin-top:14px"><div><h2>Models &amp; providers</h2><p class="muted small">Live check.</p></div>'
+        f'<div class="scrollx"><table class="tbl"><thead><tr><th>Agent</th><th>Model</th><th>Status</th><th>Details</th><th></th></tr></thead>'
         f'<tbody id="diag-wiring-rows"></tbody></table></div>'
         f'<p><button class="btn ghost small" id="diag-wiring-recheck" type="button">Recheck</button> <span class="note" id="diag-wiring-note"></span></p></section>'
         f'<section class="card stack" id="security" style="margin-top:14px"><div class="hero" style="gap:12px">{avatar_img("qwerty", 40)}<div><h2>Security and health</h2>'

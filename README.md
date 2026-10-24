@@ -152,7 +152,7 @@ cookie. The pages are `/chat` (`?ch=<channel>&to=<agent>&say=<draft>`,
 where `say` prefills the composer without sending), `/diagnostics`
 (crew status, storage, Speed, scheduled work, failures, token use, Security
 and health, and the
-live wiring check, and tool-layer status (deployed commit, bridge import, tools.py layer status, and whether Mistral's prompt includes the six Phase 4 tools). Chat replies are bounded by a 50s request deadline (ALLCHAT_DEADLINE_SECONDS) so a slow model chain cannot run past Vercel's 60s function wall and lose the reply; tools that would not finish in the remaining budget are skipped with a note. Chat requests log one sanitized diag line per stage (request id, model, tools, persistence), and a tool or reply-save failure returns a specific error instead of the generic "internal error". The bridge uses the already-loaded hub module's store() (injected by the hub loader), so it never depends on `import index` working under the serverless loader.) Stage 1a: the chat composer has an explicit in-flight send guard (button and keyboard share it), the mini chat bar's Send submits through /api/allchat instead of only opening a draft, and Diagnostics cards and tables shrink and wrap instead of clipping on the right. Stage 1c: Security and health plus Speed move from Settings into Diagnostics (Speed beside Storage on desktop, stacked on narrow screens); Settings keeps passkeys, devices, Gmail, memory, and Siri., `/money` (with a spending donut: actual spending
+live wiring check, and tool-layer status (deployed commit, bridge import, tools.py layer status, and whether Mistral's prompt includes the six Phase 4 tools). Chat replies are bounded by a 50s request deadline (ALLCHAT_DEADLINE_SECONDS) so a slow model chain cannot run past Vercel's 60s function wall and lose the reply; tools that would not finish in the remaining budget are skipped with a note. Chat requests log one sanitized diag line per stage (request id, model, tools, persistence), and a tool or reply-save failure returns a specific error instead of the generic "internal error". The bridge uses the already-loaded hub module's store() (injected by the hub loader), so it never depends on `import index` working under the serverless loader.) Stage 1a: the chat composer has an explicit in-flight send guard (button and keyboard share it), the mini chat bar's Send submits through /api/allchat instead of only opening a draft, and Diagnostics cards and tables shrink and wrap instead of clipping on the right. Stage 1b: Models & providers is the single wiring UI in Diagnostics (with per-agent Test); the duplicate Settings Wiring section is removed and its links repoint to /diagnostics#wiring. Stage 1c: Security and health plus Speed move from Settings into Diagnostics (Speed beside Storage on desktop, stacked on narrow screens); Settings keeps passkeys, devices, Gmail, memory, and Siri., `/money` (with a spending donut: actual spending
 by category, reconciling with the month's total), `/calendar`,
 `/settings` and `/agent/<id>`. The chat polls `GET /api/chat/working`
 while a reply is on its way; it reports the working agent, its step,
@@ -544,7 +544,7 @@ hub leaves it alone until it resets instead of retrying: for the delay it
 names (Gemini's `retryDelay`, Groq's "try again in 7.66s"), or for a daily
 quota until just after midnight Pacific, when Google resets free-tier
 daily quotas. Meanwhile the tier's fallback answers straight away, Gemini
-search says when it'll be back, and Settings → Wiring shows
+search says when it'll be back, and Diagnostics → Models & providers shows
 which quota ran out. Picking who answers an un-mentioned message runs on
 Groq's miner (`ROUTER_TIER`), so it doesn't spend Gemini's daily quota.
 
@@ -677,7 +677,7 @@ alerts, agendas, charts) don't change. Every agent's prompt also lists
 what it can actually do, so they don't promise what they can't. Bots
 get their own and crew-wide orders from `/api/orders`.
 
-**Wiring**, in Settings, shows for each agent whether its key is set
+**Models & providers**, in Diagnostics, shows for each agent whether its key is set
 and can use its model (James: whether Garage Gym answers). **Test** sends
 a tiny message and shows the reply time.
 

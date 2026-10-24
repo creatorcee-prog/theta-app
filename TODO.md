@@ -1,44 +1,56 @@
 # To-do
 
-## Stage 1c: Security/Health + Speed into Diagnostics (branch stage1c/diagnostics-security-speed, PR unmerged, base main 4f787089; independent of open PR #50)
-- Diagnostics is now the canonical home for system health. The
-  Settings Security and health section (id="security", QWERTY hero,
-  security_rows()) and speed_card() (id="speed") move to Diagnostics
-  by call site — no reimplementation, no new endpoints, no new
-  metrics. Both panels are server-rendered: neither has JavaScript,
-  event handlers, or its own endpoint, so there is nothing to
-  rewire and no duplicate initialization to guard against (verified
-  by inspection, asserted in tests).
-- Layout: Crew's table is unchanged but its container goes
-  full-width; Storage + Speed share a grid2 (Speed immediately right
-  of Storage at >=1000px via the existing .grid2 media query,
-  stacked below it on narrow screens; .grid2 > .card min-width:0
-  from Stage 1a keeps long strings from blowing the cards out).
-  Security and health is appended after Models & providers with its
-  id="security" preserved, so direct links keep working.
-- Settings cleanup: the Security section and the speed_card() call
-  are removed; passkeys/Face ID, devices, Gmail, memory/notes,
-  Siri, Rounds, Wiring, Bench, Standing orders, escalations,
-  reports, and About are untouched. All five /settings#security
-  pointers (two watchdog notifications, Home watchdog window href +
-  "Open Security" link) now point at /diagnostics#security; the hub
-  map no longer lists Security under Settings. Note: that hub-map
-  line is also touched by PR #50 (different substring, Wiring) —
-  if both merge, the owner takes both removals.
-- Out of scope, unchanged: storage meter (Storage still shows only
-  the mode label), release calendar (still Lenz page), agent rows,
-  Glass+, chat title/top-bar, chat themes, attachments.
-- Tests: tests/test_stage1c.py (both modes) covers panels present
-  in Diagnostics / absent from Settings, preserved Settings
-  sections, Speed placement + stacking rules at CSS/source level,
-  the server-rendered nature (no security/speed JS anywhere),
-  security_rows() error fallback, Speed "nothing measured yet"
-  then real rows after a recorded load, no panel leakage without
-  the dashboard key, and scope guards (no meter, no release move,
-  no Glass+, Stage 1a intact; this branch is main + 1c only, so it
-  does NOT assert 1b's wiring consolidation).
-  No browser/DOM harness exists, so layout is verified at
-  source/CSS level, not screenshots.
+## Stage 1c: Security/Health and Speed in Diagnostics (branch stage1c/diagnostics-security-speed, PR #51, rebased onto main b772656d which includes merged PR #50)
+- Security/Health (id=security, QWERTY hero, security_rows()) and Speed
+  (id=speed, speed_card()) are moved by call site from Settings into
+  Diagnostics; both panels are server-rendered and have no JavaScript,
+  event handlers, or endpoints of their own, so nothing was
+  reimplemented and no metric, check, or authorization changed.
+- Layout: the Crew table is unchanged but its container is full-width;
+  Storage and Speed share one grid2, so Speed sits immediately right
+  of Storage at >=1000px (the existing media query) and stacks below
+  it on narrow screens; Speed's table keeps its pre-existing .md-scroll
+  wrapper, so nothing overflows horizontally.
+- Security is appended after the Models & providers panel and keeps
+  its id=security, so every existing /diagnostics#security link works.
+- Settings keeps passkeys/Face ID, devices, Gmail, memory/notes,
+  Siri/voice commands, Rounds, Bench, Standing orders, reports, and
+  About; the moved panels and their scripts are gone from Settings.
+- All five /settings#security pointers (two watchdog notifications,
+  Home watchdog window href, "Open Security" link) now point to
+  /diagnostics#security; the hub map drops Security from the Settings
+  list (it already dropped Wiring via merged Stage 1b).
+
+## Stage 1b: Models & providers consolidation (branch stage1b/diagnostics-wiring-consolidation, PR #50 merged, base main 4f787089 which includes merged PR #49)
+- Diagnostics is now the single home for provider/model wiring status.
+  The Settings Wiring section (table #wiring-rows, #wiring-recheck) and
+  the Settings-only _WIRING_JS script are removed; _DIAG_JS is the only
+  wiring fetch path, so a Diagnostics load fires exactly one
+  /api/wiring check and Recheck fires one more on demand. No endpoint
+  changed: /api/wiring and /api/models keep their dashboard-key auth
+  and error handling; wiring() semantics (states, notes, testable)
+  are untouched.
+- Preserved capability, not a new feature: the per-agent Test button
+  that only Settings had is ported verbatim into _DIAG_JS (same
+  /api/chat probe, "Wiring test: reply with just OK.", same cost
+  disclosure in the note), so removing Settings Wiring loses nothing.
+- Navigation repaired: the Diagnostics panel gets id="wiring" and the
+  "same as Settings / Open in Settings" copy is gone; the cap
+  notification link moves from /settings#wiring to
+  /diagnostics#wiring; the capped-master reply and the hub map now
+  point at Diagnostics, not Settings Wiring. No /settings#wiring
+  reference remains.
+- Untouched on purpose: Crew table, Settings passkeys/devices/Gmail/
+  memory/Siri sections, Security/Health and Speed (still Settings),
+  storage meter (not built), release calendar (still Lenz page),
+  Stage 1a guard/minibar/clipping behavior.
+- Tests: tests/test_stage1b.py (both modes) covers the canonical
+  Diagnostics panel + single fetch, Settings duplicate removal +
+  preserved sections, endpoint auth, navigation, and scope guards.
+  test_allchat.py's old "settings has the wiring table" assertion is
+  updated to the new canonical location. No browser/DOM harness
+  exists, so recheck/Test behavior is verified from shipped source
+  plus the live endpoints, not by driving a browser.
 
 ## Stage 1a: chat submission hardening + Diagnostics clipping (branch stage1a/chat-submit-diagnostics, PR unmerged)
 - Main composer (_CHAT_JS): explicit `sending` in-flight guard in

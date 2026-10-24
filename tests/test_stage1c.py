@@ -109,7 +109,7 @@ check("diagnostics has the Security and health panel with its id",
 check("diagnostics has the Speed panel with its id",
       'id="speed"' in diag and "<h2>Speed</h2>" in diag
       and "How long the server takes" in diag)
-check("diagnostics keeps Models & providers (main base: pre-1b copy)",
+check("diagnostics keeps Models & providers (1b canonical panel)",
       "Models &amp; providers" in diag and 'id="diag-wiring-rows"' in diag)
 check("diagnostics keeps Storage, Scheduled work, Token use, Tools",
       "<h2>Storage</h2>" in diag and "<h2>Scheduled work</h2>" in diag
@@ -152,8 +152,8 @@ check("settings keeps Rounds, Bench, Standing orders, reports, About",
       "<h2>Rounds</h2>" in settings and "Mistral benchmark" in settings
       and "<h2>Standing orders</h2>" in settings and "<h2>Latest reports</h2>" in settings
       and "<h2>About</h2>" in settings)
-check("settings still has Wiring (Stage 1b is a separate open PR, untouched here)",
-      'id="wiring-rows"' in settings)
+check("wiring consolidated by merged Stage 1b (Settings copy gone, Diagnostics canonical)",
+      'id="wiring-rows"' not in settings and 'id="diag-wiring-rows"' in diag)
 
 # --- Speed shows real rows after a recorded load (no fabricated metrics) ---
 s, diag2 = call("GET", "/diagnostics", headers=K)
