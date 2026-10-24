@@ -100,7 +100,7 @@ check("composer has an explicit in-flight guard",
       "let sending = false" in chat_js and "if (sending) return" in chat_js)
 check("guard is set before the send and released in a finally",
       "if (sending) return; sending = true" in chat_js
-      and "finally { sending = false; btn.disabled = false; }" in chat_js)
+      and "finally { sending = false; btn.disabled = false; btn.classList.remove(\"is-loading\"); }" in chat_js)
 check("button and keyboard share the guarded submit path",
       'form.onsubmit = async' in chat_js
       and 'form.requestSubmit()' in chat_js)
