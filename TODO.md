@@ -1,5 +1,35 @@
 # To-do
 
+## Reply deadline (fix/reply-deadline, PR unmerged)
+- Stall investigated after the Phase 4 tool test: Mistral offered to
+  begin the test, then the chat showed "your message went through, but
+  the reply took too long to load". Root cause is NOT the tools and NOT
+  a missing heartbeat: the tools are fast (task_create/task_list 0.00s,
+  web_search 1.42s, combined 3-action reply 0.65s, desk_reply 0.69s with
+  a stubbed model) and bounded (8-15s), while the desk path's model
+  chain is unbounded (Claude 40s + SDK retry, then Gemini/Groq
+  fallbacks, then Theta takeover / SEARCH second call, and sequential
+  replies for each @mentioned agent). Past Vercel's 60s maxDuration the
+  function is killed, the reply is never saved, and the frontend — which
+  has no fetch timeout of its own — shows the timeout message when the
+  connection drops. The 1.5s working poll is progress reporting, not the
+  cause, and it stops when the fetch dies; the 6s message poll can only
+  deliver replies that were actually saved. A 62s model delay completes
+  locally (no internal cap), proving the kill mechanism.
+- Fix: app() sets _REQ.deadline (50s default) for /api/allchat and
+  /api/chat; _llm_call and claude_request cap their timeouts by the
+  time left (Claude gets no SDK retry under a deadline); run_actions
+  skips tools with less than 16s left and says so. A reply that runs
+  out of budget now returns an honest error ("couldn't reply") instead
+  of a lost reply. The chat catch also tells a fast server error apart
+  from a dropped connection.
+- Regression test tests/test_reply_deadline.py: a fake provider that
+  sleeps 30s, a 6s deadline, llm_chat fails in ~6s with a deadline
+  error (not 25s x chain), and app() wires the deadline for /api/allchat.
+- If replies ever legitimately need minutes (long Claude thinking),
+  the durable route is a job-status endpoint + the existing cron
+  rounds as executor; a heartbeat alone cannot fix a killed function.
+
 ## Follow-on fix on fix/mistral-tools-prompt (same PR #45, still unmerged)
 - Follow-on gap, caught before merge: tool_bridge.py still did a plain
   `import tools` off sys.path, so the tools could register yet fail at
