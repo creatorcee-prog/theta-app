@@ -1,5 +1,33 @@
 # To-do
 
+## Follow-on fix on fix/mistral-tools-prompt (same PR #45, still unmerged)
+- Follow-on gap, caught before merge: tool_bridge.py still did a plain
+  `import tools` off sys.path, so the tools could register yet fail at
+  execution ("tool layer not available") in the same deployment case.
+- Fix: tool_bridge.py now loads tools.py by path next to itself
+  (importlib), mirroring the index.py bridge load. tools.py is
+  stdlib-only, so there is no deeper local chain.
+- The loader now also verifies the tools module itself loaded: an old
+  bridge without TOOLS_LAYER_ERROR can no longer report "ok" by
+  default, and a failed bridge import marks the layer failed too.
+- /diagnostics Tools card gains a "Tool layer (tools.py)" line fed by
+  tools_diag()["tools_layer"].
+- Regression test: tests/test_bridge_nopath.py spawns a clean
+  subprocess with api/ scrubbed from sys.path, loads index.py by file
+  path, and requires an ACTUAL task_create + task_list execution with
+  receipts (not just registration). Negative control verified: with
+  the old tool_bridge it fails with tools_layer "tools module did
+  not load". Passes in both run_all.sh modes.
+- Vercel preview note: PR #43, #44 and #45 heads all report Vercel
+  status "Canceled by Ignored Build Step" (success state). The ignore
+  is NOT in vercel.json or the repo; it is a dashboard Project
+  Settings -> Git -> Ignored Build Step on project dashboard-app that
+  skips preview builds broadly (code changes were still ignored).
+  Production deploys from main still work. GitHub Actions
+  (.github/workflows/tests.yml) still runs the full suite on every
+  PR, so automated test validation happens; only a clickable preview
+  URL is unavailable unless the dashboard setting is narrowed.
+
 ## Fixed on fix/mistral-tools-prompt (PR pending, not merged)
 - Root cause of "Mistral only reports the original tools": the Phase 4
   bridge import relied on sys.path, and its `except ImportError:

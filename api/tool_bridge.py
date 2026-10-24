@@ -6,9 +6,28 @@ inside tools.py.
 """
 from __future__ import annotations
 
+# tools.py is loaded by path next to this file, not by sys.path, for the
+# same reason index.py loads this bridge by path: on Vercel the api/
+# directory is not guaranteed to be on sys.path, and a failed
+# `import tools` here would leave the tools registered but unusable
+# (every wrapper raises "tool layer not available"). Any failure is
+# recorded in TOOLS_LAYER_ERROR and shown on /diagnostics.
+TOOLS_LAYER_ERROR = None
+agent_tools = None
 try:
-    import tools as agent_tools
-except ImportError:  # pragma: no cover
+    import importlib.util
+    import os as _os
+    _here = _os.path.dirname(_os.path.abspath(__file__)) if "__file__" in globals() else ""
+    _tools_path = _os.path.join(_here, "tools.py") if _here else ""
+    if _tools_path and _os.path.exists(_tools_path):
+        _spec = importlib.util.spec_from_file_location("agent_tools", _tools_path)
+        _mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        agent_tools = _mod
+    else:
+        import tools as agent_tools
+except Exception as e:  # recorded, not swallowed: see tools_diag()
+    TOOLS_LAYER_ERROR = f"{type(e).__name__}: {e}"
     agent_tools = None
 
 

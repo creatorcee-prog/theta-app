@@ -151,7 +151,7 @@ accepts the dashboard key once as `?key=` and then remembers it in a
 cookie. The pages are `/chat` (`?ch=<channel>&to=<agent>&say=<draft>`,
 where `say` prefills the composer without sending), `/diagnostics`
 (crew status, storage, scheduled work, failures, token use, and the
-live wiring check, and tool-layer status (deployed commit, bridge import, and whether Mistral's prompt includes the six Phase 4 tools)), `/money` (with a spending donut: actual spending
+live wiring check, and tool-layer status (deployed commit, bridge import, tools.py layer status, and whether Mistral's prompt includes the six Phase 4 tools)), `/money` (with a spending donut: actual spending
 by category, reconciling with the month's total), `/calendar`,
 `/settings` and `/agent/<id>`. The chat polls `GET /api/chat/working`
 while a reply is on its way; it reports the working agent, its step,

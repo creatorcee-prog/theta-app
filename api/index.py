@@ -57,6 +57,7 @@ from concurrent.futures import ThreadPoolExecutor
 # is recorded in BRIDGE_IMPORT_ERROR and shown on /diagnostics instead
 # of being swallowed; the original tools keep working either way.
 BRIDGE_IMPORT_ERROR = None
+BRIDGE_TOOLS_LAYER_ERROR = None
 BRIDGE_TOOLS = {}
 try:
     import importlib.util
@@ -67,11 +68,19 @@ try:
         _mod = importlib.util.module_from_spec(_spec)
         _spec.loader.exec_module(_mod)
         BRIDGE_TOOLS = _mod.BRIDGE_TOOLS
+        _tb = _mod
     else:
         from tool_bridge import BRIDGE_TOOLS
+        import tool_bridge as _tb
+    # The layer is healthy only if the tools module itself loaded: an old
+    # bridge without TOOLS_LAYER_ERROR must not report "ok" by default.
+    BRIDGE_TOOLS_LAYER_ERROR = getattr(_tb, "TOOLS_LAYER_ERROR", None)
+    if BRIDGE_TOOLS_LAYER_ERROR is None and getattr(_tb, "agent_tools", None) is None:
+        BRIDGE_TOOLS_LAYER_ERROR = "tools module did not load"
 except Exception as e:  # recorded, not swallowed: see tools_diag()
     BRIDGE_IMPORT_ERROR = f"{type(e).__name__}: {e}"
     BRIDGE_TOOLS = {}
+    BRIDGE_TOOLS_LAYER_ERROR = BRIDGE_TOOLS_LAYER_ERROR or "bridge import failed"
 
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -1739,6 +1748,7 @@ def tools_diag():
         "commit": os.environ.get("VERCEL_GIT_COMMIT_SHA", "")[:8] or "unknown",
         "bridge_file": bool(bridge_path and os.path.exists(bridge_path)),
         "import_error": BRIDGE_IMPORT_ERROR,
+        "tools_layer": BRIDGE_TOOLS_LAYER_ERROR or "ok",
         "bridge_tools": sorted(BRIDGE_TOOLS),
         "mistral_prompt": {t: (f"ACTION: {t} |" in prompt) for t in six},
     }
@@ -11452,6 +11462,7 @@ def diagnostics_page(headers):
         f'<section class="card" style="margin-top:14px"><h2>Tools</h2>'
         f'<p class="muted small">Deployed commit: {html.escape(diag["commit"])} \u00b7 Bridge file: {"present" if diag["bridge_file"] else "missing"} \u00b7 Import: {bridge_state}</p>'
         f'<p class="muted small">Registered bridge tools: {html.escape(", ".join(diag["bridge_tools"]) or "none")}</p>'
+        f'<p class="muted small">Tool layer (tools.py): {html.escape(str(diag["tools_layer"]))}</p>'
         f'<div class="scrollx"><table class="tbl"><thead><tr><th>Phase 4 tool</th><th>Mistral\u2019s prompt</th></tr></thead><tbody>{diag_rows}</tbody></table></div></section>')
     body = (
         f'<header class="top"><div><p class="eyebrow">System health</p><h1>Diagnostics</h1></div></header>'
