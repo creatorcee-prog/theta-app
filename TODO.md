@@ -1,5 +1,26 @@
 # To-do
 
+## Fixed on fix/mistral-tools-prompt (PR pending, not merged)
+- Root cause of "Mistral only reports the original tools": the Phase 4
+  bridge import relied on sys.path, and its `except ImportError:
+  BRIDGE_TOOLS = {}` fallback silently dropped all six tools while the
+  original tools kept working. Reproduced locally by importing the app
+  without tool_bridge.py: Mistral's prompt kept the originals, lost all
+  six, and run_actions rejected them as "not a tool I have".
+- Fix: tool_bridge.py is now loaded by path next to api/index.py
+  (importlib, not sys.path), and any failure is recorded in
+  BRIDGE_IMPORT_ERROR instead of being swallowed.
+- /diagnostics gains a server-rendered Tools card (key-gated, no secrets
+  or conversations): deployed commit (VERCEL_GIT_COMMIT_SHA), bridge
+  file present/missing, import state, registered bridge tools, and
+  per-tool inclusion in Mistral's prompt. If the card still shows a
+  missing bridge or an old commit after a redeploy, the cause is the
+  deployment/packaging, not the prompt.
+- Regression test: tests/test_mistral_tools.py (25 checks memory,
+  23 redis) proves tools_prompt("mistral"), desk_system("mistral"),
+  run_actions execution, and the diagnostics card all include the six
+  tools. No approval gates removed, no security protections loosened.
+
 ## Shipped on redesign/mobile-nav-diagnostics (PR pending, not merged)
 - [x] Bottom bar with three primary destinations (Home, Diagnostics,
       Settings); Chat, Calendar and Money keep their routes, reached from
