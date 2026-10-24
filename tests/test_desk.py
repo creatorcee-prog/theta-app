@@ -357,7 +357,7 @@ check("a message without an id leaves no note", set(h._meta_json("chat:working",
 js = call("GET", "/chat.js")[1].decode()
 check("the chat shows who's working while it waits", "chat/working?rid=" in js
       and '"thinking"' in js
-      and "went through, but the reply took too long" in js)
+      and "went through, but the reply didn't arrive" in js)
 s_, page_, _ = call("GET", "/chat", headers=K)
 check("the indicator sits above the message box", b'id="chat-working"' in page_ and b"wdots" in page_)
 css = call("GET", "/ui.css")[1].decode()

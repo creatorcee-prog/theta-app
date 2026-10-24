@@ -46,6 +46,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 
@@ -145,6 +146,24 @@ def _time_left():
     request has none (background work, tests calling helpers directly)."""
     dl = getattr(_REQ, "deadline", None)
     return None if dl is None else max(0.0, dl - time.time())
+
+
+def _diag(stage, **fields):
+    """One sanitized log line per request stage (Vercel stdout). Only
+    explicit, safe fields are ever logged: stage names, tool names,
+    counts, durations, exception classes, truncated exception messages.
+    Never prompts, user text, keys, headers, or full conversations;
+    non-string/number values are dropped, never formatted blindly."""
+    rid = getattr(_REQ, "rid", None) or getattr(_REQ, "diag_id", None) or "noreq"
+    parts = [f"rid={rid}", f"stage={stage}"]
+    for k, v in fields.items():
+        if isinstance(v, bool):
+            parts.append(f"{k}={int(v)}")
+        elif isinstance(v, (int, float)):
+            parts.append(f"{k}={v}")
+        elif isinstance(v, str):
+            parts.append(f"{k}={v[:160]}")
+    print("diag " + " ".join(parts))
 # When a tier's provider is busy or down (429/5xx, timeouts), retry once,
 # then let a model on the other provider answer. *_FALLBACK_MODEL env vars
 # override; set one to "off" to fail instead.
@@ -1777,11 +1796,14 @@ def run_actions(agent, reply):
     text = _ACTION_RE.sub("", reply).strip()
     receipts, buttons = [], []
     skipped = False
+    if found:
+        _diag("tools.parsed", count=len(found), tools=",".join(n for n, _ in found[:3]))
     for name, arg in found[:3]:
         # A tool started with less than its worst case (15s) left could
         # push the request past Vercel's 60s wall; skip it and say so.
         left = _time_left()
         if left is not None and left < 16:
+            _diag("tool.skipped", tool=name)
             skipped = True
             break
         tool = TOOLS.get(name.lower())
@@ -1789,6 +1811,7 @@ def run_actions(agent, reply):
             receipts.append(f"✗ {name}: not a tool I have")
             continue
         who = AGENTS.get(agent, {}).get("name", agent)
+        t0 = time.perf_counter()
         try:
             got = tool[1](arg, agent)
             if isinstance(got, tuple):  # a proposal: text plus Approve / Decline
@@ -1796,9 +1819,19 @@ def run_actions(agent, reply):
                 buttons += more
             receipts.append("✓ " + got)
             activity(agent, f"{who} used {name}: {got}")
-        except (ValueError, CommandError, LLMError) as e:
-            receipts.append(f"✗ {name}: {e}")
+            _diag("tool.done", tool=name, elapsed_ms=int((time.perf_counter() - t0) * 1000), status="ok")
+        except Exception as e:
+            # Any tool failure is a receipt, never a 500: the old narrow
+            # catch let non-ValueError tool exceptions escape to the
+            # generic "internal error" while the user saw nothing.
+            _diag("tool.done", tool=name, elapsed_ms=int((time.perf_counter() - t0) * 1000),
+                  status="error", error_class=type(e).__name__, error=str(e))
+            receipts.append(f"✗ {name}: {str(e)[:200]}")
             activity(agent, f"{who} tried {name}, but it didn't work: {e}")
+    if found:
+        # Single pass by design: results go into the user-visible reply,
+        # not back to the model for a second turn.
+        _diag("tools.applied", receipts=len(receipts), returned_to_model=0)
     note = ("\n\n_(Stopped here: the reply used most of the time budget, so the remaining tools didn't run. "
             "Ask again to run them.)_")
     if receipts:
@@ -2295,11 +2328,13 @@ def claude_request(messages, max_tokens, model=None, effort=None, thinking=None)
                **({"thinking": {"type": "disabled"}} if thinking == "off" else {}))
     left = _time_left()
     if left is not None and left <= 1:
+        _diag("model.call", provider="anthropic", model=model, elapsed_ms=0, outcome="error", error_class="LLMError")
         raise LLMError("reply deadline reached: the request ran out of time", retryable=True, timed_out=True)
     timeout = max(1.0, left) if left is not None else MASTER_TIMEOUT
     client = _anthropic_client(max_retries=0 if left is not None else 1)
+    t0 = time.perf_counter()
     try:
-        return (client.beta.messages.create(**req, betas=["server-side-fallback-2026-07-01"], fallbacks="default",
+        resp = (client.beta.messages.create(**req, betas=["server-side-fallback-2026-07-01"], fallbacks="default",
                                             timeout=timeout)
                 if model in _CLAUDE_FALLBACK_MODELS else client.messages.create(**req, timeout=timeout))
     except anthropic.AuthenticationError as e:
@@ -2319,9 +2354,17 @@ def claude_request(messages, max_tokens, model=None, effort=None, thinking=None)
     except anthropic.APIStatusError as e:
         if "anthropic-workspace-id" in str(e.message):
             raise LLMError("Anthropic needs a workspace: " + _WORKSPACE_HINT)
-        raise LLMError(f"Anthropic returned {e.status_code}: {str(e.message)[:120]}")
+        err = LLMError(f"Anthropic returned {e.status_code}: {str(e.message)[:120]}")
+        err.status = e.status_code
+        _diag("model.call", provider="anthropic", model=model,
+              elapsed_ms=int((time.perf_counter() - t0) * 1000), outcome="error",
+              error_class="LLMError", http_status=e.status_code)
+        raise err
     except anthropic.APIConnectionError as e:
         raise LLMError(f"Anthropic unreachable: {e!r}"[:160])
+    _diag("model.call", provider="anthropic", model=model,
+          elapsed_ms=int((time.perf_counter() - t0) * 1000), outcome="ok")
+    return resp
 
 
 def claude_record(resp, model=None):
@@ -2395,8 +2438,10 @@ def _llm_call(provider, model, messages, max_tokens):
                  "User-Agent": "bot-hub/1.0"}, method="POST")
     left = _time_left()
     if left is not None and left <= 1:
+        _diag("model.call", provider=provider, model=model, elapsed_ms=0, outcome="error", error_class="LLMError")
         raise LLMError("reply deadline reached: the request ran out of time", retryable=True, timed_out=True)
     timeout = min(LLM_TIMEOUT, left) if left is not None else LLM_TIMEOUT
+    t0 = time.perf_counter()
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             if provider == "groq":
@@ -2405,16 +2450,27 @@ def _llm_call(provider, model, messages, max_tokens):
         text = out["choices"][0]["message"].get("content") or ""
         u = out.get("usage") or {}
         count_tokens(u.get("prompt_tokens"), u.get("completion_tokens"))
+        _diag("model.call", provider=provider, model=model,
+              elapsed_ms=int((time.perf_counter() - t0) * 1000), outcome="ok")
     except urllib.error.HTTPError as e:
         raw = e.read()[:4000].decode("utf-8", "replace")
         if e.code == 429:
             cool_down(provider, model, raw)
-        raise LLMError(_llm_error_text(provider, e.code, raw), retryable=e.code in _RETRYABLE,
+        err = LLMError(_llm_error_text(provider, e.code, raw), retryable=e.code in _RETRYABLE,
                        timed_out=e.code == 429)  # no same-model retry into a quota wall
+        err.status = e.code
+        _diag("model.call", provider=provider, model=model,
+              elapsed_ms=int((time.perf_counter() - t0) * 1000), outcome="error",
+              error_class="LLMError", http_status=e.code)
+        raise err
     except (urllib.error.URLError, TimeoutError) as e:
         timed_out = isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError)
+        _diag("model.call", provider=provider, model=model,
+              elapsed_ms=int((time.perf_counter() - t0) * 1000), outcome="error", error_class="LLMError")
         raise LLMError(f"{provider} call failed: {e!r}", retryable=True, timed_out=timed_out)
     except (ValueError, KeyError, IndexError, AttributeError) as e:
+        _diag("model.call", provider=provider, model=model,
+              elapsed_ms=int((time.perf_counter() - t0) * 1000), outcome="error", error_class="LLMError")
         raise LLMError(f"{provider} call failed: {e!r}")
     if not text.strip():  # the fallback may still answer; the same model again likely won't
         raise LLMError(f"{model} returned an empty reply (it may have spent its "
@@ -2734,8 +2790,9 @@ def desk_replies(thread):
         _REQ.trail, _REQ.tok = [], [0, 0]  # each reply shows its own workers and tokens
         try:
             who, reply = desk_reply(thread, to=a) if a in (DESK, "theta") else (a, allchat_reply(a, thread))
-        except (LLMError, ValueError, KeyError) as e:
-            errors[AGENTS[a]["name"]] = str(e)
+        except Exception as e:
+            _diag("agent.reply_failed", agent=a, error_class=type(e).__name__, error=str(e))
+            errors[AGENTS[a]["name"]] = str(e)[:200]
             continue
         out.append((who, reply, reply_extra()))
     return out, errors
@@ -12458,26 +12515,41 @@ def handle(method, path, query, headers, body):
                       [m for m in st.list_chat(ALLCHAT_KEEP) if message_channel(m) == ch][-CHAT_HISTORY:])
             errors, routed = {}, []
             _REQ.ch = ch if ch != "all" else None  # activity lines land in this conversation
+            _diag("allchat.start", channel=ch, thread=len(thread))
             if CHAT_MODE != "crew":  # the front desk answers (Theta for hard ones); plain commands run at once
                 try:
                     quick = desk_shortcut(thread)
                     replies, errors = ([(quick[0], quick[1], reply_extra())], {}) if quick else desk_replies(thread)
-                except (LLMError, ValueError, KeyError) as e:
-                    replies, errors = [], {AGENTS[DESK]["name"]: str(e)}
-                for who, reply, extra in replies:
-                    if isinstance(reply, tuple):  # Charter's (caption, chart url)
-                        st.add_chat(who, reply[0], image=reply[1], channel=ch, extra=extra)
-                    elif isinstance(reply, dict):
-                        st.add_chat(who, reply["text"][:4000], channel=ch, buttons=reply.get("buttons"), extra=extra)
-                    elif reply:
-                        st.add_chat(who, reply.strip()[:4000], channel=ch, extra=extra)
-                    if who == "theta":
-                        routed = [who]
+                except Exception as e:
+                    _diag("desk.compute_failed", error_class=type(e).__name__, error=str(e))
+                    replies, errors = [], {AGENTS[DESK]["name"]: str(e)[:200]}
+                _diag("allchat.replies", replies=len(replies), errors=len(errors))
+                try:
+                    for who, reply, extra in replies:
+                        if isinstance(reply, tuple):  # Charter's (caption, chart url)
+                            st.add_chat(who, reply[0], image=reply[1], channel=ch, extra=extra)
+                        elif isinstance(reply, dict):
+                            st.add_chat(who, reply["text"][:4000], channel=ch, buttons=reply.get("buttons"), extra=extra)
+                        elif reply:
+                            st.add_chat(who, reply.strip()[:4000], channel=ch, extra=extra)
+                        if who == "theta":
+                            routed = [who]
+                except Exception as e:
+                    # The tools already ran before this save, so the user
+                    # must hear that: a blind retry would run them twice.
+                    _diag("reply.persist_failed", error_class=type(e).__name__, error=str(e))
+                    return _json(502, {"ok": False, "error": "couldn't save the reply — anything it already did, like a task it created, still happened; check before sending it again"})
                 has_buttons = any(isinstance(r[1], dict) and r[1].get("buttons") for r in replies)
                 working_final(_REQ.rid, "failed" if (errors and not replies) else
                               "waiting_approval" if has_buttons else "completed")
-                return _json(200, {"ok": True, "messages": allchat_view(channel=ch), "errors": errors,
-                                   "routed": [AGENTS[a]["name"] for a in routed], "latest": latest_by_channel()})
+                try:
+                    view = allchat_view(channel=ch)
+                    latest = latest_by_channel()
+                except Exception as e:
+                    _diag("reply.view_failed", error_class=type(e).__name__, error=str(e))
+                    return _json(502, {"ok": False, "error": "couldn't load the updated chat — the reply itself was saved; refresh to see it"})
+                return _json(200, {"ok": True, "messages": view, "errors": errors,
+                                   "routed": [AGENTS[a]["name"] for a in routed], "latest": latest})
             agents = mentioned_agents(text)
             members = CHANNEL_IDS[ch]["members"]
             if not agents and ch == "news":
@@ -13253,6 +13325,7 @@ def speed_card():
 
 
 def app(environ, start_response):
+    _REQ.diag_id = uuid.uuid4().hex[:12]
     method = environ.get("REQUEST_METHOD", "GET")
     path = environ.get("PATH_INFO", "/") or "/"
     query = parse_qs(environ.get("QUERY_STRING", ""))
@@ -13290,7 +13363,7 @@ def app(environ, start_response):
                 except Exception as exc:
                     print(f"couldn't record a wrong key: {exc!r}")
     except Exception as exc:  # e.g. storage down: answer, don't crash
-        print(f"handle error on {method} {path}: {exc!r}")
+        _diag("request.failed", path=path, error_class=type(exc).__name__, error=str(exc))
         (status, ctype, out), extra = _json(500, {"ok": False, "error": "internal error"}), []
     start_response(f"{status} {_REASONS.get(status, '')}",
                    [("Content-Type", ctype), ("Content-Length", str(len(out)))]
