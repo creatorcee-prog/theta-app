@@ -127,4 +127,4 @@ h.GARAGE_GYM_SECRET = ""; s, d = call("GET", "/api/wiring", "key=dk"); h.GARAGE_
 check("wiring: James unlinked -> not set up", {r["agent"]: r for r in d["agents"]}["james"]["state"] == "off")
 check("wiring needs key", call("GET", "/api/wiring")[0] == 401)
 s, page = call("GET", "/", "key=dk"); page = page.decode()
-check("chat page defaults to #all-agents; settings has the wiring table", "Message #all-agents" in call("GET", "/chat", "key=dk")[1].decode() and 'id="wiring-rows"' in call("GET", "/settings", "key=dk")[1].decode())
+check("chat page defaults to #all-agents; diagnostics has the wiring table", "Message #all-agents" in call("GET", "/chat", "key=dk")[1].decode() and 'id="diag-wiring-rows"' in call("GET", "/diagnostics", "key=dk")[1].decode())

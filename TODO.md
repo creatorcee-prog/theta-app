@@ -1,5 +1,36 @@
 # To-do
 
+## Stage 1b: Models & providers consolidation (branch stage1b/diagnostics-wiring-consolidation, PR unmerged, base main 4f787089 which includes merged PR #49)
+- Diagnostics is now the single home for provider/model wiring status.
+  The Settings Wiring section (table #wiring-rows, #wiring-recheck) and
+  the Settings-only _WIRING_JS script are removed; _DIAG_JS is the only
+  wiring fetch path, so a Diagnostics load fires exactly one
+  /api/wiring check and Recheck fires one more on demand. No endpoint
+  changed: /api/wiring and /api/models keep their dashboard-key auth
+  and error handling; wiring() semantics (states, notes, testable)
+  are untouched.
+- Preserved capability, not a new feature: the per-agent Test button
+  that only Settings had is ported verbatim into _DIAG_JS (same
+  /api/chat probe, "Wiring test: reply with just OK.", same cost
+  disclosure in the note), so removing Settings Wiring loses nothing.
+- Navigation repaired: the Diagnostics panel gets id="wiring" and the
+  "same as Settings / Open in Settings" copy is gone; the cap
+  notification link moves from /settings#wiring to
+  /diagnostics#wiring; the capped-master reply and the hub map now
+  point at Diagnostics, not Settings Wiring. No /settings#wiring
+  reference remains.
+- Untouched on purpose: Crew table, Settings passkeys/devices/Gmail/
+  memory/Siri sections, Security/Health and Speed (still Settings),
+  storage meter (not built), release calendar (still Lenz page),
+  Stage 1a guard/minibar/clipping behavior.
+- Tests: tests/test_stage1b.py (both modes) covers the canonical
+  Diagnostics panel + single fetch, Settings duplicate removal +
+  preserved sections, endpoint auth, navigation, and scope guards.
+  test_allchat.py's old "settings has the wiring table" assertion is
+  updated to the new canonical location. No browser/DOM harness
+  exists, so recheck/Test behavior is verified from shipped source
+  plus the live endpoints, not by driving a browser.
+
 ## Stage 1a: chat submission hardening + Diagnostics clipping (branch stage1a/chat-submit-diagnostics, PR unmerged)
 - Main composer (_CHAT_JS): explicit `sending` in-flight guard in
   form.onsubmit (set synchronously after the empty check, released
