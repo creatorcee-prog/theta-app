@@ -49,11 +49,38 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 
-# Phase 4: guarded tool layer (web_search, fetch_page, task ledger)
+# Phase 4: guarded tool layer (web_search, fetch_page, task ledger).
+# Loaded by path next to this file, not by sys.path: on Vercel the
+# function's directory is not guaranteed to be on sys.path, and a plain
+# `from tool_bridge import ...` failing there silently left agents with
+# only the original tools (the ImportError fallback hid it). Any failure
+# is recorded in BRIDGE_IMPORT_ERROR and shown on /diagnostics instead
+# of being swallowed; the original tools keep working either way.
+BRIDGE_IMPORT_ERROR = None
+BRIDGE_TOOLS_LAYER_ERROR = None
+BRIDGE_TOOLS = {}
 try:
-    from tool_bridge import BRIDGE_TOOLS
-except ImportError:
+    import importlib.util
+    _here = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else ""
+    _bridge_path = os.path.join(_here, "tool_bridge.py") if _here else ""
+    if _bridge_path and os.path.exists(_bridge_path):
+        _spec = importlib.util.spec_from_file_location("tool_bridge", _bridge_path)
+        _mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        BRIDGE_TOOLS = _mod.BRIDGE_TOOLS
+        _tb = _mod
+    else:
+        from tool_bridge import BRIDGE_TOOLS
+        import tool_bridge as _tb
+    # The layer is healthy only if the tools module itself loaded: an old
+    # bridge without TOOLS_LAYER_ERROR must not report "ok" by default.
+    BRIDGE_TOOLS_LAYER_ERROR = getattr(_tb, "TOOLS_LAYER_ERROR", None)
+    if BRIDGE_TOOLS_LAYER_ERROR is None and getattr(_tb, "agent_tools", None) is None:
+        BRIDGE_TOOLS_LAYER_ERROR = "tools module did not load"
+except Exception as e:  # recorded, not swallowed: see tools_diag()
+    BRIDGE_IMPORT_ERROR = f"{type(e).__name__}: {e}"
     BRIDGE_TOOLS = {}
+    BRIDGE_TOOLS_LAYER_ERROR = BRIDGE_TOOLS_LAYER_ERROR or "bridge import failed"
 
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -1707,6 +1734,24 @@ def tools_prompt(agent):
             "\nThe hub runs each one and adds a receipt. Never say you saved, logged, set, created or recorded anything "
             "without its ACTION line. If no tool can do what's asked, say plainly that you can't. Only act on what the "
             "user asked you; don't restate, reassign or add tasks for other agents.")
+
+
+def tools_diag():
+    """Safe diagnostics for the Phase 4 tool layer: no keys, no secrets,
+    no conversation content. Lets /diagnostics show whether the deployed
+    build actually has the bridge tools in Mistral's prompt."""
+    here = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else ""
+    bridge_path = os.path.join(here, "tool_bridge.py") if here else ""
+    prompt = tools_prompt("mistral")
+    six = ["web_search", "fetch_page", "task_create", "task_list", "task_complete", "task_note"]
+    return {
+        "commit": os.environ.get("VERCEL_GIT_COMMIT_SHA", "")[:8] or "unknown",
+        "bridge_file": bool(bridge_path and os.path.exists(bridge_path)),
+        "import_error": BRIDGE_IMPORT_ERROR,
+        "tools_layer": BRIDGE_TOOLS_LAYER_ERROR or "ok",
+        "bridge_tools": sorted(BRIDGE_TOOLS),
+        "mistral_prompt": {t: (f"ACTION: {t} |" in prompt) for t in six},
+    }
 
 
 def run_actions(agent, reply):
@@ -11401,6 +11446,24 @@ def diagnostics_page(headers):
         claude_row = "Claude: couldn't read this month's use."
     storage_note = ("Upstash Redis is connected." if STORAGE_MODE.startswith("upstash")
                     else "Memory store only: data resets between requests. Connect Upstash Redis in Vercel and redeploy.")
+    diag = tools_diag()
+    diag_rows = ""
+    for t, ok in diag["mistral_prompt"].items():
+        mark = "In Mistral\u2019s prompt" if ok else "MISSING from Mistral\u2019s prompt"
+        color = "var(--good)" if ok else "var(--bad)"
+        diag_rows += f'<tr><td style="font-weight:650">{t}</td><td style="font-weight:700;color:{color}">{mark}</td></tr>'
+    if diag["import_error"] is not None:
+        bridge_state = "Import failed: " + html.escape(str(diag["import_error"])[:160])
+    elif not diag["bridge_file"]:
+        bridge_state = "Bridge file missing from the deployed build (redeploy from main)."
+    else:
+        bridge_state = "ok"
+    tools_card = (
+        f'<section class="card" style="margin-top:14px"><h2>Tools</h2>'
+        f'<p class="muted small">Deployed commit: {html.escape(diag["commit"])} \u00b7 Bridge file: {"present" if diag["bridge_file"] else "missing"} \u00b7 Import: {bridge_state}</p>'
+        f'<p class="muted small">Registered bridge tools: {html.escape(", ".join(diag["bridge_tools"]) or "none")}</p>'
+        f'<p class="muted small">Tool layer (tools.py): {html.escape(str(diag["tools_layer"]))}</p>'
+        f'<div class="scrollx"><table class="tbl"><thead><tr><th>Phase 4 tool</th><th>Mistral\u2019s prompt</th></tr></thead><tbody>{diag_rows}</tbody></table></div></section>')
     body = (
         f'<header class="top"><div><p class="eyebrow">System health</p><h1>Diagnostics</h1></div></header>'
         f'<p class="muted">From real data. Anything unmeasured is labeled as such, never shown as healthy.</p>'
@@ -11413,6 +11476,7 @@ def diagnostics_page(headers):
         f'<section class="card"><h2>Recent failures</h2><ul>{fail_html}</ul><h2 style="margin-top:14px">Recent errors</h2><ul>{err_html}</ul></section>'
         f'</div><section class="card" style="margin-top:14px"><h2>Token use</h2><ul><li>{claude_row}</li>'
         f'<li class="muted">Gemini and Groq per-model totals: not tracked yet. Replies show their tokens, but no totals are stored (see TODO).</li></ul></section>'
+        f'{tools_card}'
         f'<section class="card stack" style="margin-top:14px"><div><h2>Models &amp; providers</h2><p class="muted small">Live check, same as Settings → Wiring. <a href="/settings#wiring">Open in Settings</a></p></div>'
         f'<div class="scrollx"><table class="tbl"><thead><tr><th>Agent</th><th>Model</th><th>Status</th><th>Details</th></tr></thead>'
         f'<tbody id="diag-wiring-rows"></tbody></table></div>'

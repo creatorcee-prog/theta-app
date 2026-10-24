@@ -1,5 +1,54 @@
 # To-do
 
+## Follow-on fix on fix/mistral-tools-prompt (same PR #45, still unmerged)
+- Follow-on gap, caught before merge: tool_bridge.py still did a plain
+  `import tools` off sys.path, so the tools could register yet fail at
+  execution ("tool layer not available") in the same deployment case.
+- Fix: tool_bridge.py now loads tools.py by path next to itself
+  (importlib), mirroring the index.py bridge load. tools.py is
+  stdlib-only, so there is no deeper local chain.
+- The loader now also verifies the tools module itself loaded: an old
+  bridge without TOOLS_LAYER_ERROR can no longer report "ok" by
+  default, and a failed bridge import marks the layer failed too.
+- /diagnostics Tools card gains a "Tool layer (tools.py)" line fed by
+  tools_diag()["tools_layer"].
+- Regression test: tests/test_bridge_nopath.py spawns a clean
+  subprocess with api/ scrubbed from sys.path, loads index.py by file
+  path, and requires an ACTUAL task_create + task_list execution with
+  receipts (not just registration). Negative control verified: with
+  the old tool_bridge it fails with tools_layer "tools module did
+  not load". Passes in both run_all.sh modes.
+- Vercel preview note: PR #43, #44 and #45 heads all report Vercel
+  status "Canceled by Ignored Build Step" (success state). The ignore
+  is NOT in vercel.json or the repo; it is a dashboard Project
+  Settings -> Git -> Ignored Build Step on project dashboard-app that
+  skips preview builds broadly (code changes were still ignored).
+  Production deploys from main still work. GitHub Actions
+  (.github/workflows/tests.yml) still runs the full suite on every
+  PR, so automated test validation happens; only a clickable preview
+  URL is unavailable unless the dashboard setting is narrowed.
+
+## Fixed on fix/mistral-tools-prompt (PR pending, not merged)
+- Root cause of "Mistral only reports the original tools": the Phase 4
+  bridge import relied on sys.path, and its `except ImportError:
+  BRIDGE_TOOLS = {}` fallback silently dropped all six tools while the
+  original tools kept working. Reproduced locally by importing the app
+  without tool_bridge.py: Mistral's prompt kept the originals, lost all
+  six, and run_actions rejected them as "not a tool I have".
+- Fix: tool_bridge.py is now loaded by path next to api/index.py
+  (importlib, not sys.path), and any failure is recorded in
+  BRIDGE_IMPORT_ERROR instead of being swallowed.
+- /diagnostics gains a server-rendered Tools card (key-gated, no secrets
+  or conversations): deployed commit (VERCEL_GIT_COMMIT_SHA), bridge
+  file present/missing, import state, registered bridge tools, and
+  per-tool inclusion in Mistral's prompt. If the card still shows a
+  missing bridge or an old commit after a redeploy, the cause is the
+  deployment/packaging, not the prompt.
+- Regression test: tests/test_mistral_tools.py (25 checks memory,
+  23 redis) proves tools_prompt("mistral"), desk_system("mistral"),
+  run_actions execution, and the diagnostics card all include the six
+  tools. No approval gates removed, no security protections loosened.
+
 ## Shipped on redesign/mobile-nav-diagnostics (PR pending, not merged)
 - [x] Bottom bar with three primary destinations (Home, Diagnostics,
       Settings); Chat, Calendar and Money keep their routes, reached from
