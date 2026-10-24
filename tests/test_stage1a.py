@@ -185,6 +185,6 @@ check("wiring consolidated (Settings copy removed, Diagnostics canonical)",
 check("Security and Speed moved (in Diagnostics, not Settings) — Stage 1c",
       'id="security"' in diag and 'id="speed"' in diag
       and 'id="security"' not in settings and 'id="speed"' not in settings)
-check("release calendar not yet moved (still off Home)",
-      'id="releases"' not in home)
+check("release calendar moved to Home (Stage 1d)",
+      'id="releases"' in home)
 print("done")
