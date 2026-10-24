@@ -205,7 +205,7 @@ check("no storage meter invented", 'id="storage-meter"' not in diag)
 s, chat_js = call("GET", "/chat.js")
 chat_js = chat_js.decode()
 check("stage 1a composer guard intact",
-      "let sending = false" in chat_js and "finally { sending = false; btn.disabled = false; }" in chat_js)
+      "let sending = false" in chat_js and "finally { sending = false; btn.disabled = false; btn.classList.remove(\"is-loading\"); }" in chat_js)
 s, ui_js = call("GET", "/ui.js")
 ui_js = ui_js.decode()
 check("stage 1a mini bar submit intact",

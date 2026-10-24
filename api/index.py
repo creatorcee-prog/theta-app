@@ -8436,11 +8436,12 @@ body.typing .chat{height:100dvh}
 .chiprow::-webkit-scrollbar{display:none}
 @media (min-width:900px){.chiprow{display:none}}
 .msgs{flex:1;overflow-y:auto;padding:10px 0 6px;overscroll-behavior:contain;min-height:0}
-.msg{display:grid;grid-template-columns:40px minmax(0,1fr);column-gap:12px;padding:5px 16px 3px}
+.msg{display:grid;grid-template-columns:40px minmax(0,1fr);column-gap:12px;padding:8px 16px 6px}
 .msg:hover{background:color-mix(in srgb,var(--surface2) 55%,transparent)}
 .msg.cont{padding-top:1px}
 .msg.cont .avcol{height:0;overflow:hidden}
 .msg.cont .meta{display:none}
+.msg.mine{background:color-mix(in srgb,var(--accent) 7%,transparent)}
 .new{animation:pop .25s ease-out}
 @keyframes pop{from{opacity:0;transform:translateY(4px)}}
 .meta{display:flex;align-items:baseline;gap:8px;min-width:0}
@@ -8486,7 +8487,7 @@ html,body{overflow-x:clip;max-width:100%}
 .md .md-table th,.md .md-table td{border:1px solid var(--border);padding:7px 10px;text-align:left;vertical-align:top;
  overflow-wrap:normal;word-break:normal;white-space:normal;min-width:5.5em}
 .md .md-table th{background:var(--surface2);font-weight:650}
-.md pre{background:var(--surface2);border:1px solid var(--border);padding:9px 11px;border-radius:10px;overflow-x:auto;font-size:13px;margin:6px 0;white-space:pre}
+.md pre{background:var(--surface2);border:1px solid var(--border);padding:9px 11px;border-radius:10px;overflow-x:auto;max-height:340px;overflow-y:auto;font-size:13px;margin:6px 0;white-space:pre}
 .md code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;background:var(--surface2);border-radius:5px;padding:0 4px}
 .md pre code{background:none;padding:0}.md .md-img{max-width:100%;border-radius:10px;margin:6px 0;display:block}
 .caret{display:inline-block;width:7px;height:1.05em;vertical-align:-2px;margin-left:2px;border-radius:2px;background:var(--accent);animation:blink 1s steps(1) infinite}
@@ -8515,7 +8516,7 @@ html,body{overflow-x:clip;max-width:100%}
 .working .elapsed{margin-left:auto;font-size:12px;color:var(--muted);font-weight:400}
 @keyframes wdot{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
 @media (prefers-reduced-motion:reduce){.working .wdots i{animation:none;opacity:.7}}
-.box{display:flex;align-items:flex-end;gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:18px;padding:5px 5px 5px 14px}
+.box{display:flex;align-items:flex-end;gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:5px 5px 5px 14px}
 .box:focus-within{border-color:color-mix(in srgb,var(--accent) 60%,var(--border))}
 .box textarea{flex:1;border:0;background:transparent;resize:none;outline:none;max-height:168px;padding:8px 0;line-height:1.4;min-width:0}
 .send{width:40px;height:40px;padding:0;border-radius:14px;flex:none}
@@ -8534,7 +8535,7 @@ html,body{overflow-x:clip;max-width:100%}
 .mrow b{font-weight:640;display:block}
 .mrow .muted{font-size:11.5px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mrow > span:last-child{min-width:0}
-.members.open{display:block;position:fixed;top:0;right:0;bottom:0;width:min(86vw,300px);z-index:60;background:var(--surface);
+.members.open{display:block;position:fixed;top:0;right:0;bottom:0;width:min(86vw,300px);z-index:60;
  padding:calc(env(safe-area-inset-top) + 16px) 12px 20px;box-shadow:-12px 0 40px rgba(0,0,0,.3);overflow-y:auto}
 .scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:55}
 .scrim.open{display:block}
@@ -9182,7 +9183,7 @@ _CHAT_JS = r'''
       }
       const cont = prev && prev.from === m.from && d - parseAt(prev.at) < 7 * 60e3;
       const row = document.createElement("div");
-      row.className = "msg" + (cont ? " cont" : "") + (fresh ? " new" : "");
+      row.className = "msg" + (cont ? " cont" : "") + (fresh ? " new" : "") + (m.from === "you" ? " mine" : "");
       const avcol = document.createElement("div");
       avcol.className = "avcol";
       const a = C.agents[m.from], th = C.agents.theta;
@@ -9246,7 +9247,7 @@ _CHAT_JS = r'''
               const d = await r.json();
               if (!d.ok) throw new Error(d.error);
               thread = d.messages; render();
-            } catch (err) { status.textContent = err.message; acts.querySelectorAll("button").forEach(y => y.disabled = false); }
+            } catch (err) { status.classList.add("is-error"); status.textContent = err.message; acts.querySelectorAll("button").forEach(y => y.disabled = false); }
           };
           acts.append(x);
         }
@@ -9483,7 +9484,7 @@ _CHAT_JS = r'''
     const text = msg.value.trim(), image = pic;
     if (!text && !image) return;
     if (sending) return; sending = true;  // button and keyboard both land here, so one guard covers both
-    msg.value = ""; grow(); setPic(null); btn.disabled = true; closeMenu();
+    msg.value = ""; grow(); setPic(null); btn.disabled = true; btn.classList.add("is-loading"); status.classList.remove("is-error"); closeMenu();
     const isCmd = text.startsWith("/") && !image;
     const rid = Math.random().toString(36).slice(2, 12);
     try { sessionStorage.setItem("theta-pending-rid", rid); } catch (_) {}
@@ -9499,14 +9500,15 @@ _CHAT_JS = r'''
       if (!d.ok) { const e = new Error(d.error); e.serverError = true; throw e; }
       thread = d.messages; render(); box.scrollTop = box.scrollHeight;
       thetaLatest(d.latest);
-      if (isCmd) status.textContent = d.result;
+      if (isCmd) { status.textContent = d.result; status.classList.remove("is-error"); }
       else {
         const errs = Object.entries(d.errors || {}).map(([n, m]) => n + " couldn't reply: " + m);
         const routed = (d.routed || []).length ? "Mistral passed this to " + d.routed.join(" and ") + "." : "";
         status.textContent = [routed, ...errs].filter(Boolean).join(" | ");
+        status.classList.toggle("is-error", errs.length > 0);
       }
     } catch (err) {
-      stopWorking();
+      stopWorking(); status.classList.add("is-error");
       // A dropped connection doesn't mean the hub didn't get it: look before putting the text back.
       thread = thread.filter(m => m.id !== "pending"); await load();
       const arrived = !isCmd && thread.slice(-8).some(m => m.from === "you" && m.text === text.slice(0, 2000));
@@ -9514,7 +9516,7 @@ _CHAT_JS = r'''
         ? "The hub hit an error: " + err.message + ". Your message is saved. Before sending it again, check whether anything it asked for already happened, so it doesn't run twice."
         : "Your message went through, but the reply didn't arrive. It may still show up here — if it does, don't resend it. If it doesn't, check what already happened (like a task it created) before sending it again, so it doesn't run twice.";
       else { render(); msg.value = text; grow(); setPic(image); status.textContent = "Couldn't send: " + err.message; }
-    } finally { sending = false; btn.disabled = false; }
+    } finally { sending = false; btn.disabled = false; btn.classList.remove("is-loading"); }
   };
 
   // Members sheet on phones
@@ -10183,7 +10185,7 @@ def chat_page(headers, query):
         'aria-label="Message" aria-autocomplete="list" aria-controls="chat-menu"></textarea>'
         f'<button class="btn send" id="chat-send" aria-label="Send">{ui_icon("send")}</button></div>'
         '<div class="note" id="chat-status"></div></form></section>'
-        f'<aside class="members" id="members" aria-label="Members">{"".join(by_tier)}</aside>'
+        f'<aside class="members glass" id="members" aria-label="Members">{"".join(by_tier)}</aside>'
         '<div class="scrim" id="scrim"></div></div>'
         + _json_script("HUB_MENU", menu_data()) + _json_script("HUB_CHAT", data)
         + f'<script src="/chat.js?v={_ASSET_V}" defer></script>')

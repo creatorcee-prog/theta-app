@@ -1,5 +1,29 @@
 # To-do
 
+## Stage 3b: Chat layout redesign (branch stage3b/chat-layout, based on main c35951f2 which includes merged PR #55)
+
+- Own messages carry a mine class (render() appends it for
+  m.from === "you") with a subtle accent tint; turns get more air
+  (8px 16px 6px) while continuations stay tight; long code blocks
+  cap at 340px and scroll; composer radius uses the Glass+ token
+  (value-identical); members drawer adopts the shared .glass
+  surface (its own solid background removed, shadow and fixed
+  positioning kept).
+- States reuse the 3a foundation: send shows .is-loading while a
+  send is in flight (the existing disabled guard + finally reset
+  are untouched — the button already disabled during sends); the
+  status line shows .is-error for send failures, partial agent
+  failures, and failed action presses, cleared on the next send or
+  clean result. Completion stays as it was: the working indicator
+  hides and the agent trail persists in the message.
+- Preserved: submission semantics (sending guard, Enter/Return
+  handling), agent routing, model selection, tools, memory,
+  /api/allchat, /api/chat/press, /api/chat/working, day separators,
+  mention menu, working indicator, and the attach UI (attachments
+  belong to 3c and are untouched here).
+- No browser or phone verification (no DOM harness); verified at
+  CSS + page markup + chat JS source level.
+
 ## Stage 3a: Glass+ foundation and agent icons (branch stage3a/glass-foundation-icons, based on main aa9cc0b9 which includes merged PR #54)
 
 - Glass+ tokens (--r-sm, --pad, --gap, --glass-blur) wired into the
