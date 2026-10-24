@@ -8442,6 +8442,7 @@ body.typing .chat{height:100dvh}
 .msg.cont .avcol{height:0;overflow:hidden}
 .msg.cont .meta{display:none}
 .msg.mine{background:color-mix(in srgb,var(--accent) 7%,transparent)}
+.mbody{max-width:76ch}
 .new{animation:pop .25s ease-out}
 @keyframes pop{from{opacity:0;transform:translateY(4px)}}
 .meta{display:flex;align-items:baseline;gap:8px;min-width:0}
@@ -8500,6 +8501,7 @@ html,body{overflow-x:clip;max-width:100%}
 .daysep{display:flex;align-items:center;gap:10px;margin:14px 16px 6px;font-size:11.5px;font-weight:700;color:var(--muted)}
 .daysep::before,.daysep::after{content:"";flex:1;height:1px;background:var(--border)}
 .composer{position:relative;padding:8px 12px calc(10px + env(safe-area-inset-bottom) * 0);flex:none}
+#chat-send{width:44px;height:44px}
 .working{display:flex;flex-direction:column;gap:6px;padding:2px 6px 8px;color:var(--accent);font-size:15px;font-weight:600}
 .working[hidden]{display:none}
 .working .wline{display:flex;align-items:center;gap:10px}
@@ -9191,7 +9193,7 @@ _CHAT_JS = r'''
       const asTheta = a && th && m.from !== "you" && m.from !== "hub";
       avcol.append(avatar(asTheta ? "theta" : m.from, 40));
       const body = document.createElement("div");
-      body.style.minWidth = "0";
+      body.className = "mbody"; body.style.minWidth = "0";
       const meta = document.createElement("div"), name = document.createElement("span"), time = document.createElement("time");
       meta.className = "meta"; name.className = "name";
       name.textContent = asTheta ? th.name : (m.name || (a && a.name) || m.from);
