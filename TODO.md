@@ -1,5 +1,47 @@
 # To-do
 
+## Internal-error diagnosis (fix/internal-error-diag, PR unmerged)
+- Symptom, on deployed main 923011e1 (PR #46 merged): a task_create
+  request failed with "internal error". Evidence first: that literal
+  string comes from exactly one place, app()'s top-level catch, so an
+  exception escaped handle(). The tool path itself is envelope-safe
+  (bridge -> ValueError -> receipt; malformed ACTION lines match
+  nothing; provider errors -> LLMError -> errors dict), so the failure
+  must be an exception outside the narrow (LLMError, ValueError,
+  KeyError) tuples: a store RuntimeError/TimeoutError/URLError at an
+  unguarded point, or a non-ValueError tool exception. working(),
+  working_final(), activity(), crew_facts() and reply_extra() were
+  checked and are safe (they catch internally or are pure).
+- Demonstrated pre-fix, both modes: dispatcher RuntimeError -> 500
+  "internal error"; reply-save failure -> 500 "internal error" even
+  though the task was already in the ledger.
+- Fix: _diag() helper (request id from the frontend rid or a fresh
+  per-request id; only stage names, tool names, counts, durations,
+  exception classes and truncated messages — never prompts, user text,
+  keys or headers); stage lines for allchat start/replies, model calls
+  (provider, model, elapsed, outcome, HTTP status where available),
+  tools parsed/done/skipped/applied (results go to the user-visible
+  reply, not back to the model: single pass by design), and
+  persist/view failures; app() catch logs stage= request.failed with
+  the exception class. run_actions catches Exception per action ->
+  receipt; desk_replies catches Exception per agent -> errors dict;
+  the desk save loop returns a specific 502 naming that the tools may
+  already have run; the view step has its own 502. Deadline and tool
+  architecture preserved.
+- Regression test tests/test_internal_error.py: all six mocked
+  scenarios (valid, malformed, dispatcher raises, provider error,
+  persistence fails, tool call + final response). Scenarios 3 and 5
+  FAIL on pre-fix code (500 "internal error") and PASS with the fix.
+- Incidental: test_desk.py asserted the OLD timeout copy ("went
+  through, but the reply took too long"), which the merged retry
+  warning in PR #46 had already replaced; the assertion now pins the
+  current copy. That failure predated this change (the old substring
+  is absent from deployed main).
+- Known residuals, same class, deliberately not changed here: the crew
+  path's save loop and /api/chat's proposal save are still unguarded;
+  tools.py task_create falls back to process memory when a Redis write
+  fails (a task "created" that way is lost on the next cold start).
+
 ## Retry-warning follow-on on fix/reply-deadline (same PR #46, still unmerged)
 - The chat error messages told the user to resend without warning that
   a retry re-runs the whole chain: anything the lost reply already did
