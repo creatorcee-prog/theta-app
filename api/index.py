@@ -4223,10 +4223,40 @@ def _aperture():
     return "".join(out)
 
 
-# Avatars: a solid emblem per agent on a lit, glassy tile (the line glyphs
-# in AGENT_LOOKS stay for window placeholders). Marks are drawn in a
-# 24x24 box; fill is white unless noted.
+# Avatars: a solid emblem per agent on a lit, glassy tile. Marks are
+# drawn in a 24x24 box, white fill or a 2.6 stroke, one shared tile so
+# every agent reads at small sizes. Theta's mark never changes: the
+# app icon (_icon_png) is drawn from its exact proportions. The
+# pre-Stage-3a marks are kept verbatim below as AGENT_MARKS_LEGACY
+# (and the line glyphs in AGENT_LOOKS stay), so the original icons
+# remain retrievable in this file.
 AGENT_MARKS = {
+    "theta": '<path fill-rule="evenodd" d="M4.4 12a7.6 10 0 1 0 15.2 0a7.6 10 0 1 0-15.2 0zM7.5 12a4.5 7 0 1 0 9 0a4.5 7 0 1 0-9 0z"/>'
+             '<rect x="7.2" y="10.6" width="9.6" height="2.8" rx="1.4"/>',
+    "mistral": (f'<g fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><path d="{_arc(9.4, 20, 250)}"/>'
+                f'<path d="{_arc(6.2, 140, 370)}" opacity=".8"/><path d="{_arc(3, 260, 470)}" opacity=".6"/></g>'),
+    "glass": '<path d="M6.2 4.5h11.6l3.7 5H2.5z" opacity=".95"/><path d="M9 4.5h6l-3 5z" opacity=".55"/>'
+             '<path d="M2.5 9.5H12v11z" opacity=".78"/><path d="M12 9.5h9.5L12 20.5z" opacity=".5"/>',
+    "remi": '<path d="M12 20.6C6 16.4 2.7 13 2.7 9.2 2.7 6.3 5 4 7.8 4c1.8 0 3.3.9 4.2 2.3C12.9 4.9 14.4 4 16.2 4 '
+            '19 4 21.3 6.3 21.3 9.2c0 3.8-3.3 7.2-9.3 11.4z"/>',
+    "lenz": '<path fill-rule="evenodd" d="M12 2.5a9.5 9.5 0 1 0 0 19a9.5 9.5 0 1 0 0-19zM10.2 8.4v7.2L16.2 12z"/>',
+    "red": '<path d="M3 10.5v3h3.5L12 18V6L6.5 10.5z"/>'
+            '<g fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><path d="M15 9.5a3.6 3.6 0 0 1 0 5"/><path d="M18 7.5a6.5 6.5 0 0 1 0 9"/></g>',
+    "blue": '<path fill-rule="evenodd" d="M4 5.5h16v10H9.5L4.5 20V5.5zM7.5 8.5h9v2h-9zM7.5 12h6v2h-6z"/>',
+    "gray": '<g fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16M8.5 20h7M5 7h14"/><path d="M5 7l-2.5 5.5a2.5 2.5 0 0 0 5 0z"/><path d="M19 7l-2.5 5.5a2.5 2.5 0 0 0 5 0z"/></g>',
+    "charter": '<rect x="3.5" y="13" width="4.6" height="7.5" rx="2.3" opacity=".6"/>'
+               '<rect x="9.7" y="8.5" width="4.6" height="12" rx="2.3" opacity=".8"/>'
+               '<rect x="15.9" y="3.5" width="4.6" height="17" rx="2.3"/>',
+    "james": '<g fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><path d="M7 7v10M17 7v10M4 9.5v5M20 9.5v5M7 12h10"/></g>',
+    "qwerty": '<path d="M12 2.6l7.8 2.9v6c0 4.7-3.3 8.5-7.8 10-4.5-1.5-7.8-5.3-7.8-10v-6z"/>'
+              '<path d="M10.2 9.4L7.6 12l2.6 2.6M13.8 9.4l2.6 2.6-2.6 2.6" fill="none" stroke="{c2}" stroke-width="2.6" '
+              'stroke-linecap="round" stroke-linejoin="round"/>',
+    "hub": '<path fill-rule="evenodd" d="M12 2.5l8.2 4.75v9.5L12 21.5l-8.2-4.75v-9.5zM12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6z"/>',
+    "you": '<circle cx="12" cy="8.2" r="4.2"/><path d="M3.8 20.8a8.2 8.2 0 0 1 16.4 0z"/>',
+}
+
+
+AGENT_MARKS_LEGACY = {
     "theta": '<path fill-rule="evenodd" d="M4.4 12a7.6 10 0 1 0 15.2 0a7.6 10 0 1 0-15.2 0zM7.5 12a4.5 7 0 1 0 9 0a4.5 7 0 1 0-9 0z"/>'
              '<rect x="7.2" y="10.6" width="9.6" height="2.8" rx="1.4"/>',
     "mistral": (f'<g fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><path d="{_arc(9.4, 20, 250)}"/>'
@@ -8121,7 +8151,7 @@ def theme_css():
 
 _BASE_CSS = r'''
 *{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%;--r:18px;--tabh:calc(60px + env(safe-area-inset-bottom))}
+html{-webkit-text-size-adjust:100%;--r:18px;--r-sm:12px;--pad:18px;--gap:14px;--glass-blur:22px;--tabh:calc(60px + env(safe-area-inset-bottom))}
 body{margin:0;background:var(--bg);color:var(--text);min-height:100dvh;
  font:15px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Inter,Roboto,system-ui,sans-serif;
  -webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
@@ -8147,8 +8177,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 .main{padding:calc(env(safe-area-inset-top) + 16px) 16px calc(var(--tabh) + 28px);max-width:1180px;margin:0 auto;min-width:0}
 .tabbar{position:fixed;left:0;right:0;bottom:0;z-index:40;display:flex;justify-content:space-around;
  padding:6px 4px calc(env(safe-area-inset-bottom) + 6px);height:var(--tabh);
- background:color-mix(in srgb,var(--bg) 78%,transparent);-webkit-backdrop-filter:blur(22px) saturate(170%);
- backdrop-filter:blur(22px) saturate(170%);border-top:1px solid var(--border)}
+border-top:1px solid var(--border)}
 .tabbar a{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:10.5px;
  font-weight:650;color:var(--muted);text-decoration:none;border-radius:12px}
 .tabbar a svg{width:24px;height:24px}
@@ -8157,8 +8186,7 @@ body.typing .tabbar{display:none}
 @media (min-width:900px){
  .app{display:grid;grid-template-columns:248px minmax(0,1fr)}
  .rail{display:flex;flex-direction:column;gap:2px;position:sticky;top:0;height:100dvh;overflow-y:auto;padding:20px 12px;
-  border-right:1px solid var(--border);background:color-mix(in srgb,var(--surface) 72%,transparent);
-  -webkit-backdrop-filter:blur(22px);backdrop-filter:blur(22px)}
+  border-right:1px solid var(--border)}
  .tabbar{display:none}
  .main{padding:30px 34px 56px;width:100%}
 }
@@ -8181,9 +8209,9 @@ body.typing .tabbar{display:none}
 .dot.on{background:var(--good)}
 
 /* Building blocks */
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px;box-shadow:var(--shadow)}details.card summary{cursor:pointer}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:var(--pad);box-shadow:var(--shadow)}details.card summary{cursor:pointer}
 :root[data-glass] .card,:root[data-glass] .win,:root[data-glass] .kpi,:root[data-glass] .sw{-webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%)}
-.stack{display:flex;flex-direction:column;gap:14px}
+.stack{display:flex;flex-direction:column;gap:var(--gap)}
 .top{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin:2px 0 20px;flex-wrap:wrap}
 .top.tight{flex-wrap:nowrap;align-items:center}
 .top.tight .btn{flex:none}
@@ -8192,7 +8220,7 @@ body.typing .tabbar{display:none}
 .top h1{font-size:30px}
 .sect{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:30px 0 12px}
 .sect a{font-weight:650;font-size:14px}
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:12px;padding:10px 15px;font-weight:680;
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:var(--r-sm);padding:10px 15px;font-weight:680;
  background:var(--accent);color:var(--on);cursor:pointer;text-decoration:none;transition:transform .12s,filter .12s;white-space:nowrap}
 .btn:hover{filter:brightness(1.07);text-decoration:none}
 .btn:active{transform:scale(.97)}
@@ -8567,7 +8595,7 @@ html,body{overflow-x:clip;max-width:100%}
 .lgroup{margin:14px 0 8px}
 .rategrid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
 .rategrid .btn{font-size:18px;padding:12px 0}
-.field{width:100%;border:1px solid var(--border);background:var(--surface2);color:var(--text);border-radius:12px;padding:10px 12px;font:inherit}
+.field{width:100%;border:1px solid var(--border);background:var(--surface2);color:var(--text);border-radius:var(--r-sm);padding:10px 12px;font:inherit}
 select.field{width:auto;flex:1;min-width:120px}
 
 /* Agent profile */
@@ -8626,6 +8654,18 @@ select.field{width:auto;flex:1;min-width:120px}
 .donut .legend li{display:flex;align-items:center;gap:8px;margin:6px 0}
 .donut .legend .sw{width:10px;height:10px;border-radius:3px;flex:none}
 .donut .legend .amt{margin-left:auto;font-weight:650;white-space:nowrap}
+
+/* Glass+ foundation: one shared glass surface (solid when blur is
+   unsupported) plus reusable control states. States come last so they
+   win ties against the component rules above. */
+.glass{background:var(--surface)}
+@supports (backdrop-filter:blur(1px)){
+ .glass{background:color-mix(in srgb,var(--surface) 72%,transparent);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);backdrop-filter:blur(var(--glass-blur)) saturate(160%)}}
+.is-loading{opacity:.6;pointer-events:none;cursor:wait}
+.is-success{border-color:var(--good);color:var(--good)}
+.is-error{border-color:var(--bad);color:var(--bad)}
+.is-disabled{opacity:.55;pointer-events:none;cursor:default}
+input:disabled,select:disabled,textarea:disabled{opacity:.55;cursor:default}
 '''
 
 _UI_JS_SRC = r'''
@@ -9649,12 +9689,12 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
         '<script>window.THETA_H = {"Content-Type": "application/json", "x-dashboard-key": '
         'new URLSearchParams(location.search).get("key") || ""};'
         + ('window.THETA_LOCK = true;' if (current_session(headers) or {}).get("lock") else '') + '</script></head>'
-        f'<body class="{body_cls}"><div class="app"><aside class="rail" aria-label="Sidebar">'
+        f'<body class="{body_cls}"><div class="app"><aside class="rail glass" aria-label="Sidebar">'
         f'<a class="brand" href="/">{avatar_img("theta", 32)}{APP_NAME}</a><nav aria-label="Main">{nav}</nav>'
         f'<div class="label">Sections</div><nav aria-label="Sections">{more}</nav>'
         f'<div class="label">Crew</div>{crew}</aside><main class="main">{body}</main></div>'
         + (minibar_html(active) if show_minibar else "")
-        + f'<nav class="tabbar" aria-label="Main">{nav}</nav>'
+        + f'<nav class="tabbar glass" aria-label="Main">{nav}</nav>'
         + _json_script("THETA_LATEST", latest_by_channel(chat))
         + f'<script src="/ui.js?v={_ASSET_V}"></script>'
         # Some of what's shown was stale: fetch new data now, for the next load (you don't wait on it).
