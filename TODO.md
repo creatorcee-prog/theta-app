@@ -25,13 +25,21 @@
       results use `{status, data, sources, error, duration_ms}`; the task
       ledger records agent, status, steps, results, sources, blockers and
       approvals. Covered by `tests/test_toolbox.py`.
-- [ ] Still to do: wire `api/tools.py` into `api/index.py` (agent prompts
-      and an ACTION bridge) so agents can actually use web search, page
-      fetch and the task ledger in chat.
+- [x] Wired `api/tools.py` into `api/index.py` via the existing ACTION
+      bridge (Phase 4, branch `feature/phase4-tool-layer`): agents can use
+      `web_search`, `fetch_page` (SSRF-guarded), and the task ledger
+      (`task_create` / `task_list` / `task_complete` / `task_note`) in chat.
+      Results come back as ✓/✗ receipts. Covered by `tests/test_tool_bridge.py`
+      and the existing `tests/test_toolbox.py`. Consequential actions
+      (settings, purchases, messages) still go through the existing approval
+      gate; these new tools are read-only or internal ledger only.
 - [ ] Still to do: a browser worker for operating websites. It needs an
       always-on host, not Vercel serverless, and must stay read-only
       without approval for consequential actions. Nothing here claims
       agents can operate arbitrary websites yet.
+- [ ] Still to do (Phase 4 follow-ups): richer task UI on Diagnostics/Home,
+      optional multi-round tool loop (currently one ACTION batch per reply,
+      same as before), and any write tools behind the same Approve flow.
 
 ## Setup checklist
 
@@ -214,7 +222,7 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
         pay on its own: it proposes, you approve each purchase (like QWERTY),
         with a spending cap. It would need no card details until that's
         designed properly.
-      - Dark (Tor-only search): can't run on Vercel (no Tor there), so it
+- [ ] Dark (Tor-only search): can't run on Vercel (no Tor there), so it
         needs an always-on host with Tor. Risks to settle first: illegal or
         scam content, malware in fetched pages, and keeping it away from
         Buyer entirely. Read-only search results, never downloads.
