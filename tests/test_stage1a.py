@@ -176,8 +176,11 @@ check("every diagnostics table sits inside a horizontal scroller",
 s, settings = call("GET", "/settings", headers=K)
 check("settings serves", s == 200)
 settings = settings.decode() if isinstance(settings, bytes) else settings
-check("wiring not yet consolidated (Settings copy still present)",
-      'id="wiring-rows"' in settings and 'id="wiring-recheck"' in settings)
+# Superseded by Stage 1b (PR: diagnostics-wiring-consolidation): wiring IS
+# consolidated now, so this guard asserts the new state instead of the old one.
+check("wiring consolidated (Settings copy removed, Diagnostics canonical)",
+      'id="wiring-rows"' not in settings and 'id="wiring-recheck"' not in settings
+      and 'id="diag-wiring-rows"' in diag)
 check("Security and Speed not yet moved (still in Settings, not Diagnostics)",
       'id="security"' in settings and 'id="speed"' in settings
       and 'id="security"' not in diag and 'id="speed"' not in diag)
