@@ -150,7 +150,8 @@ Screen app files `/manifest.webmanifest`, `/sw.js` and icons. Every page
 accepts the dashboard key once as `?key=` and then remembers it in a
 cookie. The pages are `/chat` (`?ch=<channel>&to=<agent>&say=<draft>`,
 where `say` prefills the composer without sending), `/diagnostics`
-(crew status, storage, scheduled work, failures, token use, and the
+(crew status, storage, Speed, scheduled work, failures, token use, Security
+and health, and the
 live wiring check, and tool-layer status (deployed commit, bridge import, tools.py layer status, and whether Mistral's prompt includes the six Phase 4 tools). Chat replies are bounded by a 50s request deadline (ALLCHAT_DEADLINE_SECONDS) so a slow model chain cannot run past Vercel's 60s function wall and lose the reply; tools that would not finish in the remaining budget are skipped with a note. Chat requests log one sanitized diag line per stage (request id, model, tools, persistence), and a tool or reply-save failure returns a specific error instead of the generic "internal error". The bridge uses the already-loaded hub module's store() (injected by the hub loader), so it never depends on `import index` working under the serverless loader.) Stage 1a: the chat composer has an explicit in-flight send guard (button and keyboard share it), the mini chat bar's Send submits through /api/allchat instead of only opening a draft, and Diagnostics cards and tables shrink and wrap instead of clipping on the right. Stage 1c: Security and health plus Speed move from Settings into Diagnostics (Speed beside Storage on desktop, stacked on narrow screens); Settings keeps passkeys, devices, Gmail, memory, and Siri., `/money` (with a spending donut: actual spending
 by category, reconciling with the month's total), `/calendar`,
 `/settings` and `/agent/<id>`. The chat polls `GET /api/chat/working`
