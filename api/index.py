@@ -129,6 +129,22 @@ MODELS = {t: f"{m} ({p.title()})" for t, (p, m) in TIER_LLM.items()}
 MODELS["master"] = (f"{MASTER_MODEL} (Anthropic)" if os.environ.get("ANTHROPIC_API_KEY") else
                     f"{MASTER_MODEL} (not connected; {TIER_LLM['low_brain'][1]} standing in)")
 LLM_TIMEOUT = int(os.environ.get("LLM_TIMEOUT_SECONDS", "25"))
+# A chat reply must fit inside Vercel's 60s function wall (vercel.json):
+# app() sets _REQ.deadline for /api/allchat and /api/chat, and every model
+# call and tool in that request is capped by the time left. Without it, a
+# slow model chain (Claude 40s + SDK retry, then Gemini/Groq fallbacks,
+# then a Theta takeover or SEARCH second call) runs past 60s, Vercel
+# kills the function, and the reply is never saved — while the chat page
+# can only show the timeout message. The tools themselves are fast and
+# bounded (8-15s); the model chain is what needs the bound.
+ALLCHAT_DEADLINE_SECONDS = int(os.environ.get("ALLCHAT_DEADLINE_SECONDS", "50"))
+
+
+def _time_left():
+    """Seconds left on this chat request's deadline, or None when the
+    request has none (background work, tests calling helpers directly)."""
+    dl = getattr(_REQ, "deadline", None)
+    return None if dl is None else max(0.0, dl - time.time())
 # When a tier's provider is busy or down (429/5xx, timeouts), retry once,
 # then let a model on the other provider answer. *_FALLBACK_MODEL env vars
 # override; set one to "off" to fail instead.
@@ -1760,7 +1776,14 @@ def run_actions(agent, reply):
     found = _ACTION_RE.findall(reply)
     text = _ACTION_RE.sub("", reply).strip()
     receipts, buttons = [], []
+    skipped = False
     for name, arg in found[:3]:
+        # A tool started with less than its worst case (15s) left could
+        # push the request past Vercel's 60s wall; skip it and say so.
+        left = _time_left()
+        if left is not None and left < 16:
+            skipped = True
+            break
         tool = TOOLS.get(name.lower())
         if not tool or (tool[2] is not None and agent not in tool[2]):
             receipts.append(f"✗ {name}: not a tool I have")
@@ -1776,9 +1799,15 @@ def run_actions(agent, reply):
         except (ValueError, CommandError, LLMError) as e:
             receipts.append(f"✗ {name}: {e}")
             activity(agent, f"{who} tried {name}, but it didn't work: {e}")
+    note = ("\n\n_(Stopped here: the reply used most of the time budget, so the remaining tools didn't run. "
+            "Ask again to run them.)_")
     if receipts:
         out = (text + "\n\n" if text else "") + "\n".join(receipts)
+        if skipped:
+            out += note
         return {"text": out, "buttons": buttons[:2]} if buttons else out
+    if skipped:
+        return text + note
     if _CLAIM_RE.search(text):
         return text + "\n\n_(Nothing was actually saved: no tool was used.)_"
     if _PROMISE_RE.search(text):
@@ -2202,11 +2231,11 @@ def _key_fp():
     return hashlib.sha256(_clean_secret(os.environ.get("ANTHROPIC_API_KEY", "")).encode()).hexdigest()[:12]
 
 
-def _anthropic_client():
+def _anthropic_client(max_retries=1):
     import anthropic
     workspace = _clean_secret(os.environ.get("ANTHROPIC_WORKSPACE_ID", ""))
     return anthropic.Anthropic(api_key=_clean_secret(os.environ.get("ANTHROPIC_API_KEY", "")),
-                               timeout=MASTER_TIMEOUT, max_retries=1,
+                               timeout=MASTER_TIMEOUT, max_retries=max_retries,
                                default_headers={"anthropic-workspace-id": workspace} if workspace else None)
 
 
@@ -2264,10 +2293,15 @@ def claude_request(messages, max_tokens, model=None, effort=None, thinking=None)
     req = dict(model=model, max_tokens=max(4000, max_tokens * 4), system=system or anthropic.omit,
                messages=convo, output_config={"effort": effort},
                **({"thinking": {"type": "disabled"}} if thinking == "off" else {}))
-    client = _anthropic_client()
+    left = _time_left()
+    if left is not None and left <= 1:
+        raise LLMError("reply deadline reached: the request ran out of time", retryable=True, timed_out=True)
+    timeout = max(1.0, left) if left is not None else MASTER_TIMEOUT
+    client = _anthropic_client(max_retries=0 if left is not None else 1)
     try:
-        return (client.beta.messages.create(**req, betas=["server-side-fallback-2026-07-01"], fallbacks="default")
-                if model in _CLAUDE_FALLBACK_MODELS else client.messages.create(**req))
+        return (client.beta.messages.create(**req, betas=["server-side-fallback-2026-07-01"], fallbacks="default",
+                                            timeout=timeout)
+                if model in _CLAUDE_FALLBACK_MODELS else client.messages.create(**req, timeout=timeout))
     except anthropic.AuthenticationError as e:
         said = _anthropic_said(e)
         raise LLMError("Anthropic rejected ANTHROPIC_API_KEY" + (f" (it said: {said})" if said else "")
@@ -2359,8 +2393,12 @@ def _llm_call(provider, model, messages, max_tokens):
         headers={"Authorization": f"Bearer {key}",
                  "Content-Type": "application/json",
                  "User-Agent": "bot-hub/1.0"}, method="POST")
+    left = _time_left()
+    if left is not None and left <= 1:
+        raise LLMError("reply deadline reached: the request ran out of time", retryable=True, timed_out=True)
+    timeout = min(LLM_TIMEOUT, left) if left is not None else LLM_TIMEOUT
     try:
-        with urllib.request.urlopen(req, timeout=LLM_TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             if provider == "groq":
                 note_room(model, resp.headers)
             out = json.loads(resp.read())
@@ -9302,7 +9340,7 @@ _CHAT_JS = r'''
     try {
       const d = await (await fetch("/api/allchat", {method: "POST", headers: H, body: JSON.stringify(image ? {text, image, channel: C.channel, rid} : {text, channel: C.channel, rid})})).json();
       stopWorking();
-      if (!d.ok) throw new Error(d.error);
+      if (!d.ok) { const e = new Error(d.error); e.serverError = true; throw e; }
       thread = d.messages; render(); box.scrollTop = box.scrollHeight;
       thetaLatest(d.latest);
       if (isCmd) status.textContent = d.result;
@@ -9316,7 +9354,9 @@ _CHAT_JS = r'''
       // A dropped connection doesn't mean the hub didn't get it: look before putting the text back.
       thread = thread.filter(m => m.id !== "pending"); await load();
       const arrived = !isCmd && thread.slice(-8).some(m => m.from === "you" && m.text === text.slice(0, 2000));
-      if (arrived) status.textContent = "Your message went through, but the reply took too long to load. It'll show up here when it's ready.";
+      if (arrived) status.textContent = err.serverError
+        ? "The hub hit an error: " + err.message + ". Your message is saved. Before sending it again, check whether anything it asked for already happened, so it doesn't run twice."
+        : "Your message went through, but the reply didn't arrive. It may still show up here — if it does, don't resend it. If it doesn't, check what already happened (like a task it created) before sending it again, so it doesn't run twice.";
       else { render(); msg.value = text; grow(); setPic(image); status.textContent = "Couldn't send: " + err.message; }
     }
     btn.disabled = false;
@@ -13228,6 +13268,7 @@ def app(environ, start_response):
     _REQ.stale, _REQ.refreshing, _REQ.ch, _REQ.rid = False, False, None, None
     _REQ.trail, _REQ.tok = [], [0, 0]  # who worked on this request's reply, and its tokens (in, out)
     _REQ.sess_key, _REQ.locked = None, False
+    _REQ.deadline = time.time() + ALLCHAT_DEADLINE_SECONDS if path in ("/api/allchat", "/api/chat") else None
     t0 = time.time()
     _REQ.page = method == "GET" and not path.startswith("/api/")
     try:
