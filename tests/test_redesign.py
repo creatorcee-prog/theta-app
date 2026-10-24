@@ -72,11 +72,11 @@ def page(path, qs="", headers=None):
     return b.decode()
 
 def tabbar_links(html):
-    nav = html.split('<nav class="tabbar"')[1].split("</nav>")[0]
+    nav = html.split('<nav class="tabbar')[1].split("</nav>")[0]
     return re.findall(r'href="([^"]+)"', nav)
 
 def rail_links(html):
-    rail = html.split('<aside class="rail"')[1].split("</aside>")[0]
+    rail = html.split('<aside class="rail')[1].split("</aside>")[0]
     return re.findall(r'href="([^"]+)"', rail)
 
 home = page("/")
@@ -93,7 +93,7 @@ check("mini bar suggestions fit Home",
 chat = page("/chat")
 check("chat page keeps its full composer and has no mini bar",
       'id="chat-form"' in chat and '<div class="minibar">' not in chat
-      and 'class="on"' not in chat.split('<nav class="tabbar"')[1].split("</nav>")[0])
+      and 'class="on"' not in chat.split('<nav class="tabbar')[1].split("</nav>")[0])
 for p in ("/settings", "/money", "/calendar"):
     check(f"mini bar on {p}", '<div class="minibar">' in page(p))
 _, css, _ = call("GET", "/ui.css")

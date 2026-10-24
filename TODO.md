@@ -1,5 +1,27 @@
 # To-do
 
+## Stage 3a: Glass+ foundation and agent icons (branch stage3a/glass-foundation-icons, based on main aa9cc0b9 which includes merged PR #54)
+
+- Glass+ tokens (--r-sm, --pad, --gap, --glass-blur) wired into the
+  shared classes where their values already match (card padding,
+  stack gap, button and field radii); one .glass surface (solid by
+  default, translucent + blurred only under @supports
+  backdrop-filter) adopted by the tab bar and sidebar; reusable
+  .is-loading, .is-success, .is-error, .is-disabled states plus
+  native :disabled for inputs, selects, and textareas.
+- Agent icons refreshed on the shared 24x24 grid and gradient tile:
+  Lenz play button, Red megaphone, Blue speech bubble, Gray scales,
+  James dumbbell; QWERTY's chevron stroke normalized to 2.6; Theta
+  unchanged (the app icon is drawn from its exact proportions).
+  The pre-3a marks are kept verbatim as AGENT_MARKS_LEGACY in
+  api/index.py, and AGENT_LOOKS is untouched, so the original icons
+  stay retrievable in the file.
+- No changes to model routing, agent logic, endpoints, persistence,
+  chat submission, or tool execution; no new dependency. Theme
+  picker, data-glass theming, and the aurora glass theme untouched.
+- No browser or phone verification (no DOM harness); glyphs are
+  simple geometry asserted by path data + XML parsing, not pixels.
+
 ## Stage 2: Home agent organization (branch stage2/home-agent-organization, based on main 8fe5b348 which includes merged PR #53)
 
 - Home gains an Agents section after the Your crew windows: three
