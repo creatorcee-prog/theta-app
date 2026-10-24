@@ -117,7 +117,7 @@ check("icons are real PNGs of the right size", png[:8] == b"\x89PNG\r\n\x1a\n" a
 check("service worker served", b"showNotification" in call("GET", "/sw.js")[1])
 s, page, _ = call("GET", "/", "key=dk", headers={"host": "hub.example.app"}); page = page.decode()
 check("home: viewport, manifest, icon", 'name="viewport"' in page and 'rel="manifest"' in page and "apple-touch-icon" in page)
-check("settings: push controls", 'id="push-on"' in call("GET", "/settings", "key=dk")[1].decode())
+check("home: push controls (moved from Settings, Stage 2)", 'id="push-on"' in call("GET", "/", "key=dk", headers={"host": "hub.example.app"})[1].decode())
 check("dashboard records its origin for the push subject", h.store().get_meta("hub:origin") == "https://hub.example.app")
 
 # keys + subscription
