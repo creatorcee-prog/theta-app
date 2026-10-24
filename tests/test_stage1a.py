@@ -169,8 +169,11 @@ check("diagnostics keeps all sections",
       all(t in diag for t in ["<h2>Crew</h2>", "<h2>Storage</h2>", "<h2>Scheduled work</h2>",
                                "<h2>Recent failures</h2>", "<h2>Token use</h2>", "<h2>Tools</h2>",
                                "Models &amp; providers"]))
+# Stage 1c note: Speed's table keeps its pre-existing md-scroll wrapper
+# (overflow-x:auto), not scrollx — same protection, different class.
 check("every diagnostics table sits inside a horizontal scroller",
-      diag.count("<table") == diag.count('class="scrollx"') and diag.count("<table") == 4)
+      diag.count("<table") == 5
+      and diag.count("<table") == diag.count('class="scrollx"') + diag.count('class="md-scroll"'))
 
 # --- Stage 1a scope guards: later stages must NOT be in this PR ---
 s, settings = call("GET", "/settings", headers=K)
@@ -178,9 +181,11 @@ check("settings serves", s == 200)
 settings = settings.decode() if isinstance(settings, bytes) else settings
 check("wiring not yet consolidated (Settings copy still present)",
       'id="wiring-rows"' in settings and 'id="wiring-recheck"' in settings)
-check("Security and Speed not yet moved (still in Settings, not Diagnostics)",
-      'id="security"' in settings and 'id="speed"' in settings
-      and 'id="security"' not in diag and 'id="speed"' not in diag)
+# Superseded by Stage 1c (PR: diagnostics-security-speed): Security and
+# Speed ARE moved now, so this guard asserts the new state instead.
+check("Security and Speed moved (in Diagnostics, not Settings)",
+      'id="security"' not in settings and 'id="speed"' not in settings
+      and 'id="security"' in diag and 'id="speed"' in diag)
 check("release calendar not yet moved (still off Home)",
       'id="releases"' not in home)
 print("done")

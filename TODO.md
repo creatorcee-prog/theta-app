@@ -1,5 +1,45 @@
 # To-do
 
+## Stage 1c: Security/Health + Speed into Diagnostics (branch stage1c/diagnostics-security-speed, PR unmerged, base main 4f787089; independent of open PR #50)
+- Diagnostics is now the canonical home for system health. The
+  Settings Security and health section (id="security", QWERTY hero,
+  security_rows()) and speed_card() (id="speed") move to Diagnostics
+  by call site — no reimplementation, no new endpoints, no new
+  metrics. Both panels are server-rendered: neither has JavaScript,
+  event handlers, or its own endpoint, so there is nothing to
+  rewire and no duplicate initialization to guard against (verified
+  by inspection, asserted in tests).
+- Layout: Crew's table is unchanged but its container goes
+  full-width; Storage + Speed share a grid2 (Speed immediately right
+  of Storage at >=1000px via the existing .grid2 media query,
+  stacked below it on narrow screens; .grid2 > .card min-width:0
+  from Stage 1a keeps long strings from blowing the cards out).
+  Security and health is appended after Models & providers with its
+  id="security" preserved, so direct links keep working.
+- Settings cleanup: the Security section and the speed_card() call
+  are removed; passkeys/Face ID, devices, Gmail, memory/notes,
+  Siri, Rounds, Wiring, Bench, Standing orders, escalations,
+  reports, and About are untouched. All five /settings#security
+  pointers (two watchdog notifications, Home watchdog window href +
+  "Open Security" link) now point at /diagnostics#security; the hub
+  map no longer lists Security under Settings. Note: that hub-map
+  line is also touched by PR #50 (different substring, Wiring) —
+  if both merge, the owner takes both removals.
+- Out of scope, unchanged: storage meter (Storage still shows only
+  the mode label), release calendar (still Lenz page), agent rows,
+  Glass+, chat title/top-bar, chat themes, attachments.
+- Tests: tests/test_stage1c.py (both modes) covers panels present
+  in Diagnostics / absent from Settings, preserved Settings
+  sections, Speed placement + stacking rules at CSS/source level,
+  the server-rendered nature (no security/speed JS anywhere),
+  security_rows() error fallback, Speed "nothing measured yet"
+  then real rows after a recorded load, no panel leakage without
+  the dashboard key, and scope guards (no meter, no release move,
+  no Glass+, Stage 1a intact; this branch is main + 1c only, so it
+  does NOT assert 1b's wiring consolidation).
+  No browser/DOM harness exists, so layout is verified at
+  source/CSS level, not screenshots.
+
 ## Stage 1a: chat submission hardening + Diagnostics clipping (branch stage1a/chat-submit-diagnostics, PR unmerged)
 - Main composer (_CHAT_JS): explicit `sending` in-flight guard in
   form.onsubmit (set synchronously after the empty check, released
