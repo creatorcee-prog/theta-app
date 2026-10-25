@@ -262,6 +262,8 @@ with sync_playwright() as p:
             return {vis: vis, glint: glint}; }""")
         check("shards draw visible glass fragments with glints", frag["vis"] > 50 and frag["glint"] > 3)
         check("shards engage real 3D glass when available", pg.evaluate('() => !!document.querySelector(\'#bg-layer canvas[data-engine="webgl"]\')'))
+        check("with a background active, page surfaces turn translucent",
+              pg.evaluate("() => { const s = document.querySelector('.sw'); return s ? getComputedStyle(s).backgroundColor : ''; }").endswith("/ 0.45)"))
         pg.goto(f"{APP}/chat?key=dk")
         expect(pg.locator("#msgs")).to_be_visible(timeout=15000)
         pg.wait_for_timeout(600)
@@ -271,11 +273,27 @@ with sync_playwright() as p:
         pg.locator('[data-pref="bg"][data-val="gemini"]').click()
         expect(pg.locator("html")).to_have_attribute("data-bg", "gemini", timeout=5000)
         ge = layer()
-        check("gemini background shows the aurora gradient", ge and ge["cls"] == "bg-gemini" and "radial-gradient" in (ge["bg"] or ""))
+        check("gemini background shows the aurora gradient", ge and ge["cls"] == "bg-gemini" and "radial-gradient" in pg.evaluate("() => getComputedStyle(document.querySelector('#bg-layer'), '::before').backgroundImage") and "radial-gradient" in pg.evaluate("() => getComputedStyle(document.querySelector('#bg-layer'), '::after').backgroundImage"))
+        check("gemini animates without focus and keeps wall-clock phase",
+              "geminiBlueEnv" in pg.evaluate("() => getComputedStyle(document.querySelector('#bg-layer'), '::before').animationName")
+              and "geminiGoldEnv" in pg.evaluate("() => getComputedStyle(document.querySelector('#bg-layer'), '::after').animationName")
+              and pg.evaluate("() => getComputedStyle(document.querySelector('#bg-layer'), '::before').animationDelay").startswith("-"))
         pg.goto(f"{APP}/chat?key=dk")
         expect(pg.locator("#msgs")).to_be_visible(timeout=15000)
         pg.wait_for_timeout(600)
         pg.screenshot(path=os.path.join(SHOTS, "bg-gemini-390.png"))
+        pg.locator("#chat-msg").click()
+        pg.wait_for_timeout(300)
+        check("gemini keeps animating when the chat box is focused",
+              "geminiBlueEnv" in pg.evaluate("() => getComputedStyle(document.querySelector('#bg-layer'), '::before').animationName")
+              and "geminiGoldEnv" in pg.evaluate("() => getComputedStyle(document.querySelector('#bg-layer'), '::after').animationName"))
+        pg.keyboard.type("hello aurora")
+        pg.wait_for_timeout(400)
+        check("gemini blooms while typing",
+              "typing" in (pg.evaluate("() => document.querySelector('#bg-layer').className") or ""))
+        pg.wait_for_timeout(2100)
+        check("gemini settles after typing pauses",
+              "typing" not in (pg.evaluate("() => document.querySelector('#bg-layer').className") or ""))
         pg.goto(f"{APP}/settings?key=dk")
         expect(pg.locator('[data-pref="bg"][data-val="black"]')).to_be_visible(timeout=15000)
         pg.locator('[data-pref="bg"][data-val="black"]').click()

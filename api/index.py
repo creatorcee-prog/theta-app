@@ -8938,9 +8938,20 @@ input:disabled,select:disabled,textarea:disabled{opacity:.55;cursor:default}
 #bg-layer.off{display:none}
 :root[data-bg]:not([data-bg="theme"]) body{background:transparent}
 #bg-layer canvas{width:100%;height:100%;display:block}
-#bg-layer.bg-gemini{background-color:#000;background-image:radial-gradient(1500px 900px at 70% 10%,rgba(23,60,170,.12),transparent 70%),radial-gradient(1300px 800px at 10% 45%,rgba(16,185,129,.09),transparent 70%),radial-gradient(800px 500px at 85% 25%,rgba(124,58,237,.07),transparent 70%);animation:bgGemini 48s ease-in-out infinite alternate}
-@keyframes bgGemini{from{background-position:0 0,0 0,0 0}to{background-position:4% 6%,-5% -3%,-3% 5%}}
-@media (prefers-reduced-motion: reduce){#bg-layer.bg-gemini{animation:none}}
+#bg-layer.bg-gemini{background-color:#0A080B;animation:geminiPulse 8s ease-in-out infinite alternate;animation-delay:var(--gdelay,0s)}
+#bg-layer.bg-gemini::before{content:"";position:absolute;inset:0;pointer-events:none;background-image:radial-gradient(50% 95% at 65% -10%,rgba(37,99,235,.85),transparent 70%),radial-gradient(40% 85% at 30% -5%,rgba(34,211,238,.55),transparent 70%);opacity:0;animation:geminiBlueEnv 24s ease-in-out infinite,geminiDriftB 31s ease-in-out infinite alternate;animation-delay:var(--gdelay,0s),var(--gdelay,0s);transition:filter 1.4s ease-out}
+#bg-layer.bg-gemini::after{content:"";position:absolute;inset:0;pointer-events:none;background-image:radial-gradient(45% 90% at 35% -10%,rgba(16,185,129,.70),transparent 70%),radial-gradient(40% 80% at 15% -5%,rgba(190,150,40,.85),transparent 70%);opacity:0;animation:geminiGoldEnv 24s ease-in-out infinite,geminiDriftG 37s ease-in-out infinite alternate;animation-delay:var(--gdelay,0s),var(--gdelay,0s);transition:filter 1.4s ease-out}
+#bg-layer.bg-gemini.typing::before,#bg-layer.bg-gemini.typing::after{filter:brightness(1.4) saturate(1.25)}
+@keyframes geminiBlueEnv{0%{opacity:0}12%{opacity:.9}25%{opacity:1}40%{opacity:.4}50%{opacity:0}60%{opacity:.4}75%{opacity:1}88%{opacity:.9}100%{opacity:0}}
+@keyframes geminiGoldEnv{0%{opacity:0}25%{opacity:0}40%{opacity:.7}50%{opacity:1}60%{opacity:.7}75%{opacity:0}100%{opacity:0}}
+@keyframes geminiDriftB{from{transform:translateX(-4%) skewX(-4deg) scale(1)}to{transform:translateX(6%) skewX(4deg) scale(1.08)}}
+@keyframes geminiDriftG{from{transform:translateX(5%) skewX(4deg) scale(1.05)}to{transform:translateX(-6%) skewX(-4deg) scale(1.12)}}
+@keyframes geminiPulse{0%{filter:hue-rotate(0deg)}100%{filter:hue-rotate(45deg)}}
+@media (prefers-reduced-motion: reduce){#bg-layer.bg-gemini,#bg-layer.bg-gemini::before,#bg-layer.bg-gemini::after{animation:none}#bg-layer.bg-gemini::before,#bg-layer.bg-gemini::after{transition:none}#bg-layer.bg-gemini.typing::before,#bg-layer.bg-gemini.typing::after{filter:none}}
+/* Backgrounds on pages: with a background active, Glass+ page surfaces turn
+   translucent so the background shows through instead of hiding behind opaque
+   cards. Theme state keeps today's solid look, and Liquid keeps its own 30%. */
+:root[data-glassstyle="plus"][data-bg]:not([data-bg="theme"]) .card,:root[data-glassstyle="plus"][data-bg]:not([data-bg="theme"]) .win,:root[data-glassstyle="plus"][data-bg]:not([data-bg="theme"]) .kpi,:root[data-glassstyle="plus"][data-bg]:not([data-bg="theme"]) .sw,:root[data-glassstyle="plus"][data-bg]:not([data-bg="theme"]) .lo,:root[data-glassstyle="plus"][data-bg]:not([data-bg="theme"]) .lrow,:root[data-glassstyle="plus"][data-bg]:not([data-bg="theme"]) .sc,:root[data-glassstyle="plus"][data-bg]:not([data-bg="theme"]) .quickactions a{background:color-mix(in srgb,var(--surface) 45%,transparent)}
 '''
 
 _UI_JS_SRC = r'''
@@ -9178,6 +9189,7 @@ _UI_JS_SRC = r'''
     function ensure() {
       if (layer) return;
       layer = document.createElement("div"); layer.id = "bg-layer";
+      layer.style.setProperty("--gdelay", (-(Date.now() / 1000 % 24)).toFixed(2) + "s");
       cv = document.createElement("canvas"); layer.appendChild(cv);
       document.body.prepend(layer);
       ctx = cv.getContext("2d");
@@ -9678,6 +9690,14 @@ _UI_JS_SRC = r'''
     }).observe(root, {attributes: true});
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", applyBg);
     else applyBg();
+    var typeTimer = 0;
+    document.addEventListener("input", function (e) {
+      if (e.target && e.target.id === "chat-msg" && layer) {
+        layer.classList.add("typing");
+        clearTimeout(typeTimer);
+        typeTimer = setTimeout(function () { if (layer) layer.classList.remove("typing"); }, 1500);
+      }
+    });
   })();
 
   // A bar runs across the top while the next page loads.

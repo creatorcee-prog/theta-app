@@ -102,13 +102,33 @@ check("page pre-paints the html background for active backgrounds",
       'style="background:#000"' in h.page({"cookie": "theta_ui=theta.auto.grid.plus.shards"}, "T", "/", "<p>x</p>")
       and 'style="background:#000"' in h.page({"cookie": "theta_ui=theta.auto.grid.plus.gemini"}, "T", "/", "<p>x</p>")
       and 'style="background' not in h.page({}, "T", "/", "<p>x</p>"))
-check("Gemini background is a slow drifting aurora gradient",
-      "#bg-layer.bg-gemini{background-color:#000;background-image:radial-gradient(1500px 900px at 70% 10%,rgba(23,60,170,.12),transparent 70%),radial-gradient(1300px 800px at 10% 45%,rgba(16,185,129,.09),transparent 70%),radial-gradient(800px 500px at 85% 25%,rgba(124,58,237,.07),transparent 70%);animation:bgGemini 48s ease-in-out infinite alternate}" in css
-      and "@keyframes bgGemini" in css)
-check("reduced motion freezes the Gemini drift",
-      "@media (prefers-reduced-motion: reduce){#bg-layer.bg-gemini{animation:none}}" in css)
-
-# --- The engine: canvas modes, collisions, live swap, reduced motion ---
+check("Gemini Vivid aurora: top-anchored tall curtains, brightest peaks, widest sway",
+      "#bg-layer.bg-gemini{background-color:#0A080B;animation:geminiPulse 8s ease-in-out infinite alternate;animation-delay:var(--gdelay,0s)}" in css
+      and "radial-gradient(50% 95% at 65% -10%,rgba(37,99,235,.85),transparent 70%)" in css
+      and "radial-gradient(40% 85% at 30% -5%,rgba(34,211,238,.55),transparent 70%)" in css)
+check("Gemini phases crossfade blue/cyan into green/olive-gold over a 24s cycle with no focus gating",
+      "#bg-layer.bg-gemini::after" in css
+      and "radial-gradient(45% 90% at 35% -10%,rgba(16,185,129,.70),transparent 70%)" in css
+      and "radial-gradient(40% 80% at 15% -5%,rgba(190,150,40,.85),transparent 70%)" in css
+      and "@keyframes geminiBlueEnv{0%{opacity:0}12%{opacity:.9}25%{opacity:1}40%{opacity:.4}50%{opacity:0}60%{opacity:.4}75%{opacity:1}88%{opacity:.9}100%{opacity:0}}" in css
+      and "@keyframes geminiGoldEnv{0%{opacity:0}25%{opacity:0}40%{opacity:.7}50%{opacity:1}60%{opacity:.7}75%{opacity:0}100%{opacity:0}}" in css
+      and "body:has(#chat-msg:focus) #bg-layer.bg-gemini" not in css)
+check("Gemini aurora curtains sway with GPU-friendly transforms and a hue pulse, phased by wall clock",
+      "@keyframes geminiDriftB{from{transform:translateX(-4%) skewX(-4deg) scale(1)}to{transform:translateX(6%) skewX(4deg) scale(1.08)}}" in css
+      and "@keyframes geminiDriftG{from{transform:translateX(5%) skewX(4deg) scale(1.05)}to{transform:translateX(-6%) skewX(-4deg) scale(1.12)}}" in css
+      and "@keyframes geminiPulse{0%{filter:hue-rotate(0deg)}100%{filter:hue-rotate(45deg)}}" in css
+      and "animation-delay:var(--gdelay,0s),var(--gdelay,0s)" in css
+      and 'setProperty("--gdelay", (-(Date.now() / 1000 % 24)).toFixed(2) + "s")' in js)
+check("Gemini blooms while typing and settles after a pause",
+      "#bg-layer.bg-gemini.typing::before,#bg-layer.bg-gemini.typing::after{filter:brightness(1.4) saturate(1.25)}" in css
+      and "transition:filter 1.4s ease-out" in css
+      and 'e.target.id === "chat-msg"' in js
+      and 'layer.classList.add("typing")' in js
+      and 'setTimeout(function () { if (layer) layer.classList.remove("typing"); }, 1500)' in js)
+check("reduced motion freezes the Gemini phase, drift, pulse, and typing bloom",
+      "@media (prefers-reduced-motion: reduce){#bg-layer.bg-gemini,#bg-layer.bg-gemini::before,#bg-layer.bg-gemini::after{animation:none}#bg-layer.bg-gemini::before,#bg-layer.bg-gemini::after{transition:none}#bg-layer.bg-gemini.typing::before,#bg-layer.bg-gemini.typing::after{filter:none}}" in css)
+check("with a background active, plus-mode page surfaces turn 45% translucent",
+      ':root[data-glassstyle="plus"][data-bg]:not([data-bg="theme"]) .card,:root[data-glassstyle="plus"][data-bg]:not([data-bg="theme"]) .win,:root[data-glassstyle="plus"][data-bg]:not([data-bg="theme"]) .kpi,:root[data-glassstyle="plus"][data-bg]:not([data-bg="theme"]) .sw,:root[data-glassstyle="plus"][data-bg]:not([data-bg="theme"]) .lo,:root[data-glassstyle="plus"][data-bg]:not([data-bg="theme"]) .lrow,:root[data-glassstyle="plus"][data-bg]:not([data-bg="theme"]) .sc,:root[data-glassstyle="plus"][data-bg]:not([data-bg="theme"]) .quickactions a{background:color-mix(in srgb,var(--surface) 45%,transparent)}' in css)
 check("engine builds the layer and watches the background attribute",
       'layer.id = "bg-layer"' in js
       and 'root.dataset.bg' in js

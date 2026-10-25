@@ -495,13 +495,28 @@ is the fallback if WebGL is unavailable, and no library
 or network fetch is involved Stars is twinkling
 stars on black;
 Black is plain black; Gemini is the dark ambient wash from
-the Gemini app: soft radial lobes, deep blue upper-right
-and faint green mid-left, fading to black on their own,
-drifting very slowly. The background layer sits
+the Gemini app, measured from its recording: a near-black
+(#0A080B) base with color living only at the top of the
+screen. A blue/cyan field crossfades into a green/olive-gold
+field over a 24-second cycle that starts and ends dark, so
+the loop has no visible reset, and the lower screen stays
+black for legible text. The fields are tall aurora curtains
+that sway widely, at Vivid brightness (blue and gold peaks
+.85, past the reference's measured peaks), with a 45° hue
+pulse on top. While the user types in the chat
+box the curtains bloom brighter and settle back about 1.5
+seconds after typing pauses. The animation runs on its own
+whether the user is idle or typing, and its phase follows
+the wall clock, so moving between pages does not restart it. With a background active, Glass+ page surfaces
+(.card, .win, .kpi, .sw, .lo, .lrow, .sc story cards,
+.quickactions links) turn 45% translucent
+so the background shows through on pages too, not just
+in chat; theme state keeps the solid look, and Liquid
+keeps its own 30%. The background layer sits
 behind all content and is opaque, so it never fights the
 theme. Canvas modes animate with requestAnimationFrame
 (which pauses while the tab is hidden) and freeze under
-reduced motion, as does the Gemini drift.
+reduced motion, as do the Gemini phase, drift, pulse, and typing bloom.
 ## Chat
 
 Chat works like a Discord server: channels on the left, members and
