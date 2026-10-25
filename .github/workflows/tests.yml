@@ -22,3 +22,13 @@ jobs:
           node-version: "22"
       - run: pip install -r requirements.txt
       - run: tests/run_all.sh python
+      # Browser tests run after run_all.sh, so the fast suite stays fast:
+      # test_chat_dom.py SKIPs while Playwright is absent, then runs here.
+      - run: pip install -r requirements-test.txt
+      - run: python -m playwright install chromium --with-deps
+      - run: bash tests/run_browser.sh python
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chat-dom-shots
+          path: tests/chat-dom-shots/
