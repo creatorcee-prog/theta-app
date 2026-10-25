@@ -11,6 +11,7 @@ import json
 import os
 import re
 import socket
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -392,6 +393,126 @@ def parse_tool_call(text: str) -> dict[str, Any] | None:
     return {"name": name, "args": args}
 
 
+# ---------------------------------------------------------------------------
+# Follows (Phase F1: record + agent tool. Scheduled checks land in F2, so
+# a created record is verified but NOT yet monitored; receipts say so.)
+# ---------------------------------------------------------------------------
+FOLLOW_FREQUENCIES = {"hourly": 3600, "daily": 86400, "weekly": 604800}
+FOLLOW_SOURCES = {"releases", "news", "web"}
+FOLLOW_CHANNELS = {"push", "chat", "both"}
+FOLLOW_STATES = {"active", "paused", "failed", "canceled"}
+_FOLLOW_LOCK = threading.Lock()
+
+
+def _follow_load_all(store):
+    try:
+        raw = store._cmd("GET", "hub:follows")
+        return json.loads(raw) if raw else []
+    except Exception:
+        return list(getattr(store, "_follows", []))
+
+
+def _follow_save_all(store, items):
+    try:
+        store._cmd("SET", "hub:follows", json.dumps(items))
+    except Exception:
+        store._follows = items
+
+
+def _follow_get(store, fid):
+    for f in _follow_load_all(store):
+        if f.get("id") == fid:
+            return f
+    return None
+
+
+def _norm_title(t):
+    return " ".join((t or "").split()).casefold()
+
+
+def follow_create(store, title, kind="", query="", sources="", frequency="", channel="", by="hub"):
+    """Create a follow record, then read it back before reporting success.
+
+    Dedup: an active or paused follow with the same normalized title and
+    kind returns the existing record instead of a duplicate. States
+    reachable here: active (new) and canceled (via follow_cancel); paused
+    and failed arrive with the F3 controls and F2 checks.
+    """
+    title = " ".join((title or "").split())[:300]
+    if not title:
+        return {"error": "need a title to follow"}
+    kind = " ".join((kind or "").split()).lower()[:40] or "title"
+    query = " ".join((query or "").split())[:300] or title
+    freq = " ".join((frequency or "").split()).lower() or "daily"
+    if freq not in FOLLOW_FREQUENCIES:
+        return {"error": f"unknown frequency {freq!r} (hourly, daily, weekly)"}
+    if isinstance(sources, str):
+        srcs = [s.strip().lower() for s in sources.split(",") if s.strip()]
+    else:
+        srcs = [str(s).strip().lower() for s in (sources or []) if str(s).strip()]
+    if not srcs:
+        srcs = ["releases", "news", "web"]
+    bad = [s for s in srcs if s not in FOLLOW_SOURCES]
+    if bad:
+        return {"error": f"unknown source(s) {', '.join(bad)} (releases, news, web)"}
+    ch = " ".join((channel or "").split()).lower() or "both"
+    if ch in ("push+chat", "push_chat"):
+        ch = "both"
+    if ch not in FOLLOW_CHANNELS:
+        return {"error": f"unknown channel {ch!r} (push, chat, both)"}
+    with _FOLLOW_LOCK:
+        items = _follow_load_all(store)
+        for f in items:
+            if f.get("state") in ("active", "paused") and _norm_title(f.get("title")) == _norm_title(title) and (f.get("kind") or "title") == kind:
+                return {"record": f, "already": True, "verified": True}
+        now = time.time()
+        rec = {"id": f"f{int(now * 1000)}", "kind": kind, "title": title, "query": query,
+               "sources": srcs, "frequency": freq, "channel": ch, "state": "active",
+               "created": now, "next_due": now + FOLLOW_FREQUENCIES[freq],
+               "last_checked": None, "last_error": "", "seen": [], "by": by}
+        items.append(rec)
+        _follow_save_all(store, items)
+        back = _follow_get(store, rec["id"])
+        if not back:
+            return {"error": "follow saved but verification read-back failed; check follow_list"}
+        return {"record": back, "already": False, "verified": True}
+
+
+def follow_list(store, status="active", limit=20):
+    """List follow records. status: active, paused, failed, canceled, all."""
+    status = (status or "active").strip().lower()
+    if status not in ("active", "paused", "failed", "canceled", "all"):
+        status = "active"
+    limit = max(1, min(int(limit or 20), 50))
+    items = _follow_load_all(store)
+    if status != "all":
+        items = [f for f in items if f.get("state") == status]
+    items.sort(key=lambda f: f.get("created", 0), reverse=True)
+    return items[:limit]
+
+
+def follow_cancel(store, follow_id):
+    """Cancel a follow. The record is kept as canceled, never deleted, so
+    the user can still inspect it. Canceling an already-canceled follow
+    succeeds idempotently."""
+    fid = (follow_id or "").strip()
+    if not fid:
+        return {"error": "need a follow_id"}
+    with _FOLLOW_LOCK:
+        items = _follow_load_all(store)
+        rec = next((f for f in items if f.get("id") == fid), None)
+        if not rec:
+            return {"error": "follow not found"}
+        if rec.get("state") == "canceled":
+            return {"record": rec, "already": True, "verified": True}
+        rec["state"] = "canceled"
+        _follow_save_all(store, items)
+        back = _follow_get(store, fid)
+        if not back or back.get("state") != "canceled":
+            return {"error": "cancel saved but verification read-back failed; check follow_list"}
+        return {"record": back, "already": False, "verified": True}
+
+
 def run_tool(store, call: dict[str, Any], agent_id: str = "hub") -> dict[str, Any]:
     """Dispatch a parsed tool call, wrapped in a structured envelope.
 
@@ -440,4 +561,12 @@ def _run_tool_inner(store, name: str, args: dict[str, Any], agent_id: str) -> An
     if name == "task_note":
         return task_note(store, args.get("task_id", ""), step=args.get("step"), result=args.get("result"),
                          source=args.get("source"), blocker=args.get("blocker"), approval=args.get("approval"))
+    if name == "follow_create":
+        return follow_create(store, args.get("title", ""), kind=args.get("kind", ""), query=args.get("query", ""),
+                             sources=args.get("sources", ""), frequency=args.get("frequency", ""),
+                             channel=args.get("channel", ""), by=agent_id)
+    if name == "follow_list":
+        return follow_list(store, args.get("status", "active"), int(args.get("limit", 20) or 20))
+    if name == "follow_cancel":
+        return follow_cancel(store, args.get("follow_id", ""))
     return {"error": f"unknown tool: {name}"}

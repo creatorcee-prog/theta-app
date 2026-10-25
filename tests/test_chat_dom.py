@@ -89,6 +89,11 @@ class Fake(BaseHTTPRequestHandler):
             # Router call: name one agent, as the in-process fake does.
             return self._send(200, {"choices": [{"message": {"content": "mistral"}}]})
         user_text = " ".join(m.get("content", "") for m in msgs if m.get("role") == "user")
+        if "follow godzilla" in user_text.lower():
+            # The follow tool-use case: same pattern as remember — the
+            # canned reply carries a real ACTION line, executed by the
+            # real dispatcher and bridge, receipted into the real thread.
+            return self._send(200, {"choices": [{"message": {"content": "Got it.\nACTION: follow_create | Godzilla Minus Zero | movie"}}]})
         if "remember my home is" in user_text:
             # The tool-use case: the agent's canned reply carries a real
             # ACTION line, executed by the real dispatcher, receipted
@@ -424,6 +429,31 @@ with sync_playwright() as p:
         pg.screenshot(path=os.path.join(SHOTS, "tool-receipt-390.png"))
         pg.close()
 
+        # Follow tool use through the UI, with a screenshot of the receipt.
+        pg = browser.new_page(viewport={"width": 390, "height": 844})
+        pg.goto(f"{APP}/chat?key=dk")
+        expect(pg.locator("#chat-msg")).to_be_visible(timeout=15000)
+        msg = pg.locator("#chat-msg")
+        msg.fill("@mistral follow Godzilla Minus Zero")
+        msg.press("Enter")
+        expect(pg.locator("#msgs")).to_contain_text("Following: Godzilla Minus Zero", timeout=60000)
+        pg.set_viewport_size({"width": 390, "height": 844})
+        receipt_visible = pg.evaluate("""() => {
+            const el = [...document.querySelectorAll('#msgs .msg')]
+                .find(m => m.innerText.includes('Following: Godzilla Minus Zero'));
+            if (!el) return false;
+            el.scrollIntoView({block: 'center'});
+            const r = el.getBoundingClientRect();
+            return r.top >= 0 && r.bottom <= window.innerHeight; }""")
+        check("follow_create receipt renders in the thread", receipt_visible)
+        check("follow receipt is honest that checks are not live yet",
+              pg.evaluate("""() => {
+            const el = [...document.querySelectorAll('#msgs .msg')]
+                .find(m => m.innerText.includes('Following: Godzilla Minus Zero'));
+            return !!el && el.innerText.includes('not live yet'); }"""))
+        pg.screenshot(path=os.path.join(SHOTS, "follow-receipt-390.png"))
+        pg.close()
+
         # Attachments (Stage 3c): multi picker, preview strip, removal, send.
         import struct as _st, zlib as _zl, tempfile as _tf
         def _solid_png(w, h, rgb):
@@ -660,7 +690,7 @@ with sync_playwright() as p:
         check("exactly one Sources footer (plain + garbage messages have none)",
               pg.locator(".src-foot").count() == 1)
         check("footer is labelled Sources for 3 results",
-              pg.locator(".src-foot").inner_text() == "Sources"
+              pg.locator(".src-foot .src-label").inner_text() == "Sources"
               and pg.locator(".src-foot").get_attribute("aria-label") == "Show sources (3)")
         expect(pg.locator(".src-stack .src-tile")).to_have_count(2, timeout=15000)
         check("local favicon loads as a real logo, public hosts fall back to tiles",

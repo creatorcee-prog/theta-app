@@ -190,6 +190,74 @@ def tool_task_note(arg, agent):
     return f"Noted on {tid}: {step[:120]}"
 
 
+def tool_follow_create(arg, agent):
+    """Create a persistent follow record. Format: title | [kind] | [frequency] | [channel] | [sources].
+    Only the title is required; the rest default (kind title, daily, both, releases+news+web).
+    The record is verified by reading it back before success is reported.
+    Scheduled checks do NOT run yet (Phase F2); the receipt says so plainly."""
+    if agent_tools is None:
+        raise ValueError("tool layer not available")
+    parts = [p.strip() for p in (arg or "").split("|")]
+    title = parts[0] if parts else ""
+    if not title:
+        raise ValueError("need a title to follow")
+    kwargs = {"title": title}
+    if len(parts) > 1 and parts[1]:
+        kwargs["kind"] = parts[1]
+    if len(parts) > 2 and parts[2]:
+        kwargs["frequency"] = parts[2]
+    if len(parts) > 3 and parts[3]:
+        kwargs["channel"] = parts[3]
+    if len(parts) > 4 and parts[4]:
+        kwargs["sources"] = parts[4]
+    out = agent_tools.run_tool(_store(), {"name": "follow_create", "args": kwargs}, agent_id=agent)
+    if out.get("status") != "ok":
+        raise ValueError(out.get("error") or "could not create follow")
+    d = out["data"]
+    r = d["record"]
+    if d.get("already"):
+        return (f"Already following: {r['title']} (id {r['id']}, {r['state']}, checks {r['frequency']}). "
+                "No duplicate created.")
+    return (f"Following: {r['title']} (id {r['id']}, {r['state']}, checks {r['frequency']}, via {r['channel']}). "
+            "Record verified. Scheduled checks are not live yet (Phase F2); nothing will notify until then.")
+
+
+def tool_follow_list(arg, agent):
+    """List follow records by state."""
+    if agent_tools is None:
+        raise ValueError("tool layer not available")
+    status = (arg or "").strip().lower() or "active"
+    if status in ("done", "completed", "closed"):
+        status = "canceled"
+    out = agent_tools.run_tool(_store(), {"name": "follow_list", "args": {"status": status, "limit": "20"}}, agent_id=agent)
+    if out.get("status") != "ok":
+        raise ValueError(out.get("error") or "list failed")
+    items = out.get("data") or []
+    if not items:
+        return f"No {status} follows"
+    lines = []
+    for f in items[:15]:
+        lines.append(f"{f.get('title', '?')} [{f.get('id')}] {f.get('state')} checks {f.get('frequency')} via {f.get('channel')}")
+    return "Follows:\n" + "\n".join(lines)
+
+
+def tool_follow_cancel(arg, agent):
+    """Cancel a follow. The record is kept as canceled, never deleted."""
+    if agent_tools is None:
+        raise ValueError("tool layer not available")
+    fid = (arg or "").strip()
+    if not fid:
+        raise ValueError("need a follow_id")
+    out = agent_tools.run_tool(_store(), {"name": "follow_cancel", "args": {"follow_id": fid}}, agent_id=agent)
+    if out.get("status") != "ok":
+        raise ValueError(out.get("error") or "cancel failed")
+    d = out["data"]
+    r = d["record"]
+    if d.get("already"):
+        return f"Already canceled: {r['title']} ({r['id']})."
+    return f"Follow canceled: {r['title']} ({r['id']}). No further checks will run; the record is kept as canceled."
+
+
 # Descriptions for the TOOLS registry (name -> (prompt line, fn, who-or-None))
 BRIDGE_TOOLS = {
     "web_search": ("web_search | <query>   (search the web; read-only)", tool_web_search, None),
@@ -199,4 +267,7 @@ BRIDGE_TOOLS = {
     "task_complete": ("task_complete | <task_id>   (mark a ledger task done)", tool_task_complete, None),
     "task_reopen": ("task_reopen | <task_id>   (reopen a completed task)", tool_task_reopen, None),
     "task_note": ("task_note | <task_id> | <step text>   (append a step to a ledger task)", tool_task_note, None),
+    "follow_create": ("follow_create | <title> | [kind] | [frequency] | [channel] | [sources]   (create a persistent follow record, verified by read-back; scheduled checks start in Phase F2, not yet)", tool_follow_create, None),
+    "follow_list": ("follow_list | active|paused|failed|canceled|all   (list follow records)", tool_follow_list, None),
+    "follow_cancel": ("follow_cancel | <follow_id>   (cancel a follow; record kept as canceled)", tool_follow_cancel, None),
 }
