@@ -72,6 +72,9 @@
 - Agent messages are untouched: avatars, left alignment, and the
   76ch cap all stay. The old accent tint for own messages is gone,
   replaced by the bubble.
+  (Later change: the agent avatar column was removed as well, so
+  all message rows are single-column; the model is still named in
+  the meta row, with the via badge and the trail icons kept.)
 
 ## Stage 3b extension: chat hierarchy, composer states, responsive audit (branch stage3bext/chat-polish, based on main 79c7fb5a which includes merged PR #56)
 

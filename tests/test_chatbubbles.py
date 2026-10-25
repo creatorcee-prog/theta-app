@@ -74,9 +74,9 @@ def check(name, cond):
 
 check("own messages still carry the mine class in render()",
       '(m.from === "you" ? " mine" : "")' in js)
-check("mine rows drop the avatar column",
-      ".msg.mine{grid-template-columns:minmax(0,1fr)}" in css
-      and ".msg.mine .avcol{display:none}" in css)
+check("message rows are single-column with no avatar column",
+      ".msg{display:grid;grid-template-columns:minmax(0,1fr);padding:8px 16px 6px}" in css
+      and "avcol" not in css and "avcol" not in js)
 check("mine bodies are right-aligned content-hugging bubbles",
       ".msg.mine .mbody{width:fit-content;max-width:min(76ch,85%);margin-left:auto;background:var(--surface);border-radius:20px;padding:10px 14px;overflow-wrap:anywhere}" in css)
 check("mine bubbles use the glass surface under backdrop-filter",
@@ -89,6 +89,8 @@ check("chat text is larger (16px message bodies)",
       ".msg .mbody{font-size:16px}" in css)
 check("76ch cap intact (3b extension regression)",
       ".mbody{max-width:76ch}" in css)
-check("agent avatars untouched (no blanket avatar hiding)",
-      ".msg .avcol{display:none}" not in css)
+check("other avatars still render (events, trails, working box)",
+      "avatar(" in js and "avcol" not in js)
+check("working box hides when the agent stops",
+      'if (state === "completed" || state === "failed") { wBox.hidden = true;' in js)
 print("chatbubbles: all checks passed")
