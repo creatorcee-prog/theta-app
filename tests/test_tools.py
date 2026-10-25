@@ -251,6 +251,18 @@ check("forget drops matching memories", "✓ Forgot 1 remembered fact" in r and 
 r = say("lenz", "forget", "ACTION: forget | nothing like this")
 check("forget with no match is a ✗", r.startswith("✗ forget"))
 
+# task_reopen: advertised, dispatched, and receipted through the chat path.
+# Memory mode only, like test_mistral_tools.py: the run_actions store
+# tests run against the in-memory store (this file's fake Redis does not
+# implement the SET/GET the task ledger uses).
+if mode == "memory":
+    out = h.run_actions("glass", "ACTION: task_create | reopen receipt probe")
+    tid = re.search(r"\(id ([^)]+)\)", out).group(1)
+    h.run_actions("glass", f"ACTION: task_complete | {tid}")
+    r = say("glass", "reopen it", f"On it.\nACTION: task_reopen | {tid}")
+    check("task_reopen receipt replaces the ACTION line",
+          r.startswith("On it.") and "Task reopened: reopen receipt probe" in r and "ACTION" not in r)
+
 # Settings card + remove endpoints
 say("glass", "remember", "ACTION: remember | Allergic to peanuts")
 s, page, _ = call("GET", "/settings", headers=K)
