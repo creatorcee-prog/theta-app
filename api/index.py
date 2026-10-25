@@ -10149,9 +10149,6 @@ def chat_page(headers, query):
     chans = "".join(
         f'<a href="/chat?ch={x["id"]}" class="{"on" if x["id"] == ch else ""}"><span class="hash">#</span>{html.escape(x["name"])}</a>'
         for x in CHANNELS)
-    chips = "".join(
-        f'<a href="/chat?ch={x["id"]}" class="chip{" on" if x["id"] == ch else ""}">#{html.escape(x["name"])}</a>'
-        for x in CHANNELS)
     by_tier = []
     for tier in reversed(TIERS):
         rows = [a for a in statuses if a["bot_id"] in AGENTS and AGENTS[a["bot_id"]]["tier"] == tier]
@@ -10171,10 +10168,6 @@ def chat_page(headers, query):
         f'<aside class="chans" aria-label="Channels"><div class="brand" style="padding-left:10px;font-size:18px">{APP_NAME} crew</div>'
         f'<div class="label">Channels</div>{chans}</aside>'
         '<section class="thread">'
-        f'<header class="chathead"><span class="hash">#</span><b>{html.escape(c["name"])}</b>'
-        f'<span class="about muted">{html.escape(c["about"])}</span>'
-        f'<button class="btn ghost small" id="members-btn" type="button" aria-label="Members">{ui_icon("users")}</button></header>'
-        f'<nav class="chiprow" aria-label="Channels">{chips}</nav>'
         '<div class="msgs" id="msgs" role="log" aria-live="polite"></div>'
         '<form class="composer" id="chat-form"><ul id="chat-menu" role="listbox" hidden></ul>'
         '<div class="working" id="chat-working" role="status" aria-live="polite" hidden><div class="trail" id="chat-working-done"></div>'

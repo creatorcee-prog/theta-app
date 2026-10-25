@@ -133,8 +133,12 @@ check("drawer keeps its shadow and fixed positioning", "position:fixed" in _seg 
 
 # --- Structure preserved (meaningful, not just class names) ---
 for frag in ['id="chat-form"', 'id="chat-msg"', 'id="chat-send"', 'id="msgs"', 'id="chat-working"',
-             'id="chat-status"', 'class="chiprow"', 'id="chat-menu"']:
+             'id="chat-status"', 'id="chat-menu"', 'class="members glass"', 'class="chans"']:
     check(f"chat keeps {frag}", frag in chat)
+# --- Chat top removed (header row + channel chiprow) by owner request ---
+check("chathead removed", 'class="chathead"' not in chat)
+check("chiprow removed", 'class="chiprow"' not in chat)
+check("members button removed", 'id="members-btn"' not in chat)
 check("day separators kept", "daysep" in js)
 check("agent trail kept", 'className = "trail"' in js)
 check("working indicator kept", 'id="chat-working-done"' in chat and "wdots" in chat)
