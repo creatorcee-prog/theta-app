@@ -411,19 +411,28 @@ prose, using only formats the chat actually renders:
 - Bullet or numbered lists for several items.
 - `- [ ]` checklists for to-dos. These are real: checking one
   persists through `POST /api/chat/check`.
-- A fenced code block for code, headings for long answers,
-  `**bold**` sparingly, links (`http(s)` only), and images
-  (only with `![alt](https link)` for a link the agent was
-  given).
+- A fenced code block for code, with a Copy button in its
+  header, headings for long answers, `**bold**` sparingly,
+  links (`http(s)` only), and images (only with
+  `![alt](https link)` for a link the agent was given).
+- Blockquotes (`> `) for quoted passages.
+- Fenced cards when they genuinely fit, each submitting
+  through a chat message, never a button press:
+  ` ```config ` with `select Label: a | b` and
+  `check Label: on|off` lines (the user picks, then Submit
+  sends the choices), ` ```doc ` for a reusable draft
+  (Copy, Edit, Save posts the edited text),
+  ` ```flow ` with `A -> B -> C` lines (workflow boxes),
+  and ` ```bars ` with `Label: number` lines (bars;
+  negatives count as 0).
 
 Rules: simplest format that communicates well; never invent
-data to fill a table or list; never describe a button, card,
-chart, or other control the chat cannot show. Buttons in chat
-exist only when the server issues them (QWERTY proposals,
-James commands) — agents never emit them. Not yet approved:
-document/config/flow/bars fences, blockquotes, and code copy
-buttons (Stage 3d, unmerged) and charts (no renderer support
-yet); a follow-up extends this list when those land.
+data to fill a table or list; never describe a control the
+chat cannot show. Buttons in chat exist only when the
+server issues them (QWERTY proposals, James commands) —
+agents never emit them. Not yet approved: line charts,
+radio groups, and architecture diagrams (no renderer
+support yet).
 
 ## Glass style
 

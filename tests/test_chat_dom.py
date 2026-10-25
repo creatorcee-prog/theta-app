@@ -376,9 +376,9 @@ with sync_playwright() as p:
               tbl["aligns"] == ["left", "right", "center"])
         check("table container is rounded", tbl["radius"] != "0px")
         check("rich message does not overflow the phone width", no_overflow(pg))
-        check("code block has a copy button",
-              pg.locator(".codeblock .chead button").count() >= 1
-              and pg.locator(".codeblock .chead button").first.inner_text() == "Copy")
+        check("code block has a Code label and icon copy button",
+              pg.locator(".codeblock .chead .clabel").first.inner_text() == "Code"
+              and pg.locator(".codeblock .chead button").first.get_attribute("aria-label") == "Copy code")
         check("blockquote renders", pg.locator(".md-quote").count() >= 1)
         check("doc card has copy + edit",
               pg.locator(".doccard").count() >= 1

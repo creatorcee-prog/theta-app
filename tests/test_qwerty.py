@@ -154,6 +154,7 @@ r = h.run_round(force=True, only=["qwerty"])
 check("a deploy that changed the packages: checked again at once", "checked the libraries" in r["ran"]["qwerty"]["did"]
       and h.store().get_meta("sec:osv_fp") == h.installed_fingerprint())
 check("short key flagged", any("only 2 characters" in t for _, t in h.watchdog_findings()))
+check("github issues target theta-app by default", h.GITHUB_REPO == "creatorcee-prog/theta-app")
 # coding help
 h.GITHUB_TOKEN = ""  # (this sandbox has one in its environment)
 s, d, _ = call("POST", "/api/allchat", headers=K, body={"text": "/issue Lenz posters missing - Jikan seems down"})
