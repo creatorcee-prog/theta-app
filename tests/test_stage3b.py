@@ -104,7 +104,11 @@ js = h._CHAT_JS
 # --- Message hierarchy + spacing ---
 check("turns get more air", ".msg{display:grid;grid-template-columns:40px minmax(0,1fr);column-gap:12px;padding:8px 16px 6px}" in css)
 check("own messages carry a mine class in render()", '(m.from === "you" ? " mine" : "")' in js)
-check("own messages get a subtle accent tint", ".msg.mine{background:color-mix(in srgb,var(--accent) 7%,transparent)}" in css)
+check("own messages are right-aligned glass bubbles with no avatar",
+      ".msg.mine{grid-template-columns:minmax(0,1fr)}" in css
+      and ".msg.mine .avcol{display:none}" in css
+      and ".msg.mine .mbody{width:fit-content;max-width:min(76ch,85%);margin-left:auto;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:10px 14px;overflow-wrap:anywhere}" in css
+      and ".msg.mine .meta{justify-content:flex-end}" in css)
 check("continuations stay tight", ".msg.cont{padding-top:1px}" in css)
 
 # --- Scannability: long code blocks scroll ---

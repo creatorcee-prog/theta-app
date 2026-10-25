@@ -104,18 +104,17 @@ check("guard is set before the send and released in a finally",
 check("button and keyboard share the guarded submit path",
       'form.onsubmit = async' in chat_js
       and 'form.requestSubmit()' in chat_js)
-check("composer keeps failure restore + working poll + single image input",
-      'setPic(image)' in chat_js and 'startWorking(rid' in chat_js
+check("composer keeps failure restore + working poll + attachment input",
+      'setAtts(savedAtts)' in chat_js and 'startWorking(rid' in chat_js
       and "Couldn't send: " in chat_js)
 
 s, chat_html = call("GET", "/chat", headers=K)
 check("chat page serves", s == 200)
 chat_html = chat_html.decode() if isinstance(chat_html, bytes) else chat_html
-check("composer markup: one form, send button, single image picker",
+check("composer markup: one form, send button, multi attachment picker",
       '<form class="composer" id="chat-form">' in chat_html
       and 'id="chat-send"' in chat_html
-      and 'id="chat-file" accept="image/*"' in chat_html
-      and 'multiple' not in chat_html.split('id="chat-file"')[1].split('>')[0])
+      and 'id="chat-file" accept="image/*,.pdf,.txt,.md" multiple' in chat_html)
 
 # --- Mini bar Send-submit (shipped /ui.js + home markup) ---
 s, ui_js = call("GET", "/ui.js")

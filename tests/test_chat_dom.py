@@ -164,6 +164,29 @@ with sync_playwright() as p:
                 pg.screenshot(path=os.path.join(SHOTS, "thread-1280.png"))
             pg.close()
 
+        # Own-message bubbles: no avatar, larger text, right-aligned glass.
+        pg = browser.new_page(viewport={"width": 390, "height": 844})
+        pg.goto(f"{APP}/chat?key=dk")
+        expect(pg.locator("#msgs")).to_contain_text("thread filler 25", timeout=15000)
+        bub = pg.evaluate("""() => {
+            const mine = document.querySelector('#msgs .msg.mine');
+            const body = mine ? mine.querySelector('.mbody') : null;
+            const avcol = mine ? mine.querySelector('.avcol') : null;
+            const msgs = document.querySelector('#msgs').getBoundingClientRect();
+            const r = body ? body.getBoundingClientRect() : null;
+            const cs = body ? getComputedStyle(body) : null;
+            const agent = document.querySelector('#msgs .msg:not(.mine) .avcol img');
+            return {avHidden: avcol ? getComputedStyle(avcol).display === 'none' : false,
+                    font: cs ? cs.fontSize : '', radius: cs ? cs.borderRadius : '',
+                    rightGap: r ? Math.round(msgs.right - r.right) : -1,
+                    agentAvatar: agent ? agent.getBoundingClientRect().width > 0 : false}; }""")
+        check("own messages hide their avatar column", bub["avHidden"])
+        check("chat text renders at 16px", bub["font"] == "16px")
+        check("own bubble is rounded and right-aligned", bub["radius"].startswith("20px") and 0 <= bub["rightGap"] <= 40)
+        check("agent avatars still show", bub["agentAvatar"])
+        pg.screenshot(path=os.path.join(SHOTS, "thread-390.png"))
+        pg.close()
+
         # Long-thread readability: grouping, code cap, avatar images.
         pg = browser.new_page(viewport={"width": 1280, "height": 800})
         pg.goto(f"{APP}/chat?key=dk")
@@ -262,6 +285,45 @@ with sync_playwright() as p:
             return el ? el.innerText.includes('ACTION:') : true; }""")
         check("receipt replaces the ACTION line (no raw ACTION shown)", not raw_action)
         pg.screenshot(path=os.path.join(SHOTS, "tool-receipt-390.png"))
+        pg.close()
+
+        # Attachments (Stage 3c): multi picker, preview strip, removal, send.
+        import struct as _st, zlib as _zl, tempfile as _tf
+        def _solid_png(w, h, rgb):
+            def _chunk(typ, data):
+                c = _st.pack(">I", len(data)) + typ + data
+                return c + _st.pack(">I", _zl.crc32(typ + data) & 0xFFFFFFFF)
+            raw = b"".join(b"\x00" + bytes(rgb) * w for _ in range(h))
+            return (b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", _st.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+                    + _chunk(b"IDAT", _zl.compress(raw)) + _chunk(b"IEND", b""))
+        _png = _solid_png(200, 120, (52, 120, 220))
+        _pdf = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n"
+        _tmp = _tf.mkdtemp()
+        _png_path = os.path.join(_tmp, "tiny.png"); _pdf_path = os.path.join(_tmp, "notes.pdf")
+        open(_png_path, "wb").write(_png); open(_pdf_path, "wb").write(_pdf)
+        pg = browser.new_page(viewport={"width": 390, "height": 844})
+        pg.goto(f"{APP}/chat?key=dk")
+        expect(pg.locator("#chat-msg")).to_be_visible(timeout=15000)
+        pg.set_input_files("#chat-file", [_png_path, _pdf_path])
+        pg.wait_for_selector("#chat-attach:not([hidden])", timeout=10000)
+        check("attach strip shows image thumb + file chip",
+              pg.locator("#chat-attach .attp").count() == 1 and pg.locator("#chat-attach .fchip").count() == 1)
+        check("file chip names the file and its type",
+              "notes.pdf" in (pg.locator("#chat-attach .fchip").first.inner_text() or "")
+              and "PDF" in (pg.locator("#chat-attach .fchip").first.inner_text() or ""))
+        pg.locator("#chat-attach").screenshot(path=os.path.join(SHOTS, "attach-strip-390.png"))
+        pg.locator("#chat-attach .fchip .dx").first.click()
+        check("removing a chip takes it out of the strip",
+              pg.locator("#chat-attach .fchip").count() == 0 and pg.locator("#chat-attach .attp").count() == 1)
+        msg = pg.locator("#chat-msg")
+        msg.fill("photo for the crew")
+        msg.press("Enter")
+        expect(pg.locator("#msgs img.att")).to_be_visible(timeout=60000)
+        check("sent image attachment renders in the thread",
+              pg.locator("#msgs img.att").count() >= 1)
+        check("removed file is not sent with the message",
+              pg.locator("#msgs .fchip").count() == 0)
+        check("strip clears after send", pg.locator("#chat-attach[hidden]").count() == 1)
         pg.close()
     finally:
         browser.close()

@@ -531,12 +531,14 @@ class MemoryStore:
         if activity is not None:
             self.activity[bot_id] = activity
 
-    def add_chat(self, sender, text, kind="message", image=None, channel=None, buttons=None, extra=None):
+    def add_chat(self, sender, text, kind="message", image=None, channel=None, buttons=None, extra=None, attachments=None):
         if _round_capture(sender, text, kind, image, buttons):
             return {"id": 0, "from": sender, "text": text, "kind": kind, "at": _now()}
         item = {"id": self._next_id(), "from": sender, "text": text, "kind": kind, "at": _now(), **(extra or {})}
         if image:
             item["image"] = image
+        if attachments:
+            item["attachments"] = attachments
         if channel:
             item["ch"] = channel
         if buttons:
@@ -696,12 +698,14 @@ class KVStore:
         if activity is not None:
             self._cmd("HSET", "hub:activity", bot_id, activity)
 
-    def add_chat(self, sender, text, kind="message", image=None, channel=None, buttons=None, extra=None):
+    def add_chat(self, sender, text, kind="message", image=None, channel=None, buttons=None, extra=None, attachments=None):
         if _round_capture(sender, text, kind, image, buttons):
             return {"id": 0, "from": sender, "text": text, "kind": kind, "at": _now()}
         item = {"id": self._next_id(), "from": sender, "text": text, "kind": kind, "at": _now(), **(extra or {})}
         if image:
             item["image"] = image
+        if attachments:
+            item["attachments"] = attachments
         if channel:
             item["ch"] = channel
         if buttons:
@@ -2549,7 +2553,7 @@ UPLOAD_KEEP = 30
 UPLOAD_MAX_BYTES = 3_000_000  # decoded; Vercel caps a request body at 4.5 MB
 VISION_MODEL = os.environ.get("VISION_MODEL", TIER_LLM["low_brain"][1])
 _UPLOAD_RE = re.compile(r"^data:image/(jpeg|png|webp|gif);base64,([A-Za-z0-9+/=]+)$")
-_UPLOAD_URL_RE = re.compile(r"^/upload/([0-9a-f]{12})\.(jpeg|png|webp|gif)$")
+_UPLOAD_URL_RE = re.compile(r"^/upload/([0-9a-f]{12})\.(jpeg|png|webp|gif|pdf|txt|md)$")
 
 
 def save_upload(data_url):
@@ -2574,6 +2578,115 @@ def save_upload(data_url):
     st.set_meta("uploads", json.dumps(ids[-UPLOAD_KEEP:]))
     return f"/upload/{uid}.{m.group(1)}"
 
+ATTACH_MAX_COUNT = 4  # attachments on one message
+ATTACH_MAX_TOTAL = 3_000_000  # decoded bytes, all attachments together
+
+
+def _clean_filename(name):
+    """A display name for an attached file: no paths, no controls, capped."""
+    name = (name or "file").replace("\\", "/").split("/")[-1].strip()
+    name = "".join(c for c in name if ord(c) >= 32 and c != "\x7f") or "file"
+    return name[:100]
+
+
+def _decode_data_url(data_url):
+    """(mime, raw bytes) for a data: URL, or None when it is not one."""
+    m = re.match(r"^data:([^;]+);base64,([A-Za-z0-9+/=]*)$", data_url or "")
+    if not m:
+        return None
+    try:
+        return m.group(1), base64.b64decode(m.group(2), validate=True)
+    except ValueError:
+        return None
+
+
+def save_file(name, data_url):
+    """Store a non-image attachment; returns (url, kind, size).
+
+    PDF must start with %PDF; anything else must decode as UTF-8 text.
+    Nothing here is read by any model: files are stored, listed, and
+    downloadable only."""
+    name = _clean_filename(name)
+    got = _decode_data_url(data_url)
+    if not got:
+        raise ValueError(f"{name}: that file didn't come through whole. Try again.")
+    _mime, raw = got
+    if len(raw) > UPLOAD_MAX_BYTES:
+        raise ValueError(f"{name}: that file is too big (3 MB at most).")
+    if raw.startswith(b"%PDF"):
+        ext, kind = "pdf", "file"
+    else:
+        try:
+            raw.decode("utf-8")
+        except UnicodeDecodeError:
+            raise ValueError(f"{name}: that isn't a type the chat can take (images, PDF, text).")
+        ext = "md" if name.lower().endswith(".md") else "txt"
+        kind = "file"
+    st = store()
+    uid = hashlib.sha1(raw + str(time.time_ns()).encode()).hexdigest()[:12]
+    st.set_meta(f"upload:{uid}", data_url)
+    ids = _meta_json("uploads", [])
+    ids.append(uid)
+    for old in ids[:-UPLOAD_KEEP]:
+        st.set_meta(f"upload:{old}", "")
+        st.set_meta(f"vision:{old}", "")
+    st.set_meta("uploads", json.dumps(ids[-UPLOAD_KEEP:]))
+    return f"/upload/{uid}.{ext}", kind, len(raw)
+
+
+def validate_attachments(items):
+    """Check a whole batch before anything is saved; returns the cleaned
+    list [(name, kind, data_url, size)] or raises ValueError naming the
+    offending file. Saving happens only after this passes."""
+    if not isinstance(items, list):
+        raise ValueError("attachments must be a list.")
+    if len(items) > ATTACH_MAX_COUNT:
+        raise ValueError(f"at most {ATTACH_MAX_COUNT} attachments on one message.")
+    cleaned, total = [], 0
+    for it in items:
+        if not isinstance(it, dict):
+            raise ValueError("each attachment needs a name and file data.")
+        name = _clean_filename(it.get("name"))
+        data_url = it.get("data")
+        if not isinstance(data_url, str) or not data_url.startswith("data:"):
+            raise ValueError(f"{name}: that file didn't come through whole. Try again.")
+        if "," in data_url and data_url.split(",", 1)[1] == "":
+            raise ValueError(f"{name}: that file is empty.")
+        if it.get("type") == "image" or (isinstance(data_url, str) and data_url.startswith("data:image/")):
+            m = _UPLOAD_RE.match(data_url)
+            if not m:
+                raise ValueError(f"{name}: that isn't an image the chat can take (JPEG, PNG, WebP or GIF).")
+            try:
+                raw = base64.b64decode(m.group(2), validate=True)
+            except ValueError:
+                raise ValueError(f"{name}: the image didn't come through whole. Try again.")
+            if len(raw) > UPLOAD_MAX_BYTES:
+                raise ValueError(f"{name}: that image is too big (3 MB at most).")
+            cleaned.append((name, "image", data_url, len(raw)))
+            total += len(raw)
+        else:
+            got = _decode_data_url(data_url)
+            if not got:
+                raise ValueError(f"{name}: that file didn't come through whole. Try again.")
+            _mime, raw = got
+            if len(raw) > UPLOAD_MAX_BYTES:
+                raise ValueError(f"{name}: that file is too big (3 MB at most).")
+            if raw.startswith(b"%PDF"):
+                pass
+            else:
+                try:
+                    raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    raise ValueError(f"{name}: that isn't a type the chat can take (images, PDF, text).")
+            cleaned.append((name, "file", data_url, len(raw)))
+            total += len(raw)
+        if total > ATTACH_MAX_TOTAL:
+            raise ValueError("attachments together are too big (3 MB at most).")
+    for name, _kind, _data, size in cleaned:
+        if size == 0:
+            raise ValueError(f"{name}: that file is empty.")
+    return cleaned
+
 
 def upload_data(url):
     """The data URL behind an /upload/ URL, or None once it's aged out."""
@@ -2585,11 +2698,11 @@ def image_part(data_url):
     return {"type": "image_url", "image_url": {"url": data_url}}
 
 
-def see_image(msg):
-    """What the vision model sees in a chat message's image, worked out
-    once and kept. Raises LLMError when it can't look."""
-    m = _UPLOAD_URL_RE.match(msg.get("image") or "")
-    data = upload_data(msg.get("image")) if m else None
+def see_image_url(url, text=""):
+    """What the vision model sees in one /upload/ image, worked out once
+    and kept. Raises LLMError when it can't look."""
+    m = _UPLOAD_URL_RE.match(url or "")
+    data = upload_data(url) if m else None
     if not data:
         raise LLMError("the image is no longer stored")
     key = f"vision:{m.group(1)}"
@@ -2599,13 +2712,22 @@ def see_image(msg):
     ask = ("Describe this image for an assistant who can't see it. Copy any text exactly (receipts, screens, "
            "labels, signs), give every number and price, name what's shown and where, and note anything unclear. "
            "Describe only what's visible; don't guess beyond it."
-           + (f" The user sent it with: \u201c{msg['text'][:500]}\u201d" if msg.get("text") else ""))
+           + (f" The user sent it with: \u201c{text[:500]}\u201d" if text else ""))
     text = _llm_call("gemini", VISION_MODEL, [{"role": "user", "content": [{"type": "text", "text": ask},
                                                                            image_part(data)]}], 1200).strip()
     if not text:
         raise LLMError("the vision model returned nothing")
     store().set_meta(key, text[:4000])
     return text[:4000]
+
+
+def see_image(msg):
+    """What the vision model sees in a chat message's image, worked out
+    once and kept. Raises LLMError when it can't look."""
+    images, _files = message_attachments(msg)
+    if not images:
+        raise LLMError("no image attached")
+    return see_image_url(images[0], msg.get("text", ""))
 
 
 def seen_note(msg):
@@ -2618,11 +2740,50 @@ def seen_note(msg):
                 "Say plainly that you can't see it right now; don't guess what it shows.")
 
 
+def seen_notes(msg):
+    """Prompt notes for every image on a message, joined, plus the file note."""
+    images, files = message_attachments(msg)
+    notes = []
+    for url in images:
+        try:
+            notes.append(see_image_url(url, msg.get("text", "")))
+        except LLMError as e:
+            notes.append(f"(the vision model couldn't look at it: {e})")
+    out = ""
+    if notes:
+        out += ("\n\nThe user attached image(s). You can't see them yourself; the vision model describes them as:\n"
+                + "\n---\n".join(notes) + "\nAnswer from these descriptions, and don't claim details they don't mention.")
+    if files:
+        out += file_note(files)
+    return out
+
+
+def message_attachments(m):
+    """(image urls, file entries) for a message, legacy `image` included."""
+    atts = m.get("attachments") or []
+    images = [a["url"] for a in atts if a.get("kind") == "image" and (a.get("url") or "").startswith("/upload/")]
+    legacy = m.get("image") or ""
+    if legacy.startswith("/upload/") and legacy not in images:
+        images.append(legacy)
+    files = [a for a in atts if a.get("kind") == "file"]
+    return images, files
+
+
+def file_note(files):
+    """The honest note for files no model can read: names only, no summary."""
+    names = ", ".join(f"{a.get('name', 'file')} ({a.get('kind', 'file')})" for a in files)
+    return (f"\n\nThe user also attached: {names}. You cannot open or read these files; "
+            "if asked about them, say plainly you can't read them — don't guess their contents.")
+
+
 def chat_line(m):
     """One thread entry as plain text, for model context."""
     if m.get("kind") == "event":
         return f"[event] {m['text']}"
-    pic = " [sent an image]" if (m.get("image") or "").startswith("/upload/") else ""
+    images, files = message_attachments(m)
+    pic = f" [sent {len(images)} image(s)]" if images else ""
+    if files:
+        pic += f" [attached {len(files)} file(s)]"
     return f"{_chat_clock(m)}{chat_name(m['from'])}: {m['text']}{pic}"
 
 
@@ -2823,19 +2984,19 @@ def desk_reply(thread, to=None):
               "line, SEARCH: <query>, and nothing else; you'll get the results." if can_search else "")
     transcript = "\n".join(chat_line(m) for m in thread[-CHAT_HISTORY:])
     last = thread[-1]
-    pic = last["from"] == "you" and (last.get("image") or "").startswith("/upload/")
-
     def prompt_for(agent, extra=""):
         system = desk_system(agent, now=False) + search + extra  # the clock goes after, uncached
         ask = (f"The chat so far:\n{transcript}\n\nAnswer the latest message as {AGENTS[agent]['name']}. "
                "Write only your message, without your name in front.")
         content = ask
-        if pic:
-            data = upload_data(last["image"])
-            if agent == "theta" and master_ready() and data:
-                content = [{"type": "text", "text": ask + "\n\nThe user's image is attached."}, image_part(data)]
+        images, files = message_attachments(last) if last["from"] == "you" else ([], [])
+        if images or files:
+            if agent == "theta" and master_ready():
+                parts = [image_part(d) for d in (upload_data(u) for u in images) if d]
+                note = ("\n\nThe user's image(s) are attached." if parts else "") + (file_note(files) if files else "")
+                content = ([{"type": "text", "text": ask + note}] + parts) if parts else (ask + note)
             else:
-                ask = content = ask + seen_note(last)
+                ask = content = ask + seen_notes(last)
         return system, ask, content
 
     def ask_as(agent, extra=""):
@@ -3018,12 +3179,14 @@ def allchat_reply(agent, thread):
            "Write only your message, without your name in front.")
     content = ask
     last = thread[-1]
-    if last["from"] == "you" and (last.get("image") or "").startswith("/upload/"):
-        data = upload_data(last["image"])
-        if agent == "theta" and master_ready() and data:  # Claude looks for itself
-            content = [{"type": "text", "text": ask + "\n\nThe user's image is attached."}, image_part(data)]
+    images, files = message_attachments(last) if last["from"] == "you" else ([], [])
+    if images or files:
+        if agent == "theta" and master_ready():
+            parts = [image_part(d) for d in (upload_data(u) for u in images) if d]
+            note = ("\n\nThe user's image(s) are attached." if parts else "") + (file_note(files) if files else "")
+            content = ([{"type": "text", "text": ask + note}] + parts) if parts else (ask + note)
         else:
-            ask = content = ask + seen_note(last)
+            ask = content = ask + seen_notes(last)
     reply = llm_chat(AGENTS[agent]["tier"], [{"role": "system", "content": system}, {"role": "user", "content": content}])
     m = re.match(r"^\s*SEARCH:\s*(.+)$", reply.strip(), re.I)
     if not (m and can_search):
@@ -8441,7 +8604,13 @@ body.typing .chat{height:100dvh}
 .msg.cont{padding-top:1px}
 .msg.cont .avcol{height:0;overflow:hidden}
 .msg.cont .meta{display:none}
-.msg.mine{background:color-mix(in srgb,var(--accent) 7%,transparent)}
+.msg.mine{grid-template-columns:minmax(0,1fr)}
+.msg.mine .avcol{display:none}
+.msg.mine .mbody{width:fit-content;max-width:min(76ch,85%);margin-left:auto;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:10px 14px;overflow-wrap:anywhere}
+.msg.mine .meta{justify-content:flex-end}
+@supports (backdrop-filter:blur(1px)){
+ .msg.mine .mbody{background:color-mix(in srgb,var(--surface) 72%,transparent);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);backdrop-filter:blur(var(--glass-blur)) saturate(160%)}}
+.msg .mbody{font-size:16px}
 .mbody{max-width:76ch}
 .new{animation:pop .25s ease-out}
 @keyframes pop{from{opacity:0;transform:translateY(4px)}}
@@ -8523,8 +8692,11 @@ html,body{overflow-x:clip;max-width:100%}
 .box textarea{flex:1;border:0;background:transparent;resize:none;outline:none;max-height:168px;padding:8px 0;line-height:1.4;min-width:0}
 .send{width:40px;height:40px;padding:0;border-radius:14px;flex:none}
 .box:has(.pick){padding-left:5px}.pick{width:40px;height:40px;padding:0;border-radius:14px;flex:none;display:grid;place-items:center;cursor:pointer}
-.attach{position:relative;display:inline-block;margin:0 0 8px 4px}.attach[hidden]{display:none}a>.att{max-height:340px;width:auto}.attach img{display:block;max-height:96px;max-width:160px;border-radius:12px;border:1px solid var(--border)}
-.attach .dx{position:absolute;top:-8px;right:-8px;width:24px;height:24px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;line-height:1;padding:0}
+.attach{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px 4px}.attach[hidden]{display:none}a>.att{max-height:340px;width:auto}
+.attp{position:relative;display:inline-block}.attp img{display:block;max-height:96px;max-width:160px;border-radius:12px;border:1px solid var(--border)}
+.attp .dx,.attach .fchip .dx{position:absolute;top:-8px;right:-8px;width:24px;height:24px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;line-height:1;padding:0}
+.fchip{display:inline-flex;align-items:center;gap:8px;max-width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:12px;background:var(--surface2);text-decoration:none;color:var(--text);position:relative}
+.attach .fchip{padding-right:30px}.fchip b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}.fchip span{font-size:12px;color:var(--muted);flex:none}
 #chat-menu{position:absolute;bottom:100%;left:12px;right:12px;max-height:280px;overflow-y:auto;margin:0 0 6px;padding:6px;list-style:none;
  background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 12px 32px rgba(0,0,0,.22);z-index:20}
 :root[data-glass] #chat-menu{-webkit-backdrop-filter:blur(24px);backdrop-filter:blur(24px)}
@@ -9228,13 +9400,24 @@ _CHAT_JS = r'''
         body.append(tr);
       }
       body.append(fresh && agentMsg ? typed(m) : richText(m.text, m));
-      if (m.image) {
+      const imgs = [];
+      if (m.attachments) for (const a of m.attachments) if (a.kind === "image") imgs.push(a);
+      if (m.image && !imgs.some(a => a.url === m.image)) imgs.push({url: m.image, name: ""});
+      for (const a of imgs) {
         const img = document.createElement("img");
-        img.src = m.image; img.alt = m.text.split("\n")[0] || "Image"; img.className = "att"; img.loading = "lazy";
-        if (m.image.startsWith("/upload/") || m.image.startsWith("data:")) {
+        img.src = a.url; img.alt = (a.name || m.text.split("\n")[0]) || "Image"; img.className = "att"; img.loading = "lazy";
+        if (a.url.startsWith("/upload/") || a.url.startsWith("data:")) {
           img.onload = () => { if (box.scrollHeight - box.scrollTop - box.clientHeight < img.height + 120) box.scrollTop = box.scrollHeight; };
-          const a = document.createElement("a"); a.href = m.image; a.target = "_blank"; a.rel = "noopener"; a.append(img); body.append(a);
+          const lk = document.createElement("a"); lk.href = a.url; lk.target = "_blank"; lk.rel = "noopener"; lk.append(img); body.append(lk);
         } else body.append(img);
+      }
+      if (m.attachments) for (const a of m.attachments) if (a.kind === "file") {
+        const lk = document.createElement("a"); lk.className = "fchip"; lk.href = a.url; lk.target = "_blank"; lk.rel = "noopener";
+        const b = document.createElement("b"); b.textContent = a.name || "file"; lk.append(b);
+        const s = document.createElement("span");
+        s.textContent = (a.name || "").toLowerCase().endsWith(".pdf") ? "PDF" : "Text";
+        if (a.size) s.textContent += " \u00b7 " + fmtSize(a.size);
+        lk.append(s); body.append(lk);
       }
       if (m.buttons && m.buttons.length) {
         const acts = document.createElement("div");
@@ -9287,9 +9470,11 @@ _CHAT_JS = r'''
   // Composer: grows with its text; Enter sends on keyboards, Return is a new line on phones.
   function grow() { msg.style.height = "auto"; msg.style.height = Math.min(msg.scrollHeight, 168) + "px"; }
 
-  // Images: shrunk on the phone (longest side 1600px, JPEG) so uploads stay small
+  // Attachments: images shrunk on the phone (longest side 1600px, JPEG) so uploads stay small;
+  // PDFs and text files go through as-is. At most 4, 3 MB each and combined.
   const attach = document.getElementById("chat-attach"), file = document.getElementById("chat-file");
-  let pic = null;
+  let atts = [];
+  function fmtSize(n) { if (n < 1024) return n + " B"; if (n < 1048576) return (n / 1024).toFixed(0) + " KB"; return (n / 1048576).toFixed(1) + " MB"; }
   function shrink(f) {
     return new Promise((ok, bad) => {
       const url = URL.createObjectURL(f), im = new Image();
@@ -9305,19 +9490,62 @@ _CHAT_JS = r'''
       im.src = url;
     });
   }
-  function setPic(p) {
-    pic = p; attach.hidden = !p;
-    if (p) attach.querySelector("img").src = p;
+  function fileKind(f) {
+    const name = (f.name || "file").toLowerCase();
+    if (f.type.startsWith("image/")) return "image";
+    if (f.type === "application/pdf" || name.endsWith(".pdf")) return "file";
+    if (f.type.startsWith("text/") || name.endsWith(".txt") || name.endsWith(".md")) return "file";
+    return null;
   }
-  async function takeFile(f) {
-    if (!f || !f.type.startsWith("image/")) return;
-    try { setPic(await shrink(f)); msg.focus(); } catch (err) { status.textContent = err.message; }
+  function attErr(m) { status.textContent = m; status.classList.add("is-error"); }
+  function renderAtts() {
+    attach.replaceChildren();
+    atts.forEach((a, i) => {
+      const w = document.createElement("span");
+      if (a.kind === "image") {
+        w.className = "attp";
+        const im = document.createElement("img"); im.src = a.data; im.alt = a.name; w.append(im);
+      } else {
+        w.className = "fchip";
+        const b = document.createElement("b"); b.textContent = a.name; w.append(b);
+        const s = document.createElement("span");
+        s.textContent = (a.name.toLowerCase().endsWith(".pdf") ? "PDF" : "Text") + " \u00b7 " + fmtSize(a.size); w.append(s);
+      }
+      const x = document.createElement("button"); x.type = "button"; x.className = "dx"; x.setAttribute("aria-label", "Remove attachment"); x.textContent = "\u00d7";
+      x.onclick = () => { atts.splice(i, 1); renderAtts(); };
+      w.append(x); attach.append(w);
+    });
+    attach.hidden = !atts.length;
   }
-  if (file) file.onchange = () => { takeFile(file.files[0]); file.value = ""; };
-  if (attach) attach.querySelector("button").onclick = () => setPic(null);
+  function setAtts(list) { atts = list; renderAtts(); }
+  function readFile(f) {
+    return new Promise((ok, bad) => {
+      const r = new FileReader();
+      r.onload = () => ok(r.result); r.onerror = () => bad(new Error("Couldn't read " + (f.name || "that file") + "."));
+      r.readAsDataURL(f);
+    });
+  }
+  async function takeFiles(list) {
+    for (const f of list) {
+      const kind = fileKind(f), name = f.name || "file";
+      if (!kind) { attErr(name + " isn't a type the chat can take (images, PDF, text)."); continue; }
+      if (f.size === 0) { attErr(name + " is empty."); continue; }
+      if (atts.length >= 4) { attErr("At most 4 attachments on one message."); break; }
+      try {
+        const data = kind === "image" ? await shrink(f) : await readFile(f);
+        const size = kind === "image" ? Math.round(data.length * 3 / 4) : f.size;
+        if (size > 3000000) { attErr(name + " is too big (3 MB at most)."); continue; }
+        if (atts.reduce((n, a) => n + a.size, 0) + size > 3000000) { attErr("Attachments together are too big (3 MB at most)."); break; }
+        atts.push({kind, name, size, data});
+        status.classList.remove("is-error"); status.textContent = "";
+      } catch (err) { attErr(err.message); }
+    }
+    renderAtts(); msg.focus();
+  }
+  if (file) file.onchange = () => { takeFiles([...file.files]); file.value = ""; };
   msg.addEventListener("paste", e => {
     const f = [...(e.clipboardData || {}).files || []].find(x => x.type.startsWith("image/"));
-    if (f) { e.preventDefault(); takeFile(f); }
+    if (f) { e.preventDefault(); takeFiles([f]); }
   });
   msg.addEventListener("input", grow);
   msg.addEventListener("focus", () => { if (touch) document.body.classList.add("typing"); });
@@ -9483,21 +9711,22 @@ _CHAT_JS = r'''
 
   form.onsubmit = async e => {
     e.preventDefault();
-    const text = msg.value.trim(), image = pic;
-    if (!text && !image) return;
+    const text = msg.value.trim(), savedAtts = atts;
+    if (!text && !savedAtts.length) return;
     if (sending) return; sending = true;  // button and keyboard both land here, so one guard covers both
-    msg.value = ""; grow(); setPic(null); btn.disabled = true; btn.classList.add("is-loading"); status.classList.remove("is-error"); closeMenu();
-    const isCmd = text.startsWith("/") && !image;
+    msg.value = ""; grow(); setAtts([]); btn.disabled = true; btn.classList.add("is-loading"); status.classList.remove("is-error"); closeMenu();
+    const isCmd = text.startsWith("/") && !savedAtts.length;
     const rid = Math.random().toString(36).slice(2, 12);
     try { sessionStorage.setItem("theta-pending-rid", rid); } catch (_) {}
     status.textContent = isCmd ? "Running " + text.split(" ")[0] + "..." : "";
     if (!isCmd) startWorking(rid, /@theta\b/i.test(text) ? "theta" : "mistral");
     if (!isCmd) {
-      thread = [...thread, {id: "pending", from: "you", name: "You", text, image, kind: "message", at: new Date().toISOString().slice(0, 19).replace("T", " "), ch: C.channel}];
+      thread = [...thread, {id: "pending", from: "you", name: "You", text, attachments: savedAtts.map(a => ({url: a.data, name: a.name, kind: a.kind, size: a.size})), kind: "message", at: new Date().toISOString().slice(0, 19).replace("T", " "), ch: C.channel}];
       render(); box.scrollTop = box.scrollHeight;
     }
     try {
-      const d = await (await fetch("/api/allchat", {method: "POST", headers: H, body: JSON.stringify(image ? {text, image, channel: C.channel, rid} : {text, channel: C.channel, rid})})).json();
+      const body = savedAtts.length ? {text, attachments: savedAtts.map(a => ({name: a.name, type: a.kind, data: a.data})), channel: C.channel, rid} : {text, channel: C.channel, rid};
+      const d = await (await fetch("/api/allchat", {method: "POST", headers: H, body: JSON.stringify(body)})).json();
       stopWorking();
       if (!d.ok) { const e = new Error(d.error); e.serverError = true; throw e; }
       thread = d.messages; render(); box.scrollTop = box.scrollHeight;
@@ -9517,7 +9746,7 @@ _CHAT_JS = r'''
       if (arrived) status.textContent = err.serverError
         ? "The hub hit an error: " + err.message + ". Your message is saved. Before sending it again, check whether anything it asked for already happened, so it doesn't run twice."
         : "Your message went through, but the reply didn't arrive. It may still show up here — if it does, don't resend it. If it doesn't, check what already happened (like a task it created) before sending it again, so it doesn't run twice.";
-      else { render(); msg.value = text; grow(); setPic(image); status.textContent = "Couldn't send: " + err.message; }
+      else { render(); msg.value = text; grow(); setAtts(savedAtts); status.textContent = "Couldn't send: " + err.message; }
     } finally { sending = false; btn.disabled = false; btn.classList.remove("is-loading"); }
   };
 
@@ -10173,10 +10402,9 @@ def chat_page(headers, query):
         '<div class="working" id="chat-working" role="status" aria-live="polite" hidden><div class="trail" id="chat-working-done"></div>'
         '<div class="wline"><span id="chat-working-av"></span><span class="wdots" aria-hidden="true"><i></i><i></i><i></i></span>'
         '<span id="chat-working-text"></span><span class="elapsed" id="chat-working-elapsed" aria-hidden="true"></span></div></div>'
-        '<div class="attach" id="chat-attach" hidden><img alt="Image to send"><button type="button" class="dx" '
-        'aria-label="Remove image">×</button></div>'
+        '<div class="attach" id="chat-attach" hidden></div>'
         f'<div class="box"><label class="btn ghost pick" aria-label="Attach an image">{ui_icon("photo")}'
-        f'<input type="file" id="chat-file" accept="image/*" hidden></label><textarea id="chat-msg" rows="1" placeholder="Message #{html.escape(c["name"])}" '
+        f'<input type="file" id="chat-file" accept="image/*,.pdf,.txt,.md" multiple hidden></label><textarea id="chat-msg" rows="1" placeholder="Message #{html.escape(c["name"])}" '
         'aria-label="Message" aria-autocomplete="list" aria-controls="chat-menu"></textarea>'
         f'<button class="btn send" id="chat-send" aria-label="Send">{ui_icon("send")}</button></div>'
         '<div class="note" id="chat-status"></div></form></section>'
@@ -12577,9 +12805,13 @@ def handle(method, path, query, headers, body):
             text, bot_id = data.get("text"), data.get("bot_id")
             ch = data.get("channel") if data.get("channel") in CHANNEL_IDS else "all"
             pic = data.get("image") if isinstance(data.get("image"), str) and not bot_id else None
-            if pic and text is None:
+            try:
+                cleaned = validate_attachments(data.get("attachments")) if data.get("attachments") is not None else None
+            except ValueError as e:
+                return _json(400, {"ok": False, "error": str(e)})
+            if (pic or cleaned) and text is None:
                 text = ""
-            if not isinstance(text, str) or not (text.strip() or pic):
+            if not isinstance(text, str) or not (text.strip() or pic or cleaned):
                 return _json(400, {"ok": False, "error": "text required"})
             _REQ.rid = re.sub(r"[^\w-]", "", str(data.get("rid") or ""))[:24] or None  # for "who's working" notes
             if bot_id:  # a bot posting: no replies, so agents can't loop
@@ -12593,7 +12825,7 @@ def handle(method, path, query, headers, body):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
             text, leaked = redact_secrets(text)  # before it's saved or sent to any model
             warn_secrets(leaked)
-            if text.strip().startswith("/") and not pic:
+            if text.strip().startswith("/") and not pic and not cleaned:
                 try:
                     result = run_command(text)
                 except CommandError as e:
@@ -12601,11 +12833,23 @@ def handle(method, path, query, headers, body):
                 return _json(200, {"ok": True, "command": True, "result": result, "latest": latest_by_channel(),
                                    "messages": allchat_view(channel=ch), "errors": {}, "routed": []})
             st = store()
+            atts_out, image = [], None
             try:
-                image = save_upload(pic) if pic else None
+                if cleaned is not None:
+                    for name, kind, data_url, _size in cleaned:
+                        if kind == "image":
+                            url = save_upload(data_url)
+                        else:
+                            url, _k, _s = save_file(name, data_url)
+                        atts_out.append({"url": url, "name": name, "kind": kind})
+                        if kind == "image" and image is None:
+                            image = url
+                elif pic:
+                    image = save_upload(pic)
             except ValueError as e:
                 return _json(400, {"ok": False, "error": str(e)})
-            st.add_chat("you", text.strip()[:2000], image=image, channel=ch)
+            st.add_chat("you", text.strip()[:2000], image=image, channel=ch,
+                        attachments=atts_out or None)
             thread = (st.list_chat(CHAT_HISTORY) if ch == "all" else
                       [m for m in st.list_chat(ALLCHAT_KEEP) if message_channel(m) == ch][-CHAT_HISTORY:])
             errors, routed = {}, []
@@ -13257,10 +13501,11 @@ def handle(method, path, query, headers, body):
     if path.startswith("/upload/"):
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
-        m = _UPLOAD_RE.match(upload_data(path) or "")
-        if not m:
-            return _json(404, {"ok": False, "error": "no such image"})
-        return 200, f"image/{m.group(1)}", base64.b64decode(m.group(2)), [("Cache-Control", "private, max-age=86400")]
+        got = _decode_data_url(upload_data(path))
+        if not got or got[0] not in ("image/jpeg", "image/png", "image/webp", "image/gif",
+                                     "application/pdf", "text/plain", "text/markdown"):
+            return _json(404, {"ok": False, "error": "no such upload"})
+        return 200, got[0], got[1], [("Cache-Control", "private, max-age=86400")]
 
     if path.startswith("/chart/") and path.endswith(".svg"):
         if not _auth_dashboard(query, headers):
