@@ -30,13 +30,13 @@ spec = importlib.util.spec_from_file_location("index", os.path.join(api_dir, "in
 h = importlib.util.module_from_spec(spec)
 sys.modules["index"] = h  # the entry module, as a function runtime holds it
 spec.loader.exec_module(h)
-SEVEN = ["web_search", "fetch_page", "task_create", "task_list", "task_complete", "task_reopen", "task_note"]
+TEN = ["web_search", "fetch_page", "task_create", "task_list", "task_complete", "task_reopen", "task_note", "follow_create", "follow_list", "follow_cancel"]
 assert h.BRIDGE_IMPORT_ERROR is None, h.BRIDGE_IMPORT_ERROR
-assert sorted(h.BRIDGE_TOOLS) == sorted(SEVEN), sorted(h.BRIDGE_TOOLS)
+assert sorted(h.BRIDGE_TOOLS) == sorted(TEN), sorted(h.BRIDGE_TOOLS)
 diag = h.tools_diag()
 assert diag["tools_layer"] == "ok", diag
 p = h.tools_prompt("mistral")
-assert all(f"ACTION: {t} |" in p for t in SEVEN), "prompt missing tools"
+assert all(f"ACTION: {t} |" in p for t in TEN), "prompt missing tools"
 out = h.run_actions("mistral", "ACTION: task_create | nopath probe")
 assert isinstance(out, str) and "Task created: nopath probe" in out, out
 out = h.run_actions("mistral", "ACTION: task_list | open")

@@ -1471,7 +1471,7 @@ def _tool_remember(arg, agent):
         mem = [m for m in memory() if m["text"].lower() != text.lower()]
         mem.append({"id": f"m{int(time.time() * 1000) % 10**10}", "text": text, "by": agent, "at": time.time()})
         store().set_meta("memory", json.dumps(mem[-MEMORY_MAX:]))
-    return f"Remembered for the whole crew: {text}"
+    return f"Remembered for the whole crew: {text} (a saved note, not monitoring)"
 
 
 def _tool_forget(arg, agent):
@@ -1716,7 +1716,7 @@ def _tool_ask_qwerty(arg, agent):
 
 
 TOOLS = {
-    "remember": ("remember | <a fact about the user, like Home: Saint George, UT>", _tool_remember, None),
+    "remember": ("remember | <a fact about the user, like Home: Saint George, UT> (a saved note only, not monitoring; use follow_create to watch something)", _tool_remember, None),
     "forget": ("forget | <words in a remembered fact or a note's title to delete> (not reminders)", _tool_forget, None),
     "cancel": ("cancel | <#number or words of a reminder to remove>", _tool_cancel, None),
     "remind": ("remind | <when and what, like 6pm call Mom, or 1/22/2027 oil change>", _tool_remind, None),

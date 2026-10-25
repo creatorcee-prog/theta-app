@@ -47,9 +47,9 @@ import importlib.util
 spec = importlib.util.spec_from_file_location("theta_hub", os.path.join(api_dir, "index.py"))
 h = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(h)
-SEVEN = ["web_search", "fetch_page", "task_create", "task_list", "task_complete", "task_reopen", "task_note"]
+TEN = ["web_search", "fetch_page", "task_create", "task_list", "task_complete", "task_reopen", "task_note", "follow_create", "follow_list", "follow_cancel"]
 assert h.BRIDGE_IMPORT_ERROR is None, h.BRIDGE_IMPORT_ERROR
-assert sorted(h.BRIDGE_TOOLS) == sorted(SEVEN), sorted(h.BRIDGE_TOOLS)
+assert sorted(h.BRIDGE_TOOLS) == sorted(TEN), sorted(h.BRIDGE_TOOLS)
 assert "index" not in sys.modules, "hub was imported as 'index' during load"
 # The injected reference must be the hub's own store function, and it
 # must return the hub's own store object: no second copy of the hub.
@@ -63,7 +63,7 @@ assert "index" not in sys.modules, "hub was imported as 'index' during tool runs
 diag = h.tools_diag()
 assert diag["import_error"] is None, diag
 assert diag["tools_layer"] == "ok", diag
-assert sorted(diag["bridge_tools"]) == sorted(SEVEN), diag
+assert sorted(diag["bridge_tools"]) == sorted(TEN), diag
 assert all(diag["mistral_prompt"].values()), diag
 print("CHILD-OK")
 '''

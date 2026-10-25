@@ -529,6 +529,21 @@ keep the full text). Search results carry no dates, so the sheet shows
 none. No server change: the footer parses the existing receipt text,
 and unparseable receipts render as plain text, as before.
 
+## Follows
+
+Agents can create persistent follow records with `follow_create`
+(title, with optional kind, frequency, channel, sources), list them
+with `follow_list`, and cancel them with `follow_cancel` (the record
+is kept as canceled, never deleted). Records live on the `hub:follows`
+key (Redis-backed in production), carry a state (active, paused,
+failed, canceled), a check frequency (hourly, daily, weekly), a
+channel (push, chat, both), and a `next_due` time, and creation is
+verified by reading the record back before success is reported.
+Creating the same active follow twice returns the existing record,
+not a duplicate. Scheduled checks are not live yet (Phase F2), and
+every receipt says so plainly; a `remember` result is a saved note,
+not monitoring, and says that too.
+
 ## HDR
 
 On displays that report a wide color gamut, theme accents and the Gemini

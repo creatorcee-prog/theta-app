@@ -1,6 +1,7 @@
 """Regression test: Mistral's normal hub prompt must include the seven
 Phase 4 tools (web_search, fetch_page, task_create, task_list,
-task_complete, task_reopen, task_note).
+task_complete, task_reopen, task_note) plus the three Follow F1 tools
+(follow_create, follow_list, follow_cancel).
 
 Guards the silent-failure mode where a failed tool_bridge import left
 agents with only the original tools: the old `except ImportError:
@@ -75,15 +76,15 @@ def call(method, path, qs="", headers=None, body=None):
 
 
 K = {"x-dashboard-key": "dk"}
-SIX = ["web_search", "fetch_page", "task_create", "task_list", "task_complete", "task_reopen", "task_note"]
+TEN = ["web_search", "fetch_page", "task_create", "task_list", "task_complete", "task_reopen", "task_note", "follow_create", "follow_list", "follow_cancel"]
 
 check("bridge import is healthy, not the silent {} fallback", h.BRIDGE_IMPORT_ERROR is None)
-check("BRIDGE_TOOLS holds all seven tools", sorted(h.BRIDGE_TOOLS) == sorted(SIX))
+check("BRIDGE_TOOLS holds all ten tools", sorted(h.BRIDGE_TOOLS) == sorted(TEN))
 p = h.tools_prompt("mistral")
-for t in SIX:
+for t in TEN:
     check(f"tools_prompt('mistral') lists {t}", f"ACTION: {t} |" in p)
 d = h.desk_system("mistral")
-for t in SIX:
+for t in TEN:
     check(f"desk_system('mistral') lists {t}", f"ACTION: {t} |" in d)
 if mode == "memory":
     out = h.run_actions("mistral", "ACTION: task_create | mistral tools probe")
@@ -105,6 +106,6 @@ html = b.decode()
 check("diagnostics page renders", s == 200)
 check("diagnostics shows the Tools section", ">Tools<" in html)
 check("diagnostics reports bridge import ok", "Import: ok" in html)
-for t in SIX:
+for t in TEN:
     check(f"diagnostics lists {t}", t in html)
 print("done")
