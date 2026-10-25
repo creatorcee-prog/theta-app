@@ -100,10 +100,10 @@ check("an active background clears the body background (or Chromium\'s propagate
       ':root[data-bg]:not([data-bg="theme"]) body{background:transparent}' in css)
 check("page pre-paints the html background for active backgrounds",
       'style="background:#000"' in h.page({"cookie": "theta_ui=theta.auto.grid.plus.shards"}, "T", "/", "<p>x</p>")
-      and 'style="background:#050508"' in h.page({"cookie": "theta_ui=theta.auto.grid.plus.gemini"}, "T", "/", "<p>x</p>")
+      and 'style="background:#000"' in h.page({"cookie": "theta_ui=theta.auto.grid.plus.gemini"}, "T", "/", "<p>x</p>")
       and 'style="background' not in h.page({}, "T", "/", "<p>x</p>"))
 check("Gemini background is a slow drifting aurora gradient",
-      "#bg-layer.bg-gemini{background-color:#050508;background-image:radial-gradient(700px 500px at 82% 8%,rgba(59,90,246,.55),transparent 70%),radial-gradient(800px 600px at 12% 88%,rgba(16,185,129,.38),transparent 70%),radial-gradient(600px 500px at 55% 45%,rgba(168,85,247,.30),transparent 70%);animation:bgGemini 26s ease-in-out infinite alternate}" in css
+      "#bg-layer.bg-gemini{background-color:#000;background-image:radial-gradient(1500px 900px at 70% 10%,rgba(23,60,170,.12),transparent 70%),radial-gradient(1300px 800px at 10% 45%,rgba(16,185,129,.09),transparent 70%),radial-gradient(800px 500px at 85% 25%,rgba(124,58,237,.07),transparent 70%);animation:bgGemini 48s ease-in-out infinite alternate}" in css
       and "@keyframes bgGemini" in css)
 check("reduced motion freezes the Gemini drift",
       "@media (prefers-reduced-motion: reduce){#bg-layer.bg-gemini{animation:none}}" in css)
@@ -120,13 +120,25 @@ check("engine draws shards with wall and shard collisions",
 check("engine draws twinkling stars",
       "initStars" in js and "drawStars" in js
       and "Math.sin(t * st.s + st.p)" in js)
+check("shards render real 3D glass first (raw WebGL, no library), 2D canvas as fallback",
+      "getContext(\"webgl\"" in js and "DEPTH_TEST" in js and "TRIANGLES" in js
+      and "data-engine" in js and "initShards3D" in js and "dispose3D" in js and "ensure3D" in js)
 check("shards are many small bright fragments that glint as they tumble",
       "initShards" in js and "drawShards" in js
-      and "W * H / 9000" in js
-      and "rnd(10, 22)" in js and "rnd(2, 9)" in js
+      and "W * H / 1800" in js
+      and "rnd(2.5, 4)" in js and "rnd(1, 2.5)" in js
+      and "rnd(-.5, .5)" in js and "rnd(.85, 1)" in js
+      and "Math.pow(Math.random(), 0.6)" in js
+      and "Math.random() < 0.75" in js
+      and "rnd(1.5, 3)" in js and "rnd(3, 4.5)" in js and "Math.pow(Math.random(), 0.35)" in js and "a.r < 2.5" in js and "0.01 + al * 0.04" in js
       and "Math.sin(sh.rot * 2 + sh.p)" in js
       and 'rgba(215,230,255,' in js and 'rgba(255,255,255,' in js
-      and "TINTS" not in js)
+      and "TINTS" not in js
+      and "addColorStop" in js
+      and "d *= 0.45" in js and "rnd(.8, 1.4)" in js and "0.35 + 0.65 * lit" in js and "1.0 + sh.z / 300.0" in js
+      and "rnd(120, 250)" in js and "rnd(-250, -100)" in js and "rnd(0.5, 0.9)" in js and "rnd(6, 8)" in js and "rnd(1.0, 1.5)" in js and "pl < 0.08 && cluster" in js and "d *= 0.35" in js and "sh.z > 100 ? 0.5" in js and "slice(0, 320)" in js and "massPts" in js and "gl.POINTS" in js and "gl_PointSize" in js and "smoothstep(0.15, 0.0" in js and "smoothstep(-0.15, 0.15, rp.y)" in js and "sin(3.0 * ang" in js and "rimBand" in js and "rnd(1.6, 3.2)" in js and "attribute float aZ" in js and "(massPts.length + fgPts.length) * 7" in js and "fgPts" in js and "rnd(2.0, 3.7)" in js and "rimG" in js and "Math.sin(3 * a" in js and "smoothstep(1.0, 0.55, dd) * 0.8" in js and "mp.s * 5 * pts.dpr" in js and "rp.y * 5.0" in js and "(massPts.length + fgPts.length) * 7" in js and "ctx.ellipse" in js and "W * H / 750" in js and "(0.8 + Math.pow(Math.random(), 0.3) / 5)" in js and "/ 3 * 0.6" in js and "H * 0.3" in js and "Math.random() + Math.random() + Math.random()" in js and "H * 0.2" in js
+      and "OES_standard_derivatives" in js and "vBary" in js and "edgeGlow" in js and "pow(nl, 4.0)" in js and "0.35 + fres * 0.45" in js and "(0.16 + fres * 0.6)" in js and "0.04 + al * 0.18" in js
+      and "al * 0.35" in js and "7 + Math.floor(Math.random() * 5)" in js)
 check("engine animates with rAF and freezes under reduced motion",
       "requestAnimationFrame" in js
       and 'matchMedia("(prefers-reduced-motion: reduce)")' in js

@@ -478,12 +478,26 @@ offers Theme (the default: the theme's own background),
 Shards, Stars, Black, and Gemini, and any color scheme works
 with any of them. The choice is a fifth segment of the
 `theta_ui` cookie (`theme.mode.layout.glassstyle.bg`, default
-`theme`), rendered as `data-bg` on the page. Shards is many small bright glass fragments on black,
-drifting and tumbling and catching the light as they turn,
-bouncing off each other and the walls; Stars is twinkling
+`theme`), rendered as `data-bg` on the page. Shards is hundreds of tiny realistic glass slivers on black
+(a handful of faint 9-14px irregular chipped anchors with faint but
+visible dark glassy bodies where only one or two
+facets catch the light,
+confined to the cluster mass, 2-8px fragments at mid
+depth, 1-2px dim specks far away, plus over a thousand
+1-4px faint faceted chipped specks with bright rims on their lit side, plus a sparse tier of 8-16px pieces with the same treatment, sized and lit by depth plane (near pieces larger, brighter, stronger-rimmed), plus a sparse foreground tier of 16-30px shards scattered in the open field, forming a dense thicket hard against
+the right edge, concentrated in the middle vertical band,
+thinning leftward), rendered as real 3D prisms
+with a raw-WebGL glass shader (fresnel rims + speculars
+from fixed lights, true depth occlusion, tumbling on all
+axes), bouncing off each other and the walls; a 2D
+canvas painter with the same distribution and physics
+is the fallback if WebGL is unavailable, and no library
+or network fetch is involved Stars is twinkling
 stars on black;
-Black is plain black; Gemini is the slow drifting aurora
-gradient from the Gemini app. The background layer sits
+Black is plain black; Gemini is the dark ambient wash from
+the Gemini app: soft radial lobes, deep blue upper-right
+and faint green mid-left, fading to black on their own,
+drifting very slowly. The background layer sits
 behind all content and is opaque, so it never fights the
 theme. Canvas modes animate with requestAnimationFrame
 (which pauses while the tab is hidden) and freeze under
