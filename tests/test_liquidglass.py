@@ -121,8 +121,12 @@ check("liquid everywhere touches no images",
 check("liquid corners use a squircle mask over the radius fallback",
       "mask-border:url(\"data:image/png;base64," in css
       and "-webkit-mask-box-image:url(\"data:image/png;base64," in css
-      and "30 / 18px stretch" in css
-      and "30 / 18px / 0 stretch" in css
-      and "30 / 20px / 0 stretch" in css)
+      and "30 fill / 18px stretch" in css
+      and "30 fill / 18px / 0 stretch" in css
+      and "30 fill / 20px / 0 stretch" in css)
+check("squircle masks keep their middle (fill), or Safari shows a hole",
+      "30 fill / 18px stretch" in css
+      and "30 fill / 18px / 0 stretch" in css
+      and "30 fill / 20px / 0 stretch" in css)
 
 print("liquidglass: all checks passed")
