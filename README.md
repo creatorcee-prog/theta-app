@@ -533,10 +533,45 @@ In the All Agents chat, an agent that needs current facts replies
 `SEARCH: <query>`, and the app searches with Gemini (Google Search)
 before the agent answers from the results. If that Gemini search
 fails — including the free-tier 429 — the app falls back to the
-bridge web_search (DuckDuckGo, or Tavily/Serper when keyed) and the
-reply says so in a note under the Sources list. The monthly search
-budget is unchanged: a used-up budget does not fall back, and
-fallback searches do not consume it.
+bridge web_search (a keyed provider when one is configured, else
+the DuckDuckGo path below) and the reply says so in a note under
+the Sources list. The monthly search budget is unchanged: a used-up
+budget does not fall back, and fallback searches do not consume it.
+
+## Search providers
+
+`web_search` (the ACTION tool and the Gemini-search fallback) picks
+its backend from `SEARCH_PROVIDER` (default `duckduckgo`) and
+`SEARCH_API_KEY` (which also accepts `TAVILY_API_KEY` or
+`SERPER_API_KEY`):
+
+- `SEARCH_PROVIDER=tavily` + key → Tavily's search API (a real web
+  index: titles, URLs, snippets for general and news queries).
+- `SEARCH_PROVIDER=serper` + key → Serper (Google results).
+- Unset, or `SEARCH_PROVIDER=duckduckgo` → DuckDuckGo Instant Answer,
+  no key needed. This is an instant-answer lookup, NOT a general web
+  index: entity queries return an abstract and related topics, but
+  general web and news queries usually come back empty. An empty
+  there is genuine but is not proof the web has nothing, and the
+  receipt says so.
+
+Selection is explicit: naming `tavily` or `serper` without a key is
+a `not_configured` error, never a silent downgrade to DuckDuckGo,
+and an unknown provider name is an error. Other failures are typed
+too: `auth` (401/403), `rate_limit` (429), `timeout`, `network`,
+`malformed`, `provider_error`. A failed search is always an error,
+never a successful empty list. Results are validated (contentless
+items and non-http(s) URLs dropped) and capped at the requested
+count (max 10).
+
+For general search in production, set two Vercel environment
+variables and redeploy: `SEARCH_PROVIDER=tavily` and
+`TAVILY_API_KEY` (a Tavily key; or `SEARCH_PROVIDER=serper` with a
+Serper key). With no key set, only the DuckDuckGo path is available
+and general queries will often return empty — that is the documented
+limitation, not a bug to chase further. Page fetching stays
+separate: `fetch_page` retrieves a chosen URL and keeps its SSRF
+guard (public hosts only, redirects re-checked).
 
 ## Follows
 
