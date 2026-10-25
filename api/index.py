@@ -1925,14 +1925,16 @@ def system_prompt(agent_id, tools=False, now=True):
             "numbered lists for several items, - [ ] for to-dos, a fenced code block for code, headings for "
             "long answers, and **bold** sparingly; pick the format yourself when it is clearly better than plain "
             "prose, and keep it simple when it is not. Never invent data to fill a table or list. The chat also "
-            "renders blockquotes (> ), code blocks with a Copy button, and these fenced cards when they genuinely "
-            "fit: ```config with select Label: a | b and check Label: on|off lines (the user picks, then Submit sends "
-            "the choices as a chat message), ```doc for a reusable draft (Copy, Edit, Save posts the edited text as a "
-            "chat message), ```flow with A -> B -> C lines (workflow boxes), and ```bars with Label: number lines "
-            "(bars, negatives count as 0). Never describe a control the chat cannot show: it cannot show line charts, "
-            "radio groups, or architecture diagrams, and buttons in chat exist only when the server issues them "
-            "(QWERTY proposals, James commands) — agents never emit buttons. Images only with ![alt](https link) for "
-            "a link you were given)."
+            "renders blockquotes (> ), code blocks titled by their language (Copy, Edit, and a Preview for HTML), "
+            "and these fenced cards when they genuinely fit: ```config with select Label: a | b and check Label: on|off "
+            "lines (the user picks, then Submit sends the choices as a chat message), ```doc for a reusable draft "
+            "(Copy, Edit, Save posts the edited text as a chat message), ```flow with A -> B -> C lines (workflow "
+            "boxes), ```bars with Label: number lines (bars, negatives count as 0), and ```quiz with a question on "
+            "the first line and - option lines after it (the user picks one, then Submit sends the choice as a chat "
+            "message — use this when you are unsure what the user means instead of asking a paragraph of questions). "
+            "Never describe a control the chat cannot show: it cannot show line charts or architecture diagrams, "
+            "and buttons in chat exist only on cards and server-issued messages (QWERTY proposals, James commands) "
+            "— agents never emit buttons. Images only with ![alt](https link) for a link you were given)."
             f"{extra}{now_line() if now else ''}{memory_prompt()}"
             f"{chr(10) * 2 + HUB_GUIDE + hub_rules(agent_id) + tools_prompt(agent_id) if tools and not a.get('home') else ''}")
 
@@ -8326,15 +8328,15 @@ _BASE_CSS = r'''
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%;--r:18px;--r-sm:12px;--pad:18px;--gap:14px;--glass-blur:22px;--tabh:calc(60px + env(safe-area-inset-bottom))}
 body{margin:0;background:var(--bg);color:var(--text);min-height:100dvh;
- font:15px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Inter,Roboto,system-ui,sans-serif;
+ font:16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Inter,Roboto,system-ui,sans-serif;
  -webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
 body::before{content:"";position:fixed;inset:0;z-index:-1;background:var(--glowbg);pointer-events:none}
 :root[data-font="mono"] body{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:14px}
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
 h1,h2,h3{margin:0;letter-spacing:-.018em;line-height:1.2}
-h1{font-size:28px;font-weight:780}
-h2{font-size:19px;font-weight:720}
+h1{font-size:30px;font-weight:780}
+h2{font-size:20px;font-weight:720}
 h3{font-size:15px;font-weight:680}
 p{margin:.4em 0}
 code{font:12.5px ui-monospace,Menlo,monospace;background:var(--surface2);padding:1px 5px;border-radius:6px}
@@ -8389,8 +8391,8 @@ body.typing .tabbar{display:none}
 .top.tight{flex-wrap:nowrap;align-items:center}
 .top.tight .btn{flex:none}
 .note:empty{display:none}
-@media (max-width:520px){.top h1{font-size:26px}.top .btn.rr span{display:none}.top .btn.rr{padding:11px}}
-.top h1{font-size:30px}
+@media (max-width:520px){.top h1{font-size:28px}.top .btn.rr span{display:none}.top .btn.rr{padding:11px}}
+.top h1{font-size:32px}
 .sect{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:30px 0 12px}
 .sect a{font-weight:650;font-size:14px}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:var(--r-sm);padding:10px 15px;font-weight:680;
@@ -8398,7 +8400,7 @@ body.typing .tabbar{display:none}
 .btn:hover{filter:brightness(1.07);text-decoration:none}
 .btn:active{transform:scale(.97)}
 .btn.ghost{background:var(--surface2);color:var(--text);border:1px solid var(--border)}
-.btn.small{padding:6px 11px;font-size:13px;border-radius:10px}
+.btn.small{padding:6px 11px;font-size:14px;border-radius:10px}
 .btn:disabled{opacity:.55;cursor:default}
 .btn svg{width:18px;height:18px}
 /* Message action buttons (card Submit, doc Copy/Edit/Save, server buttons) are glass,
@@ -8410,7 +8412,7 @@ body.typing .tabbar{display:none}
  background:var(--surface2);color:var(--muted);border:1px solid var(--border);text-decoration:none;white-space:nowrap}
 .chip.on{background:var(--accent);color:var(--on);border-color:transparent}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
-.note{font-size:13px;color:var(--muted);min-height:18px}
+.note{font-size:14px;color:var(--muted);min-height:18px}
 .list{list-style:none;margin:0;padding:0}
 .list li{padding:10px 0;border-bottom:1px solid var(--border)}
 .list li:last-child{border-bottom:0}
@@ -8497,9 +8499,9 @@ dialog.sheet[open]{animation:up .22s cubic-bezier(.2,.8,.2,1)}
 .sheet .scroll{overflow-y:auto;padding-bottom:calc(env(safe-area-inset-bottom) + 18px)}
 .sheet .pic{aspect-ratio:16/9;border-radius:0}
 .sheet .in{padding:16px 20px 4px;display:flex;flex-direction:column;gap:10px}
-.sheet h2{font-size:21px;line-height:1.25}
+.sheet h2{font-size:22px;line-height:1.25}
 .sheet .text{color:var(--text);font-size:15px;line-height:1.5}
-.sheet .covlist{display:grid;gap:6px;font-size:13px}
+.sheet .covlist{display:grid;gap:6px;font-size:14px}
 .sheet .covlist b{display:inline-block;min-width:44px}
 .sheet .acts{display:flex;flex-wrap:wrap;gap:8px;padding-top:4px}
 .sheet .remind{display:grid;gap:8px}
@@ -8514,7 +8516,7 @@ dialog.sheet[open]{animation:up .22s cubic-bezier(.2,.8,.2,1)}
 .pf-g{stroke:var(--border);stroke-width:1}.pf-l{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
 .pf-l.s1{stroke:var(--s1)}.pf-l.s2{stroke:var(--s2)}.pf-x{stroke:var(--muted);stroke-width:1;opacity:0}
 .pf-tip{position:absolute;top:0;pointer-events:none;opacity:0;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:6px 9px;font-size:12px;line-height:1.5;white-space:nowrap;transition:opacity .12s}
-.pf-t{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+.pf-t{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
 .pf-t th,.pf-t td{text-align:left;padding:6px 4px;border-bottom:1px solid var(--border);white-space:nowrap}
 .pf-t th{color:var(--muted);font-weight:600;font-size:12px}.pf-t .up{color:var(--good,#16a34a)}.pf-t .down{color:var(--bad)}
 .sheet .remind .brow{align-items:center;gap:10px}
@@ -8622,7 +8624,7 @@ body.typing .chat{height:100dvh}
 .msg.mine .meta{display:none}
 @supports (backdrop-filter:blur(1px)){
  .msg.mine .mbody{background:color-mix(in srgb,var(--surface) 72%,transparent);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);backdrop-filter:blur(var(--glass-blur)) saturate(160%)}}
-.msg .mbody{font-size:16px}
+.msg .mbody{font-size:17px}
 #msgs ::selection{background:transparent}
 .mbody{max-width:76ch}
 .new{animation:pop .25s ease-out}
@@ -8659,7 +8661,7 @@ body.typing .chat{height:100dvh}
    stop the page itself from sliding sideways (scrolling strips inside it still scroll). */
 @media (pointer:coarse){input:not([type=checkbox]):not([type=radio]),textarea,select{font-size:16px!important}}
 html,body{overflow-x:clip;max-width:100%}
-.md>div:empty.md-gap{height:.5em}.md .md-h{font-weight:700;margin-top:4px}
+.md>div:empty.md-gap{height:.5em}.md .md-h{font-weight:700;font-size:18px;margin-top:4px}
 .md .md-list{margin:2px 0;padding-left:1.3em;white-space:normal}.md .md-list li{margin:2px 0}
 .md .md-list.tasks{list-style:none;padding-left:0}.md li.task{display:flex;gap:8px;align-items:flex-start}
 .md li.task input{margin-top:4px;flex-shrink:0;accent-color:var(--accent);width:18px;height:18px;cursor:pointer}
@@ -8670,27 +8672,27 @@ html,body{overflow-x:clip;max-width:100%}
 .md .md-table th,.md .md-table td{border-bottom:1px solid var(--border);padding:9px 12px;text-align:left;vertical-align:top;overflow-wrap:break-word;word-break:normal;white-space:normal;min-width:5.5em}
 .md .md-table tr:last-child td{border-bottom:0}
 .md .md-table th{background:var(--surface2);font-weight:650}
-.md pre{background:var(--surface2);border:1px solid var(--border);padding:9px 11px;border-radius:10px;overflow-x:auto;max-height:340px;overflow-y:auto;font-size:13px;margin:6px 0;white-space:pre}
+.md pre{background:var(--surface2);border:1px solid var(--border);padding:9px 11px;border-radius:10px;overflow-x:auto;max-height:340px;overflow-y:auto;font-size:14px;margin:6px 0;white-space:pre}
 .md code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;background:var(--surface2);border-radius:5px;padding:0 4px}
 .md pre code{background:none;padding:0}.md .md-img{max-width:100%;border-radius:10px;margin:6px 0;display:block}
 .md .md-quote{border-left:3px solid var(--accent);padding:2px 0 2px 12px;color:var(--muted);margin:6px 0}
 .md .codeblock{border:1px solid var(--border);border-radius:16px;background:var(--surface);color:var(--text);overflow:hidden;margin:6px 0}
 @supports (backdrop-filter:blur(1px)){
  .md .codeblock{background:color-mix(in srgb,var(--surface) 72%,transparent);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);backdrop-filter:blur(var(--glass-blur)) saturate(160%)}}
-:root[data-glassstyle="liquid"] .md .codeblock{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset 0 1px 0 rgba(255,255,255,.45),inset 0 -1px 0 rgba(255,255,255,.12),0 12px 32px rgba(0,0,0,.28);border:0}
+:root[data-glassstyle="liquid"] .md .codeblock{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.45),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.12),0 12px 32px rgba(0,0,0,.28);border:0}
 /* The codeblock pre stays transparent inside the glass box: without this, the liquid
    .md pre rule would put a second liquid panel (and mask) inside it. */
 :root[data-glassstyle="liquid"] .md.codeblock pre{background:transparent;color:var(--text);-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:none;-webkit-mask-box-image:none;mask-border:none}
 .md .codeblock .chead{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid var(--border)}
-.md .codeblock .chead .clabel{font-size:13px;font-weight:650;color:var(--muted)}
+.md .codeblock .chead .clabel{font-size:14px;font-weight:650;color:var(--muted)}
 .md .codeblock .cbtn{display:grid;place-items:center;width:32px;height:32px;padding:0;border:0;background:transparent;color:var(--muted);cursor:pointer;border-radius:8px}
 .md .codeblock .cbtn:hover{color:var(--text);background:var(--surface2)}
 .md .codeblock .cbtn svg{width:18px;height:18px}
 .md .codeblock .cbtn.is-success{color:#4ade80}
 .md .codeblock .cbtn.is-error{color:#f87171}
 .md .codeblock pre{border:0;border-radius:0;margin:0;background:transparent}
-.md .doccard,.md .cfgcard{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:var(--pad);box-shadow:var(--shadow);margin:8px 0}
-.md .doc-title{font-weight:700;font-size:16px;margin-bottom:8px}
+.md .doccard,.md .cfgcard,.md .quizcard{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:var(--pad);box-shadow:var(--shadow);margin:8px 0}
+.md .doc-title{font-weight:700;font-size:17px;margin-bottom:8px}
 .md .docbody{white-space:pre-wrap;overflow-wrap:anywhere}
 .md .doccard textarea.field{margin:8px 0}
 .md .cfgrow{display:flex;align-items:center;gap:10px;margin:10px 0}
@@ -8698,6 +8700,18 @@ html,body{overflow-x:clip;max-width:100%}
 .md .cfgrow select.field{flex:1;min-width:120px}
 .md .cfgrow input[type=checkbox]{flex-shrink:0;accent-color:var(--accent);width:18px;height:18px;cursor:pointer}
 .md .cfgstatus{margin-top:8px}
+.md .codeblock .chead-acts{display:flex;gap:6px;align-items:center}
+.msg .mbtn{display:grid;place-items:center;width:32px;height:32px;padding:0;border:0;background:transparent;color:var(--muted);cursor:pointer;border-radius:8px}
+.msg .mbtn:hover{color:var(--text);background:var(--surface2)}
+.msg .mbtn svg{width:18px;height:18px}
+.msg .mbtn.is-success{color:#4ade80}
+.msg .mbtn.is-error{color:#f87171}
+.msg .mmenu{margin-top:6px;border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+.msg .mmenu-item{display:block;width:100%;text-align:left;padding:10px 12px;border:0;background:transparent;color:var(--text);font:inherit;cursor:pointer}
+.msg .mmenu-item:hover{background:var(--surface2)}
+.msg .mmenu-item + .mmenu-item{border-top:1px solid var(--border)}
+.md .quizrow{display:flex;gap:8px;align-items:flex-start;padding:7px 0;cursor:pointer}
+.md .quizrow input{margin-top:2px;accent-color:var(--accent);width:18px;height:18px;flex-shrink:0;cursor:pointer}
 .md .flow{display:flex;flex-direction:column;margin:8px 0}
 .md .fnode{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 14px;font-weight:650;text-align:center}
 .md .farrow{text-align:center;color:var(--muted);padding:4px 0}
@@ -8706,12 +8720,12 @@ html,body{overflow-x:clip;max-width:100%}
 .md .bar-track{flex:1;background:var(--surface2);border-radius:999px;height:14px;overflow:hidden}
 .md .bar-fill{height:100%;background:var(--accent);border-radius:999px}
 .md .bar-val{font-variant-numeric:tabular-nums;font-size:14px;color:var(--muted)}
-@media (pointer:coarse){.md .doccard .btn,.md .cfgcard .btn,.md .codeblock .cbtn{min-height:44px;min-width:44px}}
+@media (pointer:coarse){.md .doccard .btn,.md .cfgcard .btn,.md .quizcard .btn,.md .codeblock .cbtn,.msg .mbtn{min-height:44px;min-width:44px}}
 .caret{display:inline-block;width:7px;height:1.05em;vertical-align:-2px;margin-left:2px;border-radius:2px;background:var(--accent);animation:blink 1s steps(1) infinite}
 @keyframes blink{50%{opacity:0}}
 .text .at{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);border-radius:5px;padding:0 3px;font-weight:620}
 .att{display:block;max-width:min(100%,440px);border-radius:12px;margin-top:6px;border:1px solid var(--border);background:#fff}
-.evt{display:flex;gap:8px;align-items:flex-start;padding:4px 16px 4px 28px;color:var(--muted);font-size:13px}
+.evt{display:flex;gap:8px;align-items:flex-start;padding:4px 16px 4px 28px;color:var(--muted);font-size:14px}
 .evt img{width:16px;height:16px;border-radius:5px;margin-top:2px;flex:none}
 .evt span{overflow-wrap:anywhere}
 .daysep{display:flex;align-items:center;gap:10px;margin:14px 16px 6px;font-size:11.5px;font-weight:700;color:var(--muted)}
@@ -8885,8 +8899,8 @@ select.field{width:auto;flex:1;min-width:120px}
  .glass{background:color-mix(in srgb,var(--surface) 72%,transparent);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);backdrop-filter:blur(var(--glass-blur)) saturate(160%)}}
 /* Liquid Glass: the same surfaces with a specular gloss, stronger blur, and edge light.
    Edges come from inset shadows, never borders, so own-message bubbles stay borderless. */
-:root[data-glassstyle="liquid"] .glass{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%),var(--surface);box-shadow:inset 0 1px 0 rgba(255,255,255,.45),inset 0 -1px 0 rgba(255,255,255,.12),inset 1px 0 0 rgba(255,255,255,.12),0 12px 32px rgba(0,0,0,.28)}
-:root[data-glassstyle="liquid"] .msg.mine .mbody{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%),var(--surface);box-shadow:inset 0 1px 0 rgba(255,255,255,.45),inset 0 -1px 0 rgba(255,255,255,.12),0 12px 32px rgba(0,0,0,.28)}
+:root[data-glassstyle="liquid"] .glass{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%),var(--surface);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.45),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.12),inset 1px 0 0 rgba(255,255,255,.12),0 12px 32px rgba(0,0,0,.28)}
+:root[data-glassstyle="liquid"] .msg.mine .mbody{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%),var(--surface);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.45),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.12),0 12px 32px rgba(0,0,0,.28)}
 @supports (backdrop-filter:blur(1px)){
  :root[data-glassstyle="liquid"] .glass{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%)}
  :root[data-glassstyle="liquid"] .msg.mine .mbody{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%)}}
@@ -8894,12 +8908,12 @@ select.field{width:auto;flex:1;min-width:120px}
    surface and control. Buttons and chips keep their colors and get edge light only, so accent
    states survive. Pills, circles, and images are untouched. */
 @supports (backdrop-filter:blur(1px)){
- :root[data-glassstyle="liquid"] .card,:root[data-glassstyle="liquid"] .win,:root[data-glassstyle="liquid"] .kpi,:root[data-glassstyle="liquid"] .sw,:root[data-glassstyle="liquid"] .lo,:root[data-glassstyle="liquid"] .lrow,:root[data-glassstyle="liquid"] #chat-menu{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset 0 1px 0 rgba(255,255,255,.45),inset 0 -1px 0 rgba(255,255,255,.12),0 12px 32px rgba(0,0,0,.28)}
- :root[data-glassstyle="liquid"] .box,:root[data-glassstyle="liquid"] .field,:root[data-glassstyle="liquid"] .seg,:root[data-glassstyle="liquid"] .fchip,:root[data-glassstyle="liquid"] .minibox,:root[data-glassstyle="liquid"] .md pre{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface2) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset 0 1px 0 rgba(255,255,255,.45),inset 0 -1px 0 rgba(255,255,255,.12)}
- :root[data-glassstyle="liquid"] dialog.sheet{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--bg) 82%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset 0 1px 0 rgba(255,255,255,.45),inset 0 -1px 0 rgba(255,255,255,.12),0 12px 32px rgba(0,0,0,.28)}
+ :root[data-glassstyle="liquid"] .card,:root[data-glassstyle="liquid"] .win,:root[data-glassstyle="liquid"] .kpi,:root[data-glassstyle="liquid"] .sw,:root[data-glassstyle="liquid"] .lo,:root[data-glassstyle="liquid"] .lrow,:root[data-glassstyle="liquid"] #chat-menu{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.45),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.12),0 12px 32px rgba(0,0,0,.28)}
+ :root[data-glassstyle="liquid"] .box,:root[data-glassstyle="liquid"] .field,:root[data-glassstyle="liquid"] .seg,:root[data-glassstyle="liquid"] .fchip,:root[data-glassstyle="liquid"] .minibox,:root[data-glassstyle="liquid"] .md pre{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface2) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.45),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.12)}
+ :root[data-glassstyle="liquid"] dialog.sheet{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--bg) 82%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.45),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.12),0 12px 32px rgba(0,0,0,.28)}
  :root[data-glassstyle="liquid"] .mrow:hover,:root[data-glassstyle="liquid"] .crewlink:hover{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%),color-mix(in srgb,var(--surface2) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%)}}
-:root[data-glassstyle="liquid"] .btn,:root[data-glassstyle="liquid"] .seg button,:root[data-glassstyle="liquid"] .chip{box-shadow:inset 0 1px 0 rgba(255,255,255,.35),inset 0 -1px 0 rgba(255,255,255,.10)}
-:root[data-glassstyle="liquid"] .msg-acts .btn{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset 0 1px 0 rgba(255,255,255,.45),inset 0 -1px 0 rgba(255,255,255,.12);border:0}
+:root[data-glassstyle="liquid"] .btn,:root[data-glassstyle="liquid"] .seg button,:root[data-glassstyle="liquid"] .chip{box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.35),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.10)}
+:root[data-glassstyle="liquid"] .msg-acts .btn{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.45),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.12);border:0}
 /* G2/G3 continuous curvature in liquid mode: browsers have no native corner-shape, so the
    squircle comes from a 9-slice mask (fixed corners, stretching edges) over the existing
    border-radius fallback. The mask is a 100px PNG: Chromium stretches an SVG mask to the
@@ -9098,6 +9112,50 @@ _UI_JS_SRC = r'''
     markTilt();
   });
 
+  // Liquid Glass edge light follows the phone's gyro and the
+  // cursor: the inset highlights shift with tilt or pointer.
+  // Liquid mode only, throttled, and never with reduced
+  // motion. Unlike the picture shine it is not gated on the
+  // shine setting; iOS still needs one tap to allow motion,
+  // and touch position covers a denied request.
+  let edgeX = 0, edgeY = 0, edgeLast = 0, edgeFrame = 0, edgeGyroStarted = false;
+  const edgeLiquid = () => document.documentElement.dataset.glassstyle === "liquid";
+  function edgeSet(x, y) {
+    if (still || !edgeLiquid()) return;
+    const now = performance.now();
+    if (now - edgeLast < 50) return;
+    x = Math.max(-1, Math.min(1, x)); y = Math.max(-1, Math.min(1, y));
+    if (Math.abs(x - edgeX) < 0.05 && Math.abs(y - edgeY) < 0.05) return;
+    edgeLast = now; edgeX = x; edgeY = y;
+    cancelAnimationFrame(edgeFrame);
+    edgeFrame = requestAnimationFrame(() => {
+      document.documentElement.style.setProperty("--shine-x", edgeX.toFixed(2));
+      document.documentElement.style.setProperty("--shine-y", edgeY.toFixed(2));
+    });
+  }
+  document.addEventListener("pointermove", e => {
+    if (e.pointerType !== "mouse") return;
+    edgeSet(e.clientX / innerWidth * 2 - 1, e.clientY / innerHeight * 2 - 1);
+  });
+  document.addEventListener("touchmove", e => {
+    const t = e.touches && e.touches[0]; if (!t) return;
+    edgeSet(t.clientX / innerWidth * 2 - 1, t.clientY / innerHeight * 2 - 1);
+  }, {passive: true});
+  async function startEdgeGyro() {
+    const D = window.DeviceOrientationEvent;
+    if (!D || still) return false;
+    if (typeof D.requestPermission === "function") {
+      try { if ((await D.requestPermission()) !== "granted") return false; } catch (_) { return false; }
+    }
+    addEventListener("deviceorientation", e => {
+      if (e.gamma == null || document.hidden) return;
+      edgeSet(e.gamma / 45, (e.beta - 45) / 45);
+    });
+    return true;
+  }
+  if (!(window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === "function")) { edgeGyroStarted = true; startEdgeGyro(); }
+  else addEventListener("pointerdown", () => { if (edgeGyroStarted || !edgeLiquid()) return; edgeGyroStarted = true; startEdgeGyro(); });
+
   // A bar runs across the top while the next page loads.
   const bar = document.createElement("div");
   bar.id = "loadbar"; document.body.append(bar);
@@ -9174,6 +9232,7 @@ _UI_JS_SRC = r'''
     if (d.page) {
       const ask = el("a", "btn ghost", "Ask " + d.name); ask.href = "/chat?to=" + d.agent;
       const pg = el("a", "btn ghost", d.name + "'s page"); pg.href = d.page;
+      if (/^https?:/.test(d.page)) { pg.target = "_blank"; pg.rel = "noopener"; }
       acts.append(ask, pg);
     }
     inn.append(acts);
@@ -9284,6 +9343,60 @@ _CHAT_JS = r'''
     img.width = img.height = size; img.alt = ""; img.className = "av";
     return img;
   }
+  function cel(tag, cls, txt) { const x = document.createElement(tag); if (cls) x.className = cls; if (txt != null) x.textContent = txt; return x; };
+  const SVGNS = "http://www.w3.org/2000/svg";
+  function iconSvg(kind) {
+    const svg = document.createElementNS(SVGNS, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor"); svg.setAttribute("stroke-width", "2");
+    svg.setAttribute("stroke-linecap", "round"); svg.setAttribute("stroke-linejoin", "round");
+    svg.setAttribute("aria-hidden", "true");
+    if (kind === "check") {
+      const pl = document.createElementNS(SVGNS, "polyline");
+      pl.setAttribute("points", "20 6 9 17 4 12"); svg.append(pl);
+    } else if (kind === "share") {
+      const pa = document.createElementNS(SVGNS, "path");
+      pa.setAttribute("d", "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4");
+      const pl = document.createElementNS(SVGNS, "polyline");
+      pl.setAttribute("points", "17 8 12 3 7 8");
+      const ln = document.createElementNS(SVGNS, "line");
+      ln.setAttribute("x1", "12"); ln.setAttribute("y1", "3"); ln.setAttribute("x2", "12"); ln.setAttribute("y2", "15");
+      svg.append(pa, pl, ln);
+    } else if (kind === "more") {
+      for (const cx of [5, 12, 19]) {
+        const c = document.createElementNS(SVGNS, "circle");
+        c.setAttribute("cx", cx); c.setAttribute("cy", "12"); c.setAttribute("r", "1"); svg.append(c);
+      }
+    } else {
+      const r = document.createElementNS(SVGNS, "rect");
+      r.setAttribute("x", "9"); r.setAttribute("y", "9"); r.setAttribute("width", "13"); r.setAttribute("height", "13"); r.setAttribute("rx", "2"); svg.append(r);
+      const pa = document.createElementNS(SVGNS, "path");
+      pa.setAttribute("d", "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"); svg.append(pa);
+    }
+    return svg;
+  }
+  function copyBtn(getText, icon, cls, label) {
+    const b = icon ? cel("button", cls || "cbtn") : cel("button", "btn small ghost", "Copy");
+    b.type = "button";
+    if (icon) { b.append(iconSvg("copy")); b.setAttribute("aria-label", label || "Copy code"); }
+    b.onclick = async () => {
+      let ok = false;
+      try { await navigator.clipboard.writeText(getText()); ok = true; }
+      catch (_) {
+        try {
+          const ta = document.createElement("textarea");
+          ta.value = getText(); ta.style.cssText = "position:fixed;opacity:0";
+          document.body.append(ta); ta.select();
+          ok = document.execCommand("copy"); ta.remove();
+        } catch (_) { ok = false; }
+      }
+      if (icon) { b.replaceChildren(iconSvg(ok ? "check" : "copy")); b.setAttribute("aria-label", ok ? "Copied" : "Copy failed"); }
+      else { b.textContent = ok ? "Copied" : "Copy failed"; }
+      b.classList.toggle("is-success", ok); b.classList.toggle("is-error", !ok);
+      setTimeout(() => { if (icon) { b.replaceChildren(iconSvg("copy")); b.setAttribute("aria-label", label || "Copy code"); } else { b.textContent = "Copy"; } b.classList.remove("is-success", "is-error"); }, 1500);
+    };
+    return b;
+  }
   // Text with links, @mentions and a safe subset of markdown: tables, lists
   // and checklists, code blocks, headings, **bold**, *italic*, `code` and
   // https images. Built from nodes, never innerHTML, so nothing in a
@@ -9334,46 +9447,6 @@ _CHAT_JS = r'''
     // Icon form for code headers (label "Code" beside it); text form for doc cards.
     // Icons are built with createElementNS, never injected markup (model text must
     // never pass through injected markup anywhere in this script).
-    const SVGNS = "http://www.w3.org/2000/svg";
-    function iconSvg(kind) {
-      const svg = document.createElementNS(SVGNS, "svg");
-      svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("fill", "none");
-      svg.setAttribute("stroke", "currentColor"); svg.setAttribute("stroke-width", "2");
-      svg.setAttribute("stroke-linecap", "round"); svg.setAttribute("stroke-linejoin", "round");
-      svg.setAttribute("aria-hidden", "true");
-      if (kind === "check") {
-        const pl = document.createElementNS(SVGNS, "polyline");
-        pl.setAttribute("points", "20 6 9 17 4 12"); svg.append(pl);
-      } else {
-        const r = document.createElementNS(SVGNS, "rect");
-        r.setAttribute("x", "9"); r.setAttribute("y", "9"); r.setAttribute("width", "13"); r.setAttribute("height", "13"); r.setAttribute("rx", "2"); svg.append(r);
-        const pa = document.createElementNS(SVGNS, "path");
-        pa.setAttribute("d", "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"); svg.append(pa);
-      }
-      return svg;
-    }
-    function copyBtn(getText, icon) {
-      const b = icon ? el("button", "cbtn") : el("button", "btn small ghost", "Copy");
-      b.type = "button";
-      if (icon) { b.append(iconSvg("copy")); b.setAttribute("aria-label", "Copy code"); }
-      b.onclick = async () => {
-        let ok = false;
-        try { await navigator.clipboard.writeText(getText()); ok = true; }
-        catch (_) {
-          try {
-            const ta = document.createElement("textarea");
-            ta.value = getText(); ta.style.cssText = "position:fixed;opacity:0";
-            document.body.append(ta); ta.select();
-            ok = document.execCommand("copy"); ta.remove();
-          } catch (_) { ok = false; }
-        }
-        if (icon) { b.replaceChildren(iconSvg(ok ? "check" : "copy")); b.setAttribute("aria-label", ok ? "Copied" : "Copy failed"); }
-        else { b.textContent = ok ? "Copied" : "Copy failed"; }
-        b.classList.toggle("is-success", ok); b.classList.toggle("is-error", !ok);
-        setTimeout(() => { if (icon) { b.replaceChildren(iconSvg("copy")); b.setAttribute("aria-label", "Copy code"); } else { b.textContent = "Copy"; } b.classList.remove("is-success", "is-error"); }, 1500);
-      };
-      return b;
-    }
     // Card submission through the supported /api/allchat path. Cards
     // cannot use /api/chat/press: it only accepts server-issued
     // james/qwerty buttons. No re-render on success (it would wipe
@@ -9397,6 +9470,49 @@ _CHAT_JS = r'''
           return false;
         }
       };
+    }
+    // Quiz card: the agent asks one question when it is unsure
+    // what the user means, instead of a paragraph of questions.
+    // The user picks one option; Submit sends the choice as a
+    // chat message through the normal /api/allchat path.
+    function quizCard(body) {
+      const card = el("div", "quizcard");
+      const q = (body[0] || "Question").trim() || "Question";
+      card.append(el("div", "doc-title", q));
+      const opts = [], notes = [];
+      for (const raw of body.slice(1)) {
+        const mm = raw.match(/^[-*]\s+(.+)$/);
+        if (mm && mm[1].trim()) opts.push(mm[1].trim());
+        else if (raw.trim()) notes.push(raw.trim());
+      }
+      for (const n of notes) { const d = el("div"); d.append(inline(n)); card.append(d); }
+      if (!opts.length) { card.append(el("div", "muted small", "Nothing to choose here.")); return card; }
+      const group = "q" + Math.random().toString(36).slice(2, 10);
+      const acts = el("div", "msg-acts");
+      const sub = el("button", "btn", "Submit"); sub.type = "button"; sub.disabled = true;
+      const picked = {value: null};
+      for (const o of opts) {
+        const row = el("label", "quizrow");
+        const inp = el("input"); inp.type = "radio"; inp.name = group; inp.value = o;
+        inp.onchange = () => { picked.value = o; sub.disabled = false; };
+        row.append(inp, el("span", "", o)); card.append(row);
+      }
+      sub.onclick = sendCard(() => "Quiz: " + q + " \u2014 " + (picked.value || ""), card);
+      acts.append(sub); card.append(acts);
+      return card;
+    }
+    // Code block titles name the language, not the word Code.
+    const LANG_NAMES = {python: "Python", py: "Python", javascript: "JavaScript", js: "JavaScript",
+      typescript: "TypeScript", ts: "TypeScript", html: "HTML", css: "CSS", json: "JSON",
+      bash: "Shell", sh: "Shell", shell: "Shell", zsh: "Shell", sql: "SQL", rust: "Rust",
+      go: "Go", java: "Java", c: "C", "c++": "C++", cpp: "C++", ruby: "Ruby",
+      markdown: "Markdown", md: "Markdown", yaml: "YAML", yml: "YAML", toml: "TOML",
+      xml: "XML", svg: "SVG", text: "Text", txt: "Text", plaintext: "Text"};
+    function langName(info) {
+      if (!info) return "Code";
+      const base = info.split(/[^a-z0-9+#]+/)[0] || "";
+      const name = LANG_NAMES[base] || (base ? base.charAt(0).toUpperCase() + base.slice(1) : "Code");
+      return name.slice(0, 24);
     }
     // Editable document card: Copy + Edit. Save posts the edited
     // text as a chat message; Cancel restores the original.
@@ -9507,10 +9623,49 @@ _CHAT_JS = r'''
         if (info === "config") { root.append(cfgCard(body)); continue; }
         if (info === "flow") { root.append(flowCard(body)); continue; }
         if (info === "bars") { root.append(barsCard(body)); continue; }
+        if (info === "quiz") { root.append(quizCard(body)); continue; }
         const wrap = el("div", "codeblock"), head = el("div", "chead"), pre = el("pre");
-        head.append(el("span", "clabel", "Code"), copyBtn(() => body.join("\n"), true));
-        pre.append(el("code", "", body.join("\n")));
-        wrap.append(head, pre); root.append(wrap); continue;
+        let codeText = body.join("\n");
+        const headActs = el("div", "chead-acts");
+        headActs.append(copyBtn(() => codeText, true));
+        const ed = el("button", "btn small ghost", "Edit"); ed.type = "button";
+        headActs.append(ed);
+        let preview = null, pv = null;
+        if (info === "html") {
+          pv = el("button", "btn small ghost", "Preview"); pv.type = "button";
+          pv.onclick = () => {
+            if (preview) { preview.remove(); preview = null; pv.textContent = "Preview"; return; }
+            preview = document.createElement("iframe");
+            preview.setAttribute("sandbox", "");
+            preview.setAttribute("srcdoc", codeText);
+            preview.setAttribute("title", "Preview");
+            preview.style.cssText = "width:100%;height:320px;border:0;border-top:1px solid var(--border);background:#fff";
+            wrap.append(preview); pv.textContent = "Code";
+          };
+          headActs.append(pv);
+        }
+        head.append(el("span", "clabel", langName(info)), headActs);
+        pre.append(el("code", "", codeText));
+        wrap.append(head, pre);
+        ed.onclick = () => {
+          if (preview) { preview.remove(); preview = null; if (pv) pv.textContent = "Preview"; }
+          head.querySelectorAll("button").forEach(b => b.disabled = true);
+          const ta = el("textarea"); ta.className = "field"; ta.rows = Math.min(16, Math.max(3, body.length + 1)); ta.value = codeText;
+          const row = el("div", "msg-acts");
+          const save = el("button", "btn small", "Save"); save.type = "button";
+          const cancel = el("button", "btn small ghost", "Cancel"); cancel.type = "button";
+          row.append(save, cancel);
+          pre.replaceWith(ta); wrap.append(row);
+          const done = () => { ta.replaceWith(pre); row.remove(); head.querySelectorAll("button").forEach(b => b.disabled = false); };
+          cancel.onclick = done;
+          save.onclick = async () => {
+            const fenced = "```" + (info || "") + "\n" + ta.value + "\n```";
+            if (await sendCard(() => fenced, wrap)()) {
+              codeText = ta.value; pre.querySelector("code").textContent = codeText; done();
+            }
+          };
+        };
+        root.append(wrap); continue;
       }
       if (line.includes("|") && i + 1 < lines.length && SEP.test(lines[i + 1])) {
         const wrap = el("div", "md-scroll"), table = el("table", "md-table"), thead = el("thead"), tbody = el("tbody"), hr = el("tr");
@@ -9614,8 +9769,10 @@ _CHAT_JS = r'''
       const row = document.createElement("div");
       row.className = "msg" + (cont ? " cont" : "") + (fresh ? " new" : "") + (m.from === "you" ? " mine" : "");
       const a = C.agents[m.from], th = C.agents.theta;
-      // Every agent speaks as Theta; a tag after the name says who it's really from.
+      // Every agent speaks as Theta; the trail icons below say who
+      // really worked on it, since agent footers carry no name.
       const asTheta = a && th && m.from !== "you" && m.from !== "hub";
+      const isAgent = m.from !== "you" && m.from !== "hub";
       const body = document.createElement("div");
       body.className = "mbody"; body.style.minWidth = "0";
       const meta = document.createElement("div"), name = document.createElement("span"), time = document.createElement("time");
@@ -9623,13 +9780,16 @@ _CHAT_JS = r'''
       name.textContent = asTheta ? th.name : (m.name || (a && a.name) || m.from);
       name.style.setProperty("--n", asTheta ? th.color : a ? a.color : "var(--text)");
       time.textContent = clock(d); time.dateTime = d.toISOString();
-      meta.append(name);
+      // Agent answers carry no name in the footer: just the channel
+      // (when cross-channel), time, and tokens, after the actions.
+      // The via pill is a name too, so it stays off with the name.
+      if (!isAgent) meta.append(name);
       if (asTheta && m.from !== "theta") {
         const via = document.createElement("span");
         via.className = "via"; via.textContent = a.name; via.title = "From " + a.name + (a.tier ? " (" + a.tier + ")" : "");
         via.style.setProperty("--n", a.color);
         name.setAttribute("aria-label", th.name + ", from " + a.name);
-        meta.append(via);
+        if (!isAgent) meta.append(via);
       } else if (a && a.tier && !asTheta) { const tier = document.createElement("span"); tier.className = "tier"; tier.textContent = a.tier; meta.append(tier); }
       if (C.channel === "all" && m.ch && m.ch !== "all" && C.channelNames[m.ch]) {
         const ch = document.createElement("a");
@@ -9645,12 +9805,6 @@ _CHAT_JS = r'''
         meta.append(tok);
       }
       const agentMsg = a && m.from !== "you" && m.from !== "hub";
-      body.append(meta);
-      if (m.trail && m.trail.length) {
-        const tr = trailRow(m.trail, document.createElement("div"));
-        tr.className = "trail"; tr.setAttribute("aria-label", "Worked on by " + m.trail.map(id => (C.agents[id] || {}).name || id).join(", "));
-        body.append(tr);
-      }
       body.append(fresh && agentMsg ? typed(m) : richText(m.text, m));
       const imgs = [];
       if (m.attachments) for (const a of m.attachments) if (a.kind === "image") imgs.push(a);
@@ -9689,6 +9843,63 @@ _CHAT_JS = r'''
           acts.append(x);
         }
         body.append(acts);
+      }
+      if (agentMsg) {
+        const foot = cel("div", "mfoot");
+        const row2 = cel("div", "msg-acts macts");
+        const cp = copyBtn(() => m.text, true, "mbtn", "Copy message");
+        const sh = cel("button", "mbtn"); sh.type = "button";
+        sh.setAttribute("aria-label", "Share message"); sh.append(iconSvg("share"));
+        const flashShare = ok => {
+          sh.replaceChildren(iconSvg(ok ? "check" : "share"));
+          sh.setAttribute("aria-label", ok ? "Copied" : "Share failed");
+          sh.classList.toggle("is-success", ok); sh.classList.toggle("is-error", !ok);
+          setTimeout(() => { sh.replaceChildren(iconSvg("share")); sh.setAttribute("aria-label", "Share message"); sh.classList.remove("is-success", "is-error"); }, 1500);
+        };
+        sh.onclick = async () => {
+          if (navigator.share) { try { await navigator.share({text: m.text}); } catch (_) {} return; }
+          let ok = false;
+          try { await navigator.clipboard.writeText(m.text); ok = true; }
+          catch (_) {
+            try {
+              const ta = document.createElement("textarea");
+              ta.value = m.text; ta.style.cssText = "position:fixed;opacity:0";
+              document.body.append(ta); ta.select();
+              ok = document.execCommand("copy"); ta.remove();
+            } catch (_) { ok = false; }
+          }
+          flashShare(ok);
+        };
+        const menu = cel("div", "mmenu glass"); menu.hidden = true;
+        const mi = (label, fn) => {
+          const b = cel("button", "mmenu-item", label); b.type = "button";
+          b.onclick = () => { menu.hidden = true; fn(); }; return b;
+        };
+        menu.append(
+          mi("Copy text", () => cp.onclick()),
+          mi("Share", () => sh.onclick()),
+          mi("Download as Markdown", () => {
+            const blob = new Blob([m.text], {type: "text/markdown"});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a"); a.href = url; a.download = "message.md"; a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+          }));
+        const more = cel("button", "mbtn"); more.type = "button";
+        more.setAttribute("aria-label", "More actions"); more.append(iconSvg("more"));
+        more.onclick = e => {
+          e.stopPropagation();
+          menu.hidden = !menu.hidden;
+          if (!menu.hidden) setTimeout(() => document.addEventListener("click", function close(ev) {
+            if (!foot.contains(ev.target)) { menu.hidden = true; document.removeEventListener("click", close); }
+          }), 0);
+        };
+        row2.append(cp, sh, more); foot.append(row2, menu); body.append(foot);
+      }
+      body.append(meta);
+      if (m.trail && m.trail.length) {
+        const tr = trailRow(m.trail, document.createElement("div"));
+        tr.className = "trail"; tr.setAttribute("aria-label", "Worked on by " + m.trail.map(id => (C.agents[id] || {}).name || id).join(", "));
+        body.append(tr);
       }
       row.append(body);
       out.push(row); prev = m;
@@ -10516,7 +10727,7 @@ def daily_card():
     rows = "".join(
         f'<li><label class="dcheck"><input type="checkbox" data-daily="{html.escape(i["id"])}"{" checked" if i["id"] in done else ""}>'
         f'<span>{html.escape(i["text"])}</span></label>'
-        + (f'<a class="muted small" href="{html.escape(i["link"])}">Open</a>' if i.get("link") else "")
+        + (f'<a class="muted small" href="{html.escape(i["link"])}"' + (' target="_blank" rel="noopener"' if i["link"].startswith("http") else "") + '>Open</a>' if i.get("link") else "")
         + f'<button type="button" class="dx" data-daily-remove="{html.escape(i["id"])}" aria-label="Remove {html.escape(i["text"])}">×</button></li>'
         for i in items)
     return (f'<section class="card stack daily" id="today" aria-label="Today\'s check"><div class="brow"><h2>Today\'s check</h2>'

@@ -92,27 +92,33 @@ check("table cells keep the 5.5em floor (no shredding)",
 # --- Code + quotes ---
 check("code blocks keep the 340px cap (3b regression)",
       "max-height:340px;overflow-y:auto" in css and ".md pre{" in css)
-check("code blocks get a glass box, Code label, and icon copy button",
+check("code blocks get a glass box, language title, and icon copy button",
       '.md .codeblock{border:1px solid var(--border);border-radius:16px;background:var(--surface);color:var(--text);overflow:hidden;margin:6px 0}' in css
       and '.md .codeblock .chead{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid var(--border)}' in css
-      and 'head.append(el("span", "clabel", "Code"), copyBtn(() => body.join("\\n"), true))' in rt
-      and "navigator.clipboard.writeText" in rt)
+      and 'head.append(el("span", "clabel", langName(info)), headActs)' in rt
+      and 'python: "Python"' in rt and 'javascript: "JavaScript"' in rt
+      and "navigator.clipboard.writeText" in js)
+check("code boxes are a canvas: Edit saves fenced code, HTML gets a sandboxed Preview",
+      'ed.onclick' in rt and 'pre.replaceWith(ta)' in rt
+      and '"```" + (info || "")' in rt
+      and 'if (info === "html")' in rt and 'preview.setAttribute("sandbox", "")' in rt
+      and 'preview.setAttribute("srcdoc", codeText)' in rt)
 check("card buttons and code boxes are glass, not accent or dark",
       '.msg-acts .btn{background:var(--surface);color:var(--text);border:1px solid var(--border)}' in css
       and '.md .codeblock{background:color-mix(in srgb,var(--surface) 72%,transparent);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);backdrop-filter:blur(var(--glass-blur)) saturate(160%)}' in css
-      and ':root[data-glassstyle="liquid"] .msg-acts .btn{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset 0 1px 0 rgba(255,255,255,.45),inset 0 -1px 0 rgba(255,255,255,.12);border:0}' in css
+      and ':root[data-glassstyle="liquid"] .msg-acts .btn{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.45),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.12);border:0}' in css
       and ':root[data-glassstyle="liquid"] .md.codeblock pre{background:transparent;color:var(--text);-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:none;-webkit-mask-box-image:none;mask-border:none}' in css)
 check("blockquotes render with the accent bar",
       ".md .md-quote{border-left:3px solid var(--accent);padding:2px 0 2px 12px;color:var(--muted);margin:6px 0}" in css
       and 'el("blockquote", "md-quote")' in rt)
 check("headings keep the approved flat-bold treatment",
-      ".md .md-h{font-weight:700;margin-top:4px}" in css)
+      ".md .md-h{font-weight:700;font-size:18px;margin-top:4px}" in css)
 
 # --- Cards: Theta tokens, real actions, supported API only ---
-check("doc/config cards reuse card tokens (radius, padding, shadow)",
-      ".md .doccard,.md .cfgcard{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:var(--pad);box-shadow:var(--shadow);margin:8px 0}" in css)
-check("fence dispatch covers doc, config, flow, bars",
-      'if (info === "doc")' in rt and 'if (info === "config")' in rt
+check("doc/config/quiz cards reuse card tokens (radius, padding, shadow)",
+      ".md .doccard,.md .cfgcard,.md .quizcard{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:var(--pad);box-shadow:var(--shadow);margin:8px 0}" in css)
+check("fence dispatch covers doc, config, flow, bars, quiz",
+      'if (info === "doc")' in rt and 'if (info === "config")' in rt and 'if (info === "quiz")' in rt
       and 'if (info === "flow")' in rt and 'if (info === "bars")' in rt)
 check("doc card has copy + edit with send-as-message save",
       'el("div", "doccard")' in rt and '"Send edited text"' in rt
@@ -123,7 +129,7 @@ check("config card parses strict select/check lines",
 check("card submission uses /api/allchat, never a /api/chat/press fetch",
       '"/api/allchat"' in rt and 'fetch("/api/chat/press"' not in rt)
 check("card buttons get 44px touch height on coarse pointers",
-      "@media (pointer:coarse){.md .doccard .btn,.md .cfgcard .btn,.md .codeblock .cbtn{min-height:44px;min-width:44px}}" in css)
+      "@media (pointer:coarse){.md .doccard .btn,.md .cfgcard .btn,.md .quizcard .btn,.md .codeblock .cbtn,.msg .mbtn{min-height:44px;min-width:44px}}" in css)
 
 # --- Diagrams + charts (DOM only, no new library) ---
 check("flow builder renders boxes + arrows",

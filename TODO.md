@@ -683,3 +683,41 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
 - [ ] Quick actions on Home: log an expense, ask Remi, start a round.
 - [ ] Open offline: cache the app's pages like Garage Gym does.
 - [ ] Rearrange or pin windows on Home.
+
+## Chat experience batch: footer actions, quiz cards, code canvas, edge light, larger text (branch chat/experience-batch, based on main 6ac500ad which includes merged PR #68)
+
+- Agent answers end with Copy / Share / More icon buttons, then
+  the time and token count below the answer, bottom-left
+  (meta moved from above the body; the name and the via pill
+  are removed from agent footers entirely — the trail icons
+  below are the only agent attribution left). Share uses the
+  system share sheet, or copies the text when there is none;
+  More also offers Download as Markdown. Own messages and
+  hub messages get no action row.
+- ```quiz fences render a question with radio options and a
+  Submit that sends the choice as a chat message (via
+  /api/allchat); Submit waits for a choice, and a quiz with
+  no options says so instead of dropping the question. The
+  agent prompt teaches the quiz for unsure agents, and radio
+  groups are no longer on the cannot-show list.
+- Code blocks are titled by their language (or Code), with
+  Copy and Edit in the header — saving posts the edited code
+  fenced with its language as a chat message — and a Preview
+  for HTML that renders the code in a sandboxed frame with
+  no scripts. iconSvg/copyBtn moved to the chat script's top
+  level so render() can use them (they were richText-local,
+  which broke rendering when the footer first landed).
+- Liquid Glass edge light follows the phone's gyro and the
+  cursor: pointer, touch, and deviceorientation feed
+  --shine-x/--shine-y, which shift the inset highlights on
+  liquid surfaces. Liquid mode only, throttled, never with
+  reduced motion; iOS motion permission is requested on the
+  first tap in liquid mode, with touch position as fallback.
+- Text is larger: base 15px to 16px, message bodies 16px to
+  17px, code 13px to 14px, titles up 1-2px (h1 30, h2 20,
+  message headings 18, doc titles 17). Small metadata
+  (timestamps, token counts, tab labels) is unchanged.
+- Links: every external link now opens in the default
+  browser (target _blank + noopener). Chat links already
+  did; this adds agent page links and daily-item Open links
+  (internal app links still navigate in place).

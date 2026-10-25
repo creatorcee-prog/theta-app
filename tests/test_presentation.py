@@ -85,9 +85,9 @@ check("prompt names the decision rules: tables, lists, checklists, code, heading
 check("prompt forbids invented data",
       "Never invent data to fill a table or list" in p)
 check("prompt forbids describing controls the chat cannot show",
-      "it cannot show line charts" in p
-      and "radio groups, or architecture diagrams" in p
-      and "buttons in chat exist only when the server issues them" in p)
+      "it cannot show line charts or architecture diagrams" in p
+      and "radio groups" not in p
+      and "buttons in chat exist only on cards and server-issued messages" in p)
 check("prompt reaches desk agents through desk_system",
       "Present each answer in the format that helps most" in h.desk_system("mistral"))
 
@@ -95,8 +95,9 @@ check("prompt reaches desk agents through desk_system",
 check("prompt names the merged fences",
       "```config" in p and "```doc" in p
       and "```flow" in p and "```bars" in p)
-check("prompt names blockquotes and code copy",
-      "blockquotes (> )" in p and "code blocks with a Copy button" in p)
+check("prompt names blockquotes and language-titled code boxes",
+      "blockquotes (> )" in p
+      and "code blocks titled by their language (Copy, Edit, and a Preview for HTML)" in p)
 
 # --- Every format the prompt names is actually rendered ---
 check("renderer renders tables, checklists, headings, code fences",
