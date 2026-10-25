@@ -3206,6 +3206,37 @@ def allchat_reply(agent, thread):
     return run_actions(agent, answer_with_search(agent, system, ask, m.group(1).strip()[:200]))
 
 
+def _fallback_web_search(agent, query):
+    """Bridge web_search as a fallback when Gemini search fails.
+
+    Returns (found_text, sources) with sources as [(title, url)] (max 5),
+    or ("", []) when the bridge layer or the search itself is unavailable.
+    Never raises: a failed fallback just means the caller keeps the
+    Gemini failure note. Fallback searches do not consume the Gemini
+    monthly budget; they are a different provider.
+    """
+    tb = globals().get("_tb")
+    tools = getattr(tb, "agent_tools", None) if tb is not None else None
+    if tools is None:
+        return "", []
+    try:
+        out = tools.run_tool(store(), {"name": "web_search", "args": {"query": query, "num_results": 5}}, agent_id=agent)
+    except Exception:
+        return "", []
+    if not isinstance(out, dict) or out.get("status") != "ok" or not out.get("data"):
+        return "", []
+    lines, sources = [], []
+    for i, r in enumerate(out["data"][:5]):
+        title = (r.get("title") or "").strip() or "(no title)"
+        url = (r.get("url") or "").strip()
+        snip = (r.get("snippet") or "").strip()
+        if url:
+            sources.append((title, url))
+        lines.append(f"{i + 1}. {title} — {url}\n   {snip}" if url else f"{i + 1}. {title}\n   {snip}")
+    text = "Web search results (fallback — Gemini search failed):\n" + "\n".join(lines)
+    return text[:3000], sources
+
+
 def answer_with_search(agent, system, ask, query):
     """One web search (Gemini + Google), then the agent answers from it.
     Only the search's own sources may appear as links; anything else the
@@ -3214,6 +3245,7 @@ def answer_with_search(agent, system, ask, query):
     activity(agent, f"{AGENTS[agent]['name']} searched the web: {query[:120]}")
     working(agent, "searching the web")
     found, sources = "", []
+    fallback_used = False
     if _search_budget(1):
         try:
             text, cites, queries = gemini_search(f"{query}\n\nAnswer briefly and factually.")
@@ -3226,6 +3258,9 @@ def answer_with_search(agent, system, ask, query):
                     sources.append((title or "", url))
         except LLMError as e:
             found = f"(the search failed: {str(e)[:100]})"
+            fb_text, fb_sources = _fallback_web_search(agent, query)
+            if fb_sources:
+                found, sources, fallback_used = fb_text, fb_sources, True
     else:
         found = "(this month's web searches are used up)"
     with ThreadPoolExecutor(max_workers=5) as ex:
@@ -3244,6 +3279,8 @@ def answer_with_search(agent, system, ask, query):
     used = sorted({int(n) for n in re.findall(r"\[(\d)\]", reply) if 0 < int(n) <= len(sources)}) or range(1, len(sources) + 1)
     if sources:
         reply += "\n\nSources:\n" + "\n".join(f"[{n}] {sources[n - 1][1]}" for n in used)
+    if fallback_used:
+        reply += "\n\n(Note: Gemini search failed, so these results came from the fallback web search.)"
     return reply
 
 
