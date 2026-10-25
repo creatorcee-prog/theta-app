@@ -436,17 +436,26 @@ support yet).
 
 ## Glass style
 
-Settings offers two treatments for the glass surfaces (tab
-bar, sidebar, members drawer, menus) and own-message bubbles:
+Settings offers two treatments for the glass surfaces:
 Glass+ (the frosted default: 72% surface, 22px blur) and
-Liquid Glass (specular gloss gradient, 32px blur, stronger
-saturation, edge light from inset shadows). The choice is a
-fourth segment of the `theta_ui` cookie
-(`theme.mode.layout.glassstyle`, default `plus`), rendered
-as `data-glassstyle` on the page, so it swaps live and
-survives reloads. Liquid Glass adds no borders anywhere, and
-it does not touch the Aurora theme's separate `data-glass`
-frosted-card treatment.
+Liquid Glass. In Liquid Glass mode the gloss, stronger blur
+(32px), and edge light apply to every piece of UI other
+than images: cards, windows, KPIs, swatches, the composer
+box, fields, segmented controls, file chips, the mini bar,
+sheets, the mention menu, code blocks, rows on hover, and
+own-message bubbles, plus the tab bar, sidebar, and members
+drawer. Buttons and chips keep their colors and get edge
+light only, so accent states survive; pills, circles, and
+images are untouched. Corners in liquid mode use G2/G3-style
+continuous curvature via a 9-slice squircle mask over the
+existing border-radius fallback (browsers have no native
+corner-shape; where the mask is unsupported, circular
+corners show). The choice is a fourth segment of the
+`theta_ui` cookie (`theme.mode.layout.glassstyle`, default
+`plus`), rendered as `data-glassstyle` on the page, so it
+swaps live and survives reloads. Liquid Glass adds no
+borders anywhere, and it does not touch the Aurora theme's
+separate `data-glass` frosted-card treatment.
 
 ## Chat
 

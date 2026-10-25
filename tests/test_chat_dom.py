@@ -198,6 +198,13 @@ with sync_playwright() as p:
         pg.locator('[data-pref="glassstyle"][data-val="liquid"]').click()
         expect(pg.locator("html")).to_have_attribute("data-glassstyle", "liquid", timeout=5000)
         check("liquid glass applies the stronger blur", any("32px" in (f or "") for f in filters()))
+        card = pg.evaluate("""() => {
+            const c = document.querySelector('.card');
+            if (!c) return {};
+            const s = getComputedStyle(c);
+            return {blur: s.backdropFilter || '', mask: (s.webkitMaskBoxImage || s.maskBorderSource || '')}; }""")
+        check("liquid glass reaches cards", "32px" in (card.get("blur") or ""))
+        check("liquid corners use the squircle mask", (card.get("mask") or "") not in ("", "none"))
         pg.screenshot(path=os.path.join(SHOTS, "glass-liquid.png"))
         pg.locator('[data-pref="glassstyle"][data-val="plus"]').click()
         expect(pg.locator("html")).to_have_attribute("data-glassstyle", "plus", timeout=5000)
