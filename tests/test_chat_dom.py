@@ -174,16 +174,16 @@ with sync_playwright() as p:
             const msgs = document.querySelector('#msgs').getBoundingClientRect();
             const r = body ? body.getBoundingClientRect() : null;
             const cs = body ? getComputedStyle(body) : null;
-            const agentName = document.querySelector('#msgs .msg:not(.mine) .meta .name');
+            const agentMeta = document.querySelector('#msgs .msg:not(.mine) .meta');
             const meta = mine ? mine.querySelector('.meta') : null;
             return {noAvcol: !document.querySelector('#msgs .msg .avcol'),
-                    agentNamed: agentName ? agentName.textContent.length > 0 : false,
+                    agentNameGone: agentMeta ? (!agentMeta.querySelector('.name') && !agentMeta.querySelector('.via') && !!agentMeta.querySelector('time')) : false,
                     font: cs ? cs.fontSize : '', radius: cs ? cs.borderRadius : '',
                     rightGap: r ? Math.round(msgs.right - r.right) : -1,
                     metaHidden: meta ? getComputedStyle(meta).display === 'none' : true}; }""")
         check("no message avatar column", bub["noAvcol"])
-        check("agent names still show in meta", bub["agentNamed"])
-        check("chat text renders at 16px", bub["font"] == "16px")
+        check("agent names are gone from meta (time stays)", bub["agentNameGone"])
+        check("chat text renders at 17px", bub["font"] == "17px")
         check("own bubble is rounded and right-aligned", bub["radius"].startswith("20px") and 0 <= bub["rightGap"] <= 40)
         check("own messages hide their You/timestamp meta", bub["metaHidden"])
         pg.screenshot(path=os.path.join(SHOTS, "thread-390.png"))
@@ -203,6 +203,15 @@ with sync_playwright() as p:
             const s = getComputedStyle(c);
             return {blur: s.backdropFilter || '', mask: (s.webkitMaskBoxImage || s.maskBorderSource || '')}; }""")
         check("liquid glass reaches cards", "32px" in (card.get("blur") or ""))
+        edge = pg.evaluate("""() => {
+            const c = document.querySelector('.card');
+            const before = c ? getComputedStyle(c).boxShadow : '';
+            document.documentElement.style.setProperty('--shine-x', '1');
+            const after = c ? getComputedStyle(c).boxShadow : '';
+            document.documentElement.style.removeProperty('--shine-x');
+            return {before, after}; }""")
+        check("liquid edge light follows the tilt variable",
+              edge["after"] != edge["before"] and "2px 1px" in edge["after"])
         check("liquid corners use the squircle mask", (card.get("mask") or "") not in ("", "none"))
         pg.screenshot(path=os.path.join(SHOTS, "glass-liquid.png"))
         pg.locator('[data-pref="glassstyle"][data-val="plus"]').click()
@@ -223,8 +232,10 @@ with sync_playwright() as p:
             .filter(i => i.src.includes('/avatar/'))
             .every(i => i.complete && i.naturalWidth > 0)""")
         check("avatar images resolve", imgs_ok)
-        names_ok = pg.evaluate("""() => document.querySelector('#msgs').innerText.includes('Theta')""")
-        check("agent names render in the thread", names_ok)
+        names_gone = pg.evaluate("""() => !document.querySelector('#msgs .msg:not(.mine) .meta .name')
+            && !document.querySelector('#msgs .msg:not(.mine) .meta .via')
+            && !!document.querySelector('#msgs .msg:not(.mine) .meta time')""")
+        check("agent names are gone from the thread footer (time stays)", names_gone)
 
         # Composer: multiline grow + Shift+Enter newline (no send).
         msg = pg.locator("#chat-msg")
@@ -361,7 +372,10 @@ with sync_playwright() as p:
                  "```config\nModel strategy\nselect Model strategy: Single primary model | Primary model + specialists\n"
                  "check Browser tests required: on\ncheck Approval required: off\n```\n\n"
                  "```flow\nRequest -> Renderer -> Thread\n```\n\n"
-                 "```bars\nOpus: 128\ngpt-oss: 1042\n```\n")
+                 "```bars\nOpus: 128\ngpt-oss: 1042\n```\n\n"
+                 "```quiz\nWhich view should load first?\n- Home\n- Chat\n```\n\n"
+                 "```html\n<p>Hello</p>\n```\n\n"
+                 "See https://example.com for details.\n")
         _hostile = "<script>alert(1)</script> and some javascript:evil text"
         _store = h.store()
         _store.add_chat("theta", _rich, channel="all")
@@ -382,9 +396,58 @@ with sync_playwright() as p:
               tbl["aligns"] == ["left", "right", "center"])
         check("table container is rounded", tbl["radius"] != "0px")
         check("rich message does not overflow the phone width", no_overflow(pg))
-        check("code block has a Code label and icon copy button",
-              pg.locator(".codeblock .chead .clabel").first.inner_text() == "Code"
-              and pg.locator(".codeblock .chead button").first.get_attribute("aria-label") == "Copy code")
+        richmsg = pg.locator("#msgs .msg", has=pg.locator(".md-table"))
+        check("code block title is its language, with an icon copy button",
+              richmsg.locator(".codeblock .chead .clabel").first.inner_text() == "Python"
+              and richmsg.locator(".codeblock .chead button").first.get_attribute("aria-label") == "Copy code")
+        check("code boxes have Edit, and HTML code boxes have Preview",
+              richmsg.locator(".codeblock").nth(0).locator("button").filter(has_text="Edit").count() == 1
+              and richmsg.locator(".codeblock").nth(0).locator("button").filter(has_text="Preview").count() == 0
+              and richmsg.locator(".codeblock").nth(1).locator("button").filter(has_text="Preview").count() == 1)
+        foot = pg.evaluate("""() => {
+            const msg = document.querySelector('#msgs .msg:not(.mine)');
+            const body = msg ? msg.querySelector('.mbody') : null;
+            const kids = body ? [...body.children].map(c => c.className) : [];
+            const acts = body ? [...body.querySelectorAll('.macts button')].map(b => b.getAttribute('aria-label')) : [];
+            const lk = document.querySelector('#msgs a[href="https://example.com"]');
+            const metaEl = body ? body.querySelector('.meta') : null;
+            return {kids, acts,
+                    metaName: metaEl ? !!metaEl.querySelector('.name') : false,
+                    metaVia: metaEl ? !!metaEl.querySelector('.via') : false,
+                    metaTime: metaEl ? !!metaEl.querySelector('time') : false,
+                    linkBlank: lk ? (lk.target === '_blank' && (lk.rel || '').includes('noopener')) : false}; }""")
+        kids = foot["kids"]
+        check("message footer: answer, then actions, then meta",
+              "text md" in kids and "mfoot" in kids and "meta" in kids
+              and kids.index("text md") < kids.index("mfoot") < kids.index("meta")
+              and foot["acts"] == ["Copy message", "Share message", "More actions"]
+              and not foot["metaName"] and not foot["metaVia"] and foot["metaTime"])
+        check("chat links open in the default browser (new tab)",
+              foot["linkBlank"])
+        quiz = pg.evaluate("""() => {
+            const card = document.querySelector('.quizcard');
+            if (!card) return {};
+            const radios = card.querySelectorAll('input[type=radio]');
+            const sub = [...card.querySelectorAll('button')].find(b => b.textContent === 'Submit');
+            const before = sub ? sub.disabled : null;
+            if (radios[0]) radios[0].click();
+            const enabled = sub ? !sub.disabled : false;
+            if (sub) sub.click();
+            const disabled = sub ? sub.disabled : false;
+            return {n: radios.length, before, enabled, disabled}; }""")
+        check("quiz card renders radios with a Submit that enables on choice",
+              quiz.get("n") == 2 and quiz.get("before") is True and quiz.get("enabled") is True)
+        check("quiz submit disables the card while sending",
+              quiz.get("disabled") is True)
+        more = pg.evaluate("""() => {
+            const msg = document.querySelector('#msgs .msg:not(.mine)');
+            const btn = msg ? msg.querySelector('button[aria-label="More actions"]') : null;
+            if (btn) btn.click();
+            const menu = msg ? msg.querySelector('.mmenu') : null;
+            return {open: menu ? !menu.hidden : false,
+                    text: menu ? (menu.innerText || '') : ''}; }""")
+        check("More opens a menu with Download as Markdown",
+              more["open"] and "Download as Markdown" in more["text"])
         glassed = pg.evaluate("""() => {
             const sub = document.querySelector('.cfgcard button');
             const box = document.querySelector('.codeblock');

@@ -1,6 +1,6 @@
 """Own-message bubbles (owner request, after PR #60).
 
-- Chat text is a little larger: message bodies render at 16px
+- Chat text is a little larger: message bodies render at 17px
   (base text stays 15px).
 - The user's own messages sit on the right as bubbles: the avatar
   column is gone for mine messages, the body hugs its content
@@ -85,8 +85,8 @@ check("old accent tint is gone",
       ".msg.mine{background:color-mix(in srgb,var(--accent) 7%,transparent)}" not in css)
 check("mine meta is hidden (no You/timestamp on own messages)",
       ".msg.mine .meta{display:none}" in css)
-check("chat text is larger (16px message bodies)",
-      ".msg .mbody{font-size:16px}" in css)
+check("chat text is larger (17px message bodies)",
+      ".msg .mbody{font-size:17px}" in css)
 check("76ch cap intact (3b extension regression)",
       ".mbody{max-width:76ch}" in css)
 check("other avatars still render (events, trails, working box)",

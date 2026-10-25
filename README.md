@@ -353,10 +353,17 @@ visual language (cards use the 18px card radius, controls the
   the separator row (`:---` left, `:---:` center, `---:` right),
   horizontal dividers, comfortable cells, long values wrapped,
   and horizontal scrolling on narrow screens.
-- Code blocks get a Copy button (clipboard, with a fallback)
-  and keep the 340px scroll cap. Long messages keep the
+- Code blocks are titled by their language (or Code when none
+  is given), with Copy and Edit in the header — saving posts
+  the edited code as a chat message — and a Preview for HTML
+  that renders the code in a sandboxed frame (no scripts run);
+  they keep the 340px scroll cap. Long messages keep the
   conversation layout: code and tables scroll inside their
   own containers.
+- Agent answers end with Copy / Share / More actions, then
+  the name, time, and token count below the answer (Share
+  uses the system share sheet, or copies the text when there
+  is none; More also offers Download as Markdown).
 - Fenced blocks for richer content (all parsed strictly; bad
   input falls back to plain text, never executes anything):
   ` ```doc ` (title line, then text) renders an editable
@@ -366,7 +373,10 @@ visual language (cards use the 18px card radius, controls the
   a Submit button that posts the choices as a chat message;
   ` ```flow ` renders `A -> B -> C` lines as boxes and
   arrows; ` ```bars ` renders `Label: number` lines as
-  labeled bars. Cards submit through the normal
+  labeled bars; ` ```quiz ` renders a question (first line)
+  with `- option` lines after it as radio options with a
+  Submit button that sends the choice as a chat message —
+  for when the agent is unsure what the user means. Cards submit through the normal
   `/api/allchat` path (they cannot use `/api/chat/press`,
   which only accepts server-issued buttons), and show
   Sending / Sent / error states with retry on failure.
@@ -411,10 +421,12 @@ prose, using only formats the chat actually renders:
 - Bullet or numbered lists for several items.
 - `- [ ]` checklists for to-dos. These are real: checking one
   persists through `POST /api/chat/check`.
-- A fenced code block for code, with a Copy button in its
-  header, headings for long answers, `**bold**` sparingly,
-  links (`http(s)` only), and images (only with
-  `![alt](https link)` for a link the agent was given).
+- A fenced code block for code, titled by its language, with
+  Copy and Edit in its header and a Preview for HTML,
+  headings for long answers, `**bold**` sparingly,
+  links (`http(s)` only, opened in the default browser), and
+  images (only with `![alt](https link)` for a link the
+  agent was given).
 - Blockquotes (`> `) for quoted passages.
 - Fenced cards when they genuinely fit, each submitting
   through a chat message, never a button press:
@@ -423,16 +435,18 @@ prose, using only formats the chat actually renders:
   sends the choices), ` ```doc ` for a reusable draft
   (Copy, Edit, Save posts the edited text),
   ` ```flow ` with `A -> B -> C` lines (workflow boxes),
-  and ` ```bars ` with `Label: number` lines (bars;
-  negatives count as 0).
+  ` ```bars ` with `Label: number` lines (bars;
+  negatives count as 0), and ` ```quiz ` with a question
+  and `- option` lines (the user picks one, then Submit
+  sends the choice — for when the agent is unsure what
+  the user means).
 
 Rules: simplest format that communicates well; never invent
 data to fill a table or list; never describe a control the
-chat cannot show. Buttons in chat exist only when the
-server issues them (QWERTY proposals, James commands) —
-agents never emit them. Not yet approved: line charts,
-radio groups, and architecture diagrams (no renderer
-support yet).
+chat cannot show. Buttons in chat exist only on cards and
+server-issued messages (QWERTY proposals, James commands) —
+agents never emit them. Not yet approved: line charts
+and architecture diagrams (no renderer support yet).
 
 ## Glass style
 
