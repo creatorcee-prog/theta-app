@@ -721,3 +721,20 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
   browser (target _blank + noopener). Chat links already
   did; this adds agent page links and daily-item Open links
   (internal app links still navigate in place).
+
+## Backgrounds (branch chat/backgrounds, based on main 33c5500d (post-#69 merge))
+
+- Settings -> Background offers Theme, Shards, Stars, Black,
+  and Gemini, as a fifth theta_ui cookie segment rendered as
+  data-bg. Backgrounds are distinct from themes: any scheme
+  works with any background, and Theme (the default) keeps
+  the current look exactly.
+- Shards: black canvas, drifting polygons that bounce off
+  each other and the walls, lit from the top-left. Stars:
+  twinkling stars on black. Black: plain black. Gemini: the
+  slow drifting aurora gradient from the Gemini app (CSS
+  only). The layer is fixed behind all content and opaque.
+- Canvas modes draw one frame immediately, animate with rAF
+  (pauses while hidden), and freeze under reduced motion,
+  as does the Gemini drift. The live swap works through the
+  generic Settings handler plus a data-bg observer.

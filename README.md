@@ -471,6 +471,23 @@ swaps live and survives reloads. Liquid Glass adds no
 borders anywhere, and it does not touch the Aurora theme's
 separate `data-glass` frosted-card treatment.
 
+## Backgrounds
+
+Backgrounds are separate from themes: Settings -> Background
+offers Theme (the default: the theme's own background),
+Shards, Stars, Black, and Gemini, and any color scheme works
+with any of them. The choice is a fifth segment of the
+`theta_ui` cookie (`theme.mode.layout.glassstyle.bg`, default
+`theme`), rendered as `data-bg` on the page. Shards is a black
+canvas of drifting polygons that bounce off each other and
+the walls, lit from the top-left so they read as reflecting
+and refracting light; Stars is twinkling stars on black;
+Black is plain black; Gemini is the slow drifting aurora
+gradient from the Gemini app. The background layer sits
+behind all content and is opaque, so it never fights the
+theme. Canvas modes animate with requestAnimationFrame
+(which pauses while the tab is hidden) and freeze under
+reduced motion, as does the Gemini drift.
 ## Chat
 
 Chat works like a Discord server: channels on the left, members and
