@@ -517,6 +517,18 @@ behind all content and is opaque, so it never fights the
 theme. Canvas modes animate with requestAnimationFrame
 (which pauses while the tab is hidden) and freeze under
 reduced motion, as do the Gemini phase, drift, pulse, and typing bloom.
+## Sources
+
+A web_search receipt renders with a Sources footer under the message:
+the result sites' favicons stacked, then the word Sources. Tapping it
+opens a bottom sheet listing each source with its favicon (or a letter
+tile when the site has no reachable favicon), site name, title, and
+snippet; tapping a row opens the page in a new tab. The receipt's own
+trailing Sources line is hidden from display (Copy and Download still
+keep the full text). Search results carry no dates, so the sheet shows
+none. No server change: the footer parses the existing receipt text,
+and unparseable receipts render as plain text, as before.
+
 ## HDR
 
 On displays that report a wide color gamut, theme accents and the Gemini

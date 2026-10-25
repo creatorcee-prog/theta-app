@@ -8700,6 +8700,23 @@ body.typing .chat{height:100dvh}
 .meta time{font-size:11.5px;color:var(--muted)}
 .text{white-space:pre-wrap;overflow-wrap:anywhere}
 .msg-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.src-foot{display:flex;align-items:center;gap:8px;margin-top:8px;padding:4px 2px;background:none;border:0;cursor:pointer;color:var(--text);font-family:inherit;font-size:14px}
+.src-stack{display:flex;align-items:center}
+.src-stack>*{margin-left:-8px}.src-stack>*:first-child{margin-left:0}
+.src-ic,.src-tile,.src-more{width:22px;height:22px;border-radius:50%;border:1px solid var(--border);background:var(--surface);flex:none;object-fit:cover}
+.src-tile,.src-more{display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--muted)}
+.src-label{font-weight:600}
+.src-dlg{padding:12px 16px 0;display:flex;flex-direction:column}
+.src-dlg .scroll{min-height:0}
+.src-head{display:flex;align-items:center;justify-content:space-between;padding:4px 0 10px}
+.src-head .src-title{font-size:17px;font-weight:700}
+.src-x{background:none;border:0;cursor:pointer;color:var(--muted);font-size:22px;line-height:1;padding:4px 8px}
+.src-row{display:flex;gap:10px;align-items:flex-start;padding:10px 0;text-decoration:none;color:var(--text);border-top:1px solid var(--border)}
+.src-row .src-ic,.src-row .src-tile{width:28px;height:28px}
+.src-meta{min-width:0}
+.src-host{font-size:12px;color:var(--muted)}
+.src-row-title{font-weight:600;overflow-wrap:anywhere}
+.src-snip{font-size:13px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .rcal{margin-top:16px}.rstrip{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x proximity;padding:8px 6px 10px;scroll-padding-left:6px;scrollbar-width:none}
 .rel{flex:none;width:112px;scroll-snap-align:start;color:inherit;text-decoration:none;text-align:center}
 .rel .rpic{position:relative;aspect-ratio:2/3;border-radius:10px;overflow:hidden;background:var(--surface2);border:1px solid var(--border)}
@@ -10013,6 +10030,72 @@ _CHAT_JS = r'''
   // and checklists, code blocks, headings, **bold**, *italic*, `code` and
   // https images. Built from nodes, never innerHTML, so nothing in a
   // message can run as code.
+  // Sources footer for web_search receipts. The bridge receipt is plain
+  // text ("Web search results:\n1. title — url\n   snippet\nSources: ...");
+  // parse it into links and render the stacked-favicon footer + sheet.
+  // Anything unparseable returns null and renders as plain text, as before.
+  // No dates: search results carry title/url/snippet only, so the sheet
+  // shows host + title + snippet and invents nothing.
+  function srcHost(url) { try { return new URL(url).hostname.replace(/^www\./, ""); } catch (_) { return url; } }
+  function parseSources(text) {
+    const at = String(text || "").indexOf("Web search results:");
+    if (at < 0) return null;
+    const lines = String(text).slice(at).split("\n"), out = [];
+    for (let i = 1; i < lines.length && out.length < 20; i++) {
+      const it = lines[i].match(/^\s*\d+[.)]\s+(.+)$/);
+      if (!it) continue;
+      const body = it[1], cut = body.lastIndexOf(" \u2014 ");
+      if (cut <= 0) continue;
+      const url = body.slice(cut + 3).trim();
+      if (!/^https?:\/\/\S+$/.test(url)) continue;
+      let snip = "";
+      if (i + 1 < lines.length && /^\s+\S/.test(lines[i + 1]) && !/^\s*\d+[.)]\s/.test(lines[i + 1])) snip = lines[i + 1].trim();
+      out.push({title: body.slice(0, cut).trim() || srcHost(url), url: url, snip: snip});
+    }
+    return out.length ? out : null;
+  }
+  function srcIcon(url) {
+    const host = srcHost(url);
+    let origin = "";
+    try { origin = new URL(url).origin; } catch (_) {}
+    if (!origin) return cel("span", "src-tile", host.charAt(0).toUpperCase());
+    const img = document.createElement("img");
+    img.className = "src-ic"; img.src = origin + "/favicon.ico"; img.alt = ""; img.loading = "lazy"; img.referrerPolicy = "no-referrer";
+    img.onerror = () => img.replaceWith(cel("span", "src-tile", host.charAt(0).toUpperCase()));
+    return img;
+  }
+  function sourcesFoot(text) {
+    const srcs = parseSources(text);
+    if (!srcs) return null;
+    const b = cel("button", "src-foot"); b.type = "button";
+    b.setAttribute("aria-label", "Show sources (" + srcs.length + ")");
+    const stack = cel("span", "src-stack");
+    srcs.slice(0, 4).forEach(s => stack.append(srcIcon(s.url)));
+    if (srcs.length > 4) stack.append(cel("span", "src-more", "+" + (srcs.length - 4)));
+    b.append(stack, cel("span", "src-label", "Sources"));
+    b.onclick = () => openSources(srcs, b);
+    return b;
+  }
+  let srcDlg = null;
+  function openSources(srcs, opener) {
+    if (srcDlg) srcDlg.remove();
+    const dlg = document.createElement("dialog"); dlg.className = "sheet src-dlg";
+    const x = cel("button", "src-x", "\u00d7"); x.type = "button"; x.setAttribute("aria-label", "Close sources");
+    const head = cel("div", "src-head"); head.append(cel("span", "src-title", "Sources"), x);
+    const scroll = cel("div", "scroll");
+    for (const s of srcs) {
+      const a = document.createElement("a"); a.className = "src-row"; a.href = s.url; a.target = "_blank"; a.rel = "noopener";
+      const meta = cel("div", "src-meta");
+      meta.append(cel("div", "src-host", srcHost(s.url)), cel("div", "src-row-title", s.title));
+      if (s.snip) meta.append(cel("div", "src-snip", s.snip));
+      a.append(srcIcon(s.url), meta); scroll.append(a);
+    }
+    dlg.append(cel("div", "grab"), head, scroll);
+    x.onclick = () => dlg.close();
+    dlg.addEventListener("click", e => { if (e.target === dlg) dlg.close(); });
+    dlg.addEventListener("close", () => { dlg.remove(); if (srcDlg === dlg) srcDlg = null; if (opener) opener.focus(); });
+    document.body.append(dlg); srcDlg = dlg; dlg.showModal(); x.focus();
+  }
   function richText(text, m) {
     let taskN = 0;  // checklist items are numbered so ticks can be saved per message
     const root = document.createElement("div");
@@ -10224,8 +10307,16 @@ _CHAT_JS = r'''
     const cells = l => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
     const ITEM = /^\s*(?:[-*•]|\d+[.)])\s+/;
     const lines = String(text).replace(/\r\n?/g, "\n").split("\n");
+    const srcs = (m && m.from !== "you" && m.from !== "hub") ? parseSources(text) : null;
+    let srcSkip = -1;
+    if (srcs) {
+      const sl = String(text).split("\n");
+      const mi = sl.findIndex(l => l.includes("Web search results:"));
+      if (mi >= 0) { const si = sl.findIndex((l, j) => j > mi && /^Sources:/.test(l.trim())); if (si >= 0) srcSkip = si; }
+    }
     for (let i = 0; i < lines.length;) {
       const line = lines[i];
+      if (i === srcSkip) { i++; continue; }
       if (/^\s*```/.test(line)) {
         const info = line.trim().replace(/^```/, "").trim().toLowerCase();
         const body = [];
@@ -10506,6 +10597,8 @@ _CHAT_JS = r'''
           }), 0);
         };
         row2.append(cp, sh, more); foot.append(row2, menu); body.append(foot);
+        const sf = sourcesFoot(m.text);
+        if (sf) body.append(sf);
       }
       body.append(meta);
       if (m.trail && m.trail.length) {
