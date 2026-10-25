@@ -1,5 +1,31 @@
 # To-do
 
+## Stage 3d: Rich interactive messages (Theta design, no new backend)
+
+- Chat messages render blockquotes (`> ` lines, accent bar),
+  code blocks with a real Copy button (clipboard + fallback,
+  Copied/failed states), and tables with alignment honored
+  from the separator row, `scope="col"` headers, horizontal
+  dividers, wrapped cells, and a rounded bordered container
+  that scrolls horizontally on narrow screens.
+- Fenced blocks render as interactive cards in the app's own
+  tokens (cards 18px radius, controls 12px): ` ```doc ` is an
+  editable document card (Copy + Edit; Save posts the edited
+  text as a chat message); ` ```config ` is a panel of
+  `select:` / `check:` lines with a Submit button that posts
+  the choices as a chat message; ` ```flow ` draws `A -> B`
+  boxes and arrows; ` ```bars ` draws labeled bars. Bad input
+  falls back to plain text; nothing model-written executes
+  (DOM nodes only, never innerHTML).
+- Cards submit through `/api/allchat` (they cannot use
+  `/api/chat/press`, which only accepts server-issued
+  james/qwerty buttons). No new endpoint, no model-routing
+  change, no composer/nav/agent-identity change. Considered
+  and rejected: sticky table headers (the scroll wrapper
+  prevents them from sticking on page scroll) and a stacked
+  table layout on phones (horizontal scroll preserves column
+  comparison).
+
 ## Stage 3c: File and Image Attachments
 
 - The chat composer takes up to 4 attachments: images (JPEG, PNG,

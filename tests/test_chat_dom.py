@@ -176,13 +176,16 @@ with sync_playwright() as p:
             const r = body ? body.getBoundingClientRect() : null;
             const cs = body ? getComputedStyle(body) : null;
             const agent = document.querySelector('#msgs .msg:not(.mine) .avcol img');
+            const meta = mine ? mine.querySelector('.meta') : null;
             return {avHidden: avcol ? getComputedStyle(avcol).display === 'none' : false,
                     font: cs ? cs.fontSize : '', radius: cs ? cs.borderRadius : '',
                     rightGap: r ? Math.round(msgs.right - r.right) : -1,
+                    metaHidden: meta ? getComputedStyle(meta).display === 'none' : true,
                     agentAvatar: agent ? agent.getBoundingClientRect().width > 0 : false}; }""")
         check("own messages hide their avatar column", bub["avHidden"])
         check("chat text renders at 16px", bub["font"] == "16px")
         check("own bubble is rounded and right-aligned", bub["radius"].startswith("20px") and 0 <= bub["rightGap"] <= 40)
+        check("own messages hide their You/timestamp meta", bub["metaHidden"])
         check("agent avatars still show", bub["agentAvatar"])
         pg.screenshot(path=os.path.join(SHOTS, "thread-390.png"))
         pg.close()
@@ -324,6 +327,94 @@ with sync_playwright() as p:
         check("removed file is not sent with the message",
               pg.locator("#msgs .fchip").count() == 0)
         check("strip clears after send", pg.locator("#chat-attach[hidden]").count() == 1)
+        pg.close()
+
+        # Rich messages (Stage 3d): tables, quotes, code copy, doc +
+        # config cards, flow, bars, hostile output — all in Theta's
+        # own tokens, rendered live.
+        _rich = ("Comparison:\n| Model | Replies | Status |\n| :--- | ---: | :---: |\n"
+                 "| Opus 5.5 | 128 | On |\n| gpt-oss-120b | 1042 | Off |\n\n"
+                 "> A quoted note worth keeping.\n\n"
+                 "```python\nprint(\"hello\")\n```\n\n"
+                 "```doc\nRelease note\nShip the composer fix and keep the keyboard behavior.\n```\n\n"
+                 "```config\nModel strategy\nselect Model strategy: Single primary model | Primary model + specialists\n"
+                 "check Browser tests required: on\ncheck Approval required: off\n```\n\n"
+                 "```flow\nRequest -> Renderer -> Thread\n```\n\n"
+                 "```bars\nOpus: 128\ngpt-oss: 1042\n```\n")
+        _hostile = "<script>alert(1)</script> and some javascript:evil text"
+        _store = h.store()
+        _store.add_chat("theta", _rich, channel="all")
+        _store.add_chat("theta", _hostile, channel="all")
+        pg = browser.new_page(viewport={"width": 390, "height": 844})
+        pg.goto(f"{APP}/chat?key=dk")
+        expect(pg.locator(".md-table")).to_be_visible(timeout=15000)
+        expect(pg.locator(".doccard")).to_be_visible(timeout=15000)
+        expect(pg.locator(".cfgcard")).to_be_visible(timeout=15000)
+        tbl = pg.evaluate("""() => {
+            const ths = [...document.querySelectorAll('.md-table th')];
+            const cs = getComputedStyle(document.querySelector('.md-scroll'));
+            return {scopes: ths.map(t => t.getAttribute('scope')),
+                    aligns: ths.map(t => getComputedStyle(t).textAlign),
+                    radius: cs.borderRadius}; }""")
+        check("table headers carry scope=col", tbl["scopes"] == ["col", "col", "col"])
+        check("table alignment honors the separator row",
+              tbl["aligns"] == ["left", "right", "center"])
+        check("table container is rounded", tbl["radius"] != "0px")
+        check("rich message does not overflow the phone width", no_overflow(pg))
+        check("code block has a copy button",
+              pg.locator(".codeblock .chead button").count() >= 1
+              and pg.locator(".codeblock .chead button").first.inner_text() == "Copy")
+        check("blockquote renders", pg.locator(".md-quote").count() >= 1)
+        check("doc card has copy + edit",
+              pg.locator(".doccard").count() >= 1
+              and pg.locator(".doccard button").filter(has_text="Edit").count() == 1)
+        check("config card has select, checkboxes, submit",
+              pg.locator(".cfgcard select").count() == 1
+              and pg.locator(".cfgcard input[type=checkbox]").count() == 2
+              and pg.locator(".cfgcard button").filter(has_text="Submit").count() == 1)
+        check("flow diagram and bars render",
+              pg.locator(".fnode").count() >= 3
+              and pg.locator(".bar-fill").count() == 2)
+        check("hostile model output stays inert (no script element, text shown)",
+              pg.locator("#msgs script").count() == 0
+              and "alert(1)" in (pg.locator("#msgs").inner_text() or ""))
+        foc = pg.evaluate("""() => {
+            let found = false;
+            for (const s of document.styleSheets) {
+                try { for (const r of s.cssRules) if (r.cssText.includes(':focus-visible')) found = true; }
+                catch (e) {}
+            }
+            const b = document.querySelector('.codeblock .chead button');
+            return {rule: found, focusable: b ? b.tabIndex >= 0 : false}; }""")
+        check("visible focus rule reaches the page and card buttons are focusable",
+              foc["rule"] and foc["focusable"])
+        # Table + quote + code live at the top of the rich message;
+        # scroll them into view for a dedicated evidence shot.
+        pg.locator(".md-table").first.scroll_into_view_if_needed()
+        pg.wait_for_timeout(500)
+        pg.locator("#msgs").screenshot(path=os.path.join(SHOTS, "rich-table-390.png"))
+        # Edit flow: Edit opens a textarea, Cancel restores the card.
+        pg.locator(".doccard button").filter(has_text="Edit").click()
+        expect(pg.locator(".doccard textarea.field")).to_be_visible(timeout=10000)
+        pg.locator(".doccard button").filter(has_text="Cancel").click()
+        expect(pg.locator(".doccard button").filter(has_text="Edit")).to_be_visible(timeout=10000)
+        check("doc edit cancels back to the card", True)
+        # Submit state change: clicking Submit disables the card at
+        # once (synchronous). No "Sent" assertion here on purpose:
+        # the 6s message poll can re-render the thread mid-flight
+        # and detach the card before the POST returns.
+        pg.locator(".cfgcard button").filter(has_text="Submit").click()
+        pg.wait_for_timeout(1000)
+        check("config submit disables the card while sending",
+              pg.locator(".cfgcard select:disabled").count() == 1
+              and pg.locator(".cfgcard button:disabled").count() >= 1)
+        pg.screenshot(path=os.path.join(SHOTS, "rich-390.png"))
+        pg.close()
+        pg = browser.new_page(viewport={"width": 1280, "height": 800})
+        pg.goto(f"{APP}/chat?key=dk")
+        expect(pg.locator(".md-table")).to_be_visible(timeout=15000)
+        check("rich message does not overflow desktop width", no_overflow(pg))
+        pg.screenshot(path=os.path.join(SHOTS, "rich-1280.png"))
         pg.close()
     finally:
         browser.close()

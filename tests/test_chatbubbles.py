@@ -78,13 +78,13 @@ check("mine rows drop the avatar column",
       ".msg.mine{grid-template-columns:minmax(0,1fr)}" in css
       and ".msg.mine .avcol{display:none}" in css)
 check("mine bodies are right-aligned content-hugging bubbles",
-      ".msg.mine .mbody{width:fit-content;max-width:min(76ch,85%);margin-left:auto;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:10px 14px;overflow-wrap:anywhere}" in css)
+      ".msg.mine .mbody{width:fit-content;max-width:min(76ch,85%);margin-left:auto;background:var(--surface);border-radius:20px;padding:10px 14px;overflow-wrap:anywhere}" in css)
 check("mine bubbles use the glass surface under backdrop-filter",
       ".msg.mine .mbody{background:color-mix(in srgb,var(--surface) 72%,transparent);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);backdrop-filter:blur(var(--glass-blur)) saturate(160%)}" in css)
 check("old accent tint is gone",
       ".msg.mine{background:color-mix(in srgb,var(--accent) 7%,transparent)}" not in css)
-check("mine meta right-aligns with the bubble",
-      ".msg.mine .meta{justify-content:flex-end}" in css)
+check("mine meta is hidden (no You/timestamp on own messages)",
+      ".msg.mine .meta{display:none}" in css)
 check("chat text is larger (16px message bodies)",
       ".msg .mbody{font-size:16px}" in css)
 check("76ch cap intact (3b extension regression)",

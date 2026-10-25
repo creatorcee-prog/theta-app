@@ -8606,11 +8606,12 @@ body.typing .chat{height:100dvh}
 .msg.cont .meta{display:none}
 .msg.mine{grid-template-columns:minmax(0,1fr)}
 .msg.mine .avcol{display:none}
-.msg.mine .mbody{width:fit-content;max-width:min(76ch,85%);margin-left:auto;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:10px 14px;overflow-wrap:anywhere}
-.msg.mine .meta{justify-content:flex-end}
+.msg.mine .mbody{width:fit-content;max-width:min(76ch,85%);margin-left:auto;background:var(--surface);border-radius:20px;padding:10px 14px;overflow-wrap:anywhere}
+.msg.mine .meta{display:none}
 @supports (backdrop-filter:blur(1px)){
  .msg.mine .mbody{background:color-mix(in srgb,var(--surface) 72%,transparent);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);backdrop-filter:blur(var(--glass-blur)) saturate(160%)}}
 .msg .mbody{font-size:16px}
+#msgs ::selection{background:transparent}
 .mbody{max-width:76ch}
 .new{animation:pop .25s ease-out}
 @keyframes pop{from{opacity:0;transform:translateY(4px)}}
@@ -8651,15 +8652,37 @@ html,body{overflow-x:clip;max-width:100%}
 .md .md-list.tasks{list-style:none;padding-left:0}.md li.task{display:flex;gap:8px;align-items:flex-start}
 .md li.task input{margin-top:4px;flex-shrink:0;accent-color:var(--accent);width:18px;height:18px;cursor:pointer}
 .md li.task>span{flex:1;min-width:0}
-.md .md-scroll{overflow-x:auto;margin:6px 0;white-space:normal}
+.md .md-scroll{overflow-x:auto;margin:6px 0;white-space:normal;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface)}
 .md .md-scroll{-webkit-overflow-scrolling:touch;max-width:100%}
 .md .md-table{border-collapse:collapse;font-size:14px;line-height:1.4;font-variant-numeric:tabular-nums;width:100%}
-.md .md-table th,.md .md-table td{border:1px solid var(--border);padding:7px 10px;text-align:left;vertical-align:top;
- overflow-wrap:normal;word-break:normal;white-space:normal;min-width:5.5em}
+.md .md-table th,.md .md-table td{border-bottom:1px solid var(--border);padding:9px 12px;text-align:left;vertical-align:top;overflow-wrap:break-word;word-break:normal;white-space:normal;min-width:5.5em}
+.md .md-table tr:last-child td{border-bottom:0}
 .md .md-table th{background:var(--surface2);font-weight:650}
 .md pre{background:var(--surface2);border:1px solid var(--border);padding:9px 11px;border-radius:10px;overflow-x:auto;max-height:340px;overflow-y:auto;font-size:13px;margin:6px 0;white-space:pre}
 .md code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;background:var(--surface2);border-radius:5px;padding:0 4px}
 .md pre code{background:none;padding:0}.md .md-img{max-width:100%;border-radius:10px;margin:6px 0;display:block}
+.md .md-quote{border-left:3px solid var(--accent);padding:2px 0 2px 12px;color:var(--muted);margin:6px 0}
+.md .codeblock{border:1px solid var(--border);border-radius:10px;background:var(--surface2);overflow:hidden;margin:6px 0}
+.md .codeblock .chead{display:flex;justify-content:flex-end;padding:6px 8px 0}
+.md .codeblock pre{border:0;border-radius:0;margin:0}
+.md .doccard,.md .cfgcard{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:var(--pad);box-shadow:var(--shadow);margin:8px 0}
+.md .doc-title{font-weight:700;font-size:16px;margin-bottom:8px}
+.md .docbody{white-space:pre-wrap;overflow-wrap:anywhere}
+.md .doccard textarea.field{margin:8px 0}
+.md .cfgrow{display:flex;align-items:center;gap:10px;margin:10px 0}
+.md .cfgrow label{flex:1;min-width:0}
+.md .cfgrow select.field{flex:1;min-width:120px}
+.md .cfgrow input[type=checkbox]{flex-shrink:0;accent-color:var(--accent);width:18px;height:18px;cursor:pointer}
+.md .cfgstatus{margin-top:8px}
+.md .flow{display:flex;flex-direction:column;margin:8px 0}
+.md .fnode{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 14px;font-weight:650;text-align:center}
+.md .farrow{text-align:center;color:var(--muted);padding:4px 0}
+.md .bar-row{display:flex;align-items:center;gap:10px;margin:6px 0}
+.md .bar-lab{flex:0 0 120px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+.md .bar-track{flex:1;background:var(--surface2);border-radius:999px;height:14px;overflow:hidden}
+.md .bar-fill{height:100%;background:var(--accent);border-radius:999px}
+.md .bar-val{font-variant-numeric:tabular-nums;font-size:14px;color:var(--muted)}
+@media (pointer:coarse){.md .doccard .btn,.md .cfgcard .btn,.md .codeblock .btn{min-height:44px}}
 .caret{display:inline-block;width:7px;height:1.05em;vertical-align:-2px;margin-left:2px;border-radius:2px;background:var(--accent);animation:blink 1s steps(1) infinite}
 @keyframes blink{50%{opacity:0}}
 .text .at{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);border-radius:5px;padding:0 3px;font-weight:620}
@@ -9254,6 +9277,146 @@ _CHAT_JS = r'''
       frag.append(s.slice(last));
       return frag;
     }
+    // Copy button for code blocks: clipboard API, execCommand fallback,
+    // honest success/failure states. Never touches the message text.
+    function copyBtn(getText) {
+      const b = el("button", "btn small ghost", "Copy");
+      b.type = "button";
+      b.onclick = async () => {
+        let ok = false;
+        try { await navigator.clipboard.writeText(getText()); ok = true; }
+        catch (_) {
+          try {
+            const ta = document.createElement("textarea");
+            ta.value = getText(); ta.style.cssText = "position:fixed;opacity:0";
+            document.body.append(ta); ta.select();
+            ok = document.execCommand("copy"); ta.remove();
+          } catch (_) { ok = false; }
+        }
+        b.textContent = ok ? "Copied" : "Copy failed";
+        b.classList.toggle("is-success", ok); b.classList.toggle("is-error", !ok);
+        setTimeout(() => { b.textContent = "Copy"; b.classList.remove("is-success", "is-error"); }, 1500);
+      };
+      return b;
+    }
+    // Card submission through the supported /api/allchat path. Cards
+    // cannot use /api/chat/press: it only accepts server-issued
+    // james/qwerty buttons. No re-render on success (it would wipe
+    // the card's Sent state); the normal message poll brings the
+    // sent message into the thread, which is the receipt.
+    function sendCard(getText, card) {
+      const st = el("div", "cfgstatus muted small"); card.append(st);
+      return async () => {
+        card.querySelectorAll("button,select,input,textarea").forEach(x => x.disabled = true);
+        st.textContent = "Sending\u2026"; st.classList.remove("is-error", "is-success");
+        try {
+          const rid = Math.random().toString(36).slice(2, 12);
+          const d = await (await fetch("/api/allchat", {method: "POST", headers: H, body: JSON.stringify({text: getText(), channel: C.channel, rid})})).json();
+          if (!d.ok) throw new Error(d.error);
+          st.textContent = "Sent"; st.classList.add("is-success");
+          return true;
+        } catch (err) {
+          st.textContent = (err.message || "Send failed") + " \u2014 try again.";
+          st.classList.add("is-error");
+          card.querySelectorAll("button,select,input,textarea").forEach(x => x.disabled = false);
+          return false;
+        }
+      };
+    }
+    // Editable document card: Copy + Edit. Save posts the edited
+    // text as a chat message; Cancel restores the original.
+    function docCard(body) {
+      const card = el("div", "doccard");
+      const title = el("div", "doc-title", (body[0] || "Document").trim() || "Document");
+      const text = body.slice(1).join("\n");
+      const bd = el("div", "docbody", text);
+      const acts = el("div", "msg-acts");
+      const cp = copyBtn(() => bd.textContent);
+      const ed = el("button", "btn small ghost", "Edit"); ed.type = "button";
+      acts.append(cp, ed); card.append(title, bd, acts);
+      ed.onclick = () => {
+        const ta = el("textarea"); ta.className = "field"; ta.rows = Math.min(12, Math.max(3, text.split("\n").length + 1)); ta.value = text;
+        const row = el("div", "msg-acts");
+        const save = el("button", "btn small", "Send edited text"); save.type = "button";
+        const cancel = el("button", "btn small ghost", "Cancel"); cancel.type = "button";
+        row.append(save, cancel);
+        bd.replaceWith(ta); acts.replaceWith(row);
+        cancel.onclick = () => { ta.replaceWith(bd); row.replaceWith(acts); };
+        save.onclick = async () => {
+          const ok = await sendCard(() => ta.value, card)();
+          if (ok) { bd.textContent = ta.value; ta.replaceWith(bd); row.replaceWith(acts); acts.querySelectorAll("button").forEach(b => b.disabled = true); }
+        };
+      };
+      return card;
+    }
+    // Configuration card: strict `select:` / `check:` lines only.
+    // Malformed lines render as plain text, never dropped. Submit
+    // composes the choices into a chat message.
+    function cfgCard(body) {
+      const card = el("div", "cfgcard");
+      const title = el("div", "doc-title", (body[0] || "Configuration").trim() || "Configuration");
+      card.append(title);
+      const fields = [];
+      for (const raw of body.slice(1)) {
+        const sel = raw.match(/^select\s+([^:]+):\s*(.+)$/i);
+        const chk = raw.match(/^check\s+([^:]+):\s*(on|off)\s*$/i);
+        if (sel) {
+          const row = el("div", "cfgrow"), lab = el("label", "", sel[1].trim()), inp = el("select");
+          inp.className = "field"; inp.setAttribute("aria-label", sel[1].trim());
+          sel[2].split("|").map(s => s.trim()).filter(Boolean).forEach(o => inp.append(el("option", "", o)));
+          row.append(lab, inp); card.append(row);
+          fields.push({label: sel[1].trim(), get: () => inp.value});
+        } else if (chk) {
+          const row = el("div", "cfgrow"), lab = el("label", "", chk[1].trim()), inp = el("input");
+          inp.type = "checkbox"; inp.checked = chk[2].toLowerCase() === "on"; inp.setAttribute("aria-label", chk[1].trim());
+          row.append(lab, inp); card.append(row);
+          fields.push({label: chk[1].trim(), get: () => inp.checked ? "on" : "off"});
+        } else if (raw.trim()) {
+          card.append(el("div", "", raw));
+        }
+      }
+      if (!fields.length) { card.append(el("div", "muted small", "Nothing to configure here.")); return card; }
+      const acts = el("div", "msg-acts"), sub = el("button", "btn", "Submit"); sub.type = "button";
+      acts.append(sub); card.append(acts);
+      sub.onclick = sendCard(() => "Config: " + title.textContent + " \u2014 " + fields.map(f => f.label + ": " + f.get()).join("; "), card);
+      return card;
+    }
+    // Flow diagram: `A -> B -> C` lines become boxes + arrows.
+    // Lines without arrows render as plain text, never dropped.
+    function flowCard(body) {
+      const box = el("div", "flow");
+      for (const raw of body) {
+        const nodes = raw.split("->").map(s => s.trim()).filter(Boolean);
+        if (nodes.length < 2) { if (raw.trim()) box.append(el("div", "", raw)); continue; }
+        nodes.forEach((n, j) => {
+          if (j) box.append(el("div", "farrow", "\u2193"));
+          box.append(el("div", "fnode", n));
+        });
+      }
+      return box;
+    }
+    // Bar chart: `Label: number` lines become labeled bars,
+    // max-normalized, negatives clamped at zero width.
+    function barsCard(body) {
+      const box = el("div", "");
+      const rows = [];
+      for (const raw of body) {
+        const mm = raw.match(/^(.*?):\s*(-?[\d.,]+)\s*$/);
+        if (mm) rows.push([mm[1].trim(), parseFloat(mm[2].replace(/,/g, ""))]);
+        else if (raw.trim()) box.append(el("div", "", raw));
+      }
+      const mx = Math.max(0, ...rows.map(r => r[1]));
+      for (const [lab, val] of rows) {
+        const row = el("div", "bar-row");
+        row.append(el("div", "bar-lab", lab));
+        const track = el("div", "bar-track"), fill = el("div", "bar-fill");
+        fill.style.width = (mx > 0 ? Math.max(0, val) / mx * 100 : 0) + "%";
+        track.append(fill); row.append(track);
+        row.append(el("div", "bar-val", String(val)));
+        box.append(row);
+      }
+      return box;
+    }
     const SEP = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
     const cells = l => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
     const ITEM = /^\s*(?:[-*•]|\d+[.)])\s+/;
@@ -9261,18 +9424,27 @@ _CHAT_JS = r'''
     for (let i = 0; i < lines.length;) {
       const line = lines[i];
       if (/^\s*```/.test(line)) {
+        const info = line.trim().replace(/^```/, "").trim().toLowerCase();
         const body = [];
         for (i++; i < lines.length && !/^\s*```/.test(lines[i]); i++) body.push(lines[i]);
-        const pre = el("pre"); pre.append(el("code", "", body.join("\n")));
-        root.append(pre); i++; continue;
+        i++;
+        if (info === "doc") { root.append(docCard(body)); continue; }
+        if (info === "config") { root.append(cfgCard(body)); continue; }
+        if (info === "flow") { root.append(flowCard(body)); continue; }
+        if (info === "bars") { root.append(barsCard(body)); continue; }
+        const wrap = el("div", "codeblock"), head = el("div", "chead"), pre = el("pre");
+        head.append(copyBtn(() => body.join("\n")));
+        pre.append(el("code", "", body.join("\n")));
+        wrap.append(head, pre); root.append(wrap); continue;
       }
       if (line.includes("|") && i + 1 < lines.length && SEP.test(lines[i + 1])) {
         const wrap = el("div", "md-scroll"), table = el("table", "md-table"), thead = el("thead"), tbody = el("tbody"), hr = el("tr");
-        cells(line).forEach(c => { const th = el("th"); th.append(inline(c)); hr.append(th); });
+        const aligns = cells(lines[i + 1]).map(c => /^:-+:$/.test(c) ? "center" : /^-+:$/.test(c) ? "right" : "left");
+        cells(line).forEach((c, j) => { const th = el("th"); th.setAttribute("scope", "col"); th.style.textAlign = aligns[j] || "left"; th.append(inline(c)); hr.append(th); });
         thead.append(hr);
         for (i += 2; i < lines.length && lines[i].includes("|") && lines[i].trim(); i++) {
           const tr = el("tr");
-          cells(lines[i]).forEach(c => { const td = el("td"); td.append(inline(c)); tr.append(td); });
+          cells(lines[i]).forEach((c, j) => { const td = el("td"); td.style.textAlign = aligns[j] || "left"; td.append(inline(c)); tr.append(td); });
           tbody.append(tr);
         }
         table.append(thead, tbody); wrap.append(table); root.append(wrap); continue;
@@ -9299,6 +9471,14 @@ _CHAT_JS = r'''
           list.append(li);
         }
         root.append(list); continue;
+      }
+      if (/^>\s?/.test(line)) {
+        const q = el("blockquote", "md-quote");
+        while (i < lines.length && /^>\s?/.test(lines[i])) {
+          q.append(inline(lines[i].replace(/^>\s?/, ""))); q.append(el("br")); i++;
+        }
+        if (q.lastChild) q.lastChild.remove();
+        root.append(q); continue;
       }
       const h = line.match(/^\s*#{1,4}\s+(.*)$/);
       if (h) { const d = el("div", "md-h"); d.append(inline(h[1])); root.append(d); i++; continue; }
