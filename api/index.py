@@ -8930,6 +8930,17 @@ select.field{width:auto;flex:1;min-width:120px}
 .is-error{border-color:var(--bad);color:var(--bad)}
 .is-disabled{opacity:.55;pointer-events:none;cursor:default}
 input:disabled,select:disabled,textarea:disabled{opacity:.55;cursor:default}
+
+/* Animated backgrounds (Settings -> Background). Independent of themes: the
+   layer sits behind all content (z-index -1) and is opaque, so the theme's
+   own background never shows through it. Theme (the default) hides it. */
+#bg-layer{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden;background:#000}
+#bg-layer.off{display:none}
+:root[data-bg]:not([data-bg="theme"]) body{background:transparent}
+#bg-layer canvas{width:100%;height:100%;display:block}
+#bg-layer.bg-gemini{background-color:#050508;background-image:radial-gradient(700px 500px at 82% 8%,rgba(59,90,246,.55),transparent 70%),radial-gradient(800px 600px at 12% 88%,rgba(16,185,129,.38),transparent 70%),radial-gradient(600px 500px at 55% 45%,rgba(168,85,247,.30),transparent 70%);animation:bgGemini 26s ease-in-out infinite alternate}
+@keyframes bgGemini{from{background-position:0 0,0 0,0 0}to{background-position:6% 10%,-8% -6%,4% -8%}}
+@media (prefers-reduced-motion: reduce){#bg-layer.bg-gemini{animation:none}}
 '''
 
 _UI_JS_SRC = r'''
@@ -8977,7 +8988,7 @@ _UI_JS_SRC = r'''
     else mk(m === "dark" ? t.dark : t.light);
   }
   function save() {
-    document.cookie = "theta_ui=" + [root.dataset.theme, root.dataset.mode, root.dataset.layout, (root.dataset.glassstyle || "plus")].join(".")
+    document.cookie = "theta_ui=" + [root.dataset.theme, root.dataset.mode, root.dataset.layout, (root.dataset.glassstyle || "plus"), (root.dataset.bg || "theme")].join(".")
       + ";path=/;max-age=31536000;samesite=lax";
   }
   function mark() {
@@ -9155,6 +9166,126 @@ _UI_JS_SRC = r'''
   }
   if (!(window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === "function")) { edgeGyroStarted = true; startEdgeGyro(); }
   else addEventListener("pointerdown", () => { if (edgeGyroStarted || !edgeLiquid()) return; edgeGyroStarted = true; startEdgeGyro(); });
+
+  // Animated backgrounds: Settings -> Background, independent of themes.
+  // The layer sits behind all content (z-index -1); canvas modes draw one
+  // frame immediately, then animate with rAF (which pauses while hidden).
+  (function () {
+    var root = document.documentElement;
+    var layer = null, cv = null, ctx = null, raf = 0, mode = "", W = 0, H = 0;
+    var reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    var rnd = function (a, b) { return a + Math.random() * (b - a); };
+    function ensure() {
+      if (layer) return;
+      layer = document.createElement("div"); layer.id = "bg-layer";
+      cv = document.createElement("canvas"); layer.appendChild(cv);
+      document.body.prepend(layer);
+      ctx = cv.getContext("2d");
+      addEventListener("resize", function () {
+        size();
+        if (mode === "stars") initStars(); else if (mode === "shards") initShards();
+      });
+    }
+    function size() {
+      var d = Math.min(devicePixelRatio || 1, 2);
+      W = innerWidth; H = innerHeight;
+      cv.width = Math.round(W * d); cv.height = Math.round(H * d);
+      ctx.setTransform(d, 0, 0, d, 0, 0);
+    }
+    // Stars: fixed positions, twinkling alpha.
+    var stars = [];
+    function initStars() {
+      stars = [];
+      var n = Math.round(Math.min(160, Math.max(70, W * H / 12000)));
+      for (var i = 0; i < n; i++) stars.push({x: Math.random() * W, y: Math.random() * H, r: rnd(.4, 1.6), p: Math.random() * 6.28, s: rnd(.6, 2.2)});
+    }
+    function drawStars(t) {
+      ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+      for (var i = 0; i < stars.length; i++) {
+        var st = stars[i];
+        ctx.globalAlpha = .35 + .65 * (0.5 + 0.5 * Math.sin(t * st.s + st.p));
+        ctx.fillStyle = "#fff";
+        ctx.beginPath(); ctx.arc(st.x, st.y, st.r, 0, 6.283); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+    // Shards: many small bright glass fragments, drifting and tumbling.
+    // They catch the light as they turn (brightness follows the tumble),
+    // bounce off the walls, and bump into each other. A few larger hero
+    // shards read as the bright glints; the rest are tiny slivers, white
+    // with a pale blue tone on some, on pure black.
+    var shards = [];
+    function initShards() {
+      shards = [];
+      var n = Math.round(Math.min(130, Math.max(60, W * H / 9000)));
+      for (var i = 0; i < n; i++) {
+        var hero = Math.random() < 0.12;
+        var r = hero ? rnd(10, 22) : rnd(2, 9), vs = [];
+        var nv = 3 + Math.floor(Math.random() * 2);
+        for (var j = 0; j < nv; j++) vs.push({a: j / nv * 6.283, d: r * rnd(.6, 1.2)});
+        shards.push({x: rnd(r, W - r), y: rnd(r, H - r), vx: rnd(-20, 20), vy: rnd(-16, 16), r: r, rot: Math.random() * 6.28, vr: rnd(-.6, .6), vs: vs, p: Math.random() * 6.28, hero: hero, blue: Math.random() < 0.25});
+      }
+    }
+    function drawShards(dt) {
+      ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+      for (var i = 0; i < shards.length; i++) {
+        var a = shards[i];
+        a.x += a.vx * dt; a.y += a.vy * dt; a.rot += a.vr * dt;
+        if (a.x < a.r) { a.x = a.r; a.vx = Math.abs(a.vx); }
+        if (a.x > W - a.r) { a.x = W - a.r; a.vx = -Math.abs(a.vx); }
+        if (a.y < a.r) { a.y = a.r; a.vy = Math.abs(a.vy); }
+        if (a.y > H - a.r) { a.y = H - a.r; a.vy = -Math.abs(a.vy); }
+        for (var j = i + 1; j < shards.length; j++) {
+          var b = shards[j], dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), min = a.r + b.r;
+          if (d > 0 && d < min) {
+            var nx = dx / d, ny = dy / d, ov = (min - d) / 2;
+            a.x -= nx * ov; a.y -= ny * ov; b.x += nx * ov; b.y += ny * ov;
+            var p = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+            if (p > 0) { a.vx -= p * nx; a.vy -= p * ny; b.vx += p * nx; b.vy += p * ny; }
+          }
+        }
+      }
+      for (var k = 0; k < shards.length; k++) {
+        var sh = shards[k];
+        // Facets catch the light as the shard tumbles: brightness rides
+        // the rotation, so glints sweep across the field.
+        var g = 0.5 + 0.5 * Math.sin(sh.rot * 2 + sh.p);
+        var al = sh.hero ? 0.55 + 0.45 * g : 0.15 + 0.7 * g;
+        ctx.beginPath();
+        for (var m = 0; m < sh.vs.length; m++) {
+          var v = sh.vs[m], ang = v.a + sh.rot, px = sh.x + Math.cos(ang) * v.d, py = sh.y + Math.sin(ang) * v.d;
+          if (m) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fillStyle = sh.blue ? "rgba(215,230,255," + al + ")" : "rgba(255,255,255," + al + ")";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255,255,255," + Math.min(1, al + 0.3) + ")";
+        ctx.lineWidth = sh.hero ? 1.5 : 1;
+        ctx.stroke();
+      }
+    }
+    function frame(t, last) {
+      var dt = Math.min(.05, (t - last) / 1000 || 0);
+      if (mode === "stars") drawStars(t / 1000); else if (mode === "shards") drawShards(dt);
+      if (mode === "stars" || mode === "shards") raf = requestAnimationFrame(function (nt) { frame(nt, t); });
+    }
+    function applyBg() {
+      var v = root.dataset.bg || "theme";
+      if (v === "theme") { if (layer) layer.className = "off"; cancelAnimationFrame(raf); mode = ""; return; }
+      ensure(); size();
+      layer.className = "bg-" + v;
+      cancelAnimationFrame(raf);
+      if (v === "stars") { mode = "stars"; initStars(); drawStars(0); }
+      else if (v === "shards") { mode = "shards"; initShards(); drawShards(0); }
+      else { mode = ""; return; }
+      if (!reduced) raf = requestAnimationFrame(function (t) { frame(t, t); });
+    }
+    new MutationObserver(function (ms) {
+      for (var i = 0; i < ms.length; i++) if (ms[i].attributeName === "data-bg") applyBg();
+    }).observe(root, {attributes: true});
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", applyBg);
+    else applyBg();
+  })();
 
   // A bar runs across the top while the next page loads.
   const bar = document.createElement("div");
@@ -10306,13 +10437,14 @@ _ASSET_V = hashlib.sha1((_UI_CSS + _UI_JS + _CHAT_JS).encode()).hexdigest()[:10]
 
 
 def ui_prefs(headers):
-    """(theme, mode, layout, glassstyle) from the theta_ui cookie, with defaults."""
+    """(theme, mode, layout, glassstyle, bg) from the theta_ui cookie, with defaults."""
     raw = (_cookie(headers, "theta_ui") or "").split(".")
     theme = raw[0] if raw[0] in THEMES else "theta"
     mode = raw[1] if len(raw) > 1 and raw[1] in MODES else "auto"
     layout = raw[2] if len(raw) > 2 and raw[2] in LAYOUTS else "grid"
     glassstyle = raw[3] if len(raw) > 3 and raw[3] in ("plus", "liquid") else "plus"
-    return theme, mode, layout, glassstyle
+    bg = raw[4] if len(raw) > 4 and raw[4] in ("theme", "shards", "stars", "black", "gemini") else "theme"
+    return theme, mode, layout, glassstyle, bg
 
 
 def avatar_img(agent, size=40):
@@ -10352,8 +10484,10 @@ def minibar_html(active):
 
 def page(headers, title, active, body, body_class="", statuses=None, chat=None):
     """A full page in the app shell: sidebar on wide screens, tab bar on phones."""
-    theme, mode, layout, glassstyle = ui_prefs(headers)
+    theme, mode, layout, glassstyle, bg = ui_prefs(headers)
     t = THEMES[theme]
+    bgstyle = (' style="background:#050508"' if bg == "gemini" else
+               ' style="background:#000"' if bg in ("shards", "stars", "black") else "")
     if mode == "auto":
         metas = (f'<meta name="theme-color" content="{t["light"]["bg"]}" media="(prefers-color-scheme: light)">'
                  f'<meta name="theme-color" content="{t["dark"]["bg"]}" media="(prefers-color-scheme: dark)">')
@@ -10375,7 +10509,7 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
     show_minibar = body_class != "chatpage"  # the chat page already has the full composer
     body_cls = ("hasminibar " + body_class).strip() if show_minibar else body_class
     return (
-        f'<!doctype html><html lang="en" data-theme="{theme}" data-mode="{mode}" data-layout="{layout}" data-glassstyle="{glassstyle}"{flags}>'
+        f'<!doctype html><html lang="en" data-theme="{theme}" data-mode="{mode}" data-layout="{layout}" data-glassstyle="{glassstyle}" data-bg="{bg}"{flags}{bgstyle}>'
         '<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
         f'<title>{html.escape(title)} · {APP_NAME}</title>'
         '<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">'
@@ -11264,7 +11398,7 @@ def signin_page(headers):
           'style="flex:1;border:0;background:transparent;outline:none;padding:8px 0;min-width:0">'
           '<button class="btn small" type="submit">Open</button></form><p class="note" id="si-status"></p></div>'
         f"<script>{_SIGNIN_JS}</script>")
-    theme, mode, _, _ = ui_prefs(headers)
+    theme, mode, _, _, _ = ui_prefs(headers)
     return (f'<!doctype html><html lang="en" data-theme="{theme}" data-mode="{mode}"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
             f'<title>Sign in · {APP_NAME}</title><link rel="stylesheet" href="/ui.css?v={_ASSET_V}">'
@@ -12125,7 +12259,7 @@ def siri_card(headers):
 
 
 def settings_page(headers):
-    theme, mode, layout, glassstyle = ui_prefs(headers)
+    theme, mode, layout, glassstyle, bg = ui_prefs(headers)
     st = store()
     swatches = "".join(
         f'<button type="button" class="sw" data-pref="theme" data-val="{n}" aria-label="{html.escape(t["label"])} theme">'
@@ -12159,6 +12293,12 @@ def settings_page(headers):
         'adds a specular gloss, stronger blur, and edge light to the same surfaces. Saved on this device.</p>'
         '<div class="seg" role="group" aria-label="Glass style"><button type="button" data-pref="glassstyle" data-val="plus">Glass+</button>'
         '<button type="button" data-pref="glassstyle" data-val="liquid">Liquid Glass</button></div></div>'
+        '<div><h3>Background</h3><p class="muted small">What sits behind everything. Separate from the color scheme, so any scheme works with any background. Saved on this device.</p>'
+        '<div class="seg" role="group" aria-label="Background"><button type="button" data-pref="bg" data-val="theme">Theme</button>'
+        '<button type="button" data-pref="bg" data-val="shards">Shards</button>'
+        '<button type="button" data-pref="bg" data-val="stars">Stars</button>'
+        '<button type="button" data-pref="bg" data-val="black">Black</button>'
+        '<button type="button" data-pref="bg" data-val="gemini">Gemini</button></div></div>'
         '<div><h3>Glass shine</h3><p class="muted small">Pictures have a glassy shine that follows your cursor. On a '
         'phone it can follow how you tilt it (your phone asks once for motion access).</p>'
         '<div class="seg" role="group" aria-label="Shine follows tilt"><button type="button" data-tilt="on">Follow tilt</button>'

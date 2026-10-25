@@ -220,6 +220,73 @@ with sync_playwright() as p:
         pg.screenshot(path=os.path.join(SHOTS, "glass-plus.png"))
         pg.close()
 
+        # Backgrounds: Settings swaps the layer live; canvas modes paint.
+        pg = browser.new_page(viewport={"width": 390, "height": 844})
+        pg.goto(f"{APP}/settings?key=dk")
+        expect(pg.locator('[data-pref="bg"][data-val="stars"]')).to_be_visible(timeout=15000)
+        layer = lambda: pg.evaluate("""() => {
+            const l = document.querySelector('#bg-layer');
+            const c = l ? l.querySelector('canvas') : null;
+            return l ? {cls: l.className, w: c ? c.width : 0, h: c ? c.height : 0,
+                        bg: getComputedStyle(l).backgroundImage, col: getComputedStyle(l).backgroundColor} : null; }""")
+        pg.locator('[data-pref="bg"][data-val="stars"]').click()
+        expect(pg.locator("html")).to_have_attribute("data-bg", "stars", timeout=5000)
+        pg.wait_for_timeout(600)
+        st = layer()
+        check("stars background paints a canvas layer", st and st["cls"] == "bg-stars" and st["w"] > 0 and st["h"] > 0)
+        check("active background clears the body background",
+              pg.evaluate("() => getComputedStyle(document.body).backgroundColor") == "rgba(0, 0, 0, 0)")
+        pg.goto(f"{APP}/chat?key=dk")
+        expect(pg.locator("#msgs")).to_be_visible(timeout=15000)
+        pg.wait_for_timeout(600)
+        pg.screenshot(path=os.path.join(SHOTS, "bg-stars-390.png"))
+        pg.goto(f"{APP}/settings?key=dk")
+        expect(pg.locator('[data-pref="bg"][data-val="shards"]')).to_be_visible(timeout=15000)
+        pg.locator('[data-pref="bg"][data-val="shards"]').click()
+        expect(pg.locator("html")).to_have_attribute("data-bg", "shards", timeout=5000)
+        pg.wait_for_timeout(600)
+        sh = layer()
+        check("shards background paints a canvas layer", sh and sh["cls"] == "bg-shards" and sh["w"] > 0 and sh["h"] > 0)
+        bright = pg.evaluate("""() => {
+            const cv = document.querySelector('#bg-layer canvas');
+            const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+            let n = 0;
+            for (let i = 0; i < d.length; i += 16) { if (d[i] > 200 && d[i + 1] > 200 && d[i + 2] > 200) n++; }
+            return n; }""")
+        check("shards draw bright glass fragments", bright > 50)
+        pg.goto(f"{APP}/chat?key=dk")
+        expect(pg.locator("#msgs")).to_be_visible(timeout=15000)
+        pg.wait_for_timeout(600)
+        pg.screenshot(path=os.path.join(SHOTS, "bg-shards-390.png"))
+        pg.goto(f"{APP}/settings?key=dk")
+        expect(pg.locator('[data-pref="bg"][data-val="gemini"]')).to_be_visible(timeout=15000)
+        pg.locator('[data-pref="bg"][data-val="gemini"]').click()
+        expect(pg.locator("html")).to_have_attribute("data-bg", "gemini", timeout=5000)
+        ge = layer()
+        check("gemini background shows the aurora gradient", ge and ge["cls"] == "bg-gemini" and "radial-gradient" in (ge["bg"] or ""))
+        pg.goto(f"{APP}/chat?key=dk")
+        expect(pg.locator("#msgs")).to_be_visible(timeout=15000)
+        pg.wait_for_timeout(600)
+        pg.screenshot(path=os.path.join(SHOTS, "bg-gemini-390.png"))
+        pg.goto(f"{APP}/settings?key=dk")
+        expect(pg.locator('[data-pref="bg"][data-val="black"]')).to_be_visible(timeout=15000)
+        pg.locator('[data-pref="bg"][data-val="black"]').click()
+        expect(pg.locator("html")).to_have_attribute("data-bg", "black", timeout=5000)
+        bl = layer()
+        check("black background is plain black", bl and bl["col"] == "rgb(0, 0, 0)")
+        pg.goto(f"{APP}/chat?key=dk")
+        expect(pg.locator("#msgs")).to_be_visible(timeout=15000)
+        pg.wait_for_timeout(600)
+        pg.screenshot(path=os.path.join(SHOTS, "bg-black-390.png"))
+        pg.goto(f"{APP}/settings?key=dk")
+        expect(pg.locator('[data-pref="bg"][data-val="theme"]')).to_be_visible(timeout=15000)
+        pg.locator('[data-pref="bg"][data-val="theme"]').click()
+        expect(pg.locator("html")).to_have_attribute("data-bg", "theme", timeout=5000)
+        of = layer()
+        check("theme background hides the layer", of and of["cls"] == "off")
+        pg.close()
+
+
         # Long-thread readability: grouping, code cap, remaining avatar images.
         pg = browser.new_page(viewport={"width": 1280, "height": 800})
         pg.goto(f"{APP}/chat?key=dk")

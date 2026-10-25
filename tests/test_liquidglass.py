@@ -70,11 +70,11 @@ def check(name, cond):
 
 # --- The cookie carries the glass style, defaulting to Glass+ ---
 check("ui_prefs parses the fourth cookie segment",
-      h.ui_prefs({"cookie": "theta_ui=theta.dark.grid.liquid"}) == ("theta", "dark", "grid", "liquid"))
+      h.ui_prefs({"cookie": "theta_ui=theta.dark.grid.liquid"}) == ("theta", "dark", "grid", "liquid", "theme"))
 check("three-segment cookies default to Glass+",
-      h.ui_prefs({"cookie": "theta_ui=theta.dark.grid"}) == ("theta", "dark", "grid", "plus"))
+      h.ui_prefs({"cookie": "theta_ui=theta.dark.grid"}) == ("theta", "dark", "grid", "plus", "theme"))
 check("no cookie defaults to Glass+",
-      h.ui_prefs({}) == ("theta", "auto", "grid", "plus"))
+      h.ui_prefs({}) == ("theta", "auto", "grid", "plus", "theme"))
 check("an unknown glass value defaults to Glass+",
       h.ui_prefs({"cookie": "theta_ui=theta.auto.grid.frosted"})[3] == "plus")
 
@@ -101,7 +101,7 @@ check("settings offers Glass+ and Liquid Glass",
       'data-pref="glassstyle" data-val="plus"' in settings
       and 'data-pref="glassstyle" data-val="liquid"' in settings)
 check("the UI script saves the glass style as the fourth cookie segment",
-      '[root.dataset.theme, root.dataset.mode, root.dataset.layout, (root.dataset.glassstyle || "plus")].join(".")' in js)
+      '[root.dataset.theme, root.dataset.mode, root.dataset.layout, (root.dataset.glassstyle || "plus"), (root.dataset.bg || "theme")].join(".")' in js)
 
 # --- The README documents the option ---
 check("README documents the glass style option",
