@@ -226,7 +226,7 @@ with sync_playwright() as p:
         expect(pg.locator('[data-pref="bg"][data-val="stars"]')).to_be_visible(timeout=15000)
         layer = lambda: pg.evaluate("""() => {
             const l = document.querySelector('#bg-layer');
-            const c = l ? l.querySelector('canvas') : null;
+            const c = l ? (l.querySelector('canvas[data-engine="webgl"]') || l.querySelector('canvas')) : null;
             return l ? {cls: l.className, w: c ? c.width : 0, h: c ? c.height : 0,
                         bg: getComputedStyle(l).backgroundImage, col: getComputedStyle(l).backgroundColor} : null; }""")
         pg.locator('[data-pref="bg"][data-val="stars"]').click()
@@ -244,16 +244,24 @@ with sync_playwright() as p:
         expect(pg.locator('[data-pref="bg"][data-val="shards"]')).to_be_visible(timeout=15000)
         pg.locator('[data-pref="bg"][data-val="shards"]').click()
         expect(pg.locator("html")).to_have_attribute("data-bg", "shards", timeout=5000)
-        pg.wait_for_timeout(600)
+        pg.wait_for_timeout(1200)
         sh = layer()
         check("shards background paints a canvas layer", sh and sh["cls"] == "bg-shards" and sh["w"] > 0 and sh["h"] > 0)
-        bright = pg.evaluate("""() => {
-            const cv = document.querySelector('#bg-layer canvas');
-            const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
-            let n = 0;
-            for (let i = 0; i < d.length; i += 16) { if (d[i] > 200 && d[i + 1] > 200 && d[i + 2] > 200) n++; }
-            return n; }""")
-        check("shards draw bright glass fragments", bright > 50)
+        frag = pg.evaluate("""() => {
+            const cv = document.querySelector('#bg-layer canvas[data-engine="webgl"]') || document.querySelector('#bg-layer canvas');
+            const tmp = document.createElement('canvas'); tmp.width = cv.width; tmp.height = cv.height;
+            tmp.getContext('2d').drawImage(cv, 0, 0);
+            const d = tmp.getContext('2d').getImageData(0, 0, tmp.width, tmp.height).data;
+            let vis = 0, glint = 0;
+            for (let i = 0; i < d.length; i += 16) {
+              if (d[i] > 60 || d[i + 1] > 60 || d[i + 2] > 60) vis++;
+            }
+            for (let i = 0; i < d.length; i += 4) {
+              if (d[i] > 200 || d[i + 1] > 200 || d[i + 2] > 200) glint++;
+            }
+            return {vis: vis, glint: glint}; }""")
+        check("shards draw visible glass fragments with glints", frag["vis"] > 50 and frag["glint"] > 3)
+        check("shards engage real 3D glass when available", pg.evaluate('() => !!document.querySelector(\'#bg-layer canvas[data-engine="webgl"]\')'))
         pg.goto(f"{APP}/chat?key=dk")
         expect(pg.locator("#msgs")).to_be_visible(timeout=15000)
         pg.wait_for_timeout(600)

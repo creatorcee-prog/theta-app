@@ -8679,7 +8679,7 @@ html,body{overflow-x:clip;max-width:100%}
 .md .codeblock{border:1px solid var(--border);border-radius:16px;background:var(--surface);color:var(--text);overflow:hidden;margin:6px 0}
 @supports (backdrop-filter:blur(1px)){
  .md .codeblock{background:color-mix(in srgb,var(--surface) 72%,transparent);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);backdrop-filter:blur(var(--glass-blur)) saturate(160%)}}
-:root[data-glassstyle="liquid"] .md .codeblock{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.45),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.12),0 12px 32px rgba(0,0,0,.28);border:0}
+:root[data-glassstyle="liquid"] .md .codeblock{background:linear-gradient(135deg,color-mix(in srgb,white 32%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 30%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.70),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.24),0 12px 32px rgba(0,0,0,.28);border:0}
 /* The codeblock pre stays transparent inside the glass box: without this, the liquid
    .md pre rule would put a second liquid panel (and mask) inside it. */
 :root[data-glassstyle="liquid"] .md.codeblock pre{background:transparent;color:var(--text);-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:none;-webkit-mask-box-image:none;mask-border:none}
@@ -8899,21 +8899,21 @@ select.field{width:auto;flex:1;min-width:120px}
  .glass{background:color-mix(in srgb,var(--surface) 72%,transparent);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);backdrop-filter:blur(var(--glass-blur)) saturate(160%)}}
 /* Liquid Glass: the same surfaces with a specular gloss, stronger blur, and edge light.
    Edges come from inset shadows, never borders, so own-message bubbles stay borderless. */
-:root[data-glassstyle="liquid"] .glass{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%),var(--surface);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.45),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.12),inset 1px 0 0 rgba(255,255,255,.12),0 12px 32px rgba(0,0,0,.28)}
-:root[data-glassstyle="liquid"] .msg.mine .mbody{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%),var(--surface);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.45),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.12),0 12px 32px rgba(0,0,0,.28)}
+:root[data-glassstyle="liquid"] .glass{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%),var(--surface);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.70),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.24),inset 1px 0 0 rgba(255,255,255,.12),0 12px 32px rgba(0,0,0,.28)}
+:root[data-glassstyle="liquid"] .msg.mine .mbody{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%),var(--surface);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.70),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.24),0 12px 32px rgba(0,0,0,.28)}
 @supports (backdrop-filter:blur(1px)){
- :root[data-glassstyle="liquid"] .glass{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%)}
- :root[data-glassstyle="liquid"] .msg.mine .mbody{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%)}}
+ :root[data-glassstyle="liquid"] .glass{background:linear-gradient(135deg,color-mix(in srgb,white 32%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 30%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%)}
+ :root[data-glassstyle="liquid"] .msg.mine .mbody{background:linear-gradient(135deg,color-mix(in srgb,white 32%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 30%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%)}}
 /* Liquid Glass everywhere (except images): the same gloss, blur, and edge light on every
    surface and control. Buttons and chips keep their colors and get edge light only, so accent
    states survive. Pills, circles, and images are untouched. */
 @supports (backdrop-filter:blur(1px)){
- :root[data-glassstyle="liquid"] .card,:root[data-glassstyle="liquid"] .win,:root[data-glassstyle="liquid"] .kpi,:root[data-glassstyle="liquid"] .sw,:root[data-glassstyle="liquid"] .lo,:root[data-glassstyle="liquid"] .lrow,:root[data-glassstyle="liquid"] #chat-menu{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.45),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.12),0 12px 32px rgba(0,0,0,.28)}
- :root[data-glassstyle="liquid"] .box,:root[data-glassstyle="liquid"] .field,:root[data-glassstyle="liquid"] .seg,:root[data-glassstyle="liquid"] .fchip,:root[data-glassstyle="liquid"] .minibox,:root[data-glassstyle="liquid"] .md pre{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface2) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.45),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.12)}
- :root[data-glassstyle="liquid"] dialog.sheet{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--bg) 82%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.45),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.12),0 12px 32px rgba(0,0,0,.28)}
- :root[data-glassstyle="liquid"] .mrow:hover,:root[data-glassstyle="liquid"] .crewlink:hover{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%),color-mix(in srgb,var(--surface2) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%)}}
+ :root[data-glassstyle="liquid"] .card,:root[data-glassstyle="liquid"] .win,:root[data-glassstyle="liquid"] .kpi,:root[data-glassstyle="liquid"] .sw,:root[data-glassstyle="liquid"] .lo,:root[data-glassstyle="liquid"] .lrow,:root[data-glassstyle="liquid"] #chat-menu{background:linear-gradient(135deg,color-mix(in srgb,white 32%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 30%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.70),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.24),0 12px 32px rgba(0,0,0,.28)}
+ :root[data-glassstyle="liquid"] .box,:root[data-glassstyle="liquid"] .field,:root[data-glassstyle="liquid"] .seg,:root[data-glassstyle="liquid"] .fchip,:root[data-glassstyle="liquid"] .minibox,:root[data-glassstyle="liquid"] .md pre{background:linear-gradient(135deg,color-mix(in srgb,white 32%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface2) 30%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.70),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.24)}
+ :root[data-glassstyle="liquid"] dialog.sheet{background:linear-gradient(135deg,color-mix(in srgb,white 32%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--bg) 70%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.70),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.24),0 12px 32px rgba(0,0,0,.28)}
+ :root[data-glassstyle="liquid"] .mrow:hover,:root[data-glassstyle="liquid"] .crewlink:hover{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%),color-mix(in srgb,var(--surface2) 30%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%)}}
 :root[data-glassstyle="liquid"] .btn,:root[data-glassstyle="liquid"] .seg button,:root[data-glassstyle="liquid"] .chip{box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.35),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.10)}
-:root[data-glassstyle="liquid"] .msg-acts .btn{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.45),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.12);border:0}
+:root[data-glassstyle="liquid"] .msg-acts .btn{background:linear-gradient(135deg,color-mix(in srgb,white 32%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 30%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.70),inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.24);border:0}
 /* G2/G3 continuous curvature in liquid mode: browsers have no native corner-shape, so the
    squircle comes from a 9-slice mask (fixed corners, stretching edges) over the existing
    border-radius fallback. The mask is a 100px PNG: Chromium stretches an SVG mask to the
@@ -8938,8 +8938,8 @@ input:disabled,select:disabled,textarea:disabled{opacity:.55;cursor:default}
 #bg-layer.off{display:none}
 :root[data-bg]:not([data-bg="theme"]) body{background:transparent}
 #bg-layer canvas{width:100%;height:100%;display:block}
-#bg-layer.bg-gemini{background-color:#050508;background-image:radial-gradient(700px 500px at 82% 8%,rgba(59,90,246,.55),transparent 70%),radial-gradient(800px 600px at 12% 88%,rgba(16,185,129,.38),transparent 70%),radial-gradient(600px 500px at 55% 45%,rgba(168,85,247,.30),transparent 70%);animation:bgGemini 26s ease-in-out infinite alternate}
-@keyframes bgGemini{from{background-position:0 0,0 0,0 0}to{background-position:6% 10%,-8% -6%,4% -8%}}
+#bg-layer.bg-gemini{background-color:#000;background-image:radial-gradient(1500px 900px at 70% 10%,rgba(23,60,170,.12),transparent 70%),radial-gradient(1300px 800px at 10% 45%,rgba(16,185,129,.09),transparent 70%),radial-gradient(800px 500px at 85% 25%,rgba(124,58,237,.07),transparent 70%);animation:bgGemini 48s ease-in-out infinite alternate}
+@keyframes bgGemini{from{background-position:0 0,0 0,0 0}to{background-position:4% 6%,-5% -3%,-3% 5%}}
 @media (prefers-reduced-motion: reduce){#bg-layer.bg-gemini{animation:none}}
 '''
 
@@ -9183,7 +9183,8 @@ _UI_JS_SRC = r'''
       ctx = cv.getContext("2d");
       addEventListener("resize", function () {
         size();
-        if (mode === "stars") initStars(); else if (mode === "shards") initShards();
+        if (mode === "stars") initStars();
+        else if (mode === "shards") { if (webglOn) resize3D(); else initShards(); }
       });
     }
     function size() {
@@ -9215,28 +9216,74 @@ _UI_JS_SRC = r'''
     // shards read as the bright glints; the rest are tiny slivers, white
     // with a pale blue tone on some, on pure black.
     var shards = [];
+    var massPts = [];
+    var fgPts = [];
     function initShards() {
       shards = [];
-      var n = Math.round(Math.min(130, Math.max(60, W * H / 9000)));
+      var n = Math.round(Math.min(500, Math.max(300, W * H / 1800)));
       for (var i = 0; i < n; i++) {
-        var hero = Math.random() < 0.12;
-        var r = hero ? rnd(10, 22) : rnd(2, 9), vs = [];
-        var nv = 3 + Math.floor(Math.random() * 2);
-        for (var j = 0; j < nv; j++) vs.push({a: j / nv * 6.283, d: r * rnd(.6, 1.2)});
-        shards.push({x: rnd(r, W - r), y: rnd(r, H - r), vx: rnd(-20, 20), vy: rnd(-16, 16), r: r, rot: Math.random() * 6.28, vr: rnd(-.6, .6), vs: vs, p: Math.random() * 6.28, hero: hero, blue: Math.random() < 0.25});
+        var cluster = Math.random() < 0.75;
+        var hero = Math.random() < (cluster ? 0.15 : 0.03);
+        var pl = Math.random();
+        var near = pl < 0.08 && cluster, far = pl > 0.60;
+        var r = near ? (hero ? rnd(6, 8) : rnd(5, 7))
+          : far ? rnd(0.5, 0.9)
+          : cluster ? (hero ? rnd(3, 4.5) : rnd(1.5, 3)) : (hero ? rnd(2.5, 4) : rnd(1, 2.5)), vs = [];
+        var nv = near ? 7 + Math.floor(Math.random() * 3) : 7 + Math.floor(Math.random() * 5);
+        for (var j = 0; j < nv; j++) vs.push({a: j / nv * 6.283 + rnd(near ? -.8 : -.5, near ? .8 : .5), d: r * (near ? rnd(.25, 1.25) : rnd(.35, 1.1))});
+        var bm = hero ? rnd(.85, 1) : Math.random() < 0.6 ? rnd(.1, .3) : Math.random() < 0.75 ? rnd(.3, .6) : rnd(.6, .85);
+        if (cluster) bm = Math.max(bm, rnd(.55, .9));
+        // Dense cluster mass in the right third, densest at the edge,
+        // thinning leftward like the reference.
+        var sx = cluster ? W * (2 / 3 + Math.pow(Math.random(), 0.35) / 3)
+          : W * Math.pow(Math.random(), 0.6);
+        sx = Math.min(W - r, Math.max(r, sx));
+        // Half the shards get a chipped notch: one vertex pulled hard
+        // toward the center, so the silhouette reads broken, not drawn.
+        if (near) {
+          var c1 = Math.floor(Math.random() * nv), c2 = (c1 + 1 + Math.floor(Math.random() * (nv - 1))) % nv;
+          vs[c1].d *= 0.35; vs[c2].d *= 0.45;
+        } else if (Math.random() < 0.5) vs[Math.floor(Math.random() * nv)].d *= 0.45;
+        var sy = cluster ? H * (0.5 + (Math.random() + Math.random() + Math.random() - 1.5) / 3 * 0.9) : rnd(r, H - r);
+        sy = Math.min(H - r, Math.max(r, sy));
+        shards.push({x: sx, y: sy, vx: rnd(-20, 20), vy: rnd(-16, 16), r: r, rot: Math.random() * 6.28, vr: rnd(-.6, .6), rx: Math.random() * 6.28, ry: Math.random() * 6.28, vrx: rnd(-.5, .5), vry: rnd(-.5, .5), z: near ? rnd(120, 250) : far ? rnd(-250, -100) : rnd(-100, 100), vs: vs, p: Math.random() * 6.28, hero: hero, bm: bm, st: near ? rnd(1.0, 1.5) : rnd(.8, 1.4), fe: Math.floor(Math.random() * nv), fe2: Math.floor(Math.random() * nv), blue: Math.random() < 0.25, cl: cluster});
+      }
+      // Burst-mass thicket: several hundred tiny faint specks packed
+      // into the same right-edge band, overlapping the prism shards.
+      massPts = [];
+      var mn = Math.min(2400, Math.max(1400, W * H / 750));
+      for (var mi = 0; mi < mn; mi++) {
+        var mx = W * (0.8 + Math.pow(Math.random(), 0.3) / 5);
+        var my = H * (0.5 + (Math.random() + Math.random() + Math.random() - 1.5) / 3 * 0.6);
+        var mid = Math.random() < 0.07;
+      massPts.push({x: Math.min(W - 1, Math.max(1, mx)), y: Math.min(H - 1, Math.max(1, my)), vx: rnd(-8, 8), vy: rnd(-6, 6), z: rnd(-100, 100), s: mid ? rnd(1.6, 3.2) : rnd(0.5, 2), a: mid ? (Math.random() < 0.3 ? rnd(0.5, 0.9) : rnd(0.25, 0.55)) : (Math.random() < 0.1 ? rnd(0.5, 0.9) : rnd(0.08, 0.35)), blue: Math.random() < 0.25, rot: Math.random() * 6.283});
+      }
+      // Sparse foreground tier: isolated near-plane shards in the
+      // open field, clear of the dense column, so the eye has near
+      // glass to judge distance against.
+      fgPts = [];
+      for (var fi = 0; fi < 14; fi++) {
+        var fs = rnd(2.0, 3.7);
+        fgPts.push({x: W * rnd(0.05, 0.6), y: rnd(fs * 4, H - fs * 4), vx: rnd(-8, 8), vy: rnd(-6, 6), z: rnd(120, 250), s: fs, a: rnd(0.35, 0.7), blue: Math.random() < 0.25, rot: Math.random() * 6.283});
       }
     }
-    function drawShards(dt) {
-      ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+    // Shared physics: drift, tumble on all axes, wall bounce,
+    // collisions. The 2D painter and the 3D renderer both step this.
+    function stepShards(dt) {
       for (var i = 0; i < shards.length; i++) {
         var a = shards[i];
         a.x += a.vx * dt; a.y += a.vy * dt; a.rot += a.vr * dt;
+        a.rx += a.vrx * dt; a.ry += a.vry * dt;
         if (a.x < a.r) { a.x = a.r; a.vx = Math.abs(a.vx); }
         if (a.x > W - a.r) { a.x = W - a.r; a.vx = -Math.abs(a.vx); }
         if (a.y < a.r) { a.y = a.r; a.vy = Math.abs(a.vy); }
         if (a.y > H - a.r) { a.y = H - a.r; a.vy = -Math.abs(a.vy); }
+        if (a.cl && a.y < H * 0.2) { a.y = H * 0.2; a.vy = Math.abs(a.vy); }
+        if (a.cl && a.y > H * 0.8) { a.y = H * 0.8; a.vy = -Math.abs(a.vy); }
         for (var j = i + 1; j < shards.length; j++) {
-          var b = shards[j], dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), min = a.r + b.r;
+          var b = shards[j];
+          if (a.r < 2.5 || b.r < 2.5) continue;
+          var dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), min = a.r + b.r;
           if (d > 0 && d < min) {
             var nx = dx / d, ny = dy / d, ov = (min - d) / 2;
             a.x -= nx * ov; a.y -= ny * ov; b.x += nx * ov; b.y += ny * ov;
@@ -9245,38 +9292,384 @@ _UI_JS_SRC = r'''
           }
         }
       }
+      for (var mi = 0; mi < massPts.length; mi++) {
+        var mp = massPts[mi];
+        mp.x += mp.vx * dt; mp.y += mp.vy * dt;
+        if (mp.x < 1) { mp.x = 1; mp.vx = Math.abs(mp.vx); }
+        if (mp.x > W - 1) { mp.x = W - 1; mp.vx = -Math.abs(mp.vx); }
+        if (mp.y < H * 0.3) { mp.y = H * 0.3; mp.vy = Math.abs(mp.vy); }
+        if (mp.y > H * 0.7) { mp.y = H * 0.7; mp.vy = -Math.abs(mp.vy); }
+      }
+      for (var fi = 0; fi < fgPts.length; fi++) {
+        var fp = fgPts[fi];
+        fp.x += fp.vx * dt; fp.y += fp.vy * dt;
+        if (fp.x < 1) { fp.x = 1; fp.vx = Math.abs(fp.vx); }
+        if (fp.x > W - 1) { fp.x = W - 1; fp.vx = -Math.abs(fp.vx); }
+        if (fp.y < 1) { fp.y = 1; fp.vy = Math.abs(fp.vy); }
+        if (fp.y > H - 1) { fp.y = H - 1; fp.vy = -Math.abs(fp.vy); }
+      }
+    }
+    function drawShards(dt) {
+      ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+      stepShards(dt);
+      // Light is fixed in the world (top-left); shards tumble under it,
+      // so edges light up selectively instead of glowing uniformly.
+      var LX = -0.707, LY = -0.707;
       for (var k = 0; k < shards.length; k++) {
         var sh = shards[k];
         // Facets catch the light as the shard tumbles: brightness rides
         // the rotation, so glints sweep across the field.
         var g = 0.5 + 0.5 * Math.sin(sh.rot * 2 + sh.p);
-        var al = sh.hero ? 0.55 + 0.45 * g : 0.15 + 0.7 * g;
-        ctx.beginPath();
+        var al = (sh.hero ? 0.55 + 0.45 * g : 0.15 + 0.7 * g) * sh.bm;
+        var pts = [];
         for (var m = 0; m < sh.vs.length; m++) {
-          var v = sh.vs[m], ang = v.a + sh.rot, px = sh.x + Math.cos(ang) * v.d, py = sh.y + Math.sin(ang) * v.d;
-          if (m) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+          var v = sh.vs[m], lx = Math.cos(v.a) * v.d * sh.st, ly = Math.sin(v.a) * v.d;
+          pts.push([sh.x + lx * Math.cos(sh.rot) - ly * Math.sin(sh.rot), sh.y + lx * Math.sin(sh.rot) + ly * Math.cos(sh.rot)]);
         }
-        ctx.closePath();
-        ctx.fillStyle = sh.blue ? "rgba(215,230,255," + al + ")" : "rgba(255,255,255," + al + ")";
+        var trace = function() {
+          ctx.beginPath();
+          for (var q = 0; q < pts.length; q++) { if (q) ctx.lineTo(pts[q][0], pts[q][1]); else ctx.moveTo(pts[q][0], pts[q][1]); }
+          ctx.closePath();
+        };
+        var ccx = 0, ccy = 0;
+        for (var n = 0; n < pts.length; n++) { ccx += pts[n][0]; ccy += pts[n][1]; }
+        ccx /= pts.length; ccy /= pts.length;
+        // Body: light falls across it from the top-left and dies into
+        // the dark — never a flat fill.
+        var gr = ctx.createLinearGradient(sh.x + LX * sh.r, sh.y + LY * sh.r, sh.x - LX * sh.r, sh.y - LY * sh.r);
+        gr.addColorStop(0, sh.blue ? "rgba(215,230,255," + (0.04 + al * 0.18) + ")" : "rgba(255,255,255," + (0.04 + al * 0.18) + ")");
+        gr.addColorStop(1, sh.blue ? "rgba(160,180,210," + (0.01 + al * 0.04) + ")" : "rgba(140,150,170," + (0.01 + al * 0.04) + ")");
+        trace();
+        ctx.fillStyle = gr;
         ctx.fill();
-        ctx.strokeStyle = "rgba(255,255,255," + Math.min(1, al + 0.3) + ")";
+        // Two refractive facets at different angles to the light.
+        var facet = function(f, a2) {
+          var p1 = pts[f], p2 = pts[(f + 1) % pts.length];
+          var ex = p2[0] - p1[0], ey = p2[1] - p1[1], el = Math.hypot(ex, ey) || 1;
+          var nx = ey / el, ny = -ex / el;
+          var mx = (p1[0] + p2[0]) / 2 - ccx, my = (p1[1] + p2[1]) / 2 - ccy;
+          if (nx * mx + ny * my < 0) { nx = -nx; ny = -ny; }
+          var lit = Math.max(0, nx * LX + ny * LY);
+          ctx.beginPath();
+          ctx.moveTo(p1[0], p1[1]);
+          ctx.lineTo(p2[0], p2[1]);
+          ctx.lineTo(ccx, ccy);
+          ctx.closePath();
+          ctx.fillStyle = sh.blue ? "rgba(215,230,255," + (a2 * (0.35 + 0.65 * lit)) + ")" : "rgba(255,255,255," + (a2 * (0.35 + 0.65 * lit)) + ")";
+          ctx.fill();
+        };
+        facet(sh.fe, al * 0.35);
+        facet(sh.fe2, al * 0.18);
+        // Rim: ONLY edges facing the light get stroked — the rest of
+        // the outline falls dark, so no shard wears a uniform outline.
+        ctx.beginPath();
+        for (var e = 0; e < pts.length; e++) {
+          var p1 = pts[e], p2 = pts[(e + 1) % pts.length];
+          var ex = p2[0] - p1[0], ey = p2[1] - p1[1], el = Math.hypot(ex, ey) || 1;
+          var nx = ey / el, ny = -ex / el;
+          var mx = (p1[0] + p2[0]) / 2 - ccx, my = (p1[1] + p2[1]) / 2 - ccy;
+          if (nx * mx + ny * my < 0) { nx = -nx; ny = -ny; }
+          if (nx * LX + ny * LY > 0.15) { ctx.moveTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]); }
+        }
+        ctx.strokeStyle = sh.hero ? "rgba(255,255,255,1)" : "rgba(255,255,255," + Math.min(1, al + 0.3) + ")";
         ctx.lineWidth = sh.hero ? 1.5 : 1;
         ctx.stroke();
+        // Hero glint: a hard specular catch as the facet turns to light.
+        if (sh.hero && g > 0.75) {
+          var bi = 0, bd = -2;
+          for (var w = 0; w < pts.length; w++) {
+            var dd = (pts[w][0] - sh.x) * LX + (pts[w][1] - sh.y) * LY;
+            if (dd > bd) { bd = dd; bi = w; }
+          }
+          ctx.beginPath();
+          ctx.arc(pts[bi][0], pts[bi][1], 1.5, 0, 6.283);
+          ctx.fillStyle = "rgba(255,255,255,0.9)";
+          ctx.fill();
+        }
       }
+      for (var mi = 0; mi < massPts.length; mi++) {
+        var mp = massPts[mi];
+        var depS = mp.z > 33 ? 1.35 : (mp.z < -33 ? 0.75 : 1.0);
+        var depB = mp.z > 33 ? 1.3 : (mp.z < -33 ? 0.7 : 1.0);
+        var depR = mp.z > 33 ? 1.5 : (mp.z < -33 ? 0.6 : 1.0);
+        var ss = mp.s * depS, aa = mp.a * depB;
+        var gx = -Math.sin(mp.rot), gy = Math.cos(mp.rot);
+        var gg = ctx.createLinearGradient(mp.x - gx * ss, mp.y - gy * ss, mp.x + gx * ss, mp.y + gy * ss);
+        gg.addColorStop(0, "rgba(115,128,158," + (aa * 0.56) + ")");
+        gg.addColorStop(1, "rgba(115,128,158," + (aa * 1.04) + ")");
+        ctx.fillStyle = gg;
+        ctx.beginPath();
+        for (var k = 0; k <= 24; k++) {
+          var a = k / 24 * 6.283;
+          var rr = 1 + 0.20 * Math.sin(3 * a + mp.rot) + 0.14 * Math.sin(5 * a + mp.rot * 1.7) + 0.08 * Math.sin(8 * a + mp.rot * 2.3);
+          var lx = Math.cos(a) * ss * 2.5 * rr, ly = Math.sin(a) * ss * 1.0 * rr;
+          var wx = mp.x + lx * Math.cos(mp.rot) - ly * Math.sin(mp.rot);
+          var wy = mp.y + lx * Math.sin(mp.rot) + ly * Math.cos(mp.rot);
+          if (k === 0) ctx.moveTo(wx, wy); else ctx.lineTo(wx, wy);
+        }
+        ctx.closePath();
+        ctx.fill();
+        var rimG = ctx.createLinearGradient(mp.x - gx * ss, mp.y - gy * ss, mp.x + gx * ss, mp.y + gy * ss);
+        rimG.addColorStop(0, "rgba(115,128,158," + (aa * 0.15) + ")");
+        rimG.addColorStop(1, mp.blue ? "rgba(215,230,255," + (aa * 0.7 * depR) + ")" : "rgba(255,255,255," + (aa * 0.7 * depR) + ")");
+        ctx.strokeStyle = rimG;
+        ctx.lineWidth = Math.max(1, ss * 0.5);
+        ctx.stroke();
+        ctx.fillStyle = mp.blue ? "rgba(215,230,255," + aa + ")" : "rgba(255,255,255," + aa + ")";
+        ctx.beginPath();
+        ctx.ellipse(mp.x, mp.y, ss * 0.375, ss * 0.15, mp.rot, 0, 6.283);
+        ctx.fill();
+      }
+      for (var fi = 0; fi < fgPts.length; fi++) {
+        var mp = fgPts[fi];
+        var depS = mp.z > 33 ? 1.35 : (mp.z < -33 ? 0.75 : 1.0);
+        var depB = mp.z > 33 ? 1.3 : (mp.z < -33 ? 0.7 : 1.0);
+        var depR = mp.z > 33 ? 1.5 : (mp.z < -33 ? 0.6 : 1.0);
+        var ss = mp.s * depS, aa = mp.a * depB;
+        var gx = -Math.sin(mp.rot), gy = Math.cos(mp.rot);
+        var gg = ctx.createLinearGradient(mp.x - gx * ss, mp.y - gy * ss, mp.x + gx * ss, mp.y + gy * ss);
+        gg.addColorStop(0, "rgba(115,128,158," + (aa * 0.56) + ")");
+        gg.addColorStop(1, "rgba(115,128,158," + (aa * 1.04) + ")");
+        ctx.fillStyle = gg;
+        ctx.beginPath();
+        for (var k = 0; k <= 24; k++) {
+          var a = k / 24 * 6.283;
+          var rr = 1 + 0.20 * Math.sin(3 * a + mp.rot) + 0.14 * Math.sin(5 * a + mp.rot * 1.7) + 0.08 * Math.sin(8 * a + mp.rot * 2.3);
+          var lx = Math.cos(a) * ss * 2.5 * rr, ly = Math.sin(a) * ss * 1.0 * rr;
+          var wx = mp.x + lx * Math.cos(mp.rot) - ly * Math.sin(mp.rot);
+          var wy = mp.y + lx * Math.sin(mp.rot) + ly * Math.cos(mp.rot);
+          if (k === 0) ctx.moveTo(wx, wy); else ctx.lineTo(wx, wy);
+        }
+        ctx.closePath();
+        ctx.fill();
+        var rimG = ctx.createLinearGradient(mp.x - gx * ss, mp.y - gy * ss, mp.x + gx * ss, mp.y + gy * ss);
+        rimG.addColorStop(0, "rgba(115,128,158," + (aa * 0.15) + ")");
+        rimG.addColorStop(1, mp.blue ? "rgba(215,230,255," + (aa * 0.7 * depR) + ")" : "rgba(255,255,255," + (aa * 0.7 * depR) + ")");
+        ctx.strokeStyle = rimG;
+        ctx.lineWidth = Math.max(1, ss * 0.5);
+        ctx.stroke();
+        ctx.fillStyle = mp.blue ? "rgba(215,230,255," + aa + ")" : "rgba(255,255,255," + aa + ")";
+        ctx.beginPath();
+        ctx.ellipse(mp.x, mp.y, ss * 0.375, ss * 0.15, mp.rot, 0, 6.283);
+        ctx.fill();
+      }
+    }
+    // Shards in real 3D: actual prism geometry rendered with a small
+    // raw-WebGL glass shader (fresnel rims + speculars from fixed
+    // lights, real depth occlusion). No library, no network: the app
+    // stays self-contained, and any WebGL failure leaves the 2D
+    // painter in place, so Shards never breaks — it only gets flatter.
+    var webgl = null, webglOn = false;
+    // Column-major 4x4 helpers: enough for projection * model.
+    function mMul(a, b) {
+      var o = [];
+      for (var c = 0; c < 4; c++) for (var r = 0; r < 4; r++) {
+        o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
+      }
+      return o;
+    }
+    function mPersp(fov, asp, nr, fr) {
+      var f = 1 / Math.tan(fov / 2), d = nr - fr;
+      return [f / asp, 0, 0, 0, 0, f, 0, 0, 0, 0, (fr + nr) / d, -1, 0, 0, 2 * fr * nr / d, 0];
+    }
+    function mTrans(x, y, z) { return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1]; }
+    function mRotX(a) { var c = Math.cos(a), s = Math.sin(a); return [1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1]; }
+    function mRotY(a) { var c = Math.cos(a), s = Math.sin(a); return [c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1]; }
+    function mRotZ(a) { var c = Math.cos(a), s = Math.sin(a); return [c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]; }
+    // A jagged prism: the shard's 2D outline extruded with slightly
+    // uneven front/back faces, so every facet catches light differently.
+    // Returns interleaved positions + flat face normals (non-indexed).
+    function shardPrism(vs, st, th) {
+      var pts = vs.map(function (v) { return [Math.cos(v.a) * v.d * st, Math.sin(v.a) * v.d]; });
+      var cx = 0, cy = 0;
+      for (var i = 0; i < pts.length; i++) { cx += pts[i][0]; cy += pts[i][1]; }
+      cx /= pts.length; cy /= pts.length;
+      var fz = [], bz = [];
+      for (var i = 0; i < pts.length; i++) { fz.push(th / 2 + rnd(-0.4, 0.4) * th); bz.push(-th / 2 + rnd(-0.4, 0.4) * th); }
+      var pos = [], nor = [], bar = [];
+      var tri = function (a, b, c) {
+        var ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+        var vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+        var nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+        var nl = Math.hypot(nx, ny, nz) || 1;
+        pos.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
+        for (var k = 0; k < 3; k++) nor.push(nx / nl, ny / nl, nz / nl);
+        bar.push(1, 0, 0, 0, 1, 0, 0, 0, 1);
+      };
+      for (var i = 0; i < pts.length; i++) {
+        var p = pts[i], q = pts[(i + 1) % pts.length], ni = (i + 1) % pts.length;
+        tri([cx, cy, th / 2], [p[0], p[1], fz[i]], [q[0], q[1], fz[ni]]);
+        tri([cx, cy, -th / 2], [q[0], q[1], bz[ni]], [p[0], p[1], bz[i]]);
+        tri([p[0], p[1], fz[i]], [q[0], q[1], fz[ni]], [q[0], q[1], bz[ni]]);
+        tri([p[0], p[1], fz[i]], [q[0], q[1], bz[ni]], [p[0], p[1], bz[i]]);
+      }
+      return {pos: pos, nor: nor, bar: bar};
+    }
+    function initShards3D() {
+      var wcv = document.createElement("canvas");
+      wcv.setAttribute("data-engine", "webgl");
+      wcv.style.cssText = "position:absolute;inset:0;width:100%;height:100%;display:block";
+      layer.appendChild(wcv);
+      var d = Math.min(devicePixelRatio || 1, 2);
+      wcv.width = Math.round(W * d); wcv.height = Math.round(H * d);
+      var gl = wcv.getContext("webgl", {antialias: true, alpha: false, preserveDrawingBuffer: true});
+      if (!gl) throw 0;
+      var vs = "attribute vec3 position; attribute vec3 normal; attribute vec3 bary; uniform mat4 mvp; uniform mat4 model; varying vec3 vN; varying vec3 vW; varying vec3 vBary; void main() { vN = mat3(model) * normal; vec4 w = model * vec4(position, 1.0); vW = w.xyz; vBary = bary; gl_Position = mvp * vec4(position, 1.0); }";
+      var fsBase = "precision mediump float; varying vec3 vN; varying vec3 vW; uniform vec3 tint; uniform vec3 cam; uniform float glow; void main() { vec3 N = normalize(vN) * (gl_FrontFacing ? 1.0 : -1.0); vec3 V = normalize(cam - vW); float fres = pow(1.0 - abs(dot(N, V)), 3.0); vec3 L1 = normalize(vec3(-0.6, 0.6, 1.0)); vec3 L2 = normalize(vec3(0.8, -0.3, 0.6)); float d1 = max(dot(reflect(-L1, N), V), 0.0); float d2 = max(dot(reflect(-L2, N), V), 0.0); float spec = pow(d1, 80.0) + pow(d1, 24.0) * 0.7 + pow(d2, 80.0) * 0.6; float a = clamp(0.35 + fres * 0.45 + spec, 0.0, 1.0) * glow; vec3 col = (tint * (0.16 + fres * 0.6) + vec3(1.0) * spec) * glow; "; 
+      var fsEdge = "#extension GL_OES_standard_derivatives : enable\nprecision mediump float; varying vec3 vN; varying vec3 vW; varying vec3 vBary; uniform vec3 tint; uniform vec3 cam; uniform float glow; void main() { vec3 N = normalize(vN) * (gl_FrontFacing ? 1.0 : -1.0); vec3 V = normalize(cam - vW); float fres = pow(1.0 - abs(dot(N, V)), 3.0); vec3 L1 = normalize(vec3(-0.6, 0.6, 1.0)); vec3 L2 = normalize(vec3(0.8, -0.3, 0.6)); float d1 = max(dot(reflect(-L1, N), V), 0.0); float d2 = max(dot(reflect(-L2, N), V), 0.0); float spec = pow(d1, 80.0) + pow(d1, 24.0) * 0.7 + pow(d2, 80.0) * 0.6; float e = min(min(vBary.x, vBary.y), vBary.z); float line = 1.0 - smoothstep(0.0, fwidth(e) * 1.5, e); float nl = max(dot(N, L1), 0.0); float edgeGlow = pow(nl, 4.0); float a = clamp(0.35 + fres * 0.45 + spec + line * 0.2 * edgeGlow, 0.0, 1.0) * glow; vec3 col = (tint * (0.16 + fres * 0.6) + vec3(1.0) * spec + vec3(1.0) * line * 0.8 * edgeGlow) * glow; "; 
+      var fs = fsBase + "gl_FragColor = vec4(col, a); }"; 
+      var fsE = fsEdge + "gl_FragColor = vec4(col, a); }"; 
+      var useEdge = !!gl.getExtension("OES_standard_derivatives");
+      var sh = function (t, src) { var s = gl.createShader(t); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw 0; return s; };
+      var prog = gl.createProgram();
+      gl.attachShader(prog, sh(gl.VERTEX_SHADER, vs));
+      gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, useEdge ? fsE : fs));
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw 0;
+      gl.useProgram(prog);
+      var loc = {pos: gl.getAttribLocation(prog, "position"), nor: gl.getAttribLocation(prog, "normal"), bar: gl.getAttribLocation(prog, "bary"), mvp: gl.getUniformLocation(prog, "mvp"), model: gl.getUniformLocation(prog, "model"), tint: gl.getUniformLocation(prog, "tint"), cam: gl.getUniformLocation(prog, "cam"), glow: gl.getUniformLocation(prog, "glow")};
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthMask(false);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.viewport(0, 0, wcv.width, wcv.height);
+      var meshes = [];
+      var list = shards.slice(0, 320);
+      for (var i = 0; i < list.length; i++) {
+        var s2 = list[i];
+        var g = shardPrism(s2.vs, s2.st, Math.max(1, s2.r * 0.6));
+        var buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        var data = new Float32Array(g.pos.length + g.nor.length + g.bar.length);
+        for (var k = 0; k < g.pos.length / 3; k++) {
+          data[k * 9] = g.pos[k * 3]; data[k * 9 + 1] = g.pos[k * 3 + 1]; data[k * 9 + 2] = g.pos[k * 3 + 2];
+          data[k * 9 + 3] = g.nor[k * 3]; data[k * 9 + 4] = g.nor[k * 3 + 1]; data[k * 9 + 5] = g.nor[k * 3 + 2];
+          data[k * 9 + 6] = g.bar[k * 3]; data[k * 9 + 7] = g.bar[k * 3 + 1]; data[k * 9 + 8] = g.bar[k * 3 + 2];
+        }
+        gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+        meshes.push([s2, buf, g.pos.length / 3, s2.blue ? [0.84, 0.90, 1.0] : [1.0, 1.0, 1.0], s2.hero ? 1.8 : 1.0]);
+      }
+      var dist = (H / 2) / Math.tan(22.5 * Math.PI / 180);
+      webgl = {gl: gl, prog: prog, loc: loc, meshes: meshes, wcv: wcv, dist: dist, proj: mPersp(45 * Math.PI / 180, W / H, 1, 5000), view: mTrans(0, 0, -dist)};
+      try {
+        var pvs = "attribute vec2 aXY; attribute float aSize; attribute float aAlpha; attribute float aBlue; attribute float aRot; attribute float aZ; varying float vA; varying float vB; varying float vR; varying float vZ; void main() { vA = aAlpha; vB = aBlue; vR = aRot; vZ = aZ; gl_PointSize = aSize * (aZ > 33.0 ? 1.35 : (aZ < -33.0 ? 0.75 : 1.0)); gl_Position = vec4(aXY, 0.0, 1.0); }";
+        var pfs = "precision mediump float; varying float vA; varying float vB; varying float vR; varying float vZ; void main() { float depB = vZ > 33.0 ? 1.3 : (vZ < -33.0 ? 0.7 : 1.0); float depR = vZ > 33.0 ? 1.5 : (vZ < -33.0 ? 0.6 : 1.0); vec2 pc = gl_PointCoord - 0.5; float cc = cos(vR), ss = sin(vR); vec2 rp = vec2(pc.x * cc - pc.y * ss, pc.x * ss + pc.y * cc); vec2 ev = vec2(rp.x * 2.0, rp.y * 5.0); float ang = atan(ev.y, ev.x); float jag = 1.0 + 0.20 * sin(3.0 * ang + vR) + 0.14 * sin(5.0 * ang + vR * 1.7) + 0.08 * sin(8.0 * ang + vR * 2.3); float dd = length(ev) / jag; float body = smoothstep(1.0, 0.55, dd) * 0.8; float core = smoothstep(0.15, 0.0, dd); float fac = 0.7 + 0.6 * smoothstep(-0.15, 0.15, rp.y); vec3 coreCol = mix(vec3(1.0), vec3(0.84, 0.90, 1.0), vB); float rimBand = smoothstep(0.75, 0.92, dd) * (1.0 - smoothstep(0.92, 1.0, dd)); float rim = rimBand * smoothstep(-0.05, 0.15, rp.y) * depR; vec3 col = mix(mix(vec3(0.45, 0.5, 0.62), coreCol, core) * fac, coreCol, rim * 0.7); gl_FragColor = vec4(col, vA * depB * (body * fac + core * 0.2 + rim * 0.5)); }";
+        var pprog = gl.createProgram();
+        gl.attachShader(pprog, sh(gl.VERTEX_SHADER, pvs));
+        gl.attachShader(pprog, sh(gl.FRAGMENT_SHADER, pfs));
+        gl.linkProgram(pprog);
+        if (!gl.getProgramParameter(pprog, gl.LINK_STATUS)) throw 0;
+        webgl.pts = {prog: pprog, buf: gl.createBuffer(), loc: {xy: gl.getAttribLocation(pprog, "aXY"), size: gl.getAttribLocation(pprog, "aSize"), alpha: gl.getAttribLocation(pprog, "aAlpha"), blue: gl.getAttribLocation(pprog, "aBlue"), rot: gl.getAttribLocation(pprog, "aRot"), z: gl.getAttribLocation(pprog, "aZ")}, dpr: d};
+      } catch (e) { webgl.pts = null; }
+      cv.style.display = "none";
+      webglOn = true;
+    }
+    function drawShards3D(dt) {
+      stepShards(dt);
+      var gl = webgl.gl, loc = webgl.loc;
+      gl.clearColor(0, 0, 0, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.useProgram(webgl.prog);
+      gl.uniform3f(loc.cam, 0, 0, webgl.dist);
+      for (var i = 0; i < webgl.meshes.length; i++) {
+        var m = webgl.meshes[i], sh = m[0];
+        var model = mMul(mTrans(sh.x - W / 2, -(sh.y - H / 2), sh.z), mMul(mRotX(sh.rx), mMul(mRotY(sh.ry), mRotZ(sh.rot))));
+        gl.uniformMatrix4fv(loc.model, false, new Float32Array(model));
+        gl.uniformMatrix4fv(loc.mvp, false, new Float32Array(mMul(webgl.proj, mMul(webgl.view, model))));
+        gl.uniform3f(loc.tint, m[3][0], m[3][1], m[3][2]);
+        var pf = sh.z > 100 ? 0.5 : sh.z < -100 ? 0.6 : 0.9;
+        gl.uniform1f(loc.glow, m[4] * (1.0 + sh.z / 300.0) * pf);
+        gl.bindBuffer(gl.ARRAY_BUFFER, m[1]);
+        gl.enableVertexAttribArray(loc.pos);
+        gl.vertexAttribPointer(loc.pos, 3, gl.FLOAT, false, 36, 0);
+        gl.enableVertexAttribArray(loc.nor);
+        gl.vertexAttribPointer(loc.nor, 3, gl.FLOAT, false, 36, 12);
+        if (loc.bar >= 0) {
+          gl.enableVertexAttribArray(loc.bar);
+          gl.vertexAttribPointer(loc.bar, 3, gl.FLOAT, false, 36, 24);
+        }
+        gl.drawArrays(gl.TRIANGLES, 0, m[2]);
+      }
+      if (webgl.pts) {
+        var pts = webgl.pts, f = 1 / Math.tan(22.5 * Math.PI / 180), asp = W / H;
+        var pd = new Float32Array((massPts.length + fgPts.length) * 7);
+        for (var pi = 0; pi < massPts.length; pi++) {
+          var mp = massPts[pi], den = webgl.dist - mp.z;
+          pd[pi * 7] = (f / asp * (mp.x - W / 2)) / den;
+          pd[pi * 7 + 1] = (f * (-(mp.y - H / 2))) / den;
+          pd[pi * 7 + 2] = mp.s * 5 * pts.dpr * (webgl.dist / den);
+          pd[pi * 7 + 3] = mp.a;
+          pd[pi * 7 + 4] = mp.blue ? 1 : 0;
+          pd[pi * 7 + 5] = mp.rot;
+          pd[pi * 7 + 6] = mp.z;
+        }
+        for (var fi = 0; fi < fgPts.length; fi++) {
+          var mp = fgPts[fi], den = webgl.dist - mp.z, pi = massPts.length + fi;
+          pd[pi * 7] = (f / asp * (mp.x - W / 2)) / den;
+          pd[pi * 7 + 1] = (f * (-(mp.y - H / 2))) / den;
+          pd[pi * 7 + 2] = mp.s * 5 * pts.dpr * (webgl.dist / den);
+          pd[pi * 7 + 3] = mp.a;
+          pd[pi * 7 + 4] = mp.blue ? 1 : 0;
+          pd[pi * 7 + 5] = mp.rot;
+          pd[pi * 7 + 6] = mp.z;
+        }
+        gl.useProgram(pts.prog);
+        gl.bindBuffer(gl.ARRAY_BUFFER, pts.buf);
+        gl.bufferData(gl.ARRAY_BUFFER, pd, gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(pts.loc.xy);
+        gl.vertexAttribPointer(pts.loc.xy, 2, gl.FLOAT, false, 28, 0);
+        gl.enableVertexAttribArray(pts.loc.size);
+        gl.vertexAttribPointer(pts.loc.size, 1, gl.FLOAT, false, 28, 8);
+        gl.enableVertexAttribArray(pts.loc.alpha);
+        gl.vertexAttribPointer(pts.loc.alpha, 1, gl.FLOAT, false, 28, 12);
+        gl.enableVertexAttribArray(pts.loc.blue);
+        gl.vertexAttribPointer(pts.loc.blue, 1, gl.FLOAT, false, 28, 16);
+        gl.enableVertexAttribArray(pts.loc.rot);
+        gl.vertexAttribPointer(pts.loc.rot, 1, gl.FLOAT, false, 28, 20);
+        gl.enableVertexAttribArray(pts.loc.z);
+        gl.vertexAttribPointer(pts.loc.z, 1, gl.FLOAT, false, 28, 24);
+        gl.drawArrays(gl.POINTS, 0, massPts.length + fgPts.length);
+      }
+    }
+    function resize3D() {
+      var d = Math.min(devicePixelRatio || 1, 2);
+      webgl.wcv.width = Math.round(W * d); webgl.wcv.height = Math.round(H * d);
+      webgl.gl.viewport(0, 0, webgl.wcv.width, webgl.wcv.height);
+      webgl.dist = (H / 2) / Math.tan(22.5 * Math.PI / 180);
+      webgl.view = mTrans(0, 0, -webgl.dist);
+      webgl.proj = mPersp(45 * Math.PI / 180, W / H, 1, 5000);
+    }
+    function dispose3D() {
+      if (!webgl) return;
+      for (var i = 0; i < webgl.meshes.length; i++) webgl.gl.deleteBuffer(webgl.meshes[i][1]);
+      if (webgl.pts) { webgl.gl.deleteBuffer(webgl.pts.buf); webgl.gl.deleteProgram(webgl.pts.prog); }
+      webgl.gl.getExtension("WEBGL_lose_context");
+      var c = webgl.wcv;
+      if (c && c.parentNode) c.parentNode.removeChild(c);
+      webgl = null; webglOn = false;
+      if (cv) cv.style.display = "";
+    }
+    function ensure3D() {
+      if (webglOn || !layer) return;
+      try {
+        initShards3D();
+        if (reduced) drawShards3D(0);
+        else if (!raf) raf = requestAnimationFrame(function (t) { frame(t, t); });
+      } catch (e) { dispose3D(); }
     }
     function frame(t, last) {
       var dt = Math.min(.05, (t - last) / 1000 || 0);
-      if (mode === "stars") drawStars(t / 1000); else if (mode === "shards") drawShards(dt);
+      if (mode === "stars") drawStars(t / 1000); else if (mode === "shards") { if (webglOn) drawShards3D(dt); else drawShards(dt); }
       if (mode === "stars" || mode === "shards") raf = requestAnimationFrame(function (nt) { frame(nt, t); });
     }
     function applyBg() {
       var v = root.dataset.bg || "theme";
-      if (v === "theme") { if (layer) layer.className = "off"; cancelAnimationFrame(raf); mode = ""; return; }
+      if (v === "theme") { dispose3D(); if (layer) layer.className = "off"; cancelAnimationFrame(raf); mode = ""; return; }
       ensure(); size();
       layer.className = "bg-" + v;
       cancelAnimationFrame(raf);
-      if (v === "stars") { mode = "stars"; initStars(); drawStars(0); }
-      else if (v === "shards") { mode = "shards"; initShards(); drawShards(0); }
+      if (v === "stars") { dispose3D(); mode = "stars"; initStars(); drawStars(0); }
+      else if (v === "shards") { dispose3D(); mode = "shards"; initShards(); drawShards(0); ensure3D(); }
       else { mode = ""; return; }
       if (!reduced) raf = requestAnimationFrame(function (t) { frame(t, t); });
     }
@@ -10486,7 +10879,7 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
     """A full page in the app shell: sidebar on wide screens, tab bar on phones."""
     theme, mode, layout, glassstyle, bg = ui_prefs(headers)
     t = THEMES[theme]
-    bgstyle = (' style="background:#050508"' if bg == "gemini" else
+    bgstyle = (' style="background:#000"' if bg == "gemini" else
                ' style="background:#000"' if bg in ("shards", "stars", "black") else "")
     if mode == "auto":
         metas = (f'<meta name="theme-color" content="{t["light"]["bg"]}" media="(prefers-color-scheme: light)">'
