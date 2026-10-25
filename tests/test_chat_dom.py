@@ -195,9 +195,11 @@ with sync_playwright() as p:
         pg.locator('[data-pref="glassstyle"][data-val="liquid"]').click()
         expect(pg.locator("html")).to_have_attribute("data-glassstyle", "liquid", timeout=5000)
         check("liquid glass applies the stronger blur", any("32px" in (f or "") for f in filters()))
+        pg.screenshot(path=os.path.join(SHOTS, "glass-liquid.png"))
         pg.locator('[data-pref="glassstyle"][data-val="plus"]').click()
         expect(pg.locator("html")).to_have_attribute("data-glassstyle", "plus", timeout=5000)
         check("glass+ restores the standard blur", any("22px" in (f or "") for f in filters()))
+        pg.screenshot(path=os.path.join(SHOTS, "glass-plus.png"))
         pg.close()
 
         # Long-thread readability: grouping, code cap, avatar images.
