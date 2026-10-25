@@ -340,24 +340,31 @@ Safari only shows Face ID when the request starts right from the tap. A
 passkey works only on the address it was added on; Settings flags one made
 for another address.
 
-## Images in chat
+## Images and files in chat
 
-The photo button in the chat box (or pasting an image) attaches a picture.
-The browser shrinks it first (longest side 1600px, JPEG), so a phone photo
-uploads as a few hundred KB; Vercel caps a request at 4.5 MB. The hub keeps
+The photo button in the chat box (or pasting an image) attaches a picture;
+the picker also takes PDF and text/Markdown files, up to 4 attachments per
+message. The browser shrinks images first (longest side 1600px, JPEG), so a
+phone photo uploads as a few hundred KB; Vercel caps a request at 4.5 MB,
+and attachments together cap at 3 MB decoded. The hub keeps
 the last 30 (`UPLOAD_KEEP`) and serves them, key required, at
-`/upload/<id>.jpeg`. `POST /api/allchat` takes `{"text", "image": "data:image/…;base64,…"}`;
-text is optional with an image.
+`/upload/<id>.<ext>`. `POST /api/allchat` takes `{"text", "attachments":
+[{"name", "type": "image"|"file", "data": "data:…;base64,…"}]}` (the old
+single `"image"` field still works); text is optional with attachments.
+Files are validated by content (PDF magic, else UTF-8 text), and a batch
+that fails validation saves nothing.
 
-Who sees what: Theta on Claude gets the image itself. Groq's models can't
+Who sees what: Theta on Claude gets the images themselves. Groq's models can't
 take images, so for everyone else the vision model (`VISION_MODEL`, default
-the low brain's Gemini model, on `GEMINI_API_KEY`) describes it once —
-text, numbers and prices copied out — and the agents answer from that
-description. It's kept, so later questions about the same picture don't
-re-run it. If Gemini can't look (out of quota, say), the agent is told to
+the low brain's Gemini model, on `GEMINI_API_KEY`) describes each image once —
+text, numbers and prices copied out — and the agents answer from those
+descriptions. They're kept, so later questions about the same pictures don't
+re-run them. If Gemini can't look (out of quota, say), the agent is told to
 say it can't see the image rather than guess. A receipt photo plus
 "@glass log this" works: Glass reads the total from the description and
-logs it with the `spend` tool.
+logs it with the `spend` tool. PDF and text files are NOT read by any model:
+agents are told the file names only, and must say they can't read them if
+asked.
 
 ## Chat
 

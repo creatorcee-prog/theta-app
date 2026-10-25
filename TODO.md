@@ -1,5 +1,25 @@
 # To-do
 
+## Stage 3c: File and Image Attachments
+
+- The chat composer takes up to 4 attachments: images (JPEG, PNG,
+  WebP, GIF) plus PDF and text/Markdown files. Images are shrunk
+  client-side (1600px, JPEG) as before; files go through as-is.
+- The preview strip shows image thumbs and file chips (name, type,
+  size), each with its own remove button. Client and server both
+  validate type, size (3 MB each, 3 MB combined), count, and empty
+  files; the server validates the whole batch before saving any of
+  it, and a failed send restores the full list into the composer.
+- Messages carry attachments [{url, name, kind}] plus the legacy
+  image field (= first image) for old messages. /upload/ serves
+  PDF/text under the same key-required rules as images.
+- Models: every image gets the existing vision treatment (Theta on
+  Claude sees them directly; everyone else gets the joined Gemini
+  descriptions). Files are NOT read by any model: agents get a note
+  with names only, and must say they can't read them if asked.
+- Explicitly not done: no PDF/text parsing, no model-routing
+  changes, no new service or dependency.
+
 ## Chat top removed: header row + channel chiprow (owner request)
 
 - The chat page no longer renders the header row (channel name, about
@@ -13,6 +33,19 @@
 - Left in place on purpose (dead but harmless): the .chathead/.chiprow
   CSS rules and the null-guarded members-button handler in _CHAT_JS
   (`if (mb)`), so no JS throws with the button gone.
+
+## Own-message bubbles: larger text, right-aligned glass bubbles, no own avatar (owner request)
+
+- Chat message bodies render at 16px (base text stays 15px).
+- The user's own messages are right-aligned bubbles: the avatar
+  column is gone for mine messages, the body hugs its content
+  (max 76ch / 85% of the thread), and wears the UI's glass surface
+  (solid where blur is unsupported, translucent + blurred under
+  @supports — the same values as .glass). The name/time line
+  right-aligns inside the bubble.
+- Agent messages are untouched: avatars, left alignment, and the
+  76ch cap all stay. The old accent tint for own messages is gone,
+  replaced by the bubble.
 
 ## Stage 3b extension: chat hierarchy, composer states, responsive audit (branch stage3bext/chat-polish, based on main 79c7fb5a which includes merged PR #56)
 
