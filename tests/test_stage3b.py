@@ -102,12 +102,10 @@ css = h._UI_CSS
 js = h._CHAT_JS
 
 # --- Message hierarchy + spacing ---
-check("turns get more air", ".msg{display:grid;grid-template-columns:40px minmax(0,1fr);column-gap:12px;padding:8px 16px 6px}" in css)
+check("turns get more air", ".msg{display:grid;grid-template-columns:minmax(0,1fr);padding:8px 16px 6px}" in css)
 check("own messages carry a mine class in render()", '(m.from === "you" ? " mine" : "")' in js)
-check("own messages are right-aligned glass bubbles with no avatar",
-      ".msg.mine{grid-template-columns:minmax(0,1fr)}" in css
-      and ".msg.mine .avcol{display:none}" in css
-      and ".msg.mine .mbody{width:fit-content;max-width:min(76ch,85%);margin-left:auto;background:var(--surface);border-radius:20px;padding:10px 14px;overflow-wrap:anywhere}" in css
+check("own messages are right-aligned glass bubbles",
+      ".msg.mine .mbody{width:fit-content;max-width:min(76ch,85%);margin-left:auto;background:var(--surface);border-radius:20px;padding:10px 14px;overflow-wrap:anywhere}" in css
       and ".msg.mine .meta{display:none}" in css)
 check("continuations stay tight", ".msg.cont{padding-top:1px}" in css)
 
@@ -156,7 +154,7 @@ check("attach UI intact", 'id="chat-file"' in chat and 'id="chat-attach"' in cha
 
 # --- Narrow-screen structure kept ---
 check("chat grid stays flexible", ".chat{display:grid;grid-template-columns:minmax(0,1fr)" in css)
-check("message grid stays flexible", "grid-template-columns:40px minmax(0,1fr)" in css)
+check("two-column message grid is gone", "grid-template-columns:40px minmax(0,1fr)" not in css)
 
 # --- Scope guards ---
 check("agent set unchanged",

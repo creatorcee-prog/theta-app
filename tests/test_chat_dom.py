@@ -164,29 +164,28 @@ with sync_playwright() as p:
                 pg.screenshot(path=os.path.join(SHOTS, "thread-1280.png"))
             pg.close()
 
-        # Own-message bubbles: no avatar, larger text, right-aligned glass.
+        # Message rows: no avatar column, larger text, right-aligned own bubbles.
         pg = browser.new_page(viewport={"width": 390, "height": 844})
         pg.goto(f"{APP}/chat?key=dk")
         expect(pg.locator("#msgs")).to_contain_text("thread filler 25", timeout=15000)
         bub = pg.evaluate("""() => {
             const mine = document.querySelector('#msgs .msg.mine');
             const body = mine ? mine.querySelector('.mbody') : null;
-            const avcol = mine ? mine.querySelector('.avcol') : null;
             const msgs = document.querySelector('#msgs').getBoundingClientRect();
             const r = body ? body.getBoundingClientRect() : null;
             const cs = body ? getComputedStyle(body) : null;
-            const agent = document.querySelector('#msgs .msg:not(.mine) .avcol img');
+            const agentName = document.querySelector('#msgs .msg:not(.mine) .meta .name');
             const meta = mine ? mine.querySelector('.meta') : null;
-            return {avHidden: avcol ? getComputedStyle(avcol).display === 'none' : false,
+            return {noAvcol: !document.querySelector('#msgs .msg .avcol'),
+                    agentNamed: agentName ? agentName.textContent.length > 0 : false,
                     font: cs ? cs.fontSize : '', radius: cs ? cs.borderRadius : '',
                     rightGap: r ? Math.round(msgs.right - r.right) : -1,
-                    metaHidden: meta ? getComputedStyle(meta).display === 'none' : true,
-                    agentAvatar: agent ? agent.getBoundingClientRect().width > 0 : false}; }""")
-        check("own messages hide their avatar column", bub["avHidden"])
+                    metaHidden: meta ? getComputedStyle(meta).display === 'none' : true}; }""")
+        check("no message avatar column", bub["noAvcol"])
+        check("agent names still show in meta", bub["agentNamed"])
         check("chat text renders at 16px", bub["font"] == "16px")
         check("own bubble is rounded and right-aligned", bub["radius"].startswith("20px") and 0 <= bub["rightGap"] <= 40)
         check("own messages hide their You/timestamp meta", bub["metaHidden"])
-        check("agent avatars still show", bub["agentAvatar"])
         pg.screenshot(path=os.path.join(SHOTS, "thread-390.png"))
         pg.close()
 
@@ -212,7 +211,7 @@ with sync_playwright() as p:
         pg.screenshot(path=os.path.join(SHOTS, "glass-plus.png"))
         pg.close()
 
-        # Long-thread readability: grouping, code cap, avatar images.
+        # Long-thread readability: grouping, code cap, remaining avatar images.
         pg = browser.new_page(viewport={"width": 1280, "height": 800})
         pg.goto(f"{APP}/chat?key=dk")
         expect(pg.locator("#msgs")).to_contain_text("thread filler 25", timeout=15000)
@@ -386,6 +385,15 @@ with sync_playwright() as p:
         check("code block has a Code label and icon copy button",
               pg.locator(".codeblock .chead .clabel").first.inner_text() == "Code"
               and pg.locator(".codeblock .chead button").first.get_attribute("aria-label") == "Copy code")
+        glassed = pg.evaluate("""() => {
+            const sub = document.querySelector('.cfgcard button');
+            const box = document.querySelector('.codeblock');
+            const f = e => e ? (getComputedStyle(e).backdropFilter || '') : '';
+            return {sub: f(sub), box: f(box)}; }""")
+        check("card submit button is glass, not accent",
+              "22px" in glassed["sub"])
+        check("code box is glass, not dark",
+              "22px" in glassed["box"])
         check("blockquote renders", pg.locator(".md-quote").count() >= 1)
         check("doc card has copy + edit",
               pg.locator(".doccard").count() >= 1

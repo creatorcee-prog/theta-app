@@ -8401,6 +8401,11 @@ body.typing .tabbar{display:none}
 .btn.small{padding:6px 11px;font-size:13px;border-radius:10px}
 .btn:disabled{opacity:.55;cursor:default}
 .btn svg{width:18px;height:18px}
+/* Message action buttons (card Submit, doc Copy/Edit/Save, server buttons) are glass,
+   not accent: the surface treatment in both modes, so they read as controls, not calls. */
+.msg-acts .btn{background:var(--surface);color:var(--text);border:1px solid var(--border)}
+@supports (backdrop-filter:blur(1px)){
+ .msg-acts .btn{background:color-mix(in srgb,var(--surface) 72%,transparent);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);backdrop-filter:blur(var(--glass-blur)) saturate(160%)}}
 .chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 11px;font-size:12.5px;font-weight:650;
  background:var(--surface2);color:var(--muted);border:1px solid var(--border);text-decoration:none;white-space:nowrap}
 .chip.on{background:var(--accent);color:var(--on);border-color:transparent}
@@ -8609,13 +8614,10 @@ body.typing .chat{height:100dvh}
 .chiprow::-webkit-scrollbar{display:none}
 @media (min-width:900px){.chiprow{display:none}}
 .msgs{flex:1;overflow-y:auto;padding:10px 0 6px;overscroll-behavior:contain;min-height:0}
-.msg{display:grid;grid-template-columns:40px minmax(0,1fr);column-gap:12px;padding:8px 16px 6px}
+.msg{display:grid;grid-template-columns:minmax(0,1fr);padding:8px 16px 6px}
 .msg:hover{background:color-mix(in srgb,var(--surface2) 55%,transparent)}
 .msg.cont{padding-top:1px}
-.msg.cont .avcol{height:0;overflow:hidden}
 .msg.cont .meta{display:none}
-.msg.mine{grid-template-columns:minmax(0,1fr)}
-.msg.mine .avcol{display:none}
 .msg.mine .mbody{width:fit-content;max-width:min(76ch,85%);margin-left:auto;background:var(--surface);border-radius:20px;padding:10px 14px;overflow-wrap:anywhere}
 .msg.mine .meta{display:none}
 @supports (backdrop-filter:blur(1px)){
@@ -8672,11 +8674,17 @@ html,body{overflow-x:clip;max-width:100%}
 .md code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;background:var(--surface2);border-radius:5px;padding:0 4px}
 .md pre code{background:none;padding:0}.md .md-img{max-width:100%;border-radius:10px;margin:6px 0;display:block}
 .md .md-quote{border-left:3px solid var(--accent);padding:2px 0 2px 12px;color:var(--muted);margin:6px 0}
-.md .codeblock{border:1px solid rgba(255,255,255,.10);border-radius:16px;background:#262626;color:#e8e8e8;overflow:hidden;margin:6px 0}
-.md .codeblock .chead{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.12)}
-.md .codeblock .chead .clabel{font-size:13px;font-weight:650;color:rgba(255,255,255,.75)}
-.md .codeblock .cbtn{display:grid;place-items:center;width:32px;height:32px;padding:0;border:0;background:transparent;color:rgba(255,255,255,.65);cursor:pointer;border-radius:8px}
-.md .codeblock .cbtn:hover{color:#fff;background:rgba(255,255,255,.08)}
+.md .codeblock{border:1px solid var(--border);border-radius:16px;background:var(--surface);color:var(--text);overflow:hidden;margin:6px 0}
+@supports (backdrop-filter:blur(1px)){
+ .md .codeblock{background:color-mix(in srgb,var(--surface) 72%,transparent);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);backdrop-filter:blur(var(--glass-blur)) saturate(160%)}}
+:root[data-glassstyle="liquid"] .md .codeblock{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset 0 1px 0 rgba(255,255,255,.45),inset 0 -1px 0 rgba(255,255,255,.12),0 12px 32px rgba(0,0,0,.28);border:0}
+/* The codeblock pre stays transparent inside the glass box: without this, the liquid
+   .md pre rule would put a second liquid panel (and mask) inside it. */
+:root[data-glassstyle="liquid"] .md.codeblock pre{background:transparent;color:var(--text);-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:none;-webkit-mask-box-image:none;mask-border:none}
+.md .codeblock .chead{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid var(--border)}
+.md .codeblock .chead .clabel{font-size:13px;font-weight:650;color:var(--muted)}
+.md .codeblock .cbtn{display:grid;place-items:center;width:32px;height:32px;padding:0;border:0;background:transparent;color:var(--muted);cursor:pointer;border-radius:8px}
+.md .codeblock .cbtn:hover{color:var(--text);background:var(--surface2)}
 .md .codeblock .cbtn svg{width:18px;height:18px}
 .md .codeblock .cbtn.is-success{color:#4ade80}
 .md .codeblock .cbtn.is-error{color:#f87171}
@@ -8891,6 +8899,7 @@ select.field{width:auto;flex:1;min-width:120px}
  :root[data-glassstyle="liquid"] dialog.sheet{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--bg) 82%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset 0 1px 0 rgba(255,255,255,.45),inset 0 -1px 0 rgba(255,255,255,.12),0 12px 32px rgba(0,0,0,.28)}
  :root[data-glassstyle="liquid"] .mrow:hover,:root[data-glassstyle="liquid"] .crewlink:hover{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%),color-mix(in srgb,var(--surface2) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%)}}
 :root[data-glassstyle="liquid"] .btn,:root[data-glassstyle="liquid"] .seg button,:root[data-glassstyle="liquid"] .chip{box-shadow:inset 0 1px 0 rgba(255,255,255,.35),inset 0 -1px 0 rgba(255,255,255,.10)}
+:root[data-glassstyle="liquid"] .msg-acts .btn{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset 0 1px 0 rgba(255,255,255,.45),inset 0 -1px 0 rgba(255,255,255,.12);border:0}
 /* G2/G3 continuous curvature in liquid mode: browsers have no native corner-shape, so the
    squircle comes from a 9-slice mask (fixed corners, stretching edges) over the existing
    border-radius fallback. The mask is a 100px PNG: Chromium stretches an SVG mask to the
@@ -9604,12 +9613,9 @@ _CHAT_JS = r'''
       const cont = prev && prev.from === m.from && d - parseAt(prev.at) < 7 * 60e3;
       const row = document.createElement("div");
       row.className = "msg" + (cont ? " cont" : "") + (fresh ? " new" : "") + (m.from === "you" ? " mine" : "");
-      const avcol = document.createElement("div");
-      avcol.className = "avcol";
       const a = C.agents[m.from], th = C.agents.theta;
       // Every agent speaks as Theta; a tag after the name says who it's really from.
       const asTheta = a && th && m.from !== "you" && m.from !== "hub";
-      avcol.append(avatar(asTheta ? "theta" : m.from, 40));
       const body = document.createElement("div");
       body.className = "mbody"; body.style.minWidth = "0";
       const meta = document.createElement("div"), name = document.createElement("span"), time = document.createElement("time");
@@ -9684,7 +9690,7 @@ _CHAT_JS = r'''
         }
         body.append(acts);
       }
-      row.append(avcol, body);
+      row.append(body);
       out.push(row); prev = m;
     }
     if (!thread.length) {
@@ -9923,14 +9929,15 @@ _CHAT_JS = r'''
   }
   function showWorking(who, name, step, done, info) {
     const state = (info && info.state) || "working";
+    // A stopped agent leaves no bar behind: completed and failed both
+    // hide the box instead of lingering on a finished note.
+    if (state === "completed" || state === "failed") { wBox.hidden = true; wDone.replaceChildren(); clearInterval(wTimer); return; }
     wBox.hidden = false;
     wAv.replaceChildren(avatar(who, 22));
     trailRow(done || [], wDone);
     wDots.hidden = state !== "working";
     if (info && info.elapsed != null) wElapsed.textContent = fmtElapsed(info.elapsed) + (info.stale ? " · still working" : "");
     clearInterval(wTimer);
-    if (state === "completed") { wText.textContent = name + " finished."; return; }
-    if (state === "failed") { wText.textContent = name + " couldn't finish."; return; }
     if (state === "waiting_approval") { wText.textContent = "Waiting for your approval."; return; }
     let n = 0;
     const say = () => { const v = VERBS[who] || ["working"]; wText.textContent = name + " is " + (step || v[n++ % v.length]) + "..."; };

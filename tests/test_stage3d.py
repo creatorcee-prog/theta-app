@@ -92,11 +92,16 @@ check("table cells keep the 5.5em floor (no shredding)",
 # --- Code + quotes ---
 check("code blocks keep the 340px cap (3b regression)",
       "max-height:340px;overflow-y:auto" in css and ".md pre{" in css)
-check("code blocks get a dark box, Code label, and icon copy button",
-      '.md .codeblock{border:1px solid rgba(255,255,255,.10);border-radius:16px;background:#262626;color:#e8e8e8;overflow:hidden;margin:6px 0}' in css
-      and '.md .codeblock .chead{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.12)}' in css
+check("code blocks get a glass box, Code label, and icon copy button",
+      '.md .codeblock{border:1px solid var(--border);border-radius:16px;background:var(--surface);color:var(--text);overflow:hidden;margin:6px 0}' in css
+      and '.md .codeblock .chead{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid var(--border)}' in css
       and 'head.append(el("span", "clabel", "Code"), copyBtn(() => body.join("\\n"), true))' in rt
       and "navigator.clipboard.writeText" in rt)
+check("card buttons and code boxes are glass, not accent or dark",
+      '.msg-acts .btn{background:var(--surface);color:var(--text);border:1px solid var(--border)}' in css
+      and '.md .codeblock{background:color-mix(in srgb,var(--surface) 72%,transparent);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);backdrop-filter:blur(var(--glass-blur)) saturate(160%)}' in css
+      and ':root[data-glassstyle="liquid"] .msg-acts .btn{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset 0 1px 0 rgba(255,255,255,.45),inset 0 -1px 0 rgba(255,255,255,.12);border:0}' in css
+      and ':root[data-glassstyle="liquid"] .md.codeblock pre{background:transparent;color:var(--text);-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:none;-webkit-mask-box-image:none;mask-border:none}' in css)
 check("blockquotes render with the accent bar",
       ".md .md-quote{border-left:3px solid var(--accent);padding:2px 0 2px 12px;color:var(--muted);margin:6px 0}" in css
       and 'el("blockquote", "md-quote")' in rt)
