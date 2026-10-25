@@ -602,6 +602,33 @@ with sync_playwright() as p:
         check("rich message does not overflow desktop width", no_overflow(pg))
         pg.screenshot(path=os.path.join(SHOTS, "rich-1280.png"))
         pg.close()
+        # HDR: SDR look unchanged, P3 rules present and parseable.
+        pg = browser.new_page(viewport={"width": 390, "height": 844})
+        pg.goto(f"{APP}/chat?key=dk")
+        expect(pg.locator("#chat-msg")).to_be_visible(timeout=15000)
+        hdr = pg.evaluate("""() => {
+            const probe = document.createElement('a');
+            probe.style.color = 'var(--accent)';
+            document.body.appendChild(probe);
+            const accent = getComputedStyle(probe).color;
+            const p3 = document.createElement('a');
+            p3.style.color = 'color(display-p3 1 0 0)';
+            document.body.appendChild(p3);
+            const p3c = getComputedStyle(p3).color;
+            let media = false;
+            for (const s of document.styleSheets) {
+                try { for (const r of s.cssRules) if (r.media && r.media.mediaText.includes('color-gamut')) media = true; }
+                catch (e) {}
+            }
+            return {accent: accent, p3: p3c, media: media,
+                    gamut: matchMedia('(color-gamut: p3)').matches}; }""")
+        check("SDR: accent still renders as the sRGB hex on a non-P3 display",
+              hdr["accent"] == "rgb(85, 67, 232)")
+        check("P3 color() parses in the engine", "display-p3" in hdr["p3"])
+        check("P3 media rules reach the page", hdr["media"])
+        check("headless display reports sRGB, so HDR stays off here",
+              hdr["gamut"] is False)
+        pg.close()
     finally:
         browser.close()
 

@@ -517,6 +517,20 @@ behind all content and is opaque, so it never fights the
 theme. Canvas modes animate with requestAnimationFrame
 (which pauses while the tab is hidden) and freeze under
 reduced motion, as do the Gemini phase, drift, pulse, and typing bloom.
+## HDR
+
+On displays that report a wide color gamut, theme accents and the Gemini
+curtain stops render in Display P3 instead of sRGB: the same hues, pushed
+past what sRGB can express, so saturated accents and curtain peaks look
+richer. Where the display also reports high dynamic range, the Gemini
+curtains get a brightness/saturation lift and the Liquid edge light gets
+stronger. This is progressive enhancement: SDR screens match none of
+those media queries and see exactly today's CSS. The WebGL shard shader
+is untouched (its colors are computed in-shader, so a P3 pass there
+needs a canvas color-space change); only the 2D shard painter's blue
+tints switch to P3. Visual proof needs a P3/XDR display; headless
+Chromium is sRGB, so the browser tier pins the SDR look and that
+`color(display-p3 ...)` parses.
 ## Chat
 
 Chat works like a Discord server: channels on the left, members and

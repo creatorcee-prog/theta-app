@@ -8314,6 +8314,32 @@ def _theme_vars(t, mode):
     return ";".join(f"{k}:{val}" for k, val in v.items()) + f";color-scheme:{mode}"
 
 
+def _p3(hexcolor, alpha=None, push=1.35):
+    """sRGB hex -> Display P3, chroma pushed past what sRGB can express.
+
+    Same hue family, more saturated: the color is converted into P3 space,
+    then each channel is pushed away from luminance before encoding, so a
+    P3 display shows a wider version of the accent instead of the same
+    color in different coordinates. SDR rules never see these values.
+    """
+    h = hexcolor.lstrip("#")
+    srgb = [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+    lin = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in srgb]
+    x = 0.4123908 * lin[0] + 0.3575843 * lin[1] + 0.1804808 * lin[2]
+    y = 0.2126390 * lin[0] + 0.7151687 * lin[1] + 0.0721923 * lin[2]
+    z = 0.0193308 * lin[0] + 0.1191948 * lin[1] + 0.9505322 * lin[2]
+    pr = 2.4934969 * x - 0.9313836 * y - 0.4027107 * z
+    pg = -0.8294890 * x + 1.7626641 * y + 0.0236247 * z
+    pb = 0.0358458 * x - 0.0761724 * y + 0.9568845 * z
+    lum = 0.2126 * pr + 0.7152 * pg + 0.0722 * pb
+    p3lin = [min(1.0, max(0.0, lum + (c - lum) * push)) for c in (pr, pg, pb)]
+    enc = [c * 12.92 if c <= 0.0031308 else 1.055 * (c ** (1 / 2.4)) - 0.055 for c in p3lin]
+    enc = [min(1.0, max(0.0, c)) for c in enc]
+    if alpha is None:
+        return "color(display-p3 %.4f %.4f %.4f)" % (enc[0], enc[1], enc[2])
+    return "color(display-p3 %.4f %.4f %.4f / %s)" % (enc[0], enc[1], enc[2], alpha)
+
+
 def theme_css():
     out = []
     for name, t in THEMES.items():
@@ -8321,7 +8347,46 @@ def theme_css():
         out.append(f"{sel}{{{_theme_vars(t, 'light')}}}")
         out.append(f'{sel}[data-mode="dark"]{{{_theme_vars(t, "dark")}}}')
         out.append(f'@media (prefers-color-scheme:dark){{{sel}:not([data-mode="light"]){{{_theme_vars(t, "dark")}}}}}')
+        # HDR: Display P3 accents on P3 displays; the SDR rules above are untouched.
+        _li = f'--accent:{_p3(t["light"]["accent"])};--accent2:{_p3(t["light"]["accent2"])}'
+        _dk = f'--accent:{_p3(t["dark"]["accent"])};--accent2:{_p3(t["dark"]["accent2"])}'
+        out.append(f'@media (color-gamut:p3){{{sel}{{{_li}}}{sel}[data-mode="dark"]{{{_dk}}}}}')
+        out.append(f'@media (color-gamut:p3) and (prefers-color-scheme:dark){{{sel}:not([data-mode="light"]){{{_dk}}}}}')
     return "\n".join(out)
+
+
+def _hdr_css():
+    """Wide-gamut + high-dynamic-range overrides, emitted after _BASE_CSS.
+
+    Gemini curtain stops in Display P3 (same geometry and peak alphas as the
+    SDR stops), and a highlight boost where the display reports high dynamic
+    range: brighter Gemini curtains and stronger liquid edge light. SDR
+    displays never match these media queries, so they see today's CSS.
+    """
+    b = "@media (color-gamut:p3){#bg-layer.bg-gemini::before{background-image:"
+    b += ("radial-gradient(50% 95% at 65% -10%," + _p3("#2563eb", ".85") + ",transparent 70%),"
+          "radial-gradient(40% 85% at 30% -5%," + _p3("#22d3ee", ".55") + ",transparent 70%)}")
+    b += "#bg-layer.bg-gemini::after{background-image:"
+    b += ("radial-gradient(45% 90% at 35% -10%," + _p3("#10b981", ".70") + ",transparent 70%),"
+          "radial-gradient(40% 80% at 15% -5%," + _p3("#be9628", ".85") + ",transparent 70%)}}")
+    _in1 = "inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.85)"
+    _in2 = "inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.35)"
+    _drop = "0 12px 32px rgba(0,0,0,.28)"
+    _liq = ':root[data-glassstyle="liquid"] '
+    _a = ["card", "win", "kpi", "sw", "lo", "lrow", "#chat-menu", "dialog.sheet",
+          ".msg.mine .mbody", ".msg-acts .btn", ".md .codeblock"]
+    _c = ["box", "field", "seg", "fchip", "minibox", ".md pre"]
+    _d = [".btn", ".seg button", ".chip"]
+    b += ("@media (dynamic-range:high){"
+          "#bg-layer.bg-gemini::before,#bg-layer.bg-gemini::after{filter:brightness(1.12) saturate(1.2)}"
+          + ",".join(_liq + x for x in _a) + "{box-shadow:" + _in1 + "," + _in2 + "," + _drop + "}"
+          + _liq + ".glass{box-shadow:" + _in1 + "," + _in2
+          + ",inset 1px 0 0 rgba(255,255,255,.18)," + _drop + "}"
+          + ",".join(_liq + x for x in _c) + "{box-shadow:" + _in1 + "," + _in2 + "}"
+          + ",".join(_liq + x for x in _d) + "{box-shadow:"
+          + "inset calc(var(--shine-x,0)*2px) calc(1px + var(--shine-y,0)*2px) 0 rgba(255,255,255,.45)"
+          + ",inset calc(var(--shine-x,0)*-2px) calc(-1px + var(--shine-y,0)*-2px) 0 rgba(255,255,255,.16)}}")
+    return b
 
 
 _BASE_CSS = r'''
@@ -8986,6 +9051,9 @@ _UI_JS_SRC = r'''
     window.addEventListener("pageshow", e => { if (e.persisted) back(); });
   }
   const dark = matchMedia("(prefers-color-scheme: dark)");
+  const WIDE = matchMedia("(color-gamut: p3)").matches;
+  // Shard blue tints in Display P3 on P3 displays; white is already at gamut max.
+  function tintB(a) { return WIDE ? "color(display-p3 0.72 0.88 1 / " + a + ")" : "rgba(215,230,255," + a + ")"; }
   function metaColors() {
     const t = T[root.dataset.theme] || T.theta, m = root.dataset.mode;
     document.querySelectorAll('meta[name="theme-color"]').forEach(x => x.remove());
@@ -9349,7 +9417,7 @@ _UI_JS_SRC = r'''
         // Body: light falls across it from the top-left and dies into
         // the dark — never a flat fill.
         var gr = ctx.createLinearGradient(sh.x + LX * sh.r, sh.y + LY * sh.r, sh.x - LX * sh.r, sh.y - LY * sh.r);
-        gr.addColorStop(0, sh.blue ? "rgba(215,230,255," + (0.04 + al * 0.18) + ")" : "rgba(255,255,255," + (0.04 + al * 0.18) + ")");
+        gr.addColorStop(0, sh.blue ? tintB(0.04 + al * 0.18) : "rgba(255,255,255," + (0.04 + al * 0.18) + ")");
         gr.addColorStop(1, sh.blue ? "rgba(160,180,210," + (0.01 + al * 0.04) + ")" : "rgba(140,150,170," + (0.01 + al * 0.04) + ")");
         trace();
         ctx.fillStyle = gr;
@@ -9367,7 +9435,7 @@ _UI_JS_SRC = r'''
           ctx.lineTo(p2[0], p2[1]);
           ctx.lineTo(ccx, ccy);
           ctx.closePath();
-          ctx.fillStyle = sh.blue ? "rgba(215,230,255," + (a2 * (0.35 + 0.65 * lit)) + ")" : "rgba(255,255,255," + (a2 * (0.35 + 0.65 * lit)) + ")";
+          ctx.fillStyle = sh.blue ? tintB(a2 * (0.35 + 0.65 * lit)) : "rgba(255,255,255," + (a2 * (0.35 + 0.65 * lit)) + ")";
           ctx.fill();
         };
         facet(sh.fe, al * 0.35);
@@ -9423,11 +9491,11 @@ _UI_JS_SRC = r'''
         ctx.fill();
         var rimG = ctx.createLinearGradient(mp.x - gx * ss, mp.y - gy * ss, mp.x + gx * ss, mp.y + gy * ss);
         rimG.addColorStop(0, "rgba(115,128,158," + (aa * 0.15) + ")");
-        rimG.addColorStop(1, mp.blue ? "rgba(215,230,255," + (aa * 0.7 * depR) + ")" : "rgba(255,255,255," + (aa * 0.7 * depR) + ")");
+        rimG.addColorStop(1, mp.blue ? tintB(aa * 0.7 * depR) : "rgba(255,255,255," + (aa * 0.7 * depR) + ")");
         ctx.strokeStyle = rimG;
         ctx.lineWidth = Math.max(1, ss * 0.5);
         ctx.stroke();
-        ctx.fillStyle = mp.blue ? "rgba(215,230,255," + aa + ")" : "rgba(255,255,255," + aa + ")";
+        ctx.fillStyle = mp.blue ? tintB(aa) : "rgba(255,255,255," + aa + ")";
         ctx.beginPath();
         ctx.ellipse(mp.x, mp.y, ss * 0.375, ss * 0.15, mp.rot, 0, 6.283);
         ctx.fill();
@@ -9456,11 +9524,11 @@ _UI_JS_SRC = r'''
         ctx.fill();
         var rimG = ctx.createLinearGradient(mp.x - gx * ss, mp.y - gy * ss, mp.x + gx * ss, mp.y + gy * ss);
         rimG.addColorStop(0, "rgba(115,128,158," + (aa * 0.15) + ")");
-        rimG.addColorStop(1, mp.blue ? "rgba(215,230,255," + (aa * 0.7 * depR) + ")" : "rgba(255,255,255," + (aa * 0.7 * depR) + ")");
+        rimG.addColorStop(1, mp.blue ? tintB(aa * 0.7 * depR) : "rgba(255,255,255," + (aa * 0.7 * depR) + ")");
         ctx.strokeStyle = rimG;
         ctx.lineWidth = Math.max(1, ss * 0.5);
         ctx.stroke();
-        ctx.fillStyle = mp.blue ? "rgba(215,230,255," + aa + ")" : "rgba(255,255,255," + aa + ")";
+        ctx.fillStyle = mp.blue ? tintB(aa) : "rgba(255,255,255," + aa + ")";
         ctx.beginPath();
         ctx.ellipse(mp.x, mp.y, ss * 0.375, ss * 0.15, mp.rot, 0, 6.283);
         ctx.fill();
@@ -10842,7 +10910,7 @@ def ui_icon(name):
             f'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{UI_ICONS[name]}</svg>')
 
 
-_UI_CSS = theme_css() + "\n" + _BASE_CSS + "\nhtml.veiled .app,html.veiled .tabbar{visibility:hidden}"
+_UI_CSS = theme_css() + "\n" + _BASE_CSS + "\n" + _hdr_css() + "\nhtml.veiled .app,html.veiled .tabbar{visibility:hidden}"
 _UI_JS = _UI_JS_SRC.replace("__THEMES__", json.dumps(
     {n: {"glass": bool(t.get("glass")), "mono": bool(t.get("mono")), "light": t["light"]["bg"],
          "dark": t["dark"]["bg"]} for n, t in THEMES.items()}))
