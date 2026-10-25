@@ -1,5 +1,25 @@
 # To-do
 
+## Stage 3b extension: chat hierarchy, composer states, responsive audit (branch stage3bext/chat-polish, based on main 79c7fb5a which includes merged PR #56)
+
+- Message bodies cap at 76ch (new .mbody class on the render() body
+  column) so long replies stay readable on wide desktop layouts;
+  no effect on narrow screens, where the column is already narrower.
+- The chat send button grows to a 44px touch target, scoped to
+  #chat-send so the Home mini bar button (38px) is untouched.
+- Verified-but-unchanged, from the Phase 1 inspection: the composer
+  is pinned (flex column + scrolling .msgs + flex:none composer);
+  the tab bar height already includes the safe-area inset, so the
+  composer needs none (its `* 0` term is correct, not a bug); the
+  scroll stick logic keeps reading history from jumping; the failure
+  path restores unsent text instead of losing it.
+- No stop/cancel button: the backend has no cancel endpoint, and the
+  brief forbids simulating one. No new sidebar or navigation, no
+  attach changes (3c), no artwork changes.
+- No browser or phone verification (no DOM harness); verified at
+  CSS + page markup + chat JS source level, plus headless renders
+  of the served chat page for the independent critic.
+
 ## Stage 3b: Chat layout redesign (branch stage3b/chat-layout, based on main c35951f2 which includes merged PR #55)
 
 - Own messages carry a mine class (render() appends it for
