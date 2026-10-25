@@ -1,5 +1,19 @@
 # To-do
 
+## Chat top removed: header row + channel chiprow (owner request)
+
+- The chat page no longer renders the header row (channel name, about
+  text, Members button) or the channel chiprow below it. The thread is
+  now just the message list plus the pinned composer.
+- Desktop keeps its channel sidebar and members column; the composer
+  placeholder ("Message #channel") still names the current channel.
+- Consequence, stated plainly: on phones there is no longer an in-chat
+  channel switcher or members drawer button. Restoring either needs a
+  new affordance (not added here).
+- Left in place on purpose (dead but harmless): the .chathead/.chiprow
+  CSS rules and the null-guarded members-button handler in _CHAT_JS
+  (`if (mb)`), so no JS throws with the button gone.
+
 ## Stage 3b extension: chat hierarchy, composer states, responsive audit (branch stage3bext/chat-polish, based on main 79c7fb5a which includes merged PR #56)
 
 - Message bodies cap at 76ch (new .mbody class on the render() body
