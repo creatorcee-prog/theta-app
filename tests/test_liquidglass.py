@@ -108,4 +108,21 @@ check("README documents the glass style option",
       "## Glass style" in readme and "Liquid Glass" in readme
       and "data-glassstyle" in readme)
 
+# --- Liquid reaches every surface except images ---
+check("liquid restyles cards, windows, and menus",
+      ':root[data-glassstyle="liquid"] .card,:root[data-glassstyle="liquid"] .win,:root[data-glassstyle="liquid"] .kpi,:root[data-glassstyle="liquid"] .sw,:root[data-glassstyle="liquid"] .lo,:root[data-glassstyle="liquid"] .lrow,:root[data-glassstyle="liquid"] #chat-menu{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset 0 1px 0 rgba(255,255,255,.45),inset 0 -1px 0 rgba(255,255,255,.12),0 12px 32px rgba(0,0,0,.28)}' in css)
+check("liquid restyles composer, fields, controls, and code",
+      ':root[data-glassstyle="liquid"] .box,:root[data-glassstyle="liquid"] .field,:root[data-glassstyle="liquid"] .seg,:root[data-glassstyle="liquid"] .fchip,:root[data-glassstyle="liquid"] .minibox,:root[data-glassstyle="liquid"] .md pre{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface2) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%);box-shadow:inset 0 1px 0 rgba(255,255,255,.45),inset 0 -1px 0 rgba(255,255,255,.12)}' in css)
+check("buttons and chips keep their colors, edge light only",
+      ':root[data-glassstyle="liquid"] .btn,:root[data-glassstyle="liquid"] .seg button,:root[data-glassstyle="liquid"] .chip{box-shadow:inset 0 1px 0 rgba(255,255,255,.35),inset 0 -1px 0 rgba(255,255,255,.10)}' in css)
+liq = css[css.index("Liquid Glass everywhere"):css.index(".is-loading", css.index("Liquid Glass everywhere"))]
+check("liquid everywhere touches no images",
+      ".att" not in liq and " img" not in liq and ".av" not in liq)
+check("liquid corners use a squircle mask over the radius fallback",
+      "mask-border:url(\"data:image/png;base64," in css
+      and "-webkit-mask-box-image:url(\"data:image/png;base64," in css
+      and "30 / 18px stretch" in css
+      and "30 / 18px / 0 stretch" in css
+      and "30 / 20px / 0 stretch" in css)
+
 print("liquidglass: all checks passed")
