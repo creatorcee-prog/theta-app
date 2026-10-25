@@ -129,8 +129,10 @@ def _search_tavily(query: str, num: int) -> list[dict[str, str]]:
             data = json.loads(resp.read())
     except Exception as e:
         return [{"title": "Search error", "url": "", "snippet": str(e)}]
+    if not isinstance(data, dict) or "results" not in data:
+        return [{"title": "Search error", "url": "", "snippet": "malformed response: missing results"}]
     out = []
-    for r in data.get("results", [])[:num]:
+    for r in (data.get("results") or [])[:num]:
         out.append({
             "title": r.get("title") or "",
             "url": r.get("url") or "",
@@ -152,8 +154,10 @@ def _search_serper(query: str, num: int) -> list[dict[str, str]]:
             data = json.loads(resp.read())
     except Exception as e:
         return [{"title": "Search error", "url": "", "snippet": str(e)}]
+    if not isinstance(data, dict) or "organic" not in data:
+        return [{"title": "Search error", "url": "", "snippet": "malformed response: missing organic results"}]
     out = []
-    for r in data.get("organic", [])[:num]:
+    for r in (data.get("organic") or [])[:num]:
         out.append({
             "title": r.get("title") or "",
             "url": r.get("link") or "",
@@ -163,7 +167,13 @@ def _search_serper(query: str, num: int) -> list[dict[str, str]]:
 
 
 def _search_duckduckgo(query: str, num: int) -> list[dict[str, str]]:
-    """Zero-key fallback. Uses the Instant Answer API + a light HTML scrape."""
+    """Zero-key fallback. Uses the Instant Answer API only (no key needed).
+
+    Note: this is an instant-answer lookup, not a full web index. Entity
+    queries return an abstract and related topics, but news and general
+    web queries usually come back empty. A failure is reported as a
+    Search error, never disguised as an empty result.
+    """
     # Instant Answer
     try:
         q = urllib.parse.quote(query)
@@ -173,25 +183,25 @@ def _search_duckduckgo(query: str, num: int) -> list[dict[str, str]]:
         )
         with urllib.request.urlopen(req, timeout=8) as resp:
             data = json.loads(resp.read())
-        out = []
-        if data.get("AbstractText"):
+    except Exception as e:
+        return [{"title": "Search error", "url": "", "snippet": str(e)}]
+    if not isinstance(data, dict):
+        return [{"title": "Search error", "url": "", "snippet": "malformed response: expected a JSON object"}]
+    out = []
+    if data.get("AbstractText"):
+        out.append({
+            "title": data.get("Heading") or query,
+            "url": data.get("AbstractURL") or "",
+            "snippet": data.get("AbstractText") or "",
+        })
+    for t in (data.get("RelatedTopics") or [])[:num]:
+        if isinstance(t, dict) and t.get("Text"):
             out.append({
-                "title": data.get("Heading") or query,
-                "url": data.get("AbstractURL") or "",
-                "snippet": data.get("AbstractText") or "",
+                "title": t.get("Text", "")[:80],
+                "url": t.get("FirstURL") or "",
+                "snippet": t.get("Text") or "",
             })
-        for t in data.get("RelatedTopics", [])[:num]:
-            if isinstance(t, dict) and t.get("Text"):
-                out.append({
-                    "title": t.get("Text", "")[:80],
-                    "url": t.get("FirstURL") or "",
-                    "snippet": t.get("Text") or "",
-                })
-        if out:
-            return out[:num]
-    except Exception:
-        pass
-    return [{"title": "No results", "url": "", "snippet": f"No results for: {query}"}]
+    return out[:num]
 
 
 def _extract_title(html: str) -> str:
