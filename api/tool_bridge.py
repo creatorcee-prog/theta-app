@@ -159,6 +159,20 @@ def tool_task_complete(arg, agent):
     return f"Task completed: {t.get('title')} ({t.get('id')})"
 
 
+def tool_task_reopen(arg, agent):
+    """Reopen a completed task in the ledger."""
+    if agent_tools is None:
+        raise ValueError("tool layer not available")
+    tid = (arg or "").strip()
+    if not tid:
+        raise ValueError("need a task_id")
+    out = agent_tools.run_tool(_store(), {"name": "task_reopen", "args": {"task_id": tid}}, agent_id=agent)
+    if out.get("status") != "ok":
+        raise ValueError(out.get("error") or "reopen failed")
+    t = out["data"]
+    return f"Task reopened: {t.get('title')} ({t.get('id')})"
+
+
 def tool_task_note(arg, agent):
     """Append a step or note to a task. Format: task_id | step text"""
     if agent_tools is None:
@@ -183,5 +197,6 @@ BRIDGE_TOOLS = {
     "task_create": ("task_create | <title>   (add a task to the persistent ledger)", tool_task_create, None),
     "task_list": ("task_list | open|done|all   (list tasks in the ledger)", tool_task_list, None),
     "task_complete": ("task_complete | <task_id>   (mark a ledger task done)", tool_task_complete, None),
+    "task_reopen": ("task_reopen | <task_id>   (reopen a completed task)", tool_task_reopen, None),
     "task_note": ("task_note | <task_id> | <step text>   (append a step to a ledger task)", tool_task_note, None),
 }

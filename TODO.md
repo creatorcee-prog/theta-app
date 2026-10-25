@@ -20,6 +20,28 @@
   CSS + page markup + chat JS source level, plus headless renders
   of the served chat page for the independent critic.
 
+## Stage 0: Browser verification + task_reopen discoverability (branch stage0/browser-tests-reopen-v2, replacement for PR #58, based on current main)
+
+- Browser tests for the chat page: tests/test_chat_dom.py drives real
+  Chromium (Playwright, pinned in requirements-test.txt) against the
+  served app on localhost with fake providers — layout at 390/768/1280/
+  1920 with no overflow and a pinned composer, composer multiline grow
+  (168px cap) and Shift+Enter newline, submission guard (double Enter
+  sends once), generating/disabled/completed states via a slow provider,
+  error state (aborted POST restores the text and marks .is-error), long
+  threads (code-block cap, avatars, names), and an agent tool-receipt
+  check (@mistral remember, receipt renders, no raw ACTION line) with a
+  screenshot. Run via tests/run_browser.sh after run_all.sh; screenshots
+  land in tests/chat-dom-shots/. Chromium does not verify physical-
+  device behavior (keyboard-open composer, iOS safe-area) — manual only.
+- task_reopen is now advertised: api/tool_bridge.py gains a
+  tool_task_reopen wrapper (mirroring task_complete) plus one
+  BRIDGE_TOOLS entry, so eligible agents discover it in tools_prompt
+  and run_actions accepts it; tools_diag's list grows from six to seven.
+  No permission change (all-agents, like the other ledger tools) and no
+  semantic change (same _task_set_done path, same errors). Regression
+  tests: discovery + diagnostics in test_mistral_tools.py, transitions
+  and errors in test_toolbox.py, chat-path receipt in test_tools.py.
 ## Stage 3b: Chat layout redesign (branch stage3b/chat-layout, based on main c35951f2 which includes merged PR #55)
 
 - Own messages carry a mine class (render() appends it for
