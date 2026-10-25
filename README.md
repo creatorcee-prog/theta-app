@@ -366,6 +366,45 @@ logs it with the `spend` tool. PDF and text files are NOT read by any model:
 agents are told the file names only, and must say they can't read them if
 asked.
 
+## How agents present answers
+
+Agents pick the format that helps most instead of defaulting to
+prose, using only formats the chat actually renders:
+
+- Prose for explanations, reasoning, and advice.
+- A table for things compared across columns (a header row,
+  then `|---|`).
+- Bullet or numbered lists for several items.
+- `- [ ]` checklists for to-dos. These are real: checking one
+  persists through `POST /api/chat/check`.
+- A fenced code block for code, headings for long answers,
+  `**bold**` sparingly, links (`http(s)` only), and images
+  (only with `![alt](https link)` for a link the agent was
+  given).
+
+Rules: simplest format that communicates well; never invent
+data to fill a table or list; never describe a button, card,
+chart, or other control the chat cannot show. Buttons in chat
+exist only when the server issues them (QWERTY proposals,
+James commands) — agents never emit them. Not yet approved:
+document/config/flow/bars fences, blockquotes, and code copy
+buttons (Stage 3d, unmerged) and charts (no renderer support
+yet); a follow-up extends this list when those land.
+
+## Glass style
+
+Settings offers two treatments for the glass surfaces (tab
+bar, sidebar, members drawer, menus) and own-message bubbles:
+Glass+ (the frosted default: 72% surface, 22px blur) and
+Liquid Glass (specular gloss gradient, 32px blur, stronger
+saturation, edge light from inset shadows). The choice is a
+fourth segment of the `theta_ui` cookie
+(`theme.mode.layout.glassstyle`, default `plus`), rendered
+as `data-glassstyle` on the page, so it swaps live and
+survives reloads. Liquid Glass adds no borders anywhere, and
+it does not touch the Aurora theme's separate `data-glass`
+frosted-card treatment.
+
 ## Chat
 
 Chat works like a Discord server: channels on the left, members and

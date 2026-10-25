@@ -1920,9 +1920,14 @@ def system_prompt(agent_id, tools=False, now=True):
                       f"- #{o['id']}: {o['request']}" for o in mine))
     return (f"You are {a['name']}, the {TIER_LABELS[a['tier']]} of a personal bot "
             f"hub. {a['role']}{stand_in}{personality}{can} The team: {team}. "
-            f"Stay in character{brevity}. The chat shows markdown: when it helps, use a table for things compared "
-            "across columns (a header row, then |---| ), bullet or numbered lists for several items, - [ ] for "
-            "to-dos, and **bold** sparingly; show an image only with ![alt](https link) for a link you were given."
+            f"Stay in character{brevity}. Present each answer in the format that helps most: prose for "
+            "explanations, a table for things compared across columns (a header row, then |---| ), bullet or "
+            "numbered lists for several items, - [ ] for to-dos, a fenced code block for code, headings for "
+            "long answers, and **bold** sparingly; pick the format yourself when it is clearly better than plain "
+            "prose, and keep it simple when it is not. Never invent data to fill a table or list, and never "
+            "describe a button, card, chart, or other control the chat cannot show: the chat renders only "
+            "markdown, lists, tables, checklists, code blocks, links, and images (only with ![alt](https link) "
+            "for a link you were given)."
             f"{extra}{now_line() if now else ''}{memory_prompt()}"
             f"{chr(10) * 2 + HUB_GUIDE + hub_rules(agent_id) + tools_prompt(agent_id) if tools and not a.get('home') else ''}")
 
@@ -8836,6 +8841,13 @@ select.field{width:auto;flex:1;min-width:120px}
 .glass{background:var(--surface)}
 @supports (backdrop-filter:blur(1px)){
  .glass{background:color-mix(in srgb,var(--surface) 72%,transparent);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);backdrop-filter:blur(var(--glass-blur)) saturate(160%)}}
+/* Liquid Glass: the same surfaces with a specular gloss, stronger blur, and edge light.
+   Edges come from inset shadows, never borders, so own-message bubbles stay borderless. */
+:root[data-glassstyle="liquid"] .glass{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%),var(--surface);box-shadow:inset 0 1px 0 rgba(255,255,255,.45),inset 0 -1px 0 rgba(255,255,255,.12),inset 1px 0 0 rgba(255,255,255,.12),0 12px 32px rgba(0,0,0,.28)}
+:root[data-glassstyle="liquid"] .msg.mine .mbody{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%),var(--surface);box-shadow:inset 0 1px 0 rgba(255,255,255,.45),inset 0 -1px 0 rgba(255,255,255,.12),0 12px 32px rgba(0,0,0,.28)}
+@supports (backdrop-filter:blur(1px)){
+ :root[data-glassstyle="liquid"] .glass{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%)}
+ :root[data-glassstyle="liquid"] .msg.mine .mbody{background:linear-gradient(135deg,color-mix(in srgb,white 16%,transparent),color-mix(in srgb,white 2%,transparent) 45%,color-mix(in srgb,var(--accent) 10%,transparent)),color-mix(in srgb,var(--surface) 58%,transparent);-webkit-backdrop-filter:blur(32px) saturate(190%);backdrop-filter:blur(32px) saturate(190%)}}
 .is-loading{opacity:.6;pointer-events:none;cursor:wait}
 .is-success{border-color:var(--good);color:var(--good)}
 .is-error{border-color:var(--bad);color:var(--bad)}
@@ -8888,7 +8900,7 @@ _UI_JS_SRC = r'''
     else mk(m === "dark" ? t.dark : t.light);
   }
   function save() {
-    document.cookie = "theta_ui=" + [root.dataset.theme, root.dataset.mode, root.dataset.layout].join(".")
+    document.cookie = "theta_ui=" + [root.dataset.theme, root.dataset.mode, root.dataset.layout, (root.dataset.glassstyle || "plus")].join(".")
       + ";path=/;max-age=31536000;samesite=lax";
   }
   function mark() {
@@ -9842,12 +9854,13 @@ _ASSET_V = hashlib.sha1((_UI_CSS + _UI_JS + _CHAT_JS).encode()).hexdigest()[:10]
 
 
 def ui_prefs(headers):
-    """(theme, mode, layout) from the theta_ui cookie, with defaults."""
+    """(theme, mode, layout, glassstyle) from the theta_ui cookie, with defaults."""
     raw = (_cookie(headers, "theta_ui") or "").split(".")
     theme = raw[0] if raw[0] in THEMES else "theta"
     mode = raw[1] if len(raw) > 1 and raw[1] in MODES else "auto"
     layout = raw[2] if len(raw) > 2 and raw[2] in LAYOUTS else "grid"
-    return theme, mode, layout
+    glassstyle = raw[3] if len(raw) > 3 and raw[3] in ("plus", "liquid") else "plus"
+    return theme, mode, layout, glassstyle
 
 
 def avatar_img(agent, size=40):
@@ -9887,7 +9900,7 @@ def minibar_html(active):
 
 def page(headers, title, active, body, body_class="", statuses=None, chat=None):
     """A full page in the app shell: sidebar on wide screens, tab bar on phones."""
-    theme, mode, layout = ui_prefs(headers)
+    theme, mode, layout, glassstyle = ui_prefs(headers)
     t = THEMES[theme]
     if mode == "auto":
         metas = (f'<meta name="theme-color" content="{t["light"]["bg"]}" media="(prefers-color-scheme: light)">'
@@ -9910,7 +9923,7 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
     show_minibar = body_class != "chatpage"  # the chat page already has the full composer
     body_cls = ("hasminibar " + body_class).strip() if show_minibar else body_class
     return (
-        f'<!doctype html><html lang="en" data-theme="{theme}" data-mode="{mode}" data-layout="{layout}"{flags}>'
+        f'<!doctype html><html lang="en" data-theme="{theme}" data-mode="{mode}" data-layout="{layout}" data-glassstyle="{glassstyle}"{flags}>'
         '<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
         f'<title>{html.escape(title)} · {APP_NAME}</title>'
         '<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">'
@@ -10799,7 +10812,7 @@ def signin_page(headers):
           'style="flex:1;border:0;background:transparent;outline:none;padding:8px 0;min-width:0">'
           '<button class="btn small" type="submit">Open</button></form><p class="note" id="si-status"></p></div>'
         f"<script>{_SIGNIN_JS}</script>")
-    theme, mode, _ = ui_prefs(headers)
+    theme, mode, _, _ = ui_prefs(headers)
     return (f'<!doctype html><html lang="en" data-theme="{theme}" data-mode="{mode}"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
             f'<title>Sign in · {APP_NAME}</title><link rel="stylesheet" href="/ui.css?v={_ASSET_V}">'
@@ -11660,7 +11673,7 @@ def siri_card(headers):
 
 
 def settings_page(headers):
-    theme, mode, layout = ui_prefs(headers)
+    theme, mode, layout, glassstyle = ui_prefs(headers)
     st = store()
     swatches = "".join(
         f'<button type="button" class="sw" data-pref="theme" data-val="{n}" aria-label="{html.escape(t["label"])} theme">'
@@ -11690,6 +11703,10 @@ def settings_page(headers):
         'version. Saved on this device.</p></div>'
         f'<div class="swatches">{swatches}</div>'
         f'<div><h3>Light or dark</h3><p class="muted small">Match device follows your phone\'s setting.</p><div class="seg" role="group" aria-label="Light or dark">{modes}</div></div>'
+        '<div><h3>Glass style</h3><p class="muted small">Glass+ is the frosted bar and bubble treatment. Liquid Glass '
+        'adds a specular gloss, stronger blur, and edge light to the same surfaces. Saved on this device.</p>'
+        '<div class="seg" role="group" aria-label="Glass style"><button type="button" data-pref="glassstyle" data-val="plus">Glass+</button>'
+        '<button type="button" data-pref="glassstyle" data-val="liquid">Liquid Glass</button></div></div>'
         '<div><h3>Glass shine</h3><p class="muted small">Pictures have a glassy shine that follows your cursor. On a '
         'phone it can follow how you tilt it (your phone asks once for motion access).</p>'
         '<div class="seg" role="group" aria-label="Shine follows tilt"><button type="button" data-tilt="on">Follow tilt</button>'
