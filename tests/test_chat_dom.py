@@ -66,6 +66,15 @@ class Fake(BaseHTTPRequestHandler):
         self.wfile.write(b)
 
     def do_GET(self):
+        if urlparse(self.path).path == "/favicon.ico":
+            # 1x1 transparent PNG: proves the real-logo path headlessly.
+            png = bytes.fromhex("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63000000020001e221bc330000000049454e44ae426082")
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(png)))
+            self.end_headers()
+            self.wfile.write(png)
+            return
         # Provider model listings; anything else gets an empty listing.
         self._send(200, {"data": [{"id": "openai/gpt-oss-20b"}, {"id": "gemini-3.8-flash"}]})
 
@@ -628,6 +637,56 @@ with sync_playwright() as p:
         check("P3 media rules reach the page", hdr["media"])
         check("headless display reports sRGB, so HDR stays off here",
               hdr["gamut"] is False)
+        pg.close()
+
+        # Sources footer + sheet for a web_search receipt. The first source
+        # points at the fake server itself, so its favicon really loads;
+        # the public hosts cannot load headlessly, so they fall back to
+        # letter tiles. A plain message and a garbage receipt get no footer.
+        store = h.store()
+        store.add_chat("you", "Search the web for python", channel="all")
+        receipt = ("Here is what I found.\n\n✓ Web search results:\n"
+                   "1. Python (programming language) — " + base + "/python\n   Python is a high-level language.\n"
+                   "2. Python.org - The official Python website — https://www.python.org/\n   Python.org - The official Python website\n"
+                   "3. Python documentation - docs.python.org — https://docs.python.org/\n   Python documentation - docs.python.org\n"
+                   "Sources: " + base + "/python, https://www.python.org/, https://docs.python.org/")
+        store.add_chat("theta", receipt, channel="all")
+        store.add_chat("theta", "A plain message with no receipt.", channel="all")
+        store.add_chat("theta", "✓ Web search results:\n1. Garbage line with no url\nSources: nothing here", channel="all")
+        pg = browser.new_page(viewport={"width": 390, "height": 844})
+        pg.goto(f"{APP}/chat?key=dk")
+        expect(pg.locator("#chat-msg")).to_be_visible(timeout=15000)
+        expect(pg.locator(".src-foot")).to_be_visible(timeout=15000)
+        check("exactly one Sources footer (plain + garbage messages have none)",
+              pg.locator(".src-foot").count() == 1)
+        check("footer is labelled Sources for 3 results",
+              pg.locator(".src-foot").inner_text() == "Sources"
+              and pg.locator(".src-foot").get_attribute("aria-label") == "Show sources (3)")
+        expect(pg.locator(".src-stack .src-tile")).to_have_count(2, timeout=15000)
+        check("local favicon loads as a real logo, public hosts fall back to tiles",
+              pg.evaluate("() => { const im = document.querySelector('.src-stack .src-ic'); return !!im && im.naturalWidth === 1; }"))
+        check("receipt's own Sources line is not rendered as text",
+              not pg.evaluate("() => [...document.querySelectorAll('.mbody')].some(el => el.textContent.includes('Sources: http'))"))
+        pg.locator(".src-foot").click()
+        expect(pg.locator("dialog.src-dlg")).to_be_visible(timeout=5000)
+        check("sheet lists all 3 sources",
+              pg.locator("dialog.src-dlg .src-row").count() == 3)
+        row1 = pg.locator("dialog.src-dlg .src-row").first
+        check("sheet row links to the source in a new tab, no opener",
+              row1.get_attribute("href") == base + "/python"
+              and row1.get_attribute("target") == "_blank"
+              and row1.get_attribute("rel") == "noopener")
+        check("sheet row shows host + title",
+              "127.0.0.1" in row1.inner_text() and "Python (programming language)" in row1.inner_text())
+        with pg.context.expect_page() as tab:
+            row1.click()
+        newtab = tab.value
+        check("tapping a source opens it in a new tab",
+              newtab.url == base + "/python")
+        newtab.close()
+        pg.mouse.click(10, 10)
+        expect(pg.locator("dialog.src-dlg")).to_have_count(0, timeout=5000)
+        check("backdrop tap closes the sheet", pg.locator("dialog.src-dlg").count() == 0)
         pg.close()
     finally:
         browser.close()
