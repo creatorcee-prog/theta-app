@@ -105,6 +105,21 @@ check("task_list finds completed tasks",
 out = tools.run_tool(store, {"name": "task_complete", "args": {"task_id": "nope"}})
 check("task_complete on a missing task errors",
       out["status"] == "error" and out["error"])
+out = tools.run_tool(store, {"name": "task_reopen", "args": {"task_id": tid}})
+check("task_reopen flips status back",
+      out["status"] == "ok" and out["data"]["status"] == "open" and out["data"]["done"] is False)
+out = tools.run_tool(store, {"name": "task_list", "args": {"status": "open"}})
+check("task_list finds reopened tasks",
+      any(t["id"] == tid for t in out["data"]))
+out = tools.run_tool(store, {"name": "task_reopen", "args": {"task_id": tid}})
+check("task_reopen of an open task is idempotent",
+      out["status"] == "ok" and out["data"]["status"] == "open")
+out = tools.run_tool(store, {"name": "task_reopen", "args": {"task_id": "nope"}})
+check("task_reopen on a missing task errors",
+      out["status"] == "error" and out["error"])
+out = tools.run_tool(store, {"name": "task_reopen", "args": {"task_id": ""}})
+check("task_reopen without an id errors",
+      out["status"] == "error" and out["error"])
 out = tools.run_tool(store, {"name": "nope_tool", "args": {}})
 check("unknown tool errors in the envelope",
       out["status"] == "error" and "unknown tool" in out["error"])

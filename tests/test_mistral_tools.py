@@ -1,6 +1,6 @@
-"""Regression test: Mistral's normal hub prompt must include the six
+"""Regression test: Mistral's normal hub prompt must include the seven
 Phase 4 tools (web_search, fetch_page, task_create, task_list,
-task_complete, task_note).
+task_complete, task_reopen, task_note).
 
 Guards the silent-failure mode where a failed tool_bridge import left
 agents with only the original tools: the old `except ImportError:
@@ -75,10 +75,10 @@ def call(method, path, qs="", headers=None, body=None):
 
 
 K = {"x-dashboard-key": "dk"}
-SIX = ["web_search", "fetch_page", "task_create", "task_list", "task_complete", "task_note"]
+SIX = ["web_search", "fetch_page", "task_create", "task_list", "task_complete", "task_reopen", "task_note"]
 
 check("bridge import is healthy, not the silent {} fallback", h.BRIDGE_IMPORT_ERROR is None)
-check("BRIDGE_TOOLS holds all six tools", sorted(h.BRIDGE_TOOLS) == sorted(SIX))
+check("BRIDGE_TOOLS holds all seven tools", sorted(h.BRIDGE_TOOLS) == sorted(SIX))
 p = h.tools_prompt("mistral")
 for t in SIX:
     check(f"tools_prompt('mistral') lists {t}", f"ACTION: {t} |" in p)
@@ -90,6 +90,16 @@ if mode == "memory":
     check("run_actions executes task_create", isinstance(out, str) and "Task created: mistral tools probe" in out)
     out = h.run_actions("mistral", "ACTION: task_list | open")
     check("run_actions executes task_list", "mistral tools probe" in out)
+    out = h.run_actions("mistral", "ACTION: task_create | mistral reopen probe")
+    tid = out.split("(id ", 1)[1].split(")", 1)[0]
+    out = h.run_actions("mistral", f"ACTION: task_complete | {tid}")
+    check("run_actions executes task_complete", "Task completed: mistral reopen probe" in out)
+    out = h.run_actions("mistral", f"ACTION: task_reopen | {tid}")
+    check("run_actions executes task_reopen", "Task reopened: mistral reopen probe" in out)
+    out = h.run_actions("mistral", "ACTION: task_list | open")
+    check("reopened task lists as open", "mistral reopen probe" in out)
+    out = h.run_actions("mistral", "ACTION: task_reopen | nope")
+    check("task_reopen on a missing task errors", "✗ task_reopen:" in out and "not found" in out)
 s, b, _ = call("GET", "/diagnostics", headers=K)
 html = b.decode()
 check("diagnostics page renders", s == 200)

@@ -1795,7 +1795,7 @@ def tools_diag():
     here = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else ""
     bridge_path = os.path.join(here, "tool_bridge.py") if here else ""
     prompt = tools_prompt("mistral")
-    six = ["web_search", "fetch_page", "task_create", "task_list", "task_complete", "task_note"]
+    six = ["web_search", "fetch_page", "task_create", "task_list", "task_complete", "task_reopen", "task_note"]
     return {
         "commit": os.environ.get("VERCEL_GIT_COMMIT_SHA", "")[:8] or "unknown",
         "bridge_file": bool(bridge_path and os.path.exists(bridge_path)),
