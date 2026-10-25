@@ -9209,19 +9209,21 @@ _UI_JS_SRC = r'''
       }
       ctx.globalAlpha = 1;
     }
-    // Shards: drifting polygons that bounce off each other and the walls.
-    // Light comes from the top-left, so each shard fades from a bright edge
-    // into its tint: the reflection/refraction read.
+    // Shards: many small bright glass fragments, drifting and tumbling.
+    // They catch the light as they turn (brightness follows the tumble),
+    // bounce off the walls, and bump into each other. A few larger hero
+    // shards read as the bright glints; the rest are tiny slivers, white
+    // with a pale blue tone on some, on pure black.
     var shards = [];
-    var TINTS = ["#7dd3fc", "#c4b5fd", "#f9a8d4", "#6ee7b7", "#fde68a", "#e2e8f0"];
     function initShards() {
       shards = [];
-      var n = Math.round(Math.min(16, Math.max(9, W / 90)));
+      var n = Math.round(Math.min(130, Math.max(60, W * H / 9000)));
       for (var i = 0; i < n; i++) {
-        var r = rnd(22, 58), vs = [];
-        var nv = 5 + Math.floor(Math.random() * 3);
-        for (var j = 0; j < nv; j++) vs.push({a: j / nv * 6.283, d: r * rnd(.7, 1.15)});
-        shards.push({x: rnd(r, W - r), y: rnd(r, H - r), vx: rnd(-28, 28), vy: rnd(-22, 22), r: r, rot: Math.random() * 6.28, vr: rnd(-.4, .4), vs: vs, c: TINTS[i % TINTS.length]});
+        var hero = Math.random() < 0.12;
+        var r = hero ? rnd(10, 22) : rnd(2, 9), vs = [];
+        var nv = 3 + Math.floor(Math.random() * 2);
+        for (var j = 0; j < nv; j++) vs.push({a: j / nv * 6.283, d: r * rnd(.6, 1.2)});
+        shards.push({x: rnd(r, W - r), y: rnd(r, H - r), vx: rnd(-20, 20), vy: rnd(-16, 16), r: r, rot: Math.random() * 6.28, vr: rnd(-.6, .6), vs: vs, p: Math.random() * 6.28, hero: hero, blue: Math.random() < 0.25});
       }
     }
     function drawShards(dt) {
@@ -9245,16 +9247,21 @@ _UI_JS_SRC = r'''
       }
       for (var k = 0; k < shards.length; k++) {
         var sh = shards[k];
+        // Facets catch the light as the shard tumbles: brightness rides
+        // the rotation, so glints sweep across the field.
+        var g = 0.5 + 0.5 * Math.sin(sh.rot * 2 + sh.p);
+        var al = sh.hero ? 0.55 + 0.45 * g : 0.15 + 0.7 * g;
         ctx.beginPath();
         for (var m = 0; m < sh.vs.length; m++) {
           var v = sh.vs[m], ang = v.a + sh.rot, px = sh.x + Math.cos(ang) * v.d, py = sh.y + Math.sin(ang) * v.d;
           if (m) ctx.lineTo(px, py); else ctx.moveTo(px, py);
         }
         ctx.closePath();
-        var g = ctx.createLinearGradient(sh.x - sh.r, sh.y - sh.r, sh.x + sh.r, sh.y + sh.r);
-        g.addColorStop(0, "rgba(255,255,255,.85)"); g.addColorStop(.35, sh.c + "55"); g.addColorStop(1, "rgba(0,0,0,.55)");
-        ctx.fillStyle = g; ctx.fill();
-        ctx.strokeStyle = "rgba(255,255,255,.35)"; ctx.lineWidth = 1; ctx.stroke();
+        ctx.fillStyle = sh.blue ? "rgba(215,230,255," + al + ")" : "rgba(255,255,255," + al + ")";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255,255,255," + Math.min(1, al + 0.3) + ")";
+        ctx.lineWidth = sh.hero ? 1.5 : 1;
+        ctx.stroke();
       }
     }
     function frame(t, last) {

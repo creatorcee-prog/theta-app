@@ -729,8 +729,9 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
   data-bg. Backgrounds are distinct from themes: any scheme
   works with any background, and Theme (the default) keeps
   the current look exactly.
-- Shards: black canvas, drifting polygons that bounce off
-  each other and the walls, lit from the top-left. Stars:
+- Shards: many small bright glass fragments on black,
+  drifting and tumbling and catching the light as they
+  turn, bouncing off each other and the walls. Stars:
   twinkling stars on black. Black: plain black. Gemini: the
   slow drifting aurora gradient from the Gemini app (CSS
   only). The layer is fixed behind all content and opaque.

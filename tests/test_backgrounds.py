@@ -117,10 +117,16 @@ check("engine draws shards with wall and shard collisions",
       "initShards" in js and "drawShards" in js
       and "Math.hypot(dx, dy)" in js
       and "a.vx -= p * nx" in js)
-check("engine draws twinkling stars and lights shards from the top-left",
+check("engine draws twinkling stars",
       "initStars" in js and "drawStars" in js
-      and "Math.sin(t * st.s + st.p)" in js
-      and 'createLinearGradient(sh.x - sh.r, sh.y - sh.r, sh.x + sh.r, sh.y + sh.r)' in js)
+      and "Math.sin(t * st.s + st.p)" in js)
+check("shards are many small bright fragments that glint as they tumble",
+      "initShards" in js and "drawShards" in js
+      and "W * H / 9000" in js
+      and "rnd(10, 22)" in js and "rnd(2, 9)" in js
+      and "Math.sin(sh.rot * 2 + sh.p)" in js
+      and 'rgba(215,230,255,' in js and 'rgba(255,255,255,' in js
+      and "TINTS" not in js)
 check("engine animates with rAF and freezes under reduced motion",
       "requestAnimationFrame" in js
       and 'matchMedia("(prefers-reduced-motion: reduce)")' in js

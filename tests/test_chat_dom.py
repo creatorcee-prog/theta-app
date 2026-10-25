@@ -247,6 +247,13 @@ with sync_playwright() as p:
         pg.wait_for_timeout(600)
         sh = layer()
         check("shards background paints a canvas layer", sh and sh["cls"] == "bg-shards" and sh["w"] > 0 and sh["h"] > 0)
+        bright = pg.evaluate("""() => {
+            const cv = document.querySelector('#bg-layer canvas');
+            const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+            let n = 0;
+            for (let i = 0; i < d.length; i += 16) { if (d[i] > 200 && d[i + 1] > 200 && d[i + 2] > 200) n++; }
+            return n; }""")
+        check("shards draw bright glass fragments", bright > 50)
         pg.goto(f"{APP}/chat?key=dk")
         expect(pg.locator("#msgs")).to_be_visible(timeout=15000)
         pg.wait_for_timeout(600)

@@ -478,10 +478,10 @@ offers Theme (the default: the theme's own background),
 Shards, Stars, Black, and Gemini, and any color scheme works
 with any of them. The choice is a fifth segment of the
 `theta_ui` cookie (`theme.mode.layout.glassstyle.bg`, default
-`theme`), rendered as `data-bg` on the page. Shards is a black
-canvas of drifting polygons that bounce off each other and
-the walls, lit from the top-left so they read as reflecting
-and refracting light; Stars is twinkling stars on black;
+`theme`), rendered as `data-bg` on the page. Shards is many small bright glass fragments on black,
+drifting and tumbling and catching the light as they turn,
+bouncing off each other and the walls; Stars is twinkling
+stars on black;
 Black is plain black; Gemini is the slow drifting aurora
 gradient from the Gemini app. The background layer sits
 behind all content and is opaque, so it never fights the
