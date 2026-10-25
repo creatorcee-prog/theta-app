@@ -340,6 +340,40 @@ Safari only shows Face ID when the request starts right from the tap. A
 passkey works only on the address it was added on; Settings flags one made
 for another address.
 
+## Rich messages in chat
+
+Agent messages render as structured content, all in the app's own
+visual language (cards use the 18px card radius, controls the
+12px control radius, tables sit in a rounded bordered container):
+
+- Markdown: bold, italic, code, links, mentions, lists, task
+  checklists (tappable, saved per message), headings, and
+  blockquotes (`> ` lines, accent bar on the left).
+- Tables: headers with `scope="col"`, alignment honored from
+  the separator row (`:---` left, `:---:` center, `---:` right),
+  horizontal dividers, comfortable cells, long values wrapped,
+  and horizontal scrolling on narrow screens.
+- Code blocks get a Copy button (clipboard, with a fallback)
+  and keep the 340px scroll cap. Long messages keep the
+  conversation layout: code and tables scroll inside their
+  own containers.
+- Fenced blocks for richer content (all parsed strictly; bad
+  input falls back to plain text, never executes anything):
+  ` ```doc ` (title line, then text) renders an editable
+  document card with Copy and Edit — saving posts the edited
+  text as a chat message; ` ```config ` renders a panel of
+  `select Label: a | b` and `check Label: on|off` lines with
+  a Submit button that posts the choices as a chat message;
+  ` ```flow ` renders `A -> B -> C` lines as boxes and
+  arrows; ` ```bars ` renders `Label: number` lines as
+  labeled bars. Cards submit through the normal
+  `/api/allchat` path (they cannot use `/api/chat/press`,
+  which only accepts server-issued buttons), and show
+  Sending / Sent / error states with retry on failure.
+- Model output is never executed: messages are built as DOM
+  nodes, never innerHTML, and only http(s) links and images
+  become clickable.
+
 ## Images and files in chat
 
 The photo button in the chat box (or pasting an image) attaches a picture;
