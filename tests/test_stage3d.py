@@ -92,9 +92,10 @@ check("table cells keep the 5.5em floor (no shredding)",
 # --- Code + quotes ---
 check("code blocks keep the 340px cap (3b regression)",
       "max-height:340px;overflow-y:auto" in css and ".md pre{" in css)
-check("code blocks get a real copy button in a header strip",
-      '.md .codeblock{border:1px solid var(--border);border-radius:10px;background:var(--surface2);overflow:hidden;margin:6px 0}' in css
-      and 'head.append(copyBtn(() => body.join("\\n")))' in rt
+check("code blocks get a dark box, Code label, and icon copy button",
+      '.md .codeblock{border:1px solid rgba(255,255,255,.10);border-radius:16px;background:#262626;color:#e8e8e8;overflow:hidden;margin:6px 0}' in css
+      and '.md .codeblock .chead{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.12)}' in css
+      and 'head.append(el("span", "clabel", "Code"), copyBtn(() => body.join("\\n"), true))' in rt
       and "navigator.clipboard.writeText" in rt)
 check("blockquotes render with the accent bar",
       ".md .md-quote{border-left:3px solid var(--accent);padding:2px 0 2px 12px;color:var(--muted);margin:6px 0}" in css
@@ -117,7 +118,7 @@ check("config card parses strict select/check lines",
 check("card submission uses /api/allchat, never a /api/chat/press fetch",
       '"/api/allchat"' in rt and 'fetch("/api/chat/press"' not in rt)
 check("card buttons get 44px touch height on coarse pointers",
-      "@media (pointer:coarse){.md .doccard .btn,.md .cfgcard .btn,.md .codeblock .btn{min-height:44px}}" in css)
+      "@media (pointer:coarse){.md .doccard .btn,.md .cfgcard .btn,.md .codeblock .cbtn{min-height:44px;min-width:44px}}" in css)
 
 # --- Diagrams + charts (DOM only, no new library) ---
 check("flow builder renders boxes + arrows",

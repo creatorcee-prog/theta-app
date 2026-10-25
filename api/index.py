@@ -1924,10 +1924,15 @@ def system_prompt(agent_id, tools=False, now=True):
             "explanations, a table for things compared across columns (a header row, then |---| ), bullet or "
             "numbered lists for several items, - [ ] for to-dos, a fenced code block for code, headings for "
             "long answers, and **bold** sparingly; pick the format yourself when it is clearly better than plain "
-            "prose, and keep it simple when it is not. Never invent data to fill a table or list, and never "
-            "describe a button, card, chart, or other control the chat cannot show: the chat renders only "
-            "markdown, lists, tables, checklists, code blocks, links, and images (only with ![alt](https link) "
-            "for a link you were given)."
+            "prose, and keep it simple when it is not. Never invent data to fill a table or list. The chat also "
+            "renders blockquotes (> ), code blocks with a Copy button, and these fenced cards when they genuinely "
+            "fit: ```config with select Label: a | b and check Label: on|off lines (the user picks, then Submit sends "
+            "the choices as a chat message), ```doc for a reusable draft (Copy, Edit, Save posts the edited text as a "
+            "chat message), ```flow with A -> B -> C lines (workflow boxes), and ```bars with Label: number lines "
+            "(bars, negatives count as 0). Never describe a control the chat cannot show: it cannot show line charts, "
+            "radio groups, or architecture diagrams, and buttons in chat exist only when the server issues them "
+            "(QWERTY proposals, James commands) — agents never emit buttons. Images only with ![alt](https link) for "
+            "a link you were given)."
             f"{extra}{now_line() if now else ''}{memory_prompt()}"
             f"{chr(10) * 2 + HUB_GUIDE + hub_rules(agent_id) + tools_prompt(agent_id) if tools and not a.get('home') else ''}")
 
@@ -5416,7 +5421,7 @@ SEC_MAX_FAILS = int(os.environ.get("SEC_MAX_FAILS", "10"))  # wrong keys per add
 SEC_WINDOW = 15 * 60  # ...in this many seconds...
 SEC_LOCK = int(os.environ.get("SEC_LOCK_MINUTES", "30")) * 60  # ...locks it out this long
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
-GITHUB_REPO = os.environ.get("GITHUB_REPO", "creatorcee-prog/dashboard-app")
+GITHUB_REPO = os.environ.get("GITHUB_REPO", "creatorcee-prog/theta-app")
 _SEC_CACHE = {"at": 0.0, "data": None}
 _SEC_LOCK = threading.Lock()
 _PUBLIC_PATHS = ("/ui.css", "/ui.js", "/chat.js", "/sw.js", "/manifest.webmanifest", "/favicon.ico",
@@ -8667,9 +8672,15 @@ html,body{overflow-x:clip;max-width:100%}
 .md code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;background:var(--surface2);border-radius:5px;padding:0 4px}
 .md pre code{background:none;padding:0}.md .md-img{max-width:100%;border-radius:10px;margin:6px 0;display:block}
 .md .md-quote{border-left:3px solid var(--accent);padding:2px 0 2px 12px;color:var(--muted);margin:6px 0}
-.md .codeblock{border:1px solid var(--border);border-radius:10px;background:var(--surface2);overflow:hidden;margin:6px 0}
-.md .codeblock .chead{display:flex;justify-content:flex-end;padding:6px 8px 0}
-.md .codeblock pre{border:0;border-radius:0;margin:0}
+.md .codeblock{border:1px solid rgba(255,255,255,.10);border-radius:16px;background:#262626;color:#e8e8e8;overflow:hidden;margin:6px 0}
+.md .codeblock .chead{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.12)}
+.md .codeblock .chead .clabel{font-size:13px;font-weight:650;color:rgba(255,255,255,.75)}
+.md .codeblock .cbtn{display:grid;place-items:center;width:32px;height:32px;padding:0;border:0;background:transparent;color:rgba(255,255,255,.65);cursor:pointer;border-radius:8px}
+.md .codeblock .cbtn:hover{color:#fff;background:rgba(255,255,255,.08)}
+.md .codeblock .cbtn svg{width:18px;height:18px}
+.md .codeblock .cbtn.is-success{color:#4ade80}
+.md .codeblock .cbtn.is-error{color:#f87171}
+.md .codeblock pre{border:0;border-radius:0;margin:0;background:transparent}
 .md .doccard,.md .cfgcard{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:var(--pad);box-shadow:var(--shadow);margin:8px 0}
 .md .doc-title{font-weight:700;font-size:16px;margin-bottom:8px}
 .md .docbody{white-space:pre-wrap;overflow-wrap:anywhere}
@@ -8687,7 +8698,7 @@ html,body{overflow-x:clip;max-width:100%}
 .md .bar-track{flex:1;background:var(--surface2);border-radius:999px;height:14px;overflow:hidden}
 .md .bar-fill{height:100%;background:var(--accent);border-radius:999px}
 .md .bar-val{font-variant-numeric:tabular-nums;font-size:14px;color:var(--muted)}
-@media (pointer:coarse){.md .doccard .btn,.md .cfgcard .btn,.md .codeblock .btn{min-height:44px}}
+@media (pointer:coarse){.md .doccard .btn,.md .cfgcard .btn,.md .codeblock .cbtn{min-height:44px;min-width:44px}}
 .caret{display:inline-block;width:7px;height:1.05em;vertical-align:-2px;margin-left:2px;border-radius:2px;background:var(--accent);animation:blink 1s steps(1) infinite}
 @keyframes blink{50%{opacity:0}}
 .text .at{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);border-radius:5px;padding:0 3px;font-weight:620}
@@ -9291,9 +9302,31 @@ _CHAT_JS = r'''
     }
     // Copy button for code blocks: clipboard API, execCommand fallback,
     // honest success/failure states. Never touches the message text.
-    function copyBtn(getText) {
-      const b = el("button", "btn small ghost", "Copy");
+    // Icon form for code headers (label "Code" beside it); text form for doc cards.
+    // Icons are built with createElementNS, never injected markup (model text must
+    // never pass through injected markup anywhere in this script).
+    const SVGNS = "http://www.w3.org/2000/svg";
+    function iconSvg(kind) {
+      const svg = document.createElementNS(SVGNS, "svg");
+      svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor"); svg.setAttribute("stroke-width", "2");
+      svg.setAttribute("stroke-linecap", "round"); svg.setAttribute("stroke-linejoin", "round");
+      svg.setAttribute("aria-hidden", "true");
+      if (kind === "check") {
+        const pl = document.createElementNS(SVGNS, "polyline");
+        pl.setAttribute("points", "20 6 9 17 4 12"); svg.append(pl);
+      } else {
+        const r = document.createElementNS(SVGNS, "rect");
+        r.setAttribute("x", "9"); r.setAttribute("y", "9"); r.setAttribute("width", "13"); r.setAttribute("height", "13"); r.setAttribute("rx", "2"); svg.append(r);
+        const pa = document.createElementNS(SVGNS, "path");
+        pa.setAttribute("d", "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"); svg.append(pa);
+      }
+      return svg;
+    }
+    function copyBtn(getText, icon) {
+      const b = icon ? el("button", "cbtn") : el("button", "btn small ghost", "Copy");
       b.type = "button";
+      if (icon) { b.append(iconSvg("copy")); b.setAttribute("aria-label", "Copy code"); }
       b.onclick = async () => {
         let ok = false;
         try { await navigator.clipboard.writeText(getText()); ok = true; }
@@ -9305,9 +9338,10 @@ _CHAT_JS = r'''
             ok = document.execCommand("copy"); ta.remove();
           } catch (_) { ok = false; }
         }
-        b.textContent = ok ? "Copied" : "Copy failed";
+        if (icon) { b.replaceChildren(iconSvg(ok ? "check" : "copy")); b.setAttribute("aria-label", ok ? "Copied" : "Copy failed"); }
+        else { b.textContent = ok ? "Copied" : "Copy failed"; }
         b.classList.toggle("is-success", ok); b.classList.toggle("is-error", !ok);
-        setTimeout(() => { b.textContent = "Copy"; b.classList.remove("is-success", "is-error"); }, 1500);
+        setTimeout(() => { if (icon) { b.replaceChildren(iconSvg("copy")); b.setAttribute("aria-label", "Copy code"); } else { b.textContent = "Copy"; } b.classList.remove("is-success", "is-error"); }, 1500);
       };
       return b;
     }
@@ -9445,7 +9479,7 @@ _CHAT_JS = r'''
         if (info === "flow") { root.append(flowCard(body)); continue; }
         if (info === "bars") { root.append(barsCard(body)); continue; }
         const wrap = el("div", "codeblock"), head = el("div", "chead"), pre = el("pre");
-        head.append(copyBtn(() => body.join("\n")));
+        head.append(el("span", "clabel", "Code"), copyBtn(() => body.join("\n"), true));
         pre.append(el("code", "", body.join("\n")));
         wrap.append(head, pre); root.append(wrap); continue;
       }

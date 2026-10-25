@@ -1,11 +1,11 @@
-"""Presentation Intelligence Policy, first slice (main-based).
+"""Presentation Intelligence Policy, second slice (merged main).
 
 The policy's prompt side: system_prompt() carries a compact
 presentation section (decision rules + hard limits), and the
-README catalogs exactly the formats the chat renders. The
-prompt must NOT promise formats the renderer cannot show:
-doc/config/flow/bars fences, blockquotes, code copy buttons,
-and charts are Stage 3d or later work, not main behavior.
+README catalogs exactly the formats the chat renders. Stage 3d
+merged, so the prompt now names its fences (doc/config/flow/
+bars), blockquotes, and code copy buttons; only line charts,
+radio groups, and architecture diagrams remain unrendered.
 """
 import sys, json, threading, os
 sys.dont_write_bytecode = True
@@ -85,14 +85,18 @@ check("prompt names the decision rules: tables, lists, checklists, code, heading
 check("prompt forbids invented data",
       "Never invent data to fill a table or list" in p)
 check("prompt forbids describing controls the chat cannot show",
-      "never describe a button, card, chart, or other control the chat cannot show" in p)
+      "it cannot show line charts" in p
+      and "radio groups, or architecture diagrams" in p
+      and "buttons in chat exist only when the server issues them" in p)
 check("prompt reaches desk agents through desk_system",
       "Present each answer in the format that helps most" in h.desk_system("mistral"))
 
-# --- The prompt promises nothing the renderer cannot show ---
-check("prompt promises no 3d-only fences",
-      "```doc" not in p and "```config" not in p
-      and "```flow" not in p and "```bars" not in p)
+# --- The prompt names the merged fences, nothing unrendered ---
+check("prompt names the merged fences",
+      "```config" in p and "```doc" in p
+      and "```flow" in p and "```bars" in p)
+check("prompt names blockquotes and code copy",
+      "blockquotes (> )" in p and "code blocks with a Copy button" in p)
 
 # --- Every format the prompt names is actually rendered ---
 check("renderer renders tables, checklists, headings, code fences",
@@ -104,6 +108,7 @@ check("README catalogs the approved presentation formats",
       "## How agents present answers" in readme
       and "never invent" in readme
       and "Not yet approved" in readme
-      and "Stage 3d" in readme)
+      and "```config" in readme
+      and "line charts" in readme)
 
 print("presentation: all checks passed")
