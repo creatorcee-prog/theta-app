@@ -529,6 +529,15 @@ keep the full text). Search results carry no dates, so the sheet shows
 none. No server change: the footer parses the existing receipt text,
 and unparseable receipts render as plain text, as before.
 
+In the All Agents chat, an agent that needs current facts replies
+`SEARCH: <query>`, and the app searches with Gemini (Google Search)
+before the agent answers from the results. If that Gemini search
+fails — including the free-tier 429 — the app falls back to the
+bridge web_search (DuckDuckGo, or Tavily/Serper when keyed) and the
+reply says so in a note under the Sources list. The monthly search
+budget is unchanged: a used-up budget does not fall back, and
+fallback searches do not consume it.
+
 ## Follows
 
 Agents can create persistent follow records with `follow_create`
