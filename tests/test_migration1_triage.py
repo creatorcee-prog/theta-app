@@ -461,6 +461,79 @@ with clean_env():
     check("site failure: model error propagates out of triage", raised and did == [])
     check("site failure: failed escalation is not marked triaged", eid not in triaged_ids())
 
+# --- E. Review correction: triage never triggers the cap notification ---
+# master_ready() writes claude:capped meta + notify() once a month when
+# over cap; legacy triage never called it. The site now computes
+# desk_up/master_up with the pure _master_under_cap() predicate, so a
+# low_brain-only run cannot produce that side effect. route() itself
+# is untouched by this correction.
+_orig_notify = h.notify
+PUSHED = []
+h.notify = lambda title, body, url="/": PUSHED.append((title, body, url)) or 1
+
+
+def _cap_month():
+    return h.datetime.now(h.hub_tz()).strftime("%Y-%m")
+
+
+def _set_spend(usd):
+    h.store().set_meta("claude:spend", json.dumps({_cap_month(): {"usd": usd, "calls": 0, "input": 0, "output": 0}}))
+
+
+def _capped():
+    return h.store().get_meta("claude:capped") or ""
+
+
+with clean_env(ANTHROPIC_API_KEY=None):
+    h.store().set_meta("claude:capped", "")
+    PUSHED.clear()
+    check("pure predicate, no key: False", h._master_under_cap() is False)
+    check("pure predicate, no key: no meta write, no notify", _capped() == "" and PUSHED == [])
+
+with clean_env(ANTHROPIC_API_KEY="sk-test"):
+    _set_spend(0.0)
+    h.store().set_meta("claude:capped", "")
+    PUSHED.clear()
+    check("pure predicate, under cap: True", h._master_under_cap() is True)
+    check("pure predicate, under cap: no meta write, no notify", _capped() == "" and PUSHED == [])
+
+with clean_env(ANTHROPIC_API_KEY="sk-test"):
+    _set_spend(9999.0)
+    h.store().set_meta("claude:capped", "")
+    PUSHED.clear()
+    check("pure predicate, over cap: False", h._master_under_cap() is False)
+    check("pure predicate, over cap: STILL no meta write, no notify", _capped() == "" and PUSHED == [])
+
+with clean_env(ANTHROPIC_API_KEY="sk-test"):
+    _set_spend(9999.0)
+    h.store().set_meta("claude:capped", "")
+    PUSHED.clear()
+    check("master_ready preserved, over cap: False", h.master_ready() is False)
+    check("master_ready preserved, over cap: capped meta written", _capped() == _cap_month())
+    check("master_ready preserved, over cap: exactly one notify", len(PUSHED) == 1 and "cap" in PUSHED[0][1])
+    check("master_ready preserved, month guard: no second notify", (h.master_ready() is False) and len(PUSHED) == 1)
+
+with clean_env(ANTHROPIC_API_KEY="sk-test"):
+    _set_spend(9999.0)
+    h.store().set_meta("claude:capped", "")
+    PUSHED.clear()
+    diags.clear()
+    eid = seed_escalation("over-cap issue")
+    # An earlier section leaves one open escalation behind, so the run
+    # handles two; give the script two replies and assert on the new one.
+    h._llm_call = scripted({FLASH: ["handled reply", "handled reply"], FB120: []})
+    did = []
+    h._triage_escalations(did)
+    check("site over cap: triage still completes", f"handled #{eid}" in did)
+    check("site over cap: new escalation marked triaged", eid in triaged_ids())
+    check("site over cap: no capped meta written", _capped() == "")
+    check("site over cap: no notify sent", PUSHED == [])
+    check("site over cap: selection unaffected (one route diag)", len(route_diags()) == 1)
+
+h.notify = _orig_notify
+h.store().set_meta("claude:spend", "{}")
+h.store().set_meta("claude:capped", "")
+
 h._diag = _orig_diag
 h._llm_call = _orig_llm
 print("test_migration1_triage done")

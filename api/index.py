@@ -2114,7 +2114,9 @@ def _tool_error_category(name, err):
 #   DESK_MODEL, LOW_BRAIN_MODEL, or MASTER_MONTHLY_CAP_USD, so a
 #   chat Approve change to a SETTABLE value cannot move route()
 #   decisions (D6). desk_up / master_up are caller-supplied state:
-#   migration PRs pass desk_on() / master_ready(). Both are REQUIRED
+#   migration PRs pass desk_on() / master_ready() (or their pure
+#   equivalents where a site must avoid master_ready()'s cap-notify
+#   side effect). Both are REQUIRED
 #   keywords: there is no omitted-means-False, so no call site can
 #   silently assume desk-off / master-not-ready, and route() never
 #   performs a live desk_on() / master_ready() lookup itself.
@@ -2312,7 +2314,8 @@ def route(role, agent=None, entry_point=None, *, desk_up, master_up, fallback_of
     agent: agent id for the DESK check (None = no agent context).
     entry_point: one of ROUTE_ENTRY_POINTS (None = generic tier path).
     desk_up / master_up: caller-supplied state (migration PRs pass
-    desk_on() / master_ready()); omitted is impossible here — both
+    desk_on() / master_ready(), or their pure equivalents where a site
+    must avoid master_ready()'s cap-notify side effect); omitted is impossible here — both
     are required keywords, so no hidden live lookup exists.
 
     Returns a dict: role, agent, entry_point, path ("desk" or "tier"),
@@ -2614,12 +2617,23 @@ def claude_spend():
     return data.get(month, {"usd": 0.0, "calls": 0, "input": 0, "output": 0})
 
 
-def master_ready():
-    """Claude answers for Theta: a key is set and this month is under the cap."""
+def _master_under_cap():
+    """Pure readiness predicate: a Claude key is set and this month is
+    under the cap. No meta writes, no notify — unlike master_ready(),
+    which tells you once a month when the cap is hit. Migration #1's
+    triage site uses this so a low_brain-only run can never trigger
+    the cap notification."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return False
-    if claude_spend()["usd"] < MASTER_MONTHLY_CAP:
+    return claude_spend()["usd"] < MASTER_MONTHLY_CAP
+
+
+def master_ready():
+    """Claude answers for Theta: a key is set and this month is under the cap."""
+    if _master_under_cap():
         return True
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return False
     month = datetime.now(hub_tz()).strftime("%Y-%m")
     if store().get_meta("claude:capped") != month:  # tell you once a month
         store().set_meta("claude:capped", month)
@@ -5137,12 +5151,17 @@ def _triage_escalations(did):
     # desk_chat; the Mistral system prompt here is a persona, not
     # desk routing). desk_up/master_up are the live readiness states
     # (required keywords; the low_brain branch does not use them, but
-    # they are passed explicitly, never assumed). fallback_off
+    # they are passed explicitly, never assumed). They are computed
+    # with the pure _master_under_cap() predicate, NOT desk_on() /
+    # master_ready(): those notify once a month when the cap is hit,
+    # and legacy triage never triggered that side effect. route()
+    # itself is untouched by this correction. fallback_off
     # translates the legacy FALLBACK_LLM "off" with zero production
     # env change. route()'s diag (via="route") is kept alongside
     # llm_chat's _note line, deliberately.
     decision = route("low_brain", agent=None, entry_point=None,
-                     desk_up=desk_on(), master_up=master_ready(),
+                     desk_up=DESK_MODEL.lower() != "off" and _master_under_cap(),
+                     master_up=_master_under_cap(),
                      fallback_off=("low_brain",) if FALLBACK_LLM.get("low_brain", (None, "off"))[1] == "off" else ())
     triage_prim = (decision["primary"]["provider"], decision["primary"]["model"])
     triage_fb = decision["fallbacks"][0] if decision["fallbacks"] else "off"
