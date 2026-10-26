@@ -2091,7 +2091,8 @@ def _tool_error_category(name, err):
 
 
 # ---- Stage 4 P1 interface: central model selection (route()).
-# P1 interface PR ONLY: this section ADDS a pure selection function.
+# P1 interface PR ONLY: this section ADDS a selection function that is
+# side-effect-free apart from one diagnostic line.
 # No production path calls route() yet, so reverting this section (plus
 # its tests) changes zero behavior. Call-site migration PRs will call
 # route() one entry point at a time; the allchat migration in particular
@@ -2290,9 +2291,11 @@ def _route_candidates(role, desk_up, master_up, prim, fallback):
 
 
 def route(role, agent=None, entry_point=None, *, desk_up, master_up):
-    """Central model selection (Stage 4 P1 interface). Pure: selects,
-    never calls a model, never loops tools, never reads or writes
-    llm:last_selection, never touches the store.
+    """Central model selection (Stage 4 P1 interface). Side-effect-free
+    apart from diagnostics: selects, never calls a model, never loops
+    tools, never reads or writes llm:last_selection, never touches the
+    store. Its single diagnostic effect is one model.selected diag line
+    (via="route").
 
     role: one of TIERS (miner, manager, low_brain, master).
     agent: agent id for the DESK check (None = no agent context).

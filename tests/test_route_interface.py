@@ -1,5 +1,6 @@
 """Stage 4 P1 interface: route() contract tests (no production path calls
-route() yet — this file tests the pure selection function only).
+route() yet — this file tests the selection function (side-effect-free
+apart from one diagnostic line) only).
 
 Stubs: none needed for selection itself; _diag is recorded, and
 _llm_call / claude_chat are armed to raise, proving route() never
@@ -278,7 +279,7 @@ with clean_env(MASTER_MONTHLY_CAP_USD="0.01"):
     b = h.route("master", desk_up=False, master_up=True)["budget"]
     check("route() enforces nothing: cap var does not move its budget info", b["default_cap_usd"] == 15.0)
 
-# --- G. purity: no model call, no store touch, one route diag line ---
+# --- G. diag-only effect: no model call, no store touch, one route diag line ---
 with clean_env():
     diags.clear()
     d = h.route("miner", desk_up=False, master_up=False)
@@ -289,6 +290,33 @@ with clean_env():
     st.set_meta("llm:last_selection", "sentinel-before")
     h.route("manager", desk_up=False, master_up=False)
     check("route() never writes llm:last_selection", st.get_meta("llm:last_selection") == "sentinel-before")
+
+# --- H. Q2 review: eager cross-role validation (contract, pinned) ---
+# route() resolves EVERY role's primary pair (and all three tier
+# fallbacks) on each call, before branching on path — see the prim /
+# fallback loops at the top of route(). So a malformed pair for an
+# UNRELATED role fails the whole decision. That is the current
+# contract, pinned here, not a one-test accident: fail-fast
+# detection (any bad ROUTE_* var surfaces on the next request of any
+# role) traded against blast radius (one bad var blocks every
+# migrated role). Per-chain lazy resolution would remove the blast
+# radius but let a bad pair hide until its own role is requested;
+# that change needs its own reviewed diff and is NOT made here.
+with clean_env(ROUTE_MASTER_PROVIDER="not-a-provider", ROUTE_MASTER_MODEL="x"):
+    check("unrelated role: malformed ROUTE_MASTER_* pair fails a miner request",
+          raises(lambda: h.route("miner", desk_up=False, master_up=False), h.RouteConfigError))
+with clean_env(ROUTE_MASTER_PROVIDER="anthropic"):
+    check("unrelated role: half ROUTE_MASTER_* pair fails a miner request",
+          raises(lambda: h.route("miner", desk_up=False, master_up=False), h.RouteConfigError))
+with clean_env(ROUTE_MASTER_PROVIDER="not-a-provider", ROUTE_MASTER_MODEL="x"):
+    check("unrelated role: malformed ROUTE_MASTER_* pair fails a low_brain request",
+          raises(lambda: h.route("low_brain", desk_up=False, master_up=False), h.RouteConfigError))
+with clean_env(ROUTE_MINER_PROVIDER="not-a-provider", ROUTE_MINER_MODEL="x"):
+    check("mirror: malformed ROUTE_MINER_* pair fails a low_brain request",
+          raises(lambda: h.route("low_brain", desk_up=False, master_up=False), h.RouteConfigError))
+with clean_env():
+    check("control: clean config still routes a miner request",
+          prim(h.route("miner", desk_up=False, master_up=False)) == GROQ20)
 
 h._diag = _orig_diag
 h._llm_call, h.claude_chat = _orig_llm_call, _orig_claude_chat
