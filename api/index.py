@@ -1799,14 +1799,16 @@ def tools_diag():
     here = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else ""
     bridge_path = os.path.join(here, "tool_bridge.py") if here else ""
     prompt = tools_prompt("mistral")
-    six = ["web_search", "fetch_page", "task_create", "task_list", "task_complete", "task_reopen", "task_note"]
+    # Checked from the registered bridge tools, not a hardcoded list, so a
+    # newly registered bridge tool is checked too. (The follow tools were
+    # in the prompt but never checked until this fix.)
     return {
         "commit": os.environ.get("VERCEL_GIT_COMMIT_SHA", "")[:8] or "unknown",
         "bridge_file": bool(bridge_path and os.path.exists(bridge_path)),
         "import_error": BRIDGE_IMPORT_ERROR,
         "tools_layer": BRIDGE_TOOLS_LAYER_ERROR or "ok",
         "bridge_tools": sorted(BRIDGE_TOOLS),
-        "mistral_prompt": {t: (f"ACTION: {t} |" in prompt) for t in six},
+        "mistral_prompt": {t: (f"ACTION: {t} |" in prompt) for t in sorted(BRIDGE_TOOLS)},
     }
 
 
@@ -1846,7 +1848,8 @@ def run_actions(agent, reply):
             # catch let non-ValueError tool exceptions escape to the
             # generic "internal error" while the user saw nothing.
             _diag("tool.done", tool=name, elapsed_ms=int((time.perf_counter() - t0) * 1000),
-                  status="error", error_class=type(e).__name__, error=str(e))
+                  status="error", error_class=type(e).__name__, error=str(e),
+                  error_category=_tool_error_category(name, e))
             receipts.append(f"✗ {name}: {str(e)[:200]}")
             activity(agent, f"{who} tried {name}, but it didn't work: {e}")
     if found:
@@ -2030,6 +2033,63 @@ def _llm_error_text(provider, code, raw):
     return f"{provider} returned {code}: {(msg or raw)[:200]}"
 
 
+# ---- P0 telemetry: which model actually answered, and why a fallback ran.
+# Logs/diagnostics-data only: model.selected diag lines plus one
+# llm:last_selection meta record. No reply text changes, no routing
+# changes, no user content, no keys/headers/bodies. Error categories are
+# a fixed set of strings derived from structured exception fields and
+# message keywords, never from raw provider bodies. (run_actions uses
+# _tool_error_category below; it resolves at call time.)
+
+def _model_error_category(err):
+    """Sanitized category for a model-call failure."""
+    status = getattr(err, "status", None)
+    if status in (401, 403):
+        return "auth"
+    if status == 429:
+        return "rate_limit"
+    msg = (str(err) or "").lower()
+    if "out of free quota" in msg:
+        return "quota"
+    if "tokens left" in msg or "more than groq" in msg:
+        return "capacity"
+    if "empty reply" in msg:
+        return "empty"
+    if getattr(err, "timed_out", False) or "timed out" in msg or "timeout" in msg:
+        return "timeout"
+    if "urlerror" in msg:
+        return "network"
+    if "valueerror" in msg or "keyerror" in msg or "indexerror" in msg or "attributeerror" in msg:
+        return "malformed"
+    return "unknown"
+
+
+def _note_model_selection(tier, provider, model, via, reason=""):
+    """Record which model actually answered a request and, on fallback
+    paths, the sanitized reason the first choice didn't. Never raises:
+    noting must never cost the reply (same rule as the existing
+    llm:fallback meta write). via is one of master, desk, primary,
+    retry, tier_fallback, borrow."""
+    _diag("model.selected", tier=tier, provider=provider, model=model, via=via, reason=reason)
+    try:
+        store().set_meta("llm:last_selection", json.dumps(
+            {"tier": tier, "provider": provider, "model": model, "via": via, "reason": reason, "at": time.time()}))
+    except Exception:
+        pass
+
+
+def _tool_error_category(name, err):
+    """Sanitized category for a tool failure, for the tool.done diag line.
+    Search failures carry their kind in the message ("Search failed
+    (kind): ..."); anything else uses the exception class. Never user
+    content, keys, or bodies."""
+    m = re.match(r"Search failed \((\w+)\):", str(err) or "")
+    if m and m.group(1) in ("not_configured", "unknown_provider", "auth", "rate_limit",
+                             "timeout", "network", "malformed", "provider_error"):
+        return "search:" + m.group(1)
+    return type(err).__name__
+
+
 def llm_chat(tier, messages, max_tokens=800):
     """One chat-completion call for `tier`; returns the reply text.
     Master is Claude while it's connected and under its monthly cap;
@@ -2038,7 +2098,9 @@ def llm_chat(tier, messages, max_tokens=800):
     then the tier's fallback model on the other provider answers."""
     if tier == "master" and master_ready():
         try:
-            return claude_chat(messages, max_tokens)
+            text = claude_chat(messages, max_tokens)
+            _note_model_selection("master", "anthropic", MASTER_MODEL_ID, "master")
+            return text
         except LLMError as e:  # Theta still answers, on the stand-in
             store().set_meta("claude:last_error", json.dumps({"at": time.time(), "error": str(e)[:200], "fp": _key_fp()}))
             note = (f" Right now {MASTER_MODEL} couldn't answer ({str(e)[:120]}), so you're running on the "
@@ -2049,7 +2111,9 @@ def llm_chat(tier, messages, max_tokens=800):
     t = "low_brain" if tier == "master" else tier
     if t == "manager" and desk_on():  # Groq's free tier can't take the managers' prompts (8k tokens a minute)
         try:
-            return claude_chat(messages, max_tokens, model=DESK_MODEL, effort=DESK_EFFORT)
+            text = claude_chat(messages, max_tokens, model=DESK_MODEL, effort=DESK_EFFORT)
+            _note_model_selection("manager", "anthropic", DESK_MODEL, "desk")
+            return text
         except LLMError:
             pass  # Groq, then Gemini, as before
     need = est_tokens(messages) + max_tokens
@@ -2060,7 +2124,9 @@ def llm_chat(tier, messages, max_tokens=800):
         first = LLMError(f"{provider} {model}: {why}", retryable=True, timed_out=True)
     else:
         try:
-            return _llm_call(provider, model, messages, max_tokens)
+            text = _llm_call(provider, model, messages, max_tokens)
+            _note_model_selection(t, provider, model, "primary")
+            return text
         except LLMError as e:
             if not e.retryable:
                 raise
@@ -2068,7 +2134,9 @@ def llm_chat(tier, messages, max_tokens=800):
         if not first.timed_out:
             time.sleep(LLM_RETRY_DELAY)
             try:
-                return _llm_call(provider, model, messages, max_tokens)
+                text = _llm_call(provider, model, messages, max_tokens)
+                _note_model_selection(t, provider, model, "retry", _model_error_category(first))
+                return text
             except LLMError as e:
                 if not e.retryable:
                     raise
@@ -2089,6 +2157,7 @@ def llm_chat(tier, messages, max_tokens=800):
                                                              "model": fb_model}))
             except Exception:
                 pass  # noting it must never cost the reply
+            _note_model_selection(t, fb_provider, fb_model, "tier_fallback", _model_error_category(first))
             return text
     got = borrow_help(t, messages, max_tokens, need, tried, str(first))
     if got is not None:
@@ -2166,6 +2235,7 @@ def borrow_help(t, messages, max_tokens, need, tried, why):
             asker = (getattr(_REQ, "trail", None) or ["hub"])[-1]
             activity(asker, f"The {TIER_LABELS[t]} models couldn't take this ({why[:90]}), so the {TIER_LABELS[h]} "
                             f"model ({m}) helped")
+            _note_model_selection(t, p, m, "borrow", _model_error_category(why))
             if h == "low_brain":
                 working(DESK, "helping")
             return text
@@ -2183,7 +2253,9 @@ def desk_chat(messages, max_tokens=800):
     if Claude fails) the low brain, Gemini then Groq."""
     if desk_on():
         try:
-            return claude_chat(messages, max_tokens, model=DESK_MODEL, effort=DESK_EFFORT)
+            text = claude_chat(messages, max_tokens, model=DESK_MODEL, effort=DESK_EFFORT)
+            _note_model_selection("low_brain", "anthropic", DESK_MODEL, "desk")
+            return text
         except LLMError as e:
             try:
                 store().set_meta("llm:fallback", json.dumps({"tier": "low_brain", "at": time.time(), "why": str(e)[:160],
