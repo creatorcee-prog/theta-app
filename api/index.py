@@ -2828,6 +2828,13 @@ def claude_request(messages, max_tokens, model=None, effort=None, thinking=None)
         raise err
     except anthropic.APIConnectionError as e:
         raise LLMError(f"Anthropic unreachable: {e!r}"[:160])
+    except anthropic.APIError as e:
+        # Trailing catch-all (migration #2 review correction): any SDK
+        # error the specific branches above don't name — e.g. a
+        # malformed response (APIResponseValidationError) — becomes a
+        # fallback-eligible LLMError instead of escaping desk_chat /
+        # the master path raw. Placed last so the specific messages win.
+        raise LLMError(f"Anthropic call failed: {(_anthropic_said(e) or repr(e))[:120]}")
     _diag("model.call", provider="anthropic", model=model,
           elapsed_ms=int((time.perf_counter() - t0) * 1000), outcome="ok")
     return resp
