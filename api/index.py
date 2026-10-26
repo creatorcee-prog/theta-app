@@ -5352,12 +5352,33 @@ def send_digest(opener=True, now=None):
     post, brief = morning_digest(now.date() if now else None)
     if opener:
         try:
+            # Migration #3: selection comes from route(), executed by
+            # llm_chat. agent/entry_point are None: a bare tier call
+            # that must never take the desk path (the legacy call is
+            # llm_chat, not desk_chat). desk_up/master_up use the pure
+            # _master_under_cap() predicate: the legacy digest never
+            # made readiness calls, so no notify/meta side effects.
+            # fallback_off translates the legacy FALLBACK_LLM "off"
+            # with zero production env change. route()'s diag
+            # (via="route") is kept alongside llm_chat's _note line,
+            # deliberately. Option A: route() sits inside the try and
+            # the except also catches RouteConfigError, so a routing
+            # or config failure drops only the optional opener — never
+            # the digest itself.
+            decision = route("low_brain", agent=None, entry_point=None,
+                             desk_up=DESK_MODEL.lower() != "off" and _master_under_cap(),
+                             master_up=_master_under_cap(),
+                             fallback_off=("low_brain",) if FALLBACK_LLM.get("low_brain", (None, "off"))[1] == "off" else ())
+            digest_prim = (decision["primary"]["provider"], decision["primary"]["model"])
+            digest_fb = decision["fallbacks"][0] if decision["fallbacks"] else "off"
+            digest_fb = (digest_fb["provider"], digest_fb["model"]) if digest_fb != "off" else "off"
             line = llm_chat("low_brain", [
                 {"role": "system", "content": system_prompt("mistral")},
                 {"role": "user", "content": "Write one short sentence to open today's digest. "
-                 "Don't mention any events, numbers or headlines."}], max_tokens=300)
+                 "Don't mention any events, numbers or headlines."}], max_tokens=300,
+                primary=digest_prim, fallback=digest_fb)
             post = f"{line.strip()}\n{post}"
-        except LLMError:
+        except (LLMError, RouteConfigError):
             pass
     item = st.add_chat("mistral", post)
     try:
