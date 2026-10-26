@@ -2090,6 +2090,305 @@ def _tool_error_category(name, err):
     return type(err).__name__
 
 
+# ---- Stage 4 P1 interface: central model selection (route()).
+# P1 interface PR ONLY: this section ADDS a pure selection function.
+# No production path calls route() yet, so reverting this section (plus
+# its tests) changes zero behavior. Call-site migration PRs will call
+# route() one entry point at a time; the allchat migration in particular
+# must NOT start until this interface contract is reviewed (D5 hinge
+# below).
+#
+# Contract (read before migrating a call site):
+# - route() SELECTS; it never calls a model, never loops tools (D1:
+#   single-pass preserved), never reads llm:last_selection (that record
+#   is a most-recent snapshot, never request-level attribution or
+#   billing evidence), and never writes llm:last_selection either
+#   (selection is not answering; writing it would be false
+#   attribution). It emits one model.selected diag line (same fields
+#   as P0's _note_model_selection, via="route") so selections are
+#   observable in logs.
+# - Inputs are exactly: role, agent, entry_point, desk_up, master_up,
+#   plus ROUTE_* environment variables read at CALL time. Nothing
+#   else. In particular route() never reads TIER_LLM, FALLBACK_LLM,
+#   DESK_MODEL, LOW_BRAIN_MODEL, or MASTER_MONTHLY_CAP_USD, so a
+#   chat Approve change to a SETTABLE value cannot move route()
+#   decisions (D6). desk_up / master_up are caller-supplied state:
+#   migration PRs pass desk_on() / master_ready(). Both are REQUIRED
+#   keywords: there is no omitted-means-False, so no call site can
+#   silently assume desk-off / master-not-ready, and route() never
+#   performs a live desk_on() / master_ready() lookup itself.
+# - Defaults are literals equal to the code's unset-env defaults. If
+#   an upstream default changes, update ROUTE_DEFAULTS deliberately
+#   in a migration PR; the P0 baseline tests pin legacy behavior, so
+#   drift shows up there first.
+# - Config precedence: ROUTE_<ROLE>_PROVIDER + ROUTE_<ROLE>_MODEL
+#   (a complete pair) wins; otherwise the literal default. A half
+#   pair, an unknown provider, or an empty model raises
+#   RouteConfigError — never a silent fallback or silent default.
+#   SETTABLE values do not leak into selections (tested).
+# - Tier fallbacks keep the legacy shape: provider fixed per tier,
+#   model overridable via ROUTE_<ROLE>_FALLBACK_MODEL, and "off"
+#   suppresses that role's fallback step (mirrors
+#   MINER/MANAGER/LOW_BRAIN_FALLBACK_MODEL="off" in FALLBACK_LLM,
+#   where an "off" fallback is skipped and the borrow walk still
+#   runs). route() does NOT read the legacy *_FALLBACK_MODEL vars:
+#   a migration PR must translate a legacy "off" to the matching
+#   ROUTE_*_FALLBACK_MODEL="off", or the migrated path regains a
+#   fallback the operator turned off. There is no master/desk
+#   fallback var: the master path falls back to the low_brain
+#   stand-in chain, and the desk path falls back to the low_brain
+#   chain.
+# - Fallback-off IS modeled (see above). The one thing route() does
+#   not do is read the legacy *_FALLBACK_MODEL vars — translation
+#   is a migration-PR obligation, flagged in the inventory table.
+# - DeepSeek is ABSENT from ROUTE_PROVIDERS by design (D2:
+#   probe-only). A verified provider plugs in here later by adding
+#   its name to ROUTE_PROVIDERS plus its default model id — only
+#   after provider, identifier, endpoint, credentials, tool-call
+#   compliance, limits, and pricing are verified.
+#
+# Concise call-site inventory (full table with lines + behavior in
+# the P1 interface PR body; all sites NOT migrated — route() is
+# uncalled):
+# - Selection logic: llm_chat (tier chain + retry + tier fallback +
+#   borrow), desk_chat (desk path), claude_chat (Anthropic SDK
+#   direct), gemini_search (native search API, own budget),
+#   borrow_help (upward walk), room_for (capacity pre-check),
+#   master_ready (key + cap gate), desk_on (desk state).
+# - Tier callers (each picks a tier, then llm_chat/desk_chat):
+#   desk_reply/ask_as, allchat_reply (first turn + SEARCH second
+#   turn), answer_with_search, pick_responders (router),
+#   round_summary, summarize, master_work, _post_leads,
+#   plan_project, plus background jobs (gym_ask, _triage_escalations,
+#   _theta_decisions, _round_theta, send_digest, _round_news,
+#   _lenz_pitch, _round_remi_calendar, stock_week_note, file_issue,
+#   story_brief, condense_titles, acknowledge_order, job_query,
+#   classify_mail, draft_reply, handle).
+# - Bypass / out of scope for route(): _search_web/_work (project
+#   search, Gemini-only per D10 until its migration PR), james_ask
+#   (external Garage Gym owns prompt + model, D11), run_bench
+#   (diagnostic, DESK_MODEL direct by design), vision gating
+#   (theta + master_ready only), quick_reply / remi_quick_reply
+#   (no model by design), adzuna_jobs / usajobs_jobs (keyed HTTP
+#   APIs, not models).
+# - D5 hinge: DESK_ENTRY_POINTS below deliberately excludes
+#   "allchat": today the allchat first turn for Mistral runs the
+#   tier path (low_brain chain), NOT the desk path. The D5
+#   migration PR flips that by adding "allchat" to this set.
+
+
+class RouteConfigError(ValueError):
+    """route() configuration is invalid: half a pair, unknown provider,
+    or empty model. Raised, never silently defaulted."""
+
+
+ROUTE_PROVIDERS = {"groq", "gemini", "anthropic"}  # DeepSeek absent (D2).
+
+# Literal current-behavior defaults (see contract above: NOT read from
+# SETTABLE-managed vars, so Approve taps cannot move route()).
+ROUTE_DEFAULTS = {
+    "miner": ("groq", "openai/gpt-oss-20b"),
+    "manager": ("groq", "openai/gpt-oss-120b"),
+    "low_brain": ("gemini", "gemini-3.8-flash"),
+    "master": ("anthropic", "claude-opus-5-5"),
+    "desk": ("anthropic", "claude-haiku-5-5"),
+}
+ROUTE_FALLBACK_DEFAULTS = {
+    "miner": ("groq", "openai/gpt-oss-120b"),
+    "manager": ("gemini", "gemini-3.8-flash"),
+    "low_brain": ("groq", "openai/gpt-oss-120b"),
+}
+ROUTE_CONFIG_VARS = {
+    "miner": ("ROUTE_MINER_PROVIDER", "ROUTE_MINER_MODEL"),
+    "manager": ("ROUTE_MANAGER_PROVIDER", "ROUTE_MANAGER_MODEL"),
+    "low_brain": ("ROUTE_LOW_BRAIN_PROVIDER", "ROUTE_LOW_BRAIN_MODEL"),
+    "master": ("ROUTE_MASTER_PROVIDER", "ROUTE_MASTER_MODEL"),
+    "desk": ("ROUTE_DESK_PROVIDER", "ROUTE_DESK_MODEL"),
+}
+ROUTE_ENTRY_POINTS = {"desk", "allchat", "router", "round", "search",
+                      "project", "summary", "bench", "other"}
+DESK_ENTRY_POINTS = {"desk", "round", "search"}  # D5 hinge: no "allchat" yet.
+
+# Fallback models: legacy shape (provider fixed per tier, model
+# overridable, "off" suppresses the step). No master/desk fallback
+# vars: the master path falls back to the low_brain stand-in chain,
+# and the desk path falls back to the low_brain chain.
+ROUTE_FALLBACK_VARS = {
+    "miner": "ROUTE_MINER_FALLBACK_MODEL",
+    "manager": "ROUTE_MANAGER_FALLBACK_MODEL",
+    "low_brain": "ROUTE_LOW_BRAIN_FALLBACK_MODEL",
+}
+
+
+def _route_fallback(role):
+    """(provider, model) for `role`'s tier fallback, or None when its
+    ROUTE_*_FALLBACK_MODEL is "off". Unset/empty means the literal
+    default; any other value replaces the model only (provider stays
+    the tier's default fallback provider, as in FALLBACK_LLM). Reads
+    env at call time."""
+    var = ROUTE_FALLBACK_VARS[role]
+    model = (os.environ.get(var) or "").strip()
+    if model == "off":
+        return None
+    if model:
+        return (ROUTE_FALLBACK_DEFAULTS[role][0], model)
+    return ROUTE_FALLBACK_DEFAULTS[role]
+
+
+def _route_primary(role):
+    """(provider, model) for `role`: ROUTE_* override pair, else the
+    literal default. Raises RouteConfigError on a half pair, an
+    unknown provider, or an empty model. Reads env at call time."""
+    pvar, mvar = ROUTE_CONFIG_VARS[role]
+    provider = (os.environ.get(pvar) or "").strip()
+    model = (os.environ.get(mvar) or "").strip()
+    if bool(provider) != bool(model):
+        raise RouteConfigError(
+            f"route {role}: set both {pvar} and {mvar}, or neither (half a pair)")
+    if provider:
+        if provider not in ROUTE_PROVIDERS:
+            raise RouteConfigError(
+                f"route {role}: unknown provider {provider!r} "
+                f"(groq, gemini, anthropic; DeepSeek is probe-only per D2)")
+        return (provider, model)
+    return ROUTE_DEFAULTS[role]
+
+
+def _route_candidates(role, desk_up, master_up, prim, fallback):
+    """Ordered, deduped [(provider, model)] for a tier path, following
+    llm_chat's chain: primary, one tier fallback, then the borrow walk
+    (_HELP_UP: miner -> manager -> low_brain; low_brain borrows nothing).
+    A None fallback (ROUTE_*_FALLBACK_MODEL="off") skips that step;
+    the borrow walk still runs. The master model never appears in any
+    borrow walk (never-Theta): any candidate equal to the resolved
+    master primary is dropped unless it IS the master primary of a
+    master_up call."""
+    master_pair = prim["master"]
+    if role == "miner":
+        chain = [prim["miner"], fallback["miner"]]
+        if desk_up:
+            chain.append(prim["desk"])
+        chain += [prim["manager"], fallback["manager"],
+                  prim["low_brain"], fallback["low_brain"]]
+    elif role == "manager":
+        chain = ([prim["desk"]] if desk_up else []) + [
+            prim["manager"], fallback["manager"],
+            prim["low_brain"], fallback["low_brain"]]
+    elif role == "low_brain":
+        chain = [prim["low_brain"], fallback["low_brain"]]
+    else:  # master: Opus, then the low_brain stand-in chain
+        chain = [prim["master"], prim["low_brain"], fallback["low_brain"]]
+    out = []
+    for pair in chain:
+        if pair is not None and pair not in out:
+            out.append(pair)
+    if not (role == "master" and master_up):
+        out = [pair for pair in out if pair != master_pair]
+    if not out:
+        raise RouteConfigError(f"route {role}: no usable candidate (overrides deduped everything away)")
+    return out
+
+
+def route(role, agent=None, entry_point=None, *, desk_up, master_up):
+    """Central model selection (Stage 4 P1 interface). Pure: selects,
+    never calls a model, never loops tools, never reads or writes
+    llm:last_selection, never touches the store.
+
+    role: one of TIERS (miner, manager, low_brain, master).
+    agent: agent id for the DESK check (None = no agent context).
+    entry_point: one of ROUTE_ENTRY_POINTS (None = generic tier path).
+    desk_up / master_up: caller-supplied state (migration PRs pass
+    desk_on() / master_ready()); omitted is impossible here — both
+    are required keywords, so no hidden live lookup exists.
+
+    Returns a dict: role, agent, entry_point, path ("desk" or "tier"),
+    tier (telemetry label, matching today's _note behavior: desk path
+    notes under "low_brain"; master-not-ready notes under "low_brain"
+    as the stand-in), desk_up, master_up, primary {provider, model},
+    fallbacks [{provider, model}], candidates (primary + fallbacks,
+    in try order), stand_in (True when the primary itself is the
+    low_brain stand-in: master role with master_up False), policy
+    (retry/fallback/borrow rules the executor must honor), budget
+    (cap info for the migrator; route() enforces nothing).
+
+    Desk path (agent == DESK and entry_point in DESK_ENTRY_POINTS)
+    follows desk_chat: Haiku while desk_up, else the low_brain chain.
+    Every other combination follows the tier path, INCLUDING
+    agent == DESK with entry_point == "allchat" (current behavior;
+    D5 flips that mapping in the allchat migration PR).
+    Desk path takes precedence over role: agent == DESK at a desk
+    entry point follows the desk path even if role == "master"
+    (migration PRs must never pass role="master" with agent=DESK;
+    Mistral never answers as Theta, and the desk path drops the
+    master pair unconditionally). A ROUTE_*_FALLBACK_MODEL of "off"
+    suppresses that role's fallback step; the borrow walk is
+    unaffected.
+    """
+    if role not in TIERS:
+        raise RouteConfigError(f"unknown route role {role!r} (miner, manager, low_brain, master)")
+    if agent is not None and agent not in AGENTS:
+        raise RouteConfigError(f"unknown route agent {agent!r}")
+    if entry_point is not None and entry_point not in ROUTE_ENTRY_POINTS:
+        raise RouteConfigError(f"unknown route entry_point {entry_point!r}")
+    prim = {}
+    for r in ("miner", "manager", "low_brain", "master", "desk"):
+        prim[r] = _route_primary(r)
+    fallback = {r: _route_fallback(r) for r in ("miner", "manager", "low_brain")}
+    desk_path = agent == DESK and entry_point in DESK_ENTRY_POINTS
+    if desk_path:
+        if desk_up:
+            cands = [prim["desk"], prim["low_brain"], fallback["low_brain"]]
+        else:
+            cands = [prim["low_brain"], fallback["low_brain"]]
+        # The desk path never answers as Theta: drop the master pair
+        # unconditionally (desk_chat never calls the master model,
+        # even under overrides). An emptied list is a configuration
+        # error, not an IndexError at primary = cands[0].
+        out_cands = []
+        for pair in cands:
+            if pair is not None and pair != prim["master"] and pair not in out_cands:
+                out_cands.append(pair)
+        if not out_cands:
+            raise RouteConfigError("route desk path: no usable candidate (overrides deduped everything away)")
+        cands = out_cands
+        path, tele_tier, stand_in = "desk", "low_brain", False
+    elif role == "master":
+        cands = _route_candidates("master", desk_up, master_up, prim, fallback)
+        path, tele_tier = "tier", "master" if master_up else "low_brain"
+        stand_in = not master_up
+    else:
+        cands = _route_candidates(role, desk_up, master_up, prim, fallback)
+        path, tele_tier, stand_in = "tier", role, False
+    primary = cands[0]
+    if role == "master":
+        budget = {"scope": "master-monthly", "default_cap_usd": 15.0, "hard_ceiling": False,
+                  "enforced_by": "master_ready (legacy path; route() neither reads nor enforces the live cap)",
+                  "note": "Hub-counted spend; cross-instance enforcement unverified (D4) — not a guaranteed hard ceiling."}
+    else:
+        budget = {"scope": None,
+                  "note": "No monthly cap for this role; Groq room / Gemini cooldown checks live in the executor (room_for), not in route()."}
+    decision = {
+        "role": role, "agent": agent, "entry_point": entry_point, "path": path,
+        "tier": tele_tier, "desk_up": desk_up, "master_up": master_up,
+        "primary": {"provider": primary[0], "model": primary[1]},
+        "fallbacks": [{"provider": p, "model": m} for p, m in cands[1:]],
+        "candidates": [{"provider": p, "model": m} for p, m in cands],
+        "stand_in": stand_in,
+        "policy": {
+            "retries": 1,
+            "retry_delay_s": LLM_RETRY_DELAY,
+            "retry_rule": "primary only; retryable and not timed_out (429s count as timed_out and skip the retry); non-retryable raises at once",
+            "room_precheck": "executor-side: skip candidates failing room_for (cooling/Groq room); route() does not evaluate room state",
+            "tried_set": "executor tries each candidate at most once, in listed order",
+            "borrow": role in ("miner", "manager"),
+            "single_pass": True,
+        },
+        "budget": budget,
+    }
+    _diag("model.selected", tier=tele_tier, provider=primary[0], model=primary[1], via="route", reason="")
+    return decision
+
+
 def llm_chat(tier, messages, max_tokens=800):
     """One chat-completion call for `tier`; returns the reply text.
     Master is Claude while it's connected and under its monthly cap;
