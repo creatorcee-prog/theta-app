@@ -141,17 +141,22 @@ for provider, ok_body, empty_body in (
     check("%s null results list is empty, not a crash" % provider,
           env["status"] == "ok" and env["data"] == [])
 
-# --- Provider selection: a keyed provider without a key falls back to DDG ---
-set_provider(tools, "serper", "")
-with stub_urlopen(body=DDG_OK):
-    env = run_search(tools)
-check("serper without a key falls back to the DuckDuckGo path",
-      env["status"] == "ok" and len(env["data"]) == 2)
+# --- Provider selection: a named keyed provider without a key is an
+# error, never a silent downgrade to the weak backend; an unknown
+# provider name is an error too. (Deliberate behavior change from the
+# pre-fix guards, which pinned the silent DDG fallback.) ---
+for provider in ("serper", "tavily"):
+    set_provider(tools, provider, "")
+    with stub_urlopen(body=DDG_OK):
+        env = run_search(tools)
+    check("%s without a key is a not_configured error, not a silent DDG fallback" % provider,
+          env["status"] == "error" and "not_configured" in (env["error"] or "")
+          and "SEARCH_API_KEY" in (env["error"] or ""))
 set_provider(tools, "unknown-provider", "")
 with stub_urlopen(body=DDG_OK):
     env = run_search(tools)
-check("unknown provider name falls back to the DuckDuckGo path",
-      env["status"] == "ok" and len(env["data"]) == 2)
+check("unknown provider name is an error, not a silent DDG fallback",
+      env["status"] == "error" and "unknown_provider" in (env["error"] or ""))
 
 # --- Empty query is an empty result, not an error ---
 check("empty query returns an empty list",
@@ -167,7 +172,13 @@ check("bridge receipt carries the actual results",
       and "https://en.wikipedia.org/wiki/Python" in receipt)
 with stub_urlopen(body=DDG_EMPTY):
     receipt = bridge.tool_web_search("python", "mistral")
-check("bridge reports a genuine empty as bare No results", receipt == "No results")
+check("bridge labels a genuine DDG empty as an Instant Answer limit, not proof of nothing",
+      receipt.startswith("No results") and "Instant Answer" in receipt
+      and "SEARCH_PROVIDER" in receipt)
+set_provider(bridge.agent_tools, "serper", "dummy-test-key")
+with stub_urlopen(body=b'{"organic": []}'):
+    receipt = bridge.tool_web_search("python", "mistral")
+check("bridge reports a genuine keyed-provider empty as bare No results", receipt == "No results")
 set_provider(bridge.agent_tools, "serper", "dummy-test-key")
 with stub_urlopen(error=urllib.error.HTTPError("https://x", 401, "Unauthorized", {}, None)):
     try:

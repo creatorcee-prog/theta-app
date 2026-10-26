@@ -26,6 +26,89 @@ SEARCH_PROVIDER = os.environ.get("SEARCH_PROVIDER", "duckduckgo").lower()
 SEARCH_API_KEY = os.environ.get("SEARCH_API_KEY") or os.environ.get("TAVILY_API_KEY") or os.environ.get("SERPER_API_KEY")
 
 
+class SearchError(Exception):
+    """A search failure with a machine-readable kind, never a fake result.
+
+    kinds: not_configured (a keyed provider was selected but no key is
+    set), unknown_provider, auth (401/403), rate_limit (429),
+    timeout, network, malformed (bad JSON or unexpected schema),
+    provider_error (other HTTP 4xx/5xx). str() carries the kind so the
+    run_tool envelope and the bridge receipt keep it; no key, header,
+    or request body is ever included in the message.
+    """
+
+    KINDS = {"not_configured", "unknown_provider", "auth", "rate_limit",
+             "timeout", "network", "malformed", "provider_error"}
+
+    def __init__(self, kind, message):
+        self.kind = kind if kind in self.KINDS else "provider_error"
+        self.message = message
+        super().__init__(f"Search failed ({self.kind}): {message}")
+
+
+def _selected_provider():
+    """Effective provider name: the env value, or duckduckgo when unset."""
+    return (SEARCH_PROVIDER or "duckduckgo").lower()
+
+
+def _request_json(req, timeout):
+    """POST/GET a provider and parse its JSON body, or raise SearchError.
+
+    HTTP status, timeouts, and malformed bodies are distinguished here
+    so a provider failure is never reported as an empty search.
+    """
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise SearchError("auth", f"provider rejected the key (HTTP {e.code})")
+        if e.code == 429:
+            raise SearchError("rate_limit", "provider rate limit reached (HTTP 429)")
+        raise SearchError("provider_error", f"provider returned HTTP {e.code}")
+    except TimeoutError:
+        raise SearchError("timeout", "provider request timed out")
+    except urllib.error.URLError as e:
+        reason = str(getattr(e, "reason", e))
+        if "timed out" in reason.lower() or "timeout" in reason.lower():
+            raise SearchError("timeout", "provider request timed out")
+        raise SearchError("network", f"provider unreachable: {reason[:120]}")
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        raise SearchError("malformed", "provider returned non-JSON body")
+    if not isinstance(data, dict):
+        raise SearchError("malformed", "provider returned a non-object JSON body")
+    return data
+
+
+def _clean_results(items, num, title_key, url_key, snippet_keys):
+    """Validate provider items into [{title, url, snippet}].
+
+    Drops items that are not objects, carry no usable content (no title
+    and no snippet), or carry a URL that is not http(s). An empty URL
+    is kept: the bridge shows title + snippet without a link, and only
+    non-empty URLs become Sources.
+    """
+    out = []
+    for r in items or []:
+        if not isinstance(r, dict):
+            continue
+        title = (r.get(title_key) or "").strip()
+        url = (r.get(url_key) or "").strip()
+        snippet = ""
+        for k in snippet_keys:
+            snippet = (r.get(k) or "").strip()
+            if snippet:
+                break
+        if not title and not snippet:
+            continue
+        if url and not url.startswith(("http://", "https://")):
+            continue
+        out.append({"title": title, "url": url, "snippet": snippet})
+    return out[:num]
+
+
 def _host_is_public(host: str) -> bool:
     """True only if every resolved address is a public unicast IP.
 
@@ -70,18 +153,37 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 
 def tool_web_search(query: str, num_results: int = 5) -> list[dict[str, str]]:
-    """Return [{title, url, snippet}, ...]."""
+    """Return [{title, url, snippet}, ...]; raise SearchError on failure.
+
+    Selection is explicit, never a silent downgrade: a named keyed
+    provider without a key is a not_configured error, and an unknown
+    provider name is an error. Only the default (unset) or an explicit
+    "duckduckgo" uses the zero-key Instant Answer path, whose limits
+    are labeled in its docstring and in the bridge receipt.
+    """
     query = (query or "").strip()
     if not query:
         return []
     num_results = max(1, min(int(num_results or 5), 10))
+    provider = _selected_provider()
 
-    if SEARCH_PROVIDER == "tavily" and SEARCH_API_KEY:
+    if provider == "tavily":
+        if not SEARCH_API_KEY:
+            raise SearchError("not_configured",
+                              "SEARCH_PROVIDER=tavily but no API key is set "
+                              "(set SEARCH_API_KEY or TAVILY_API_KEY)")
         return _search_tavily(query, num_results)
-    if SEARCH_PROVIDER == "serper" and SEARCH_API_KEY:
+    if provider == "serper":
+        if not SEARCH_API_KEY:
+            raise SearchError("not_configured",
+                              "SEARCH_PROVIDER=serper but no API key is set "
+                              "(set SEARCH_API_KEY or SERPER_API_KEY)")
         return _search_serper(query, num_results)
-    # Default / fallback: DuckDuckGo Instant Answer + HTML (no key needed)
-    return _search_duckduckgo(query, num_results)
+    if provider == "duckduckgo":
+        return _search_duckduckgo(query, num_results)
+    raise SearchError("unknown_provider",
+                      f"unknown SEARCH_PROVIDER {provider!r} "
+                      "(duckduckgo, tavily, serper)")
 
 
 def tool_fetch_page(url: str, max_chars: int = 6000) -> dict[str, str]:
@@ -125,21 +227,15 @@ def _search_tavily(query: str, num: int) -> list[dict[str, str]]:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read())
-    except Exception as e:
-        return [{"title": "Search error", "url": "", "snippet": str(e)}]
-    if not isinstance(data, dict) or "results" not in data:
-        return [{"title": "Search error", "url": "", "snippet": "malformed response: missing results"}]
-    out = []
-    for r in (data.get("results") or [])[:num]:
-        out.append({
-            "title": r.get("title") or "",
-            "url": r.get("url") or "",
-            "snippet": r.get("content") or r.get("snippet") or "",
-        })
-    return out
+    data = _request_json(req, timeout=15)
+    if "results" not in data:
+        raise SearchError("malformed", "Tavily response is missing the results key")
+    results = data.get("results")
+    if results is None:
+        results = []
+    elif not isinstance(results, list):
+        raise SearchError("malformed", "Tavily results is not a list")
+    return _clean_results(results, num, "title", "url", ("content", "snippet"))
 
 
 def _search_serper(query: str, num: int) -> list[dict[str, str]]:
@@ -150,58 +246,64 @@ def _search_serper(query: str, num: int) -> list[dict[str, str]]:
         headers={"Content-Type": "application/json", "X-API-KEY": SEARCH_API_KEY},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read())
-    except Exception as e:
-        return [{"title": "Search error", "url": "", "snippet": str(e)}]
-    if not isinstance(data, dict) or "organic" not in data:
-        return [{"title": "Search error", "url": "", "snippet": "malformed response: missing organic results"}]
-    out = []
-    for r in (data.get("organic") or [])[:num]:
-        out.append({
-            "title": r.get("title") or "",
-            "url": r.get("link") or "",
-            "snippet": r.get("snippet") or "",
-        })
-    return out
+    data = _request_json(req, timeout=15)
+    if "organic" not in data:
+        raise SearchError("malformed", "Serper response is missing the organic key")
+    organic = data.get("organic")
+    if organic is None:
+        organic = []
+    elif not isinstance(organic, list):
+        raise SearchError("malformed", "Serper organic is not a list")
+    return _clean_results(organic, num, "title", "link", ("snippet",))
 
 
 def _search_duckduckgo(query: str, num: int) -> list[dict[str, str]]:
     """Zero-key fallback. Uses the Instant Answer API only (no key needed).
 
-    Note: this is an instant-answer lookup, not a full web index. Entity
-    queries return an abstract and related topics, but news and general
-    web queries usually come back empty. A failure is reported as a
-    Search error, never disguised as an empty result.
+    This is an instant-answer lookup, NOT a general web index, and the
+    receipt says so when it comes back empty: entity queries return an
+    abstract and related topics, but general web and news queries
+    usually come back empty. That empty is genuine, not a failure —
+    but it is not evidence that the web has no matching pages. For
+    general search, configure a keyed provider (SEARCH_PROVIDER=tavily
+    or serper with SEARCH_API_KEY). A transport or parse failure
+    raises SearchError, never a disguised empty result.
     """
-    # Instant Answer
-    try:
-        q = urllib.parse.quote(query)
-        req = urllib.request.Request(
-            f"https://api.duckduckgo.com/?q={q}&format=json&no_html=1&skip_disambig=1",
-            headers={"User-Agent": "ThetaBot/1.0"},
-        )
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            data = json.loads(resp.read())
-    except Exception as e:
-        return [{"title": "Search error", "url": "", "snippet": str(e)}]
-    if not isinstance(data, dict):
-        return [{"title": "Search error", "url": "", "snippet": "malformed response: expected a JSON object"}]
+    q = urllib.parse.quote(query)
+    req = urllib.request.Request(
+        f"https://api.duckduckgo.com/?q={q}&format=json&no_html=1&skip_disambig=1",
+        headers={"User-Agent": "ThetaBot/1.0"},
+    )
+    data = _request_json(req, timeout=8)
     out = []
     if data.get("AbstractText"):
+        url = data.get("AbstractURL") or ""
+        if url and not url.startswith(("http://", "https://")):
+            url = ""
         out.append({
             "title": data.get("Heading") or query,
-            "url": data.get("AbstractURL") or "",
+            "url": url,
             "snippet": data.get("AbstractText") or "",
         })
-    for t in (data.get("RelatedTopics") or [])[:num]:
-        if isinstance(t, dict) and t.get("Text"):
-            out.append({
-                "title": t.get("Text", "")[:80],
-                "url": t.get("FirstURL") or "",
-                "snippet": t.get("Text") or "",
-            })
+
+    def _collect(topics):
+        for t in topics or []:
+            if not isinstance(t, dict):
+                continue
+            if t.get("Text"):
+                url = t.get("FirstURL") or ""
+                if url and not url.startswith(("http://", "https://")):
+                    continue
+                out.append({
+                    "title": t.get("Text", "")[:80],
+                    "url": url,
+                    "snippet": t.get("Text") or "",
+                })
+            elif isinstance(t.get("Topics"), list):
+                # Category groups nest real results one level down.
+                _collect(t["Topics"])
+
+    _collect(data.get("RelatedTopics"))
     return out[:num]
 
 
@@ -516,25 +618,30 @@ def follow_cancel(store, follow_id):
 def run_tool(store, call: dict[str, Any], agent_id: str = "hub") -> dict[str, Any]:
     """Dispatch a parsed tool call, wrapped in a structured envelope.
 
-    {status: "ok" | "error", data, sources, error, duration_ms}. data is
-    the tool's own result; sources lists URLs a web result came from;
-    error is None on success. External content stays data: it is never
-    treated as instructions."""
+    {status: "ok" | "error", data, sources, error, duration_ms, provider}.
+    data is the tool's own result; sources lists URLs a web result came
+    from; error is None on success; provider names the search backend
+    for web_search calls (so the bridge can label a zero-key empty).
+    External content stays data: it is never treated as instructions.
+    A search failure is a SearchError with a kind, never a fake result
+    or a successful empty list."""
     name = call.get("name") or ""
     args = call.get("args") or {}
     t0 = time.perf_counter()
     try:
         result = _run_tool_inner(store, name, args, agent_id)
+    except SearchError as e:
+        result = {"error": str(e)}
     except Exception as e:
         result = {"error": str(e)}
     ms = int((time.perf_counter() - t0) * 1000)
     if isinstance(result, dict) and result.get("error"):
-        return {"status": "error", "data": None, "sources": [], "error": str(result["error"]), "duration_ms": ms}
+        env = {"status": "error", "data": None, "sources": [], "error": str(result["error"]), "duration_ms": ms}
+        if name == "web_search":
+            env["provider"] = _selected_provider()
+        return env
     sources: list[str] = []
     if name == "web_search" and isinstance(result, list):
-        if result and result[0].get("title") == "Search error":
-            return {"status": "error", "data": None, "sources": [],
-                    "error": str(result[0].get("snippet", "")), "duration_ms": ms}
         sources = [r.get("url", "") for r in result if r.get("url")]
     elif name == "fetch_page" and isinstance(result, dict):
         text = result.get("text", "")
@@ -542,7 +649,10 @@ def run_tool(store, call: dict[str, Any], agent_id: str = "hub") -> dict[str, An
             return {"status": "error", "data": None, "sources": [], "error": text, "duration_ms": ms}
         if result.get("url"):
             sources = [result["url"]]
-    return {"status": "ok", "data": result, "sources": sources, "error": None, "duration_ms": ms}
+    env = {"status": "ok", "data": result, "sources": sources, "error": None, "duration_ms": ms}
+    if name == "web_search":
+        env["provider"] = _selected_provider()
+    return env
 
 
 def _run_tool_inner(store, name: str, args: dict[str, Any], agent_id: str) -> Any:

@@ -61,7 +61,15 @@ def _store():
 
 
 def tool_web_search(arg, agent):
-    """Read-only: search the web. Uses tools.py (DuckDuckGo fallback or configured provider)."""
+    """Read-only: search the web via tools.py.
+
+    Provider selection lives in tools.py: a keyed provider (tavily,
+    serper) without its key is a not_configured error, never a silent
+    downgrade. A genuine empty from the default zero-key backend
+    (DuckDuckGo Instant Answer) says so plainly, because that backend
+    covers entity lookups only and general web/news queries often come
+    back empty there — an empty there is not proof the web has nothing.
+    """
     if agent_tools is None:
         raise ValueError("tool layer not available")
     query = (arg or "").strip()
@@ -72,6 +80,11 @@ def tool_web_search(arg, agent):
         raise ValueError(out.get("error") or "search failed")
     results = out.get("data") or []
     if not results:
+        if out.get("provider") == "duckduckgo":
+            return ("No results. Note: the default search is DuckDuckGo Instant Answer, "
+                    "which covers entity lookups only — general web and news queries often "
+                    "come back empty here. For general search, set SEARCH_PROVIDER=tavily "
+                    "or serper with SEARCH_API_KEY.")
         return "No results"
     lines = []
     for i, r in enumerate(results[:5], 1):
