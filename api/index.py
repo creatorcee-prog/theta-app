@@ -2180,13 +2180,17 @@ def _tool_error_category(name, err):
 #   (theta + master_ready only), quick_reply / remi_quick_reply
 #   (no model by design), adzuna_jobs / usajobs_jobs (keyed HTTP
 #   APIs, not models).
-# - D5 hinge: DESK_ENTRY_POINTS below deliberately excludes
-#   "allchat": today the allchat first turn for Mistral runs the
-#   tier path (low_brain chain), NOT the desk path. The D5
-#   migration PR flips that by adding "allchat" to this set.
+# - D5 hinge (flipped by migration #2): DESK_ENTRY_POINTS includes
+#   "allchat", so Mistral's allchat first turn now runs the desk path
+#   (desk_chat), NOT the tier path. Desk-off behavior is unchanged:
+#   the desk path with desk_up False IS the low_brain chain.
 # - MIGRATED (migration #1): _triage_escalations' low_brain call now
 #   goes through route() (primary + tier-fallback overrides into
 #   llm_chat); every other site still runs its legacy path.
+# - MIGRATED (migration #2): Mistral's allchat first turn now goes
+#   through desk_chat, driven by route() (desk + low_brain overrides
+#   into desk_chat); every other allchat agent still runs its legacy
+#   llm_chat tier path, and the SEARCH second turn is untouched.
 
 
 class RouteConfigError(ValueError):
@@ -2219,7 +2223,7 @@ ROUTE_CONFIG_VARS = {
 }
 ROUTE_ENTRY_POINTS = {"desk", "allchat", "router", "round", "search",
                       "project", "summary", "bench", "other"}
-DESK_ENTRY_POINTS = {"desk", "round", "search"}  # D5 hinge: no "allchat" yet.
+DESK_ENTRY_POINTS = {"desk", "round", "search", "allchat"}  # D5 hinge flipped by migration #2: allchat now takes the desk path.
 
 # Fallback models: legacy shape (provider fixed per tier, model
 # overridable, "off" suppresses the step). No master/desk fallback
@@ -2330,9 +2334,9 @@ def route(role, agent=None, entry_point=None, *, desk_up, master_up, fallback_of
 
     Desk path (agent == DESK and entry_point in DESK_ENTRY_POINTS)
     follows desk_chat: Haiku while desk_up, else the low_brain chain.
-    Every other combination follows the tier path, INCLUDING
-    agent == DESK with entry_point == "allchat" (current behavior;
-    D5 flips that mapping in the allchat migration PR).
+    Every other combination follows the tier path. Since migration #2
+    (D5), agent == DESK with entry_point == "allchat" takes the desk
+    path: Mistral's allchat first turn unifies with her desk replies.
     Desk path takes precedence over role: agent == DESK at a desk
     entry point follows the desk path even if role == "master"
     (migration PRs must never pass role="master" with agent=DESK;
@@ -2585,21 +2589,30 @@ def desk_on():
     return DESK_MODEL.lower() != "off" and master_ready()
 
 
-def desk_chat(messages, max_tokens=800):
+def desk_chat(messages, max_tokens=800, desk_up=None, desk_model=None, primary=None, fallback=None):
     """Mistral's chat replies: DESK_MODEL on Claude while it's on, else (or
-    if Claude fails) the low brain, Gemini then Groq."""
-    if desk_on():
+    if Claude fails) the low brain, Gemini then Groq.
+    desk_up/desk_model/primary/fallback (migration #2): optional route()
+    values for the migrated allchat first turn. desk_up replaces the
+    desk_on() lookup (None = legacy lookup); desk_model replaces
+    DESK_MODEL for the desk attempt; primary/fallback pass through to
+    the low_brain leg exactly as llm_chat's overrides (None = legacy
+    lookup). Retry, room, key and error handling are unchanged; only
+    the values come from route()."""
+    up = desk_up if desk_up is not None else desk_on()
+    if up:
+        model = desk_model or DESK_MODEL
         try:
-            text = claude_chat(messages, max_tokens, model=DESK_MODEL, effort=DESK_EFFORT)
-            _note_model_selection("low_brain", "anthropic", DESK_MODEL, "desk")
+            text = claude_chat(messages, max_tokens, model=model, effort=DESK_EFFORT)
+            _note_model_selection("low_brain", "anthropic", model, "desk")
             return text
         except LLMError as e:
             try:
                 store().set_meta("llm:fallback", json.dumps({"tier": "low_brain", "at": time.time(), "why": str(e)[:160],
-                                                             "model": TIER_LLM["low_brain"][1]}))
+                                                             "model": primary[1] if primary is not None else TIER_LLM["low_brain"][1]}))
             except Exception:
                 pass  # noting it must never cost the reply
-    return llm_chat("low_brain", messages, max_tokens)
+    return llm_chat("low_brain", messages, max_tokens, primary=primary, fallback=fallback)
 
 
 # $ per million tokens: (input, output, cache read). Unknown models (a
@@ -2815,6 +2828,13 @@ def claude_request(messages, max_tokens, model=None, effort=None, thinking=None)
         raise err
     except anthropic.APIConnectionError as e:
         raise LLMError(f"Anthropic unreachable: {e!r}"[:160])
+    except anthropic.APIError as e:
+        # Trailing catch-all (migration #2 review correction): any SDK
+        # error the specific branches above don't name — e.g. a
+        # malformed response (APIResponseValidationError) — becomes a
+        # fallback-eligible LLMError instead of escaping desk_chat /
+        # the master path raw. Placed last so the specific messages win.
+        raise LLMError(f"Anthropic call failed: {(_anthropic_said(e) or repr(e))[:120]}")
     _diag("model.call", provider="anthropic", model=model,
           elapsed_ms=int((time.perf_counter() - t0) * 1000), outcome="ok")
     return resp
@@ -3619,7 +3639,42 @@ def allchat_reply(agent, thread):
             content = ([{"type": "text", "text": ask + note}] + parts) if parts else (ask + note)
         else:
             ask = content = ask + seen_notes(last)
-    reply = llm_chat(AGENTS[agent]["tier"], [{"role": "system", "content": system}, {"role": "user", "content": content}])
+    msgs = [{"role": "system", "content": system}, {"role": "user", "content": content}]
+    if agent == DESK:
+        # MIGRATED (migration #2, D5): Mistral's allchat first turn goes
+        # through desk_chat, driven by route() — the B2 divergence is
+        # resolved: desk-enabled first turns now answer on Haiku, as
+        # her desk replies do. The prompt above is unchanged (allchat
+        # framing, not desk_reply's); only the executor changes.
+        # desk_up/master_up come from the pure _master_under_cap()
+        # predicate, NOT desk_on()/master_ready(): legacy allchat made
+        # no readiness calls, and master_ready() would notify once a
+        # month when the cap is hit (see the #82 correction). The
+        # predicate computes the same booleans desk_on() would.
+        # Desk-off is exactly the legacy path: the desk path with
+        # desk_up False IS llm_chat("low_brain"). Fallback-off follows
+        # the #1 pattern (legacy FALLBACK_LLM "off" -> fallback_off)
+        # with zero production env change. route()'s diag (via="route")
+        # is kept alongside the executor's _note line, deliberately.
+        # The SEARCH second turn (answer_with_search) is untouched.
+        decision = route("low_brain", agent=DESK, entry_point="allchat",
+                         desk_up=DESK_MODEL.lower() != "off" and _master_under_cap(),
+                         master_up=_master_under_cap(),
+                         fallback_off=("low_brain",) if FALLBACK_LLM.get("low_brain", (None, "off"))[1] == "off" else ())
+        if decision["desk_up"]:
+            desk_model = decision["primary"]["model"]
+            low_primary = (decision["fallbacks"][0]["provider"], decision["fallbacks"][0]["model"])
+            low_fallback = ((decision["fallbacks"][1]["provider"], decision["fallbacks"][1]["model"])
+                            if len(decision["fallbacks"]) > 1 else "off")
+        else:
+            desk_model = None
+            low_primary = (decision["primary"]["provider"], decision["primary"]["model"])
+            low_fallback = ((decision["fallbacks"][0]["provider"], decision["fallbacks"][0]["model"])
+                            if decision["fallbacks"] else "off")
+        reply = desk_chat(msgs, desk_up=decision["desk_up"], desk_model=desk_model,
+                          primary=low_primary, fallback=low_fallback)
+    else:
+        reply = llm_chat(AGENTS[agent]["tier"], msgs)
     m = re.match(r"^\s*SEARCH:\s*(.+)$", reply.strip(), re.I)
     if not (m and can_search):
         return run_actions(agent, reply)
