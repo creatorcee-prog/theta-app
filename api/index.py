@@ -2091,7 +2091,8 @@ def _tool_error_category(name, err):
 
 
 # ---- Stage 4 P1 interface: central model selection (route()).
-# P1 interface PR ONLY: this section ADDS a pure selection function.
+# P1 interface PR ONLY: this section ADDS a selection function that is
+# side-effect-free apart from one diagnostic line.
 # No production path calls route() yet, so reverting this section (plus
 # its tests) changes zero behavior. Call-site migration PRs will call
 # route() one entry point at a time; the allchat migration in particular
@@ -2113,7 +2114,9 @@ def _tool_error_category(name, err):
 #   DESK_MODEL, LOW_BRAIN_MODEL, or MASTER_MONTHLY_CAP_USD, so a
 #   chat Approve change to a SETTABLE value cannot move route()
 #   decisions (D6). desk_up / master_up are caller-supplied state:
-#   migration PRs pass desk_on() / master_ready(). Both are REQUIRED
+#   migration PRs pass desk_on() / master_ready() (or their pure
+#   equivalents where a site must avoid master_ready()'s cap-notify
+#   side effect). Both are REQUIRED
 #   keywords: there is no omitted-means-False, so no call site can
 #   silently assume desk-off / master-not-ready, and route() never
 #   performs a live desk_on() / master_ready() lookup itself.
@@ -2141,6 +2144,12 @@ def _tool_error_category(name, err):
 # - Fallback-off IS modeled (see above). The one thing route() does
 #   not do is read the legacy *_FALLBACK_MODEL vars — translation
 #   is a migration-PR obligation, flagged in the inventory table.
+# - fallback_off (migration #1 contract extension): route(...,
+#   fallback_off) suppresses the fallback step for the named roles
+#   even when their ROUTE_*_FALLBACK_MODEL is set. It exists so a
+#   migrated call site can translate a legacy FALLBACK_LLM "off"
+#   without a production env change; it never reads legacy vars
+#   itself, and the caller computes it from FALLBACK_LLM.
 # - DeepSeek is ABSENT from ROUTE_PROVIDERS by design (D2:
 #   probe-only). A verified provider plugs in here later by adding
 #   its name to ROUTE_PROVIDERS plus its default model id — only
@@ -2175,6 +2184,9 @@ def _tool_error_category(name, err):
 #   "allchat": today the allchat first turn for Mistral runs the
 #   tier path (low_brain chain), NOT the desk path. The D5
 #   migration PR flips that by adding "allchat" to this set.
+# - MIGRATED (migration #1): _triage_escalations' low_brain call now
+#   goes through route() (primary + tier-fallback overrides into
+#   llm_chat); every other site still runs its legacy path.
 
 
 class RouteConfigError(ValueError):
@@ -2220,12 +2232,14 @@ ROUTE_FALLBACK_VARS = {
 }
 
 
-def _route_fallback(role):
-    """(provider, model) for `role`'s tier fallback, or None when its
-    ROUTE_*_FALLBACK_MODEL is "off". Unset/empty means the literal
-    default; any other value replaces the model only (provider stays
+def _route_fallback(role, off=False):
+    """(provider, model) for `role`'s tier fallback, or None when `off`
+    is true or its ROUTE_*_FALLBACK_MODEL is "off". Unset/empty means the
+    literal default; any other value replaces the model only (provider stays
     the tier's default fallback provider, as in FALLBACK_LLM). Reads
     env at call time."""
+    if off:
+        return None
     var = ROUTE_FALLBACK_VARS[role]
     model = (os.environ.get(var) or "").strip()
     if model == "off":
@@ -2289,16 +2303,19 @@ def _route_candidates(role, desk_up, master_up, prim, fallback):
     return out
 
 
-def route(role, agent=None, entry_point=None, *, desk_up, master_up):
-    """Central model selection (Stage 4 P1 interface). Pure: selects,
-    never calls a model, never loops tools, never reads or writes
-    llm:last_selection, never touches the store.
+def route(role, agent=None, entry_point=None, *, desk_up, master_up, fallback_off=()):
+    """Central model selection (Stage 4 P1 interface). Side-effect-free
+    apart from diagnostics: selects, never calls a model, never loops
+    tools, never reads or writes llm:last_selection, never touches the
+    store. Its single diagnostic effect is one model.selected diag line
+    (via="route").
 
     role: one of TIERS (miner, manager, low_brain, master).
     agent: agent id for the DESK check (None = no agent context).
     entry_point: one of ROUTE_ENTRY_POINTS (None = generic tier path).
     desk_up / master_up: caller-supplied state (migration PRs pass
-    desk_on() / master_ready()); omitted is impossible here — both
+    desk_on() / master_ready(), or their pure equivalents where a site
+    must avoid master_ready()'s cap-notify side effect); omitted is impossible here — both
     are required keywords, so no hidden live lookup exists.
 
     Returns a dict: role, agent, entry_point, path ("desk" or "tier"),
@@ -2323,6 +2340,12 @@ def route(role, agent=None, entry_point=None, *, desk_up, master_up):
     master pair unconditionally). A ROUTE_*_FALLBACK_MODEL of "off"
     suppresses that role's fallback step; the borrow walk is
     unaffected.
+    fallback_off: optional roles whose fallback step is suppressed
+    regardless of env (explicit caller override, wins over
+    ROUTE_*_FALLBACK_MODEL). Migration #1 uses it to translate a
+    legacy FALLBACK_LLM "off" with zero production env change;
+    default empty means env behavior. Unknown roles raise
+    RouteConfigError.
     """
     if role not in TIERS:
         raise RouteConfigError(f"unknown route role {role!r} (miner, manager, low_brain, master)")
@@ -2330,10 +2353,14 @@ def route(role, agent=None, entry_point=None, *, desk_up, master_up):
         raise RouteConfigError(f"unknown route agent {agent!r}")
     if entry_point is not None and entry_point not in ROUTE_ENTRY_POINTS:
         raise RouteConfigError(f"unknown route entry_point {entry_point!r}")
+    off_roles = set(fallback_off or ())
+    bad_off = off_roles - set(ROUTE_FALLBACK_VARS)
+    if bad_off:
+        raise RouteConfigError(f"unknown fallback_off role(s) {sorted(bad_off)} (miner, manager, low_brain)")
     prim = {}
     for r in ("miner", "manager", "low_brain", "master", "desk"):
         prim[r] = _route_primary(r)
-    fallback = {r: _route_fallback(r) for r in ("miner", "manager", "low_brain")}
+    fallback = {r: _route_fallback(r, r in off_roles) for r in ("miner", "manager", "low_brain")}
     desk_path = agent == DESK and entry_point in DESK_ENTRY_POINTS
     if desk_path:
         if desk_up:
@@ -2389,12 +2416,18 @@ def route(role, agent=None, entry_point=None, *, desk_up, master_up):
     return decision
 
 
-def llm_chat(tier, messages, max_tokens=800):
+def llm_chat(tier, messages, max_tokens=800, primary=None, fallback=None):
     """One chat-completion call for `tier`; returns the reply text.
     Master is Claude while it's connected and under its monthly cap;
     otherwise the low brain answers for it.
     A busy or down provider gets one quick retry (not after a timeout),
-    then the tier's fallback model on the other provider answers."""
+    then the tier's fallback model on the other provider answers.
+    primary/fallback (migration #1): optional route() values for this
+    call. primary replaces TIER_LLM[t] for the primary step; fallback
+    replaces FALLBACK_LLM[t] for the tier-fallback step, or "off" to
+    suppress it. None means the legacy lookup. Desk-first, master,
+    borrow, retry, room, key and error handling are unchanged; only
+    the two values come from route()."""
     if tier == "master" and master_ready():
         try:
             text = claude_chat(messages, max_tokens)
@@ -2416,7 +2449,7 @@ def llm_chat(tier, messages, max_tokens=800):
         except LLMError:
             pass  # Groq, then Gemini, as before
     need = est_tokens(messages) + max_tokens
-    provider, model = TIER_LLM[t]
+    provider, model = primary if primary is not None else TIER_LLM[t]
     tried = {(provider, model)} | ({("anthropic", DESK_MODEL)} if t == "manager" and desk_on() else set())
     fits, why = room_for(provider, model, need)
     if not fits:  # don't send what it would refuse: straight to the next model
@@ -2439,7 +2472,12 @@ def llm_chat(tier, messages, max_tokens=800):
             except LLMError as e:
                 if not e.retryable:
                     raise
-    fb_provider, fb_model = FALLBACK_LLM.get(t, (None, "off"))
+    if fallback is None:
+        fb_provider, fb_model = FALLBACK_LLM.get(t, (None, "off"))
+    elif fallback == "off":
+        fb_provider, fb_model = None, "off"
+    else:
+        fb_provider, fb_model = fallback
     err = first
     if fb_model != "off" and os.environ.get(PROVIDERS[fb_provider][1]):
         tried.add((fb_provider, fb_model))
@@ -2579,12 +2617,23 @@ def claude_spend():
     return data.get(month, {"usd": 0.0, "calls": 0, "input": 0, "output": 0})
 
 
-def master_ready():
-    """Claude answers for Theta: a key is set and this month is under the cap."""
+def _master_under_cap():
+    """Pure readiness predicate: a Claude key is set and this month is
+    under the cap. No meta writes, no notify — unlike master_ready(),
+    which tells you once a month when the cap is hit. Migration #1's
+    triage site uses this so a low_brain-only run can never trigger
+    the cap notification."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return False
-    if claude_spend()["usd"] < MASTER_MONTHLY_CAP:
+    return claude_spend()["usd"] < MASTER_MONTHLY_CAP
+
+
+def master_ready():
+    """Claude answers for Theta: a key is set and this month is under the cap."""
+    if _master_under_cap():
         return True
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return False
     month = datetime.now(hub_tz()).strftime("%Y-%m")
     if store().get_meta("claude:capped") != month:  # tell you once a month
         store().set_meta("claude:capped", month)
@@ -5093,12 +5142,37 @@ def _triage_escalations(did):
     done = set(json.loads(st.get_meta("mistral:triaged") or "[]"))
     todo = [e for e in st.list_escalations(50, open_only=True)
             if e["to_role"] == "low_brain" and e["id"] not in done][:3]
+    # Migration #1: selection comes from route(), executed by llm_chat.
+    # One decision per run (legacy tier values are import-time frozen,
+    # so a run never re-resolves mid-loop; a config error fails the
+    # run before any escalation is touched, never half a run).
+    # agent/entry_point are None: this is a bare tier call and must
+    # never take the desk path (the legacy call is llm_chat, not
+    # desk_chat; the Mistral system prompt here is a persona, not
+    # desk routing). desk_up/master_up are the live readiness states
+    # (required keywords; the low_brain branch does not use them, but
+    # they are passed explicitly, never assumed). They are computed
+    # with the pure _master_under_cap() predicate, NOT desk_on() /
+    # master_ready(): those notify once a month when the cap is hit,
+    # and legacy triage never triggered that side effect. route()
+    # itself is untouched by this correction. fallback_off
+    # translates the legacy FALLBACK_LLM "off" with zero production
+    # env change. route()'s diag (via="route") is kept alongside
+    # llm_chat's _note line, deliberately.
+    decision = route("low_brain", agent=None, entry_point=None,
+                     desk_up=DESK_MODEL.lower() != "off" and _master_under_cap(),
+                     master_up=_master_under_cap(),
+                     fallback_off=("low_brain",) if FALLBACK_LLM.get("low_brain", (None, "off"))[1] == "off" else ())
+    triage_prim = (decision["primary"]["provider"], decision["primary"]["model"])
+    triage_fb = decision["fallbacks"][0] if decision["fallbacks"] else "off"
+    triage_fb = (triage_fb["provider"], triage_fb["model"]) if triage_fb != "off" else "off"
     for e in todo:
         reply = llm_chat("low_brain", [
             {"role": "system", "content": system_prompt("mistral")},
             {"role": "user", "content": f"Escalation #{e['id']} from {display_name(e['from_bot'])}: "
              f"{e['issue']}\nContext: {json.dumps(e.get('context') or {})[:600]}\nHandle it in 2-3 "
-             "sentences. If it truly needs Theta's decision, start your reply with THETA:"}])
+             "sentences. If it truly needs Theta's decision, start your reply with THETA:"}],
+            primary=triage_prim, fallback=triage_fb)
         if reply.strip().upper().startswith("THETA:"):
             note = reply.strip()[6:].strip()
             new_id = st.add_escalation("mistral", "low_brain", "master", f"#{e['id']}: {e['issue']}",
