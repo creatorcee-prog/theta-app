@@ -3682,12 +3682,12 @@ def allchat_reply(agent, thread):
 
 
 def _fallback_web_search(agent, query):
-    """Bridge web_search as a fallback when Gemini search fails.
+    """Bridge web_search, tried first by answer_with_search.
 
     Returns (found_text, sources) with sources as [(title, url)] (max 5),
     or ("", []) when the bridge layer or the search itself is unavailable.
-    Never raises: a failed fallback just means the caller keeps the
-    Gemini failure note. Fallback searches do not consume the Gemini
+    Never raises: a failed bridge attempt just means the caller falls
+    through to the Gemini path. Bridge searches do not consume the Gemini
     monthly budget; they are a different provider.
     """
     tb = globals().get("_tb")
@@ -3708,20 +3708,29 @@ def _fallback_web_search(agent, query):
         if url:
             sources.append((title, url))
         lines.append(f"{i + 1}. {title} — {url}\n   {snip}" if url else f"{i + 1}. {title}\n   {snip}")
-    text = "Web search results (fallback — Gemini search failed):\n" + "\n".join(lines)
+    text = "Web search results (bridge web search):\n" + "\n".join(lines)
     return text[:3000], sources
 
 
 def answer_with_search(agent, system, ask, query):
-    """One web search (Gemini + Google), then the agent answers from it.
+    """Bridge web search first, Gemini + Google only if it returns
+    nothing, then the agent answers from it.
     Only the search's own sources may appear as links; anything else the
     model writes as a link is removed. One search per reply, so a web
     page can't steer the agent into fetching something else."""
     activity(agent, f"{AGENTS[agent]['name']} searched the web: {query[:120]}")
     working(agent, "searching the web")
     found, sources = "", []
-    fallback_used = False
-    if _search_budget(1):
+    bridge_used = False
+    # Bridge-first (token saving): the bridge is a plain HTTP call, so it
+    # runs before any Gemini call or budget spend. It is tried exactly once
+    # per reply: if it returns sources, Gemini never runs; if it returns
+    # nothing or fails, the Gemini path below runs exactly as before, and
+    # a later Gemini error does NOT retry the bridge (already known).
+    fb_text, fb_sources = _fallback_web_search(agent, query)
+    if fb_sources:
+        found, sources, bridge_used = fb_text, fb_sources, True
+    elif _search_budget(1):
         try:
             text, cites, queries = gemini_search(f"{query}\n\nAnswer briefly and factually.")
             _search_budget(max(queries, 1) - 1)
@@ -3733,9 +3742,6 @@ def answer_with_search(agent, system, ask, query):
                     sources.append((title or "", url))
         except LLMError as e:
             found = f"(the search failed: {str(e)[:100]})"
-            fb_text, fb_sources = _fallback_web_search(agent, query)
-            if fb_sources:
-                found, sources, fallback_used = fb_text, fb_sources, True
     else:
         found = "(this month's web searches are used up)"
     with ThreadPoolExecutor(max_workers=5) as ex:
@@ -3754,8 +3760,8 @@ def answer_with_search(agent, system, ask, query):
     used = sorted({int(n) for n in re.findall(r"\[(\d)\]", reply) if 0 < int(n) <= len(sources)}) or range(1, len(sources) + 1)
     if sources:
         reply += "\n\nSources:\n" + "\n".join(f"[{n}] {sources[n - 1][1]}" for n in used)
-    if fallback_used:
-        reply += "\n\n(Note: Gemini search failed, so these results came from the fallback web search.)"
+    if bridge_used:
+        reply += "\n\n(Note: these results came from the bridge web search.)"
     return reply
 
 

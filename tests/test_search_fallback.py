@@ -1,8 +1,15 @@
-"""Search fallback: answer_with_search falls back to bridge web_search
-when gemini_search fails (429 included), and only then.
+"""Bridge-first search: answer_with_search tries bridge web_search first;
+Gemini runs only if the bridge returns nothing or fails.
 
-Stubs: gemini_search (fail / ok), the second-turn model call
-(desk_chat for mistral), and the bridge tool layer. No live network.
+This file's guards were updated for the bridge-first change (they used to
+pin Gemini-first): a bridge success now preempts Gemini entirely, and a
+Gemini budget exhaustion no longer blocks a bridge answer, because the
+bridge does not consume the Gemini budget. The guards were changed to the
+new state, not weakened: every old scenario still asserts its reply shape,
+plus the new preemption/budget facts.
+
+Stubs: gemini_search (fail / ok / must-not-run), the second-turn model
+call (desk_chat for mistral), and the bridge tool layer. No live network.
 """
 import sys, json, threading, os
 sys.dont_write_bytecode = True
@@ -88,9 +95,10 @@ class FakeTools:
 
 
 FB_OK = {"status": "ok", "data": [
-    {"title": "Fallback Glass One", "url": "https://example.com/one", "snippet": "Fallback snippet one."},
-    {"title": "Fallback Glass Two", "url": "https://example.com/two", "snippet": "Fallback snippet two."},
+    {"title": "Bridge Glass One", "url": "https://example.com/one", "snippet": "Bridge snippet one."},
+    {"title": "Bridge Glass Two", "url": "https://example.com/two", "snippet": "Bridge snippet two."},
 ], "sources": ["https://example.com/one", "https://example.com/two"]}
+FB_EMPTY = {"status": "ok", "data": [], "sources": []}
 FB_ERR = {"status": "error", "data": None, "sources": [], "error": "duckduckgo blocked", "duration_ms": 3}
 
 
@@ -103,53 +111,62 @@ def gemini_ok(prompt, timeout=30):
             [(0, 10, "https://example.com/gemini", "Gemini Glass")], 1)
 
 
+def gemini_boom(prompt, timeout=30):
+    raise AssertionError("gemini_search must not run on this path")
+
+
 def prompt_text():
     return "\n".join(m.get("content", "") for m in CAPTURED[-1] if isinstance(m, dict))
 
 
-# 1. Gemini 429 -> fallback results are used, and the reply says so.
-h.gemini_search = gemini_fail
+# 1. Bridge answers first -> Gemini never runs, bridge note (not a
+# Gemini-failure note) is carried.
+h.gemini_search = gemini_boom
 h._tb.agent_tools = FakeTools(FB_OK)
 CALLS.clear()
 CAPTURED.clear()
 r = h.answer_with_search("mistral", "System prompt", "Find glasses", "prescription glasses display")
-check("fallback results reach the second turn", "Fallback Glass One" in prompt_text() and "Fallback Glass Two" in prompt_text())
-check("fallback reply cites the fallback source", "https://example.com/one" in r)
-check("fallback reply carries the fallback note", "fallback web search" in r)
-check("second turn was told the results are fallback", "fallback" in prompt_text().lower())
-check("fallback called bridge web_search once", len(CALLS) == 1 and CALLS[0]["name"] == "web_search")
+check("bridge-first results reach the second turn", "Bridge Glass One" in prompt_text() and "Bridge Glass Two" in prompt_text())
+check("bridge-first reply cites the bridge source", "https://example.com/one" in r)
+check("bridge-first reply carries the bridge note", "bridge web search" in r)
+check("second turn was told the results are bridge results", "bridge web search" in prompt_text().lower())
+check("bridge-first called bridge web_search once", len(CALLS) == 1 and CALLS[0]["name"] == "web_search")
 
-# 2. Gemini ok -> no fallback, no note.
+# 2. Bridge empty -> Gemini runs exactly as before.
 h.gemini_search = gemini_ok
+h._tb.agent_tools = FakeTools(FB_EMPTY)
 CALLS.clear()
 CAPTURED.clear()
 r = h.answer_with_search("mistral", "System prompt", "Find glasses", "prescription glasses display")
-check("gemini success second turn gets the gemini text", "Gemini says" in prompt_text())
-check("gemini success reply cites the gemini source", "https://example.com/gemini" in r)
-check("gemini success reply has no fallback note", "fallback web search" not in r)
-check("gemini success never calls the fallback", len(CALLS) == 0)
+check("bridge-empty second turn gets the gemini text", "Gemini says" in prompt_text())
+check("bridge-empty reply cites the gemini source", "https://example.com/gemini" in r)
+check("bridge-empty reply has no bridge note", "bridge web search" not in r)
+check("bridge-empty still attempted the bridge once", len(CALLS) == 1)
 
-# 3. Gemini 429 + fallback also fails -> graceful failure, no note, no crash.
+# 3. Bridge fails + Gemini fails -> graceful failure, bridge tried once
+# (not retried after the Gemini error), no note, no crash.
 h.gemini_search = gemini_fail
 h._tb.agent_tools = FakeTools(FB_ERR)
+CALLS.clear()
 CAPTURED.clear()
 r = h.answer_with_search("mistral", "System prompt", "Find glasses", "prescription glasses display")
 check("double failure still produces a reply", isinstance(r, str) and r)
 check("double failure second turn sees the search failure", "the search failed" in prompt_text())
-check("double failure reply has no fallback note", "fallback web search" not in r)
+check("double failure reply has no bridge note", "bridge web search" not in r)
+check("double failure tried the bridge once, not again", len(CALLS) == 1)
 
-# 4. Gemini 429 + no bridge layer -> graceful failure, no crash.
+# 4. No bridge layer + Gemini fails -> graceful failure, no crash.
+h.gemini_search = gemini_fail
 h._tb.agent_tools = None
+CALLS.clear()
 CAPTURED.clear()
 r = h.answer_with_search("mistral", "System prompt", "Find glasses", "prescription glasses display")
 check("missing bridge layer still produces a reply", isinstance(r, str) and r)
 check("missing bridge layer second turn sees the search failure", "the search failed" in prompt_text())
-check("missing bridge layer reply has no fallback note", "fallback web search" not in r)
+check("missing bridge layer reply has no bridge note", "bridge web search" not in r)
 
-# 5. Monthly budget exhausted -> neither gemini nor fallback runs.
-def gemini_boom(prompt, timeout=30):
-    raise AssertionError("gemini_search must not run when the budget is used up")
-
+# 5. Monthly budget exhausted -> the bridge is NOT blocked (it does not
+# consume the Gemini budget); only the Gemini leg is gated.
 h.gemini_search = gemini_boom
 h._tb.agent_tools = FakeTools(FB_OK)
 month = datetime.now(h.hub_tz()).strftime("%Y-%m")
@@ -157,8 +174,17 @@ h.store().set_meta("search:used", json.dumps({month: 4000}))
 CALLS.clear()
 CAPTURED.clear()
 r = h.answer_with_search("mistral", "System prompt", "Find glasses", "prescription glasses display")
-check("budget-exhausted second turn sees the used-up note", "used up" in prompt_text())
-check("budget-exhausted never calls the fallback", len(CALLS) == 0)
-check("budget-exhausted reply has no fallback note", "fallback web search" not in r)
+check("budget-exhausted bridge success still answers", "Bridge Glass One" in prompt_text())
+check("budget-exhausted bridge success has no used-up note", "used up" not in prompt_text())
+check("budget-exhausted bridge success carries the bridge note", "bridge web search" in r)
+check("budget-exhausted bridge success called the bridge once", len(CALLS) == 1)
+# 5b. Budget exhausted + bridge empty -> the used-up note, as before.
+h._tb.agent_tools = FakeTools(FB_EMPTY)
+CALLS.clear()
+CAPTURED.clear()
+r = h.answer_with_search("mistral", "System prompt", "Find glasses", "prescription glasses display")
+check("budget-exhausted bridge-empty second turn sees the used-up note", "used up" in prompt_text())
+check("budget-exhausted bridge-empty reply has no bridge note", "bridge web search" not in r)
+check("budget-exhausted bridge-empty still attempted the bridge once", len(CALLS) == 1)
 
 print("ALL PASS")
