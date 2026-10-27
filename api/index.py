@@ -5539,10 +5539,48 @@ def _lenz_pitch():
         facts = (f"New in the feeds ({item['source']}): {item['title']}\n"
                  "In 1-2 sentences, say why it might be worth a look. You only have the title: "
                  "don't invent details.")
+    # Migration #5: primary/fallback selection comes from route(),
+    # executed by llm_chat. agent/entry_point are None: a bare tier
+    # call that must never take the desk path. desk_up/master_up use
+    # the pure _master_under_cap() predicate: the legacy call never
+    # made readiness calls, so no notify/meta side effects.
+    # fallback_off translates the legacy FALLBACK_LLM "off" with zero
+    # production env change. route()'s diag (via="route") is kept
+    # alongside llm_chat's _note line, deliberately. The borrow chain
+    # is NOT migrated: borrow_help still reads the legacy tier,
+    # fallback and desk settings; under defaults it is identical.
+    # Miner subtlety (as in #4): route()'s decision["fallbacks"] is
+    # the whole downstream chain, deduped — so fallbacks[0] is the
+    # tier fallback ONLY when one exists. A suppressed tier fallback
+    # maps to fallback="off", and borrow runs untouched. An anthropic
+    # fallbacks[0] (the desk pair, reachable only when dedup ate the
+    # tier-fallback step) is likewise not a valid llm_chat fallback
+    # leg (PROVIDERS has no anthropic entry — it would raise KeyError,
+    # not LLMError), so it also maps to "off" and borrow tries the
+    # desk model properly via claude_chat (see #85 review fix).
+    # Caller note: _round_lenz catches LLMError only, so a
+    # RouteConfigError escapes to run_round, which catches ValueError
+    # (RouteConfigError's parent) and records a lenz job failure —
+    # loud, not hidden behind a "no pitch" note. That is deliberate:
+    # a malformed ROUTE_* config is an operator error.
+    miner_off = (FALLBACK_LLM.get("miner", (None, "off"))[1] == "off"
+                 or os.environ.get("ROUTE_MINER_FALLBACK_MODEL") == "off")
+    decision = route("miner", agent=None, entry_point=None,
+                     desk_up=DESK_MODEL.lower() != "off" and _master_under_cap(),
+                     master_up=_master_under_cap(),
+                     fallback_off=("miner",) if FALLBACK_LLM.get("miner", (None, "off"))[1] == "off" else ())
+    miner_prim = (decision["primary"]["provider"], decision["primary"]["model"])
+    if miner_off:
+        miner_fb = "off"
+    else:
+        miner_fb = decision["fallbacks"][0]
+        miner_fb = (miner_fb["provider"], miner_fb["model"])
+        if miner_fb[0] == "anthropic":
+            miner_fb = "off"
     pitch = llm_chat("miner", [
         {"role": "system", "content": system_prompt("lenz") + " You're posting in the All "
          "Agents group chat."},
-        {"role": "user", "content": facts}])
+        {"role": "user", "content": facts}], primary=miner_prim, fallback=miner_fb)
     store().add_chat("lenz", f"{pitch.strip()}\n{item['url']}")
     save_card("lenz", item["title"], pitch.strip(), item.get("image"), item["url"])
     _mark_seen("round:lenz:seen", item["url"])
