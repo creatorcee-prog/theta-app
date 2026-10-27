@@ -390,6 +390,149 @@ with clean_env(ANTHROPIC_API_KEY="sk-test"):
     check("classify borrow desk-on: no fallback meta (borrow, not tier fallback)",
           _fb_model() == "")
 
+# E1a. ROUTE_DESK_* set, legacy DESK_MODEL at its default: the route
+# decision resolves the ROUTE desk pair into the chain tail, while the
+# primary stays the miner pair. (desk_up here is passed exactly as
+# classify_mail passes it; the decision itself is side-effect-free.)
+with clean_env(ANTHROPIC_API_KEY="sk-test",
+               ROUTE_DESK_PROVIDER="anthropic", ROUTE_DESK_MODEL="claude-sonnet-5-5"):
+    reset_run()
+    check("desk review: legacy DESK_MODEL is the default Haiku",
+          h.DESK_MODEL == HAIKU)
+    d = h.route("miner", agent=None, entry_point=None,
+                desk_up=h.DESK_MODEL.lower() != "off" and h._master_under_cap(),
+                master_up=h._master_under_cap())
+    check("desk review: ROUTE desk pair sits in the chain tail, primary unchanged",
+          d["primary"] == {"provider": "groq", "model": "openai/gpt-oss-20b"}
+          and [(c["provider"], c["model"]) for c in d["candidates"]] ==
+          [MINER20, MINER120, ("anthropic", "claude-sonnet-5-5"), GEMINIFLASH])
+    check("desk review: route decision adds no notify or cap write",
+          PUSHED == [] and _capped() == "")
+
+# E1b. Same config through classify_mail, primary success: the ROUTE
+# desk pair is never executed (borrow never runs), no Haiku, no notify.
+with clean_env(ANTHROPIC_API_KEY="sk-test",
+               ROUTE_DESK_PROVIDER="anthropic", ROUTE_DESK_MODEL="claude-sonnet-5-5"):
+    reset_run()
+    h._llm_call = scripted({MINER20: ["1|work|yes\n2|shopping|no"], MINER120: []})
+    out = h.classify_mail(_rows())
+    check("desk review: ROUTE desk set, primary success, dict correct",
+          out == {"t1": ("work", True), "t2": ("shopping", False)} and calls == [MINER20])
+    check("desk review: ROUTE desk set, primary success, no Haiku call",
+          CLAUDE_CALLS == [])
+    check("desk review: ROUTE desk set, primary success, no notify, one route diag",
+          PUSHED == [] and _capped() == "" and len(route_diags()) == 1)
+
+# E2. ROUTE_DESK_* set, desk on, primary + tier fallback fail: borrow
+# still uses the LEGACY desk model (Haiku), not the ROUTE desk model,
+# and the order is primary, retry, tier fallback, Haiku, manager fallback.
+with clean_env(ANTHROPIC_API_KEY="sk-test",
+               ROUTE_DESK_PROVIDER="anthropic", ROUTE_DESK_MODEL="claude-sonnet-5-5"):
+    reset_run()
+    h._llm_call = scripted({MINER20: [err("down"), err("down")],
+                            MINER120: [err("down")],
+                            GEMINIFLASH: ["1|work|yes\n2|shopping|no"]})
+    CLAUDE_PLAN.append(err("haiku down"))
+    out = h.classify_mail(_rows())
+    check("desk review: ROUTE desk set, borrow order is legacy Haiku then manager fallback",
+          out == {"t1": ("work", True), "t2": ("shopping", False)}
+          and calls == [MINER20, MINER20, MINER120, GEMINIFLASH])
+    check("desk review: borrow desk candidate is legacy Haiku, not the ROUTE model",
+          CLAUDE_CALLS == [HAIKU])
+    check("desk review: borrow win writes no fallback meta",
+          _fb_model() == "")
+    check("desk review: under cap, no notify",
+          PUSHED == [] and _capped() == "")
+
+# E3. Desk disabled via legacy DESK_MODEL="off", ROUTE_DESK_* still set:
+# the ROUTE desk pair leaves the chain, and borrow skips Haiku entirely.
+_orig_desk = h.DESK_MODEL
+h.DESK_MODEL = "off"
+try:
+    with clean_env(ANTHROPIC_API_KEY="sk-test",
+                   ROUTE_DESK_PROVIDER="anthropic", ROUTE_DESK_MODEL="claude-sonnet-5-5"):
+        reset_run()
+        d = h.route("miner", agent=None, entry_point=None,
+                    desk_up=h.DESK_MODEL.lower() != "off" and h._master_under_cap(),
+                    master_up=h._master_under_cap())
+        check("desk review: legacy desk off, ROUTE desk pair leaves the chain",
+              ("anthropic", "claude-sonnet-5-5") not in
+              [(c["provider"], c["model"]) for c in d["candidates"]])
+        reset_run()
+        h._llm_call = scripted({MINER20: [err("down"), err("down")],
+                                MINER120: [err("down")],
+                                GEMINIFLASH: ["1|work|yes\n2|shopping|no"]})
+        out = h.classify_mail(_rows())
+        check("desk review: legacy desk off, order has no Haiku step",
+              out == {"t1": ("work", True), "t2": ("shopping", False)}
+              and calls == [MINER20, MINER20, MINER120, GEMINIFLASH]
+              and CLAUDE_CALLS == [])
+        check("desk review: legacy desk off, borrow win writes no fallback meta",
+              _fb_model() == "")
+finally:
+    h.DESK_MODEL = _orig_desk
+
+# E4. Over cap + primary success: the route decision itself never
+# triggers the cap notification or the capped write (the pure
+# predicate, not master_ready()). Proves no readiness side effect
+# from #85, with and without ROUTE_DESK_* set.
+for _extra in ({}, {"ROUTE_DESK_PROVIDER": "anthropic", "ROUTE_DESK_MODEL": "claude-sonnet-5-5"}):
+    with clean_env(ANTHROPIC_API_KEY="sk-test", **_extra):
+        reset_run()
+        _set_spend(20.0)
+        h._llm_call = scripted({MINER20: ["1|work|yes\n2|shopping|no"], MINER120: []})
+        out = h.classify_mail(_rows())
+        check("desk review: over cap, primary success, no notify and no cap write",
+              out == {"t1": ("work", True), "t2": ("shopping", False)}
+              and PUSHED == [] and _capped() == "")
+
+# E5. Over cap + full failure: exactly one cap notice, from the LEGACY
+# borrow path (borrow_help -> desk_on() -> master_ready()), which
+# predates #85 and is unchanged by it; the route decision adds none
+# (proven by E4, where borrow never runs). Haiku is skipped over cap.
+with clean_env(ANTHROPIC_API_KEY="sk-test"):
+    reset_run()
+    _set_spend(20.0)
+    h._llm_call = scripted({MINER20: [err("down"), err("down")],
+                            MINER120: [err("down")],
+                            GEMINIFLASH: ["1|work|yes\n2|shopping|no"]})
+    out = h.classify_mail(_rows())
+    check("desk review: over cap, full failure, manager fallback answers, no Haiku",
+          out == {"t1": ("work", True), "t2": ("shopping", False)}
+          and calls == [MINER20, MINER20, MINER120, GEMINIFLASH]
+          and CLAUDE_CALLS == [])
+    check("desk review: over cap, full failure, exactly one legacy cap notice",
+          len(PUSHED) == 1 and PUSHED[0][0] == "Theta" and _capped() == _cap_month())
+
+# E6. Degenerate corner, pinned as accepted: primary == tier-fallback
+# model (dedup) makes fallbacks[0] the desk pair when desk_up. That pair
+# cannot run as an llm_chat fallback leg (PROVIDERS has no anthropic
+# entry — it would raise KeyError, not LLMError), so it maps to
+# fallback="off" and borrow tries Haiku properly via claude_chat.
+# Desk off: fallbacks[0] is the manager primary and runs as the leg.
+with clean_env(ANTHROPIC_API_KEY="sk-test", ROUTE_MINER_FALLBACK_MODEL="openai/gpt-oss-20b"):
+    reset_run()
+    h._llm_call = scripted({MINER20: [err("down"), err("down")]})
+    CLAUDE_PLAN.append("1|work|yes\n2|shopping|no")
+    out = h.classify_mail(_rows())
+    check("desk review: primary==fallback, desk pair skipped as leg, borrow Haiku answers",
+          out == {"t1": ("work", True), "t2": ("shopping", False)}
+          and calls == [MINER20, MINER20] and CLAUDE_CALLS == [HAIKU]
+          and _fb_model() == "")
+h.DESK_MODEL = "off"
+try:
+    with clean_env(ANTHROPIC_API_KEY="sk-test", ROUTE_MINER_FALLBACK_MODEL="openai/gpt-oss-20b"):
+        reset_run()
+        h._llm_call = scripted({MINER20: [err("down"), err("down")],
+                                MINER120: ["1|work|yes\n2|shopping|no"]})
+        out = h.classify_mail(_rows())
+        check("desk review: primary==fallback, desk off, fallback leg runs manager primary",
+              out == {"t1": ("work", True), "t2": ("shopping", False)}
+              and calls == [MINER20, MINER20, MINER120]
+              and _fb_model() == MINER120[1])
+finally:
+    h.DESK_MODEL = _orig_desk
+
 h.FALLBACK_LLM.clear()
 h.FALLBACK_LLM.update(_orig_fb)
 h._diag = _orig_diag
