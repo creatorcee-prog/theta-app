@@ -109,6 +109,11 @@ def _clean_results(items, num, title_key, url_key, snippet_keys):
     return out[:num]
 
 
+# A page is read up to this many bytes; the rest is never downloaded, so
+# a huge or endless response can't stall a request or fill memory.
+FETCH_MAX_BYTES = 2_000_000
+
+
 def _host_is_public(host: str) -> bool:
     """True only if every resolved address is a public unicast IP.
 
@@ -205,7 +210,7 @@ def tool_fetch_page(url: str, max_chars: int = 6000) -> dict[str, str]:
         )
         opener = urllib.request.build_opener(_SafeRedirectHandler)
         with opener.open(req, timeout=12) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
+            raw = resp.read(FETCH_MAX_BYTES).decode("utf-8", errors="replace")
             final_url = resp.geturl()
     except Exception as e:
         if "Blocked redirect" in str(e):

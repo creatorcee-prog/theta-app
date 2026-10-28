@@ -69,9 +69,14 @@ check("ORDER: reply issues a commandeer order from Theta", any(o["issued_by"] ==
 check("order shows as an event", any(m["text"].startswith("Theta issued order #") for m in h.allchat_view() if m.get("kind") == "event"))
 check("decided once", "decided" not in h.run_round(force=True)["ran"]["theta"]["did"])
 real_dt = h.datetime
+def sunday_shift(d):
+    """Days to a Sunday that isn't today and is in today's month, so
+    month totals still hold (from Oct 26 the next Sunday is November)."""
+    ahead = (6 - d.weekday()) % 7 or 7
+    return ahead if (d + timedelta(days=ahead)).month == d.month else -((d.weekday() + 1) % 7 or 7)
 class Sunday(real_dt):
     @classmethod
-    def now(cls, tz=None): return real_dt.now(tz) + timedelta(days=(6 - real_dt.now(tz).weekday()) % 7)
+    def now(cls, tz=None): return real_dt.now(tz) + timedelta(days=sunday_shift(real_dt.now(tz)))
 h.datetime = Sunday
 r1 = h.run_round(force=True)["ran"]["theta"]
 facts_prompt = [c for c in CALLS if "this week's review" in c["messages"][-1]["content"]][-1]["messages"][-1]["content"]

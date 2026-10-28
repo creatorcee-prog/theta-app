@@ -56,7 +56,7 @@ class Resp:
     def __exit__(self, *a):
         return False
 
-    def read(self):
+    def read(self, n=-1):
         return self._body
 
 

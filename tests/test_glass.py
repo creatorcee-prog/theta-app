@@ -114,9 +114,14 @@ call("POST", "/api/glass/expense", headers=K, body={"amount": 5, "category": "Ga
 h.run_round(force=True)
 check("100% alert once", [m["text"] for m in call("GET", "/api/allchat", "key=dk")[1]["messages"] if m["name"] == "Glass"][-1] == "Gas is over budget: $153.10 of $150.")
 real_dt = h.datetime
+def sunday_shift(d):
+    """Days to a Sunday that isn't today and is in today's month, so
+    month totals still hold (from Oct 26 the next Sunday is November)."""
+    ahead = (6 - d.weekday()) % 7 or 7
+    return ahead if (d + timedelta(days=ahead)).month == d.month else -((d.weekday() + 1) % 7 or 7)
 class Sunday(real_dt):
     @classmethod
-    def now(cls, tz=None): return real_dt.now(tz) + timedelta(days=(6 - real_dt.now(tz).weekday()) % 7)
+    def now(cls, tz=None): return real_dt.now(tz) + timedelta(days=sunday_shift(real_dt.now(tz)))
 h.datetime = Sunday
 r = h.run_round(force=True)["ran"]["glass"]
 h.datetime = real_dt
