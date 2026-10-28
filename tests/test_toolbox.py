@@ -40,6 +40,7 @@ check("redirects to private hosts are refused", blocked)
 
 # --- fetch parses a page through the guarded opener (no live network) ---
 real_build = urllib.request.build_opener
+READS = []
 
 
 class FakeResp:
@@ -49,7 +50,8 @@ class FakeResp:
     def __exit__(self, *a):
         return False
 
-    def read(self):
+    def read(self, n=-1):
+        READS.append(n)
         return b"<html><head><title>Hi</title></head><body><p>Hello world</p></body></html>"
 
     def geturl(self):
@@ -74,6 +76,7 @@ finally:
     urllib.request.build_opener = real_build
 check("fetch parses a page through the guarded opener",
       r["title"] == "Hi" and "Hello world" in r["text"] and r["url"] == "http://8.8.8.8/")
+check("fetch reads at most FETCH_MAX_BYTES, never the whole body", READS == [tools.FETCH_MAX_BYTES])
 
 # --- envelope + task ledger (a plain store object uses the in-memory fallback) ---
 class FakeStore:

@@ -97,9 +97,14 @@ check("routed + 'graph' -> activity chart", "image" in d["messages"][-1] and "Me
 for i in range(h.CHART_KEEP + 3): h.save_chart("<svg/>")
 check("only the newest charts kept", len(json.loads(h.store().get_meta("charts"))) == h.CHART_KEEP)
 real_dt = h.datetime
+def sunday_shift(d):
+    """Days to a Sunday that isn't today and is in today's month, so
+    month totals still hold (from Oct 26 the next Sunday is November)."""
+    ahead = (6 - d.weekday()) % 7 or 7
+    return ahead if (d + timedelta(days=ahead)).month == d.month else -((d.weekday() + 1) % 7 or 7)
 class Sunday(real_dt):
     @classmethod
-    def now(cls, tz=None): return real_dt.now(tz) + timedelta(days=(6 - real_dt.now(tz).weekday()) % 7)
+    def now(cls, tz=None): return real_dt.now(tz) + timedelta(days=sunday_shift(real_dt.now(tz)))
 h.datetime = Sunday
 r1 = h.run_round(force=True)["ran"]["charter"]; r2 = h.run_round(force=True)["ran"]["charter"]
 h.datetime = real_dt

@@ -399,5 +399,5 @@ h.CHAT_MODE = "desk"
 check("QWERTY can switch modes on approval", "CHAT_MODE" in h.SETTABLE)
 js = call("GET", "/chat.js")[1].decode()
 check("chat shows every agent as Theta with a tag naming the real sender", "asTheta" in js and 'via.className = "via"' in js
-      and 'avatar(asTheta ? "theta" : m.from' in js)
+      and 'name.textContent = asTheta ? th.name' in js)
 print("ALL PASS")
