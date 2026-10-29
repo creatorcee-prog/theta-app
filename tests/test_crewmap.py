@@ -231,7 +231,7 @@ check("other agents can't propose", "not a tool I have" in h.run_actions("lenz",
 m_ = h.store().add_chat("qwerty", r["text"], buttons=r["buttons"])
 DONE = []
 REAL_VSE = h.vercel_set_env
-h.vercel_set_env = lambda k, v: DONE.append((k, v))
+h.vercel_set_env = lambda k, v, more=None: DONE.append((k, v))
 h.vercel_redeploy = lambda: True
 s_, d_, _ = call("POST", "/api/chat/press", headers=K, body={"msg": m_["id"], "id": f"qp:{pid}:yes"})
 last = d_["messages"][-1]["text"]

@@ -1243,7 +1243,11 @@ def agent_model(agent_id):
     """What answers for an agent: its tier's model, or the app it lives in."""
     a = AGENTS[agent_id]
     if (agent_id == DESK or (a["tier"] == "manager" and not a.get("home"))) and desk_on():
-        return f"{DESK_MODEL} (Anthropic); {MODELS[a['tier']]} as backup"
+        try:
+            desk = _route_primary("desk")[1] if agent_id == DESK else DESK_MODEL  # Mistral follows route()
+        except RouteConfigError:
+            desk = DESK_MODEL
+        return f"{desk} (Anthropic); {MODELS[a['tier']]} as backup"
     return f"{a['home']}'s coach model" if a.get("home") else MODELS[a["tier"]]
 
 
@@ -1592,11 +1596,39 @@ def _tool_project(arg, agent):
 SETTABLE = {"LENZ_YOUTUBE", "LENZ_SUBREDDITS", "LENZ_TWITCH", "LENZ_FEEDS_MINUTES", "GLASS_HOLDINGS", "GLASS_WATCHLIST",
             "GLASS_BUDGETS", "GLASS_MOVE_ALERT", "GLASS_BENCHMARK", "BIRTHDAYS", "DIGEST_TIME", "DAILY_NUDGE_TIME",
             "HUB_TIMEZONE", "HOME_LOCATION", "GMAIL_IMPORTANT", "GMAIL_ARCHIVE", "MASTER_MONTHLY_CAP_USD",
-            "VISION_MODEL", "LOW_BRAIN_MODEL", "DESK_MODEL", "ROUND_POSTS", "WIDGET_CACHE_SECONDS", "NEWS_FEEDS", "ENTERTAINMENT_FEEDS", "CHAT_MODE"}
+            "VISION_MODEL", "ROUTE_LOW_BRAIN_MODEL", "ROUTE_DESK_MODEL", "DESK_MODEL", "ROUND_POSTS", "WIDGET_CACHE_SECONDS", "NEWS_FEEDS", "ENTERTAINMENT_FEEDS", "CHAT_MODE"}
 VERCEL_TOKEN = os.environ.get("VERCEL_TOKEN", "")
 VERCEL_PROJECT = os.environ.get("VERCEL_PROJECT", "")
 VERCEL_TEAM_ID = os.environ.get("VERCEL_TEAM_ID", "")
 VERCEL_DEPLOY_HOOK = os.environ.get("VERCEL_DEPLOY_HOOK", "")
+
+
+# Model settings QWERTY can propose: route()'s (migration #6 moved Mistral
+# onto it), set as a complete provider + model pair in one Vercel call so a
+# half pair (which route() refuses) can't happen. The legacy var is set to
+# match when it has the same provider, so unmigrated paths agree.
+# DESK_MODEL stays settable only as the desk's on/off switch.
+ROUTE_SETTABLE = {"ROUTE_DESK_MODEL": ("desk", "DESK_MODEL"), "ROUTE_LOW_BRAIN_MODEL": ("low_brain", "LOW_BRAIN_MODEL")}
+_LEGACY_PROVIDER = {"desk": "anthropic", "low_brain": "gemini"}
+
+
+def _model_proposal(key, val):
+    """{key: value} to set for a model proposal, or ValueError saying why not."""
+    role, legacy = ROUTE_SETTABLE[key]
+    if role == "desk":
+        if val not in CLAUDE_PRICES:
+            raise ValueError(f"Mistral's desk model must be a Claude model the hub can price: {', '.join(CLAUDE_PRICES)}")
+        provider = "anthropic"
+    else:
+        provider = "gemini" if val.startswith("gemini") else "groq"
+        found = list_models(provider)
+        if "models" in found and val not in found["models"]:
+            raise ValueError(f"{val} isn't a model your {provider} key can use (see /api/models)")
+    pvar, mvar = ROUTE_CONFIG_VARS[role]
+    out = {pvar: provider, mvar: val}
+    if provider == _LEGACY_PROVIDER[role]:
+        out[legacy] = val
+    return out
 
 
 def proposals():
@@ -1609,7 +1641,11 @@ def _tool_propose(arg, agent):
     if m:
         key, op, val = m.group(1), m.group(2), " ".join(m.group(3).split()).strip(" '\"`")
         if key not in SETTABLE:
-            raise ValueError(f"{key} isn't one I can change; keys, tokens and private links stay with you in Vercel")
+            raise ValueError(f"{key} isn't one I can change; keys, tokens and private links stay with you in Vercel"
+                             + ("; to change a model, propose ROUTE_DESK_MODEL or ROUTE_LOW_BRAIN_MODEL"
+                                if key in ("LOW_BRAIN_MODEL", "MANAGER_MODEL", "MINER_MODEL") else ""))
+        if op == "+=" and (key in ROUTE_SETTABLE or key == "DESK_MODEL"):
+            raise ValueError(f"{key} takes one value, not +=")
         if op == "+=":
             val = ",".join(x for x in (os.environ.get(key, "").strip(), val) if x)
         if not val or len(val) > 2000:
@@ -1617,6 +1653,14 @@ def _tool_propose(arg, agent):
         if redact_secrets(val)[1]:
             raise ValueError("that looks like a secret; add secrets in Vercel yourself")
         prop = {"kind": "setting", "key": key, "value": val, "summary": f"Set {key} to: {val}"}
+        if key == "DESK_MODEL":
+            desk = _route_primary("desk")[1]
+            if val not in ("off", desk):
+                raise ValueError(f"DESK_MODEL only turns the desk off (off) or back on ({desk}); "
+                                 "to change Mistral's model, propose ROUTE_DESK_MODEL")
+        if key in ROUTE_SETTABLE:
+            sets = _model_proposal(key, val)
+            prop.update(sets=sets, summary="Set " + ", ".join(f"{k}={v}" for k, v in sets.items()))
     else:
         im = re.match(r"^issue\s+(.+)$", arg, re.I | re.S)
         if not im:
@@ -1633,14 +1677,17 @@ def _tool_propose(arg, agent):
             [{"id": f"qp:{pid}:yes", "label": "Approve", "style": "primary"}, {"id": f"qp:{pid}:no", "label": "Decline"}])
 
 
-def vercel_set_env(key, value):
+def vercel_set_env(key, value, more=None):
+    """Set key (and every pair in `more`) in one Vercel call, so related
+    settings land together or not at all."""
     if not (VERCEL_TOKEN and VERCEL_PROJECT):
         raise LLMError("I can't change settings yet: add VERCEL_TOKEN and VERCEL_PROJECT in Vercel (see TODO)")
     from urllib.parse import quote
     url = (f"https://api.vercel.com/v10/projects/{quote(VERCEL_PROJECT, safe='')}/env?upsert=true"
            + (f"&teamId={quote(VERCEL_TEAM_ID)}" if VERCEL_TEAM_ID else ""))
-    req = urllib.request.Request(url, method="POST", data=json.dumps(
-        {"key": key, "value": value, "type": "encrypted", "target": ["production"]}).encode(),
+    pairs = {key: value, **(more or {})}
+    body = [{"key": k, "value": v, "type": "encrypted", "target": ["production"]} for k, v in pairs.items()]
+    req = urllib.request.Request(url, method="POST", data=json.dumps(body[0] if len(body) == 1 else body).encode(),
         headers={"Authorization": f"Bearer {VERCEL_TOKEN}", "Content-Type": "application/json", "User-Agent": "Theta-hub"})
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
@@ -1677,9 +1724,10 @@ def apply_proposal(pid, yes):
         return f"Declined, nothing changed: {p['summary']}"
     try:
         if p["kind"] == "setting":
-            vercel_set_env(p["key"], p["value"])
-            post_event("qwerty", f"QWERTY set {p['key']} (you approved)")
-            return (f"✓ Set {p['key']}. " + ("Redeploying now; it takes effect in about a minute." if vercel_redeploy()
+            vercel_set_env(p["key"], p["value"], {k: v for k, v in p.get("sets", {}).items() if k != p["key"]})
+            names = ", ".join(p.get("sets") or [p["key"]])
+            post_event("qwerty", f"QWERTY set {names} (you approved)")
+            return (f"✓ Set {names}. " + ("Redeploying now; it takes effect in about a minute." if vercel_redeploy()
                                             else "Redeploy in Vercel for it to take effect (or add VERCEL_DEPLOY_HOOK so I can)."))
         url, _ = file_issue(p["title"], p.get("details", ""))
         return f"✓ Filed the issue: {url}" if url else "✗ I wrote the issue but couldn't file it: GITHUB_TOKEN isn't set."
