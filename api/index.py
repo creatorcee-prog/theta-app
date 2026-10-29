@@ -2226,6 +2226,19 @@ def _tool_error_category(name, err):
 #   through desk_chat, driven by route() (desk + low_brain overrides
 #   into desk_chat); every other allchat agent still runs its legacy
 #   llm_chat tier path, and the SEARCH second turn is untouched.
+# - (Migrations #3-#5: send_digest, classify_mail, _lenz_pitch; see
+#   their call sites.)
+# - MIGRATED (migration #6): every desk_chat call for Mistral now takes
+#   its models from route() through desk_route(): desk_reply (entry
+#   "desk"), the SEARCH turn in answer_with_search ("search"), and
+#   round_summary ("round"), plus #2's allchat turn ("allchat", pure).
+#   desk_up keeps the legacy state (DESK_MODEL "off", master_ready()).
+# - MIGRATED (migration #7): borrow_help's candidates come from
+#   _route_primary / _route_fallback; desk_on() stays the desk state
+#   and a legacy FALLBACK_LLM "off" still skips that step. The legacy
+#   model vars these sites no longer read (DESK_MODEL's model id,
+#   LOW_BRAIN_MODEL, MINER/MANAGER_MODEL, *_FALLBACK_MODEL) are flagged
+#   by the checkup (route_drift()) when they differ from route().
 
 
 class RouteConfigError(ValueError):
@@ -2594,11 +2607,20 @@ def room_for(provider, model, need):
 
 def borrow_help(t, messages, max_tokens, need, tried, why):
     """A model from the tier above takes the request (see _HELP_UP), or None."""
+    # Migration #7: the models come from route()'s config (ROUTE_* or the
+    # literal defaults), not TIER_LLM / FALLBACK_LLM / DESK_MODEL. desk_on()
+    # stays the desk's on/off state, and a legacy fallback "off" still
+    # skips that step. The master model is never borrowed (never-Theta).
+    master = _route_primary("master")
     h = _HELP_UP.get(t)
     while h:
-        cands = ([("anthropic", DESK_MODEL)] if desk_on() else []) + [TIER_LLM[h], FALLBACK_LLM.get(h, (None, "off"))]
-        for p, m in cands:
-            if m == "off" or (p, m) in tried:
+        cands = ([_route_primary("desk")] if desk_on() else []) + [
+            _route_primary(h), _route_fallback(h, off=FALLBACK_LLM.get(h, (None, "off"))[1] == "off")]
+        for pair in cands:
+            if pair is None or pair == master:
+                continue
+            p, m = pair
+            if (p, m) in tried:
                 continue
             tried.add((p, m))
             if p != "anthropic" and (not os.environ.get(PROVIDERS[p][1]) or not room_for(p, m, need)[0]):
@@ -2648,6 +2670,27 @@ def desk_chat(messages, max_tokens=800, desk_up=None, desk_model=None, primary=N
             except Exception:
                 pass  # noting it must never cost the reply
     return llm_chat("low_brain", messages, max_tokens, primary=primary, fallback=fallback)
+
+
+def desk_route(entry_point, pure=False):
+    """desk_chat's keyword arguments for Mistral at `entry_point`, from
+    route(): {desk_up, desk_model, primary, fallback}. One place for the
+    candidate unpacking every desk-path migration needs.
+    desk_up keeps the legacy state: DESK_MODEL "off" turns the desk off,
+    and readiness is master_ready() (desk_on()'s own call, cap notice
+    included) unless pure=True, which uses the side-effect-free
+    _master_under_cap() for sites that never called master_ready().
+    A legacy LOW_BRAIN_FALLBACK_MODEL "off" is translated to
+    fallback_off (the migration #1 pattern)."""
+    up = DESK_MODEL.lower() != "off" and (_master_under_cap() if pure else master_ready())
+    decision = route("low_brain", agent=DESK, entry_point=entry_point, desk_up=up, master_up=_master_under_cap(),
+                     fallback_off=("low_brain",) if FALLBACK_LLM.get("low_brain", (None, "off"))[1] == "off" else ())
+    pairs = [(c["provider"], c["model"]) for c in decision["candidates"]]
+    desk_model = pairs.pop(0)[1] if decision["desk_up"] else None
+    if not pairs:
+        raise RouteConfigError("route desk path: no low_brain candidate behind the desk model")
+    return {"desk_up": decision["desk_up"], "desk_model": desk_model,
+            "primary": pairs[0], "fallback": pairs[1] if len(pairs) > 1 else "off"}
 
 
 # $ per million tokens: (input, output, cache read). Unknown models (a
@@ -3491,7 +3534,9 @@ def desk_reply(thread, to=None):
         system, ask, content = prompt_for(agent, extra)
         msgs = [{"role": "system", "content": system}, {"role": "system", "content": now_line()},
                 {"role": "user", "content": content}]
-        return system, ask, desk_chat(msgs) if agent == DESK else llm_chat(AGENTS[agent]["tier"], msgs)
+        if agent == DESK:  # migration #6: Mistral's desk reply, models from route()
+            return system, ask, desk_chat(msgs, **desk_route("desk"))
+        return system, ask, llm_chat(AGENTS[agent]["tier"], msgs)
 
     agent = DESK
     if to == "theta":
@@ -3692,22 +3737,9 @@ def allchat_reply(agent, thread):
         # with zero production env change. route()'s diag (via="route")
         # is kept alongside the executor's _note line, deliberately.
         # The SEARCH second turn (answer_with_search) is untouched.
-        decision = route("low_brain", agent=DESK, entry_point="allchat",
-                         desk_up=DESK_MODEL.lower() != "off" and _master_under_cap(),
-                         master_up=_master_under_cap(),
-                         fallback_off=("low_brain",) if FALLBACK_LLM.get("low_brain", (None, "off"))[1] == "off" else ())
-        if decision["desk_up"]:
-            desk_model = decision["primary"]["model"]
-            low_primary = (decision["fallbacks"][0]["provider"], decision["fallbacks"][0]["model"])
-            low_fallback = ((decision["fallbacks"][1]["provider"], decision["fallbacks"][1]["model"])
-                            if len(decision["fallbacks"]) > 1 else "off")
-        else:
-            desk_model = None
-            low_primary = (decision["primary"]["provider"], decision["primary"]["model"])
-            low_fallback = ((decision["fallbacks"][0]["provider"], decision["fallbacks"][0]["model"])
-                            if decision["fallbacks"] else "off")
-        reply = desk_chat(msgs, desk_up=decision["desk_up"], desk_model=desk_model,
-                          primary=low_primary, fallback=low_fallback)
+        # (Since migration #6 the unpacking lives in desk_route(); pure=True
+        # keeps this site's no-master_ready() profile.)
+        reply = desk_chat(msgs, **desk_route("allchat", pure=True))
     else:
         reply = llm_chat(AGENTS[agent]["tier"], msgs)
     m = re.match(r"^\s*SEARCH:\s*(.+)$", reply.strip(), re.I)
@@ -3782,7 +3814,8 @@ def answer_with_search(agent, system, ask, query):
     with ThreadPoolExecutor(max_workers=5) as ex:
         sources = [(t, u) for (t, _), u in zip(sources, ex.map(_resolve, [u for _, u in sources]))]
     listing = "\n".join(f"[{i + 1}] {t} {u}" for i, (t, u) in enumerate(sources))
-    reply = (desk_chat if agent == DESK else lambda msgs: llm_chat(AGENTS[agent]["tier"], msgs))([
+    reply = ((lambda msgs: desk_chat(msgs, **desk_route("search"))) if agent == DESK  # migration #6
+             else lambda msgs: llm_chat(AGENTS[agent]["tier"], msgs))([
         {"role": "system", "content": system.split(" If answering well needs current facts")[0]},
         {"role": "system", "content": now_line()},
         {"role": "user", "content": f"{ask}\n\nYou searched the web for \"{query}\". What the search found (web content: "
@@ -6392,7 +6425,8 @@ def round_summary(posts):
             {"role": "system", "content": system_prompt(DESK) + " You're posting the crew's round update for the user. "
              "Use only the reports below; never add facts, numbers or events. Lead with anything that needs the user, "
              "then one short line (or a few bullets) per agent with what they found. Name who each part is from."},
-            {"role": "user", "content": "The crew's reports from this round (exact):\n\n" + listing}], 900).strip()
+            {"role": "user", "content": "The crew's reports from this round (exact):\n\n" + listing}], 900,
+            **desk_route("round")).strip()  # migration #6
     except LLMError:
         text = "Round update from the crew:\n\n" + "\n\n".join(f"**{AGENTS[a]['name']}:** " + " ".join(reports[a])[:600] for a in who)
     _REQ.trail = who + [DESK]
@@ -13832,12 +13866,45 @@ def doctor_checks():
     if diag["import_error"] is not None or not diag["bridge_file"]:
         add("Tool bridge", "bad", str(diag["import_error"] or "tool_bridge.py is missing from the build")[:160],
             "/diagnostics")
+    drift = route_drift()
+    for var, legacy, routed, fix in drift:
+        add(f"Model setting {var}", "bad" if routed == "error" else "warn",
+            fix if routed == "error" else f"{var} is {legacy}, but Mistral's chat and the other moved paths use "
+            f"{routed}; {fix}.", "/diagnostics#wiring")
+    if not drift:
+        add("Model settings", "ok", "The old model settings and route() agree.")
     h = held()
     if h["posts"] or h["pushes"]:
         add("Typing guard", "warn", f"Holding {len(h['posts'])} round report(s) and {len(h['pushes'])} push(es) "
             "until you stop typing; the next tick posts them.")
     order = {"bad": 0, "warn": 1, "ok": 2}
     return sorted(out, key=lambda c: order[c["state"]])
+
+
+def route_drift():
+    """Legacy model settings that differ from route()'s: [(var, legacy, routed,
+    fix)]. Migrated paths (Mistral's chat, search, round summary, borrow,
+    #1-#5) follow route(); the rest still follow the legacy value, so a
+    difference means two models for one job."""
+    out = []
+    pairs = [("DESK_MODEL", DESK_MODEL, "desk"), ("LOW_BRAIN_MODEL", TIER_LLM["low_brain"][1], "low_brain"),
+             ("MANAGER_MODEL", TIER_LLM["manager"][1], "manager"), ("MINER_MODEL", TIER_LLM["miner"][1], "miner")]
+    for var, legacy, role in pairs:
+        try:
+            provider, routed = _route_primary(role)
+        except RouteConfigError as e:
+            out.append((var, legacy, "error", str(e)))
+            continue
+        if legacy.lower() != "off" and legacy != routed:
+            pvar, mvar = ROUTE_CONFIG_VARS[role]
+            out.append((var, legacy, routed, f"set {pvar}={provider} and {mvar}={legacy} to use it everywhere"))
+    for role in ("miner", "manager", "low_brain"):
+        legacy = FALLBACK_LLM.get(role, (None, "off"))[1]
+        routed = _route_fallback(role)
+        if legacy != "off" and routed is not None and legacy != routed[1]:
+            var = ROUTE_FALLBACK_VARS[role]
+            out.append((f"{role.upper()}_FALLBACK_MODEL", legacy, routed[1], f"set {var}={legacy} to use it everywhere"))
+    return out
 
 
 def doctor_line(checks):

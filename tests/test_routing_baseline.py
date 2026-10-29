@@ -312,7 +312,7 @@ check("at most 3 actions run per reply",
 prompts = []
 
 
-def canned_second(msgs):
+def canned_second(msgs, *a, **kw):  # desk_chat now also gets route() keywords
     prompts.append(msgs)
     return "Answer [1]."
 
