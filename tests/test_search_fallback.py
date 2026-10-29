@@ -76,7 +76,7 @@ def check(name, cond):
 CAPTURED, CALLS = [], []
 
 
-def canned_second(msgs):
+def canned_second(msgs, *a, **kw):  # desk_chat now also gets route() keywords
     CAPTURED.append(msgs)
     return "Answer from search [1]."
 
