@@ -1432,6 +1432,7 @@ def james_summary(now=None):
 # or ✗ why not), so a reply can't claim more than happened. Shared memory
 # (facts you ask the crew to remember) and notes are kept here too.
 MEMORY_MAX, NOTES_MAX = 60, 100
+SEAT_NOTES_MAX = 12  # each agent's own notes; the oldest drops off
 _TOOL_LOCK = threading.Lock()
 _ACTION_RE = re.compile(r"^\s*\**ACTION\**\s*:\s*([a-z_]+)\s*\|\s*(.+?)\s*$", re.I | re.M)
 _PROMISE_RE = re.compile(r"\b(?:i(?:'ll| will| can| could)|let me)\s+(?:\w+\s+){0,2}?(?:push|deploy|commit|write|draft|"
@@ -1450,6 +1451,19 @@ def memory():
 
 def notes():
     return _meta_json("notes", [])
+
+
+def seat_notes(agent):
+    """An agent's own working notes (lessons, how you like things done),
+    kept across chats and model changes and read back into its prompt.
+    Unlike memory, only that agent sees them."""
+    return _meta_json(f"seat:{agent}", [])
+
+
+def seat_prompt(agent):
+    mine = seat_notes(agent)
+    return ("\n\nYour own notes from past chats (you wrote these; follow them unless the user says otherwise):\n"
+            + "\n".join(f"- {n['text']}" for n in mine)) if mine else ""
 
 
 def home_location():
@@ -1474,22 +1488,38 @@ def _tool_remember(arg, agent):
     return f"Remembered for the whole crew: {text} (a saved note, not monitoring)"
 
 
+def _tool_self_note(arg, agent):
+    text = " ".join(arg.split())[:200]
+    if not text:
+        raise ValueError("nothing to note")
+    with _TOOL_LOCK:
+        mine = [n for n in seat_notes(agent) if n["text"].lower() != text.lower()]
+        mine.append({"id": f"s{int(time.time() * 1000) % 10**10}", "text": text, "by": agent, "at": time.time()})
+        store().set_meta(f"seat:{agent}", json.dumps(mine[-SEAT_NOTES_MAX:]))
+    return f"Noted for myself: {text} (Settings → Memory and notes)"
+
+
 def _tool_forget(arg, agent):
-    """Drop remembered facts, and notes whose title has these words."""
+    """Drop remembered facts, notes whose title has these words, and the
+    agent's own notes that have them."""
     words = arg.lower().split()
     if not words:
         raise ValueError("forget what?")
     with _TOOL_LOCK:
-        mem, ns = memory(), notes()
+        mem, ns, mine = memory(), notes(), seat_notes(agent)
         keep = [m for m in mem if not all(w in m["text"].lower() for w in words)]
         keep_n = [n for n in ns if not all(w in n["title"].lower() for w in words)]
+        keep_s = [n for n in mine if not all(w in n["text"].lower() for w in words)]
         store().set_meta("memory", json.dumps(keep))
         store().set_meta("notes", json.dumps(keep_n))
-    facts, gone_n = len(mem) - len(keep), len(ns) - len(keep_n)
-    if not facts and not gone_n:
+        if len(keep_s) != len(mine):
+            store().set_meta(f"seat:{agent}", json.dumps(keep_s))
+    facts, gone_n, gone_s = len(mem) - len(keep), len(ns) - len(keep_n), len(mine) - len(keep_s)
+    if not facts and not gone_n and not gone_s:
         raise ValueError(f"nothing remembered and no note matches “{arg}”")
     bits = ([f"{facts} remembered fact{'s' if facts != 1 else ''}"] if facts else []) + \
-           ([f"{gone_n} note{'s' if gone_n != 1 else ''}"] if gone_n else [])
+           ([f"{gone_n} note{'s' if gone_n != 1 else ''}"] if gone_n else []) + \
+           ([f"{gone_s} of my own note{'s' if gone_s != 1 else ''}"] if gone_s else [])
     return "Forgot " + " and ".join(bits)
 
 
@@ -1722,6 +1752,8 @@ TOOLS = {
     "remind": ("remind | <when and what, like 6pm call Mom, or 1/22/2027 oil change>", _tool_remind, None),
     "check": ("check | <a daily habit for Today's check>", _tool_check, None),
     "note": ("note | <title> :: <text>   (save a note, list or snippet)", _tool_note, None),
+    "self_note": ("self_note | <a lesson or working note for yourself, like: the user wants totals rounded to the dollar> "
+                  "(only you see it, in every later chat)", _tool_self_note, None),
     "spend": ("spend | $42 groceries", _tool_spend, None),
     "watched": ("watched | <title>, <rating 1-10>   (log something finished)", _tool_watched, None),
     "project": ("project | <what to find>   (the whole crew searches the web)", _tool_project, {"theta", "mistral"}),
@@ -1749,8 +1781,11 @@ HUB_GUIDE = (
     "- Calendar (/calendar): the family calendar (read-only, from REMI_CALENDAR_URLS) and Reminders.\n"
     "- Money (/money): Budgets, Recent spending, Charter's charts, Import from Rocket Money, Stocks.\n"
     "- Settings (/settings): Color scheme (light/dark, Glass shine, Home layout), Phone notifications (Turn on, "
-    "Send a test), Sign in with Face ID, Devices, Gmail, Memory and notes, Voice commands "
+    "Send a test), Sign in with Face ID, Devices, Gmail, Memory and notes (with each agent's own notes), Voice commands "
     "(Siri), Speed, Rounds, Standing orders.\n"
+    "- Diagnostics (/diagnostics): Checkup (one button that checks storage, the tick, rounds, every model, search "
+    "and the tool bridge; /checkup posts it in #dev-and-security), the crew, scheduled work, failures, Models & "
+    "providers, Security and health.\n"
     "- Lenz's page (/lenz): the library (watched, playing, reading, ratings) and the Release calendar. "
     "Email (/mail): Remi's sorted inbox and drafted replies. Each agent has a page at /agent/<name>.\n"
     "- Settings that change how the hub works are environment variables in Vercel (Project → Settings → "
@@ -1938,7 +1973,7 @@ def system_prompt(agent_id, tools=False, now=True):
             "Never describe a control the chat cannot show: it cannot show line charts or architecture diagrams, "
             "and buttons in chat exist only on cards and server-issued messages (QWERTY proposals, James commands) "
             "— agents never emit buttons. Images only with ![alt](https link) for a link you were given)."
-            f"{extra}{now_line() if now else ''}{memory_prompt()}"
+            f"{extra}{now_line() if now else ''}{memory_prompt()}{seat_prompt(agent_id)}"
             f"{chr(10) * 2 + HUB_GUIDE + hub_rules(agent_id) + tools_prompt(agent_id) if tools and not a.get('home') else ''}")
 
 
@@ -4334,6 +4369,10 @@ def run_tick(now=None):
             _save_reminders(keep)
     for what in fired:
         post_event("remi", f"Remi reminded you: {what}")
+    try:
+        release_held()  # what the typing guard held, now that you've stopped
+    except Exception as e:
+        print(f"releasing held posts failed: {e!r}")
     digest = False
     local = datetime.fromtimestamp(now, hub_tz())
     try:
@@ -4808,10 +4847,21 @@ def _push_name(sub):
     return f"{sub.get('device') or svc}" + (f", added {_when(sub['made'])}" if sub.get("made") else ", added before devices were tracked")
 
 
+def _urgent(title, body, url):
+    """Pushes the typing guard never holds: reminders, QWERTY's security
+    and device alerts, health problems, and Settings' test push."""
+    return (url == REMINDER_URL or title == "QWERTY" or url.startswith("/diagnostics")
+            or body.startswith("Test: phone notifications"))
+
+
 def notify(title, body, url="/"):
     """Push to every subscribed device; returns how many got it. Quietly
     does nothing until keys and a subscription exist. Dead subscriptions
-    (404/410) are dropped."""
+    (404/410) are dropped. While you're typing, a non-urgent push is held
+    (see TYPING_GUARD_SECONDS) and goes out with the next release."""
+    if not _urgent(title, body, url) and user_typing():
+        _hold(push={"title": title, "body": body[:240], "url": url})
+        return 0
     subs = push_subs()
     problem = push_problem()
     if problem:
@@ -6356,6 +6406,58 @@ def round_summary(posts):
 # reports in his facts); agents: each agent posts its own round, as before.
 ROUND_POSTS = os.environ.get("ROUND_POSTS", "summary").lower()
 
+# Typing guard: while you're typing in the chat (the composer pings
+# /api/typing), scheduled rounds hold their update and non-urgent pushes
+# wait, so nothing lands mid-thought. Once you've been quiet this long,
+# the next tick or round posts what was held, with one push. Reminders and
+# security alerts always go out at once. 0 turns it off.
+TYPING_GUARD_SECONDS = int(os.environ.get("TYPING_GUARD_SECONDS", "120") or 0)
+
+
+def user_typing():
+    if TYPING_GUARD_SECONDS <= 0:
+        return False
+    return time.time() - float(store().get_meta("user:typing") or 0) < TYPING_GUARD_SECONDS
+
+
+def held():
+    return _meta_json("guard:held", {"posts": [], "pushes": []})
+
+
+_GUARD_LOCK = threading.Lock()
+
+
+def _hold(posts=(), push=None):
+    with _GUARD_LOCK:
+        h = held()
+        h["posts"] = (h["posts"] + list(posts))[-40:]
+        if push:
+            h["pushes"] = (h["pushes"] + [push])[-10:]
+        store().set_meta("guard:held", json.dumps(h))
+
+
+def release_held():
+    """Post what the guard held, once you're not typing. Returns what went out."""
+    if user_typing():
+        return None
+    with _GUARD_LOCK:
+        h = held()
+        if not (h["posts"] or h["pushes"]):
+            return None
+        store().set_meta("guard:held", json.dumps({"posts": [], "pushes": []}))
+    if h["posts"]:
+        try:
+            round_summary(h["posts"])
+        except Exception as e:  # same rule as a live round: the reports are kept
+            print(f"held round summary failed: {e!r}")
+    if h["pushes"]:
+        first = h["pushes"][0]
+        body = first["body"] if len(h["pushes"]) == 1 else "; ".join(
+            f"{p['title']}: {p['body']}" for p in h["pushes"])[:240]
+        notify(first["title"] if len(h["pushes"]) == 1 else "Theta", body,
+               first["url"] if len(h["pushes"]) == 1 else "/chat")
+    return {"posts": len(h["posts"]), "pushes": len(h["pushes"])}
+
 
 def run_round(force=False, now=None, only=None):
     """Run every agent's job that is due (or all, with force; or just `only`),
@@ -6363,6 +6465,9 @@ def run_round(force=False, now=None, only=None):
     started = time.time()
     now = now or started
     st = store()
+    guard = not force and user_typing()  # you asked for a forced round: it posts now
+    if not guard:
+        release_held()
     last = json.loads(st.get_meta("round:last") or "{}")
     due = [a for a in ROUND_JOBS if (only is None or a in only)
            and (force or now - last.get(a, 0) >= ROUND_MIN_GAP)]
@@ -6419,7 +6524,9 @@ def run_round(force=False, now=None, only=None):
             note = f"couldn't refresh ({str(e)[:80]})"
         if note:
             parts.append(f"Windows: {note}")
-    if posts:
+    if posts and guard:
+        _hold(posts)
+    elif posts:
         try:
             round_summary(posts)
         except Exception as e:  # the reports are kept even if the summary fails
@@ -7801,6 +7908,15 @@ def _cmd_status(arg):
     return "Mistral posted the status."
 
 
+def _cmd_checkup(arg):
+    checks = doctor_checks()
+    problems = [c for c in checks if c["state"] != "ok"]
+    store().add_chat("qwerty", "Checkup: " + doctor_line(checks) + "".join(
+        f"\n- {'✗' if c['state'] == 'bad' else '!'} **{c['name']}**: {c['detail']}" for c in problems)
+        + ("\n\nDetails and fixes: Diagnostics → Checkup." if problems else ""), channel="dev")
+    return "QWERTY posted the checkup in #dev-and-security."
+
+
 def _cmd_help(arg):
     store().add_chat("hub", "Commands:\n" + "\n".join(
         f"/{c['name']}{' ' + c['args'] if c['args'] else ''}: {c['about']}" for c in COMMANDS))
@@ -8295,6 +8411,7 @@ COMMANDS = [  # shown in the "/" menu in this order
     {"name": "trending", "args": "", "about": "Lenz pitches the next trending title", "run": _cmd_trending},
     {"name": "summary", "args": "", "about": "Theta summarizes new reports", "run": _cmd_summary},
     {"name": "status", "args": "", "about": "Mistral posts what's wired and what isn't", "run": _cmd_status},
+    {"name": "checkup", "args": "", "about": "QWERTY checks everything that can break and posts what's wrong", "run": _cmd_checkup},
     {"name": "issue", "args": "<title> - <details>", "about": "QWERTY writes up a GitHub issue with a fix", "run": _cmd_issue},
     {"name": "security", "args": "", "about": "QWERTY posts what he sees right now", "run": _cmd_security},
     {"name": "devices", "args": "", "about": "QWERTY lists every device connected, with details", "run": _cmd_devices},
@@ -11318,6 +11435,14 @@ _CHAT_JS = r'''
     if (f) { e.preventDefault(); takeFiles([f]); }
   });
   msg.addEventListener("input", grow);
+  // Typing guard: tell the hub you're typing (at most every 30 s), so a
+  // scheduled round holds its update until you've stopped.
+  let typedAt = 0;
+  msg.addEventListener("input", () => {
+    if (!msg.value.trim() || Date.now() - typedAt < 30000) return;
+    typedAt = Date.now();
+    fetch("/api/typing", {method: "POST", headers: H, body: "{}"}).catch(() => {});
+  });
   msg.addEventListener("focus", () => { if (touch) document.body.classList.add("typing"); });
   msg.addEventListener("blur", () => setTimeout(() => document.body.classList.remove("typing"), 120));
 
@@ -13437,10 +13562,13 @@ def memory_card():
     ns = "".join(row("notes", n, f'<b>{html.escape(n["title"])}</b>'
                      + (f'<br><span class="small">{html.escape(n["text"])}</span>' if n["text"] else ""))
                  for n in reversed(notes()))
+    seats = "".join(row("seat", n, html.escape(n["text"])) for a in AGENTS for n in reversed(seat_notes(a)))
     return ('<section class="card stack" id="memory" aria-label="Memory and notes"><h2>Memory and notes</h2>'
             '<p class="muted small">Tell any agent “remember …” or “save a note …”. Every agent sees the memory; '
             f'a ✓ in chat means it really saved.</p><h3>Remembered</h3><ul class="dlist mem">{mem or "<li class=empty>Nothing yet.</li>"}</ul>'
-            f'<h3>Notes</h3><ul class="dlist mem">{ns or "<li class=empty>No notes yet.</li>"}</ul><p class="note"></p>'
+            f'<h3>Notes</h3><ul class="dlist mem">{ns or "<li class=empty>No notes yet.</li>"}</ul>'
+            '<h3>Agents\u2019 own notes</h3><p class="muted small">What each agent noted for itself; only that agent sees '
+            f'its own.</p><ul class="dlist mem">{seats or "<li class=empty>None yet.</li>"}</ul><p class="note"></p>'
             f'<script>{_MEMORY_JS}</script></section>')
 
 
@@ -13593,6 +13721,28 @@ def money_page(headers):
 
 _DIAG_JS = r"""
 (() => {
+  const btn = document.getElementById("checkup-run"); if (!btn) return;
+  const list = document.getElementById("checkup-list"), note = document.getElementById("checkup-note");
+  const MARK = {ok: ["\u2713", "var(--good)"], warn: ["!", "var(--warn)"], bad: ["\u2717", "var(--bad)"]};
+  btn.addEventListener("click", async () => {
+    btn.disabled = true; note.textContent = "Checking...";
+    try {
+      const d = await (await fetch("/api/doctor", {headers: window.THETA_H})).json();
+      if (!d.ok) throw new Error(d.error);
+      list.replaceChildren(...d.checks.map(c => {
+        const li = document.createElement("li"), b = document.createElement("b"), m = document.createElement("span");
+        m.textContent = MARK[c.state][0] + " "; m.style.color = MARK[c.state][1]; m.style.fontWeight = "800";
+        b.textContent = c.name;
+        li.append(m, b, document.createTextNode(": " + c.detail));
+        if (c.fix && c.state !== "ok") { const a = document.createElement("a"); a.href = c.fix; a.textContent = " Fix \u2192"; li.append(a); }
+        return li;
+      }));
+      note.textContent = d.summary;
+    } catch (e) { note.textContent = "Couldn't run the checkup: " + e.message; }
+    btn.disabled = false;
+  });
+})();
+(() => {
   const H = window.THETA_H, rows = document.getElementById("diag-wiring-rows");
   const MARK = {ok: ["Wired", "var(--good)"], bad: ["Not wired", "var(--bad)"], off: ["Not set up", "var(--warn)"]};
   const cell = (text, style) => { const td = document.createElement("td"); td.textContent = text; if (style) td.style.cssText = style; return td; };
@@ -13635,6 +13785,67 @@ _DIAG_JS = r"""
   load();
 })();
 """
+
+
+def doctor_checks():
+    """Checkup: everything that can quietly break, in one list, worst first.
+    Each check is {name, state (ok|warn|bad), detail, fix (a link)}. From
+    real data only; the model checks reuse wiring(), which costs no tokens."""
+    out = []
+
+    def add(name, state, detail, fix=""):
+        out.append({"name": name, "state": state, "detail": detail, "fix": fix})
+    if STORAGE_MODE.startswith("upstash"):
+        add("Storage", "ok", "Upstash Redis is connected.")
+    else:
+        add("Storage", "bad", "Memory only: chats, budgets and notes reset between requests. Connect Upstash "
+            "Redis in Vercel and redeploy.", "/diagnostics")
+    last_tick = float(store().get_meta("tick:last") or 0)
+    if not last_tick:
+        add("5-minute tick", "bad", "Never ran: reminders won't go out. Check the Supabase Cron job.", "/diagnostics")
+    elif time.time() - last_tick > 900:
+        add("5-minute tick", "bad", f"Last ran {_ago(last_tick)} ago; expected every 5 minutes.", "/diagnostics")
+    else:
+        add("5-minute tick", "ok", f"Ran {_ago(last_tick)} ago.")
+    failures = _meta_json("round:failures", {})
+    for a, err in failures.items():
+        add(f"{AGENTS.get(a, {}).get('name', a)}'s round", "bad", f"Last round failed: {str(err)[:160]}", "/diagnostics")
+    if not failures:
+        add("Rounds", "ok", "No round job is failing.")
+    for row in wiring():
+        state = {"ok": "ok", "off": "warn"}.get(row.get("state"), "bad")
+        add(row["name"] + (f" ({row['model']})" if row.get("model") else ""), state, row.get("note", ""),
+            "/diagnostics#wiring")
+    tools = getattr(globals().get("_tb"), "agent_tools", None)
+    if tools is None:
+        add("Web search", "bad", "The tool layer didn't load, so there's no bridge search.", "/diagnostics")
+    else:
+        provider = tools._selected_provider()
+        if provider in ("tavily", "serper") and not tools.SEARCH_API_KEY:
+            add("Web search", "bad", f"SEARCH_PROVIDER={provider} but no key is set.", "/diagnostics")
+        elif provider in ("tavily", "serper"):
+            add("Web search", "ok", f"{provider.title()} is set up.")
+        else:
+            add("Web search", "warn", f"{provider}: instant answers only, so most searches fall to Gemini. "
+                "Set SEARCH_PROVIDER=tavily with a key for full results.", "/diagnostics")
+    diag = tools_diag()
+    if diag["import_error"] is not None or not diag["bridge_file"]:
+        add("Tool bridge", "bad", str(diag["import_error"] or "tool_bridge.py is missing from the build")[:160],
+            "/diagnostics")
+    h = held()
+    if h["posts"] or h["pushes"]:
+        add("Typing guard", "warn", f"Holding {len(h['posts'])} round report(s) and {len(h['pushes'])} push(es) "
+            "until you stop typing; the next tick posts them.")
+    order = {"bad": 0, "warn": 1, "ok": 2}
+    return sorted(out, key=lambda c: order[c["state"]])
+
+
+def doctor_line(checks):
+    bad = [c for c in checks if c["state"] == "bad"]
+    warn = [c for c in checks if c["state"] == "warn"]
+    if not bad and not warn:
+        return f"All {len(checks)} checks passed."
+    return (f"{len(bad)} broken, {len(warn)} to look at, {len(checks) - len(bad) - len(warn)} fine.")
 
 
 def diagnostics_page(headers):
@@ -13701,6 +13912,10 @@ def diagnostics_page(headers):
     body = (
         f'<header class="top"><div><p class="eyebrow">System health</p><h1>Diagnostics</h1></div></header>'
         f'<p class="muted">From real data. Anything unmeasured is labeled as such, never shown as healthy.</p>'
+        f'<section class="card stack" id="checkup"><div><h2>Checkup</h2><p class="muted small">One button: storage, the '
+        f'tick, rounds, every model, search and the tool bridge, worst first.</p></div>'
+        f'<ul class="list" id="checkup-list"></ul>'
+        f'<p><button class="btn small" id="checkup-run" type="button">Run checkup</button> <span class="note" id="checkup-note"></span></p></section>'
         f'<section class="card"><h2>Crew</h2><div class="scrollx"><table class="tbl"><thead><tr><th>Agent</th><th>Tier</th><th>Status</th><th>Activity</th></tr></thead><tbody>{crew_rows}</tbody></table></div></section>'
         f'<div class="grid2" style="margin-top:14px">'
         f'<section class="card"><h2>Storage</h2><p><b>{html.escape(STORAGE_MODE)}</b></p><p class="muted small">{html.escape(storage_note)}</p></section>'
@@ -14619,6 +14834,12 @@ def handle(method, path, query, headers, body):
             return _json(200, {"ok": True, "agent": agent, "name": AGENTS[agent]["name"],
                                "model": agent_model(agent), "reply": reply, "image": image})
 
+        if path == "/api/typing":  # the composer, while you type (typing guard)
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            store().set_meta("user:typing", str(time.time()))
+            return _json(200, {"ok": True})
+
         if path == "/api/allchat":
             text, bot_id = data.get("text"), data.get("bot_id")
             ch = data.get("channel") if data.get("channel") in CHANNEL_IDS else "all"
@@ -15009,6 +15230,17 @@ def handle(method, path, query, headers, body):
             gone = sign_out_device(target, keep=me.get("id"))
             post_event("qwerty", f"QWERTY signed out {gone} device{'s' if gone != 1 else ''}")
             return _json(200, {"ok": True, "signed_out": gone})
+
+        if path == "/api/seat/remove":  # an agent's own note, from Settings
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            item = str(data.get("id") or "")
+            with _TOOL_LOCK:
+                for a in AGENTS:
+                    mine = seat_notes(a)
+                    if any(n["id"] == item for n in mine):
+                        store().set_meta(f"seat:{a}", json.dumps([n for n in mine if n["id"] != item]))
+            return _json(200, {"ok": True})
 
         if path in ("/api/memory/remove", "/api/notes/remove"):
             if not _auth_dashboard(query, headers):
@@ -15402,6 +15634,12 @@ def handle(method, path, query, headers, body):
                            "step": note.get("step", ""), "done": note.get("done", []),
                            "state": note.get("state", "working"), "started": started,
                            "updated": note.get("at", now), "elapsed": max(0, int(now - started))})
+
+    if path == "/api/doctor":
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        checks = doctor_checks()
+        return _json(200, {"ok": True, "checks": checks, "summary": doctor_line(checks)})
 
     if path == "/api/wiring":
         if not _auth_dashboard(query, headers):

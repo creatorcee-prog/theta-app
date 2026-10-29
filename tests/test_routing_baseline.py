@@ -97,12 +97,12 @@ def tool_done():
 
 
 # --- A. Tool registration, as it stands on main ---
-INTERNAL = ["remember", "forget", "cancel", "remind", "check", "note", "spend",
+INTERNAL = ["remember", "forget", "cancel", "remind", "check", "note", "self_note", "spend",
             "watched", "project", "propose", "ask_qwerty", "ask", "chart", "workout"]
 BRIDGE = ["web_search", "fetch_page", "task_create", "task_list", "task_complete",
           "task_reopen", "task_note", "follow_create", "follow_list", "follow_cancel"]
-check("TOOLS holds exactly the 14 internal tools", sorted(
-    k for k in h.TOOLS if k in INTERNAL) == sorted(INTERNAL) and len(h.TOOLS) == 24)
+check("TOOLS holds exactly the 15 internal tools", sorted(
+    k for k in h.TOOLS if k in INTERNAL) == sorted(INTERNAL) and len(h.TOOLS) == 25)
 check("BRIDGE_TOOLS holds exactly the 10 bridge tools (incl. 3 follow tools)",
       sorted(h.BRIDGE_TOOLS) == sorted(BRIDGE))
 mp = h.tools_prompt("mistral")
