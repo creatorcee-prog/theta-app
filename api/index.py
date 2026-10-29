@@ -8555,9 +8555,26 @@ def recent_fallback(tier, within=86400):
     return dict(fb, ago=f"{mins // 60} h" if mins >= 60 else f"{mins} min")
 
 
-def wiring():
+ROUND_HOURS_UTC = (0, 12, 18)  # supabase/cron.sql.example's bot-hub-rounds schedule
+
+
+def next_round_at(now=None):
+    """The next scheduled round (from ROUND_HOURS_UTC), as a local datetime."""
+    now = datetime.fromtimestamp(now or time.time(), timezone.utc)
+    for days in (0, 1):
+        for hr in ROUND_HOURS_UTC:
+            at = (now + timedelta(days=days)).replace(hour=hr, minute=0, second=0, microsecond=0)
+            if at > now:
+                return at.astimezone(hub_tz())
+
+
+def wiring(fresh=False):
     """Per agent: what answers for it and whether it's wired in. Checks the
-    key and that the key can use the model; costs no tokens."""
+    key and that the key can use the model; costs no tokens. fresh (the
+    Recheck button) skips the cached model lists and saved statuses and
+    checks calendars, Gmail and stock prices live (still no model tokens)."""
+    if fresh:
+        _MODELS_CACHE.clear()
     models = {p: list_models(p) for p in {p for p, _ in TIER_LLM.values()}}
     rows = []
     for aid, a in AGENTS.items():
@@ -8638,13 +8655,14 @@ def wiring():
     rows.append({"agent": "push", "name": "Phone notifications", "tier": "", "model": "Web Push (Mistral)",
                  "testable": False, **push_row})
     if calendar_linked():
-        bad = calendar_problems()
+        bad = ([i + 1 for i, u in enumerate(REMI_CALENDAR_URLS) if _calendar_text(u) is None]  # live, one fetch each
+               if fresh else calendar_problems())
         rows.append({"agent": "remi-calendar", "name": "Remi's calendar", "tier": "",
                      "model": f"{len(REMI_CALENDAR_URLS)} calendar link(s), {len(BIRTHDAYS)} birthdays",
                      "testable": False,
                      **({"state": "bad", "note": f"Couldn't read link(s) {', '.join(map(str, bad))}: "
                                                   "check REMI_CALENDAR_URLS"} if bad else
-                        {"state": "ok", "note": "Calendar readable"})})
+                        {"state": "ok", "note": "Calendar readable" + (" (checked just now)" if fresh else "")})})
     else:
         rows.append({"agent": "remi-calendar", "name": "Remi's calendar", "tier": "",
                      "model": "Google Calendar (iCal)", "testable": False, "state": "off",
@@ -8652,12 +8670,17 @@ def wiring():
     now = time.time()
     ago = lambda t: "just now" if _ago(t) == "now" else f"{_ago(t)} ago"
     last_round = max(json.loads(store().get_meta("round:last") or "{}").values(), default=0)
+    last_tick = float(store().get_meta("tick:last") or 0)
+    cron_alive = last_tick and now - last_tick < 20 * 60
+    nxt = next_round_at(now)
     rows.append({"agent": "rounds", "name": "Rounds", "tier": "", "model": "Supabase Cron → /api/round", "testable": False,
-                 **({"state": "off", "note": "No round has run yet: run the bot-hub-rounds job in supabase/cron.sql.example"}
+                 **({"state": "ok", "note": f"Scheduled: Supabase Cron is running (the tick checked in {ago(last_tick)}), "
+                     f"so the first round should come at {_clock(nxt)} {nxt.tzname()}"}
+                    if not last_round and cron_alive else
+                    {"state": "off", "note": "No round has run yet: run the bot-hub-rounds job in supabase/cron.sql.example"}
                     if not last_round else
                     {"state": "ok", "note": f"Last round {ago(last_round)}"} if now - last_round < 13 * 3600 else
                     {"state": "bad", "note": f"Last round {ago(last_round)}: check the bot-hub-rounds job in Supabase"})})
-    last_tick = float(store().get_meta("tick:last") or 0)
     rows.append({"agent": "tick", "name": "Reminders and digest", "tier": "", "model": "Supabase Cron → /api/tick",
                  "testable": False,
                  **({"state": "off", "note": "Not running yet: run the bot-hub-tick job in supabase/cron.sql.example"}
@@ -8674,26 +8697,43 @@ def wiring():
             if LENZ_TWITCH else ""]
     last = float(store().get_meta("lenz:feeds:at") or 0)
     rows.append({"agent": "lenz-feeds", "name": "Lenz's channels", "tier": "", "model": "YouTube, Reddit, Twitch", "testable": False,
-                 **({"state": "ok" if last else "off", "note": ", ".join(x for x in srcs if x)
-                     + (f"; checked {_ago(last)} ago" if last else "; checked from the 5-minute tick")} if lenz_feeds_on() or any(srcs) else
+                 **({"state": "ok", "note": ", ".join(x for x in srcs if x)
+                     + (f"; checked {_ago(last)} ago" if last else "; set up, first check comes with the 5-minute tick")}
+                    if lenz_feeds_on() or any(srcs) else
                     {"state": "off", "note": "Not set: LENZ_YOUTUBE, LENZ_SUBREDDITS, LENZ_TWITCH (+ TWITCH_CLIENT_ID/SECRET)"})})
     boards = [n for n, on in (("Adzuna", ADZUNA_APP_ID and ADZUNA_APP_KEY), ("USAJOBS", USAJOBS_API_KEY and USAJOBS_EMAIL)) if on]
     rows.append({"agent": "jobs", "name": "Job boards (projects)", "tier": "", "model": "Adzuna, USAJOBS", "testable": False,
                  **({"state": "ok", "note": f"{' and '.join(boards)} linked; job projects use them before web search"} if boards else
                     {"state": "off", "note": "Not linked: ADZUNA_APP_ID + ADZUNA_APP_KEY, and/or USAJOBS_API_KEY + USAJOBS_EMAIL"})})
+    gmail_live = None
+    if fresh and gmail_connected():
+        try:
+            gmail_live = {"state": "ok", "note": f"Connected as {gmail_api('GET', '/profile').get('emailAddress') or 'you'} "
+                                                 "(checked just now)"}
+        except LLMError as e:
+            gmail_live = {"state": "bad", "note": f"Connected, but Gmail didn't answer: {str(e)[:120]}"}
     rows.append({"agent": "gmail", "name": "Remi's Gmail", "tier": "", "model": "Gmail (OAuth)", "testable": False,
-                 **({"state": "ok", "note": f"Connected as {store().get_meta('gmail:me') or 'you'}"} if gmail_connected() else
+                 **(gmail_live or {"state": "ok", "note": f"Connected as {store().get_meta('gmail:me') or 'you'}"} if gmail_connected() else
                     {"state": "off", "note": "Ready: Settings → Gmail → Connect"} if gmail_configured() else
                     {"state": "off", "note": "Not linked: set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET"})})
     if not FINNHUB_API_KEY or not stocks_on():
         rows.append({"agent": "stocks", "name": "Glass's stocks", "tier": "", "model": "Finnhub", "testable": False,
                      "state": "off", "note": "Not linked: set FINNHUB_API_KEY" if not FINNHUB_API_KEY else
                      "Set GLASS_HOLDINGS and/or GLASS_WATCHLIST"})
+    elif fresh:
+        sym = stock_symbols()[0]
+        try:
+            q = finnhub("/quote", symbol=sym)
+            live = ({"state": "ok", "note": f"Finnhub answered: {sym} at ${q['c']:,.2f} (checked just now)"} if q.get("c") else
+                    {"state": "bad", "note": f"Finnhub answered but had no price for {sym}: check the symbol"})
+        except LLMError as e:
+            live = {"state": "bad", "note": f"Finnhub didn't answer: {str(e)[:120]}"}
+        rows.append({"agent": "stocks", "name": "Glass's stocks", "tier": "", "model": "Finnhub", "testable": False, **live})
     else:
         have = stock_quotes()
         rows.append({"agent": "stocks", "name": "Glass's stocks", "tier": "", "model": "Finnhub", "testable": False,
                      **({"state": "ok", "note": f"{len(have)} prices"} if have else
-                        {"state": "off", "note": "Prices arrive with Glass's next round"})})
+                        {"state": "ok", "note": "Set up; prices arrive with Glass's next round (Recheck tests Finnhub now)"})})
     return rows
 
 
@@ -13828,11 +13868,11 @@ _DIAG_JS = r"""
   const H = window.THETA_H, rows = document.getElementById("diag-wiring-rows");
   const MARK = {ok: ["Wired", "var(--good)"], bad: ["Not wired", "var(--bad)"], off: ["Not set up", "var(--warn)"]};
   const cell = (text, style) => { const td = document.createElement("td"); td.textContent = text; if (style) td.style.cssText = style; return td; };
-  async function load() {
+  async function load(fresh) {
     const note = document.getElementById("diag-wiring-note");
-    note.textContent = "Checking...";
+    note.textContent = fresh ? "Checking everything live..." : "Checking...";
     try {
-      const d = await (await fetch("/api/wiring", {headers: H})).json();
+      const d = await (await fetch("/api/wiring" + (fresh === true ? "?fresh=1" : ""), {headers: H})).json();
       if (!d.ok) throw new Error(d.error);
       rows.replaceChildren(...d.agents.map(a => {
         const tr = document.createElement("tr");
@@ -13848,7 +13888,8 @@ _DIAG_JS = r"""
                   cell(label, "font-weight:700;color:" + color), result, test);
         return tr;
       }));
-      note.textContent = "Checked " + new Date().toLocaleTimeString() + ". Test sends a tiny message and uses a few tokens.";
+      note.textContent = (fresh === true ? "Checked live " : "Checked ") + new Date().toLocaleTimeString()
+        + ". Recheck asks each service now (no model tokens); Test sends a tiny message and uses a few tokens.";
     } catch (err) { note.textContent = "Couldn't check wiring: " + err.message; }
   }
   async function testAgent(agent, out, b) {
@@ -13863,7 +13904,7 @@ _DIAG_JS = r"""
     } catch (err) { out.textContent = "Failed: " + err.message; out.style.color = "var(--bad)"; }
     b.disabled = false;
   }
-  document.getElementById("diag-wiring-recheck").onclick = load;
+  document.getElementById("diag-wiring-recheck").onclick = () => load(true);
   load();
 })();
 """
@@ -15759,7 +15800,7 @@ def handle(method, path, query, headers, body):
     if path == "/api/wiring":
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
-        return _json(200, {"ok": True, "agents": wiring()})
+        return _json(200, {"ok": True, "agents": wiring(fresh=query.get("fresh", [""])[0] == "1")})
 
     if path == "/api/models":
         if not _auth_dashboard(query, headers):
