@@ -256,7 +256,7 @@ four goal scores, and the bar is 80%.
   - focusable image
   - no light in the left pupil
   - no part blocking the beam
-  - prism has a mount (waveguide: rim clip)
+  - prism or mirror patch bonded to the lens by standoff pins (waveguide: rim clip)
   - waveguide only: TIR across the beam, see-through ≥ 70%
   - mirror patch only: see-through ≥ 70%, patch held on the lens
 
@@ -269,7 +269,7 @@ Two physics findings the search kept running into:
   single-lens design passes at 0.5 D; a two-element eyepiece is the real fix.
 - **A beam wider than the prism leaks.** When the lens beam overfills the
   prism, edge rays reflect off the triangular end faces and arrive as a
-  blurred second image. The bracket on that face then blocks them.
+  blurred second image. The image check rejects those pixels.
 
 The head model uses the lateral orbital rim from Hertel exophthalmometry:
 adult mean about 15.5 mm behind the cornea, about 114 mm rim to rim
@@ -277,6 +277,30 @@ adult mean about 15.5 mm behind the cornea, about 114 mm rim to rim
 [Shenyang study](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4336939/)).
 Space beside the eye in front of the rim is open air; behind it, the side of
 the head runs back at your measured temple gaps.
+
+### How the optics are held, and an upright image
+
+- **Standoff pins to the lens:** the prism or mirror patch is bonded to the
+  back of your spectacle lens by two or three Ø1.5 mm pins (glass rod or
+  printed), glued at both ends. That way the frame carries the optic, not
+  just the optics arm.
+  - The pins are placed automatically. They go where the part comes
+    nearest the lens, outside the 10° central zone, and, for the patch, on
+    the half of its rim away from the display.
+  - They are traced as absorbers and drawn as solid parts. The "bonded to
+    the lens" check fails if they are longer than 12 mm, and warns if they
+    block light that is heading for the eye.
+- **Upright image:** every design used to show its image mirrored and
+  rotated 140–174°, as it would come out of the optics unaided. Now each
+  make, alignment and click-to-aim runs "Level the image":
+  - it fits the traced pixel directions;
+  - it rolls the OLED about its own axis until the image's horizontal is
+    level;
+  - it turns on the driver's left–right flip where the optics mirror the
+    image.
+  - The orientation check fails above 3° of tilt or if the image is still
+    mirrored. It reports keystone shear separately, which a single roll
+    cannot remove (Lumen: about 5°).
 
 ### Optics arm, HUD zone and reach
 
@@ -320,7 +344,7 @@ gizmo:
 - the OLED, prism, collimator and driver board
 - the temple housing, which moves along the temple and up/down
 - the eye
-- generic parts: prism mount bracket, LiPo battery, USB-C charger, Raspberry Pi Zero 2 W, IMU, and any custom parts you add
+- generic parts: prism mount bracket (default design only), LiPo battery, USB-C charger, Raspberry Pi Zero 2 W, IMU, and any custom parts you add
 
 Generic parts can be attached to the prism or the OLED so they move with it.
 They are traced as light absorbers, so a part left in the beam shows up as

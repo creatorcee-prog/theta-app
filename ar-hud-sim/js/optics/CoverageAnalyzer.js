@@ -2,6 +2,7 @@
 // analysis. Operates only on traced results; nothing here creates rays that
 // the tracer did not produce.
 
+import { lensMountPoints } from './LensMount.js';
 import { Vector3, Quaternion } from 'three';
 import { computeEye, directionToAngles, anglesToDirection } from '../model/eye.js';
 
@@ -140,6 +141,7 @@ function hardwarePoints(system) {
   const h = glasses.housing;
   groups.housing = boxCorners(h.center, new Quaternion(), h.size);
   if (system.arm && system.arm.length > 0.6) groups.arm = armSurfacePoints(system.arm);
+  if (system.lensMount) groups.mount = lensMountPoints(system.lensMount);
   return groups;
 }
 

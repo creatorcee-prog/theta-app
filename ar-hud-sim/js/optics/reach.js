@@ -9,6 +9,7 @@ import { analyzeCoverage } from './CoverageAnalyzer.js';
 import { runDiagnostics } from './Diagnostics.js';
 import { solveFocusDistance } from './focus.js';
 import { assessFocus } from './Vision.js';
+import { levelImage } from './orient.js';
 
 export const REACH_CHECKS = ['prismLens', 'prismClear', 'hwCentral', 'oledFit', 'lensPod', 'armFit', 'headHousing'];
 
@@ -32,6 +33,7 @@ export function evaluateAim(params, h, v) {
     const fz = solveFocusDistance(p, assessFocus({ Vx: 0, Vy: 0 }, p.eye).targetVergence, { tol: 0.1, maxIter: 4 });
     if (fz.distance != null && Number.isFinite(fz.distance)) p.collimator.distance = fz.distance;
   }
+  levelImage(p); // the display is rolled for an upright image at every aim, as in the app
   p.sim = { ...p.sim, pixelsX: 7, pixelsY: 4, raysPerPixel: p.waveguide?.enabled || p.patch?.enabled ? 48 : 24, wavelengths: 'mono', ghosts: false };
   const r = runSimulation(p);
   const cov = analyzeCoverage(r);

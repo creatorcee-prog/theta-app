@@ -51,7 +51,7 @@ export class UIController {
       if (sec.id === 'prism' || sec.id === 'oled' || sec.id === 'align') {
         const row = document.createElement('div');
         row.className = 'btn-row';
-        row.innerHTML = `<button type="button" class="btn small" data-action="align">Re-align chain to target direction</button>`;
+        row.innerHTML = `<button type="button" class="btn small" data-action="align">Re-align chain to target direction</button><button type="button" class="btn small ghost" data-action="level">Level the image</button>`;
         body.appendChild(row);
       }
       det.appendChild(body);

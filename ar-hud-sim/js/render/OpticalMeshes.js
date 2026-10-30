@@ -165,7 +165,7 @@ export class OpticalMeshes {
     if (arm && arm.length > 0.6) {
       const r = arm.radius + arm.wall / 2;
       const tube = new THREE.Mesh(new THREE.CylinderGeometry(r, r, arm.length, 28, 1, true),
-        new THREE.MeshStandardMaterial({ color: 0x8a94a6, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false, roughness: 0.6 }));
+        new THREE.MeshStandardMaterial({ color: 0x56606e, transparent: true, opacity: 0.8, side: THREE.DoubleSide, roughness: 0.6 }));
       tube.geometry.rotateX(Math.PI / 2);
       tube.position.copy(arm.start).addScaledVector(arm.axis, arm.length / 2);
       tube.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), arm.axis);
@@ -174,6 +174,27 @@ export class OpticalMeshes {
       rings.position.copy(tube.position); rings.quaternion.copy(tube.quaternion);
       cg.add(rings);
       if (labels) { const l = makeLabel('Optics arm (holds the prism)'); l.position.copy(tube.position).add(new THREE.Vector3(0, r + 5, 0)); cg.add(l); }
+    }
+
+    // ---------------- standoff pins bonding the combiner to the lens back
+    const lm = system.lensMount;
+    if (lm) {
+      const pinMat = new THREE.MeshStandardMaterial({ color: 0x56606e, roughness: 0.5, metalness: 0.2 });
+      for (const pin of lm.pins) {
+        const m = new THREE.Mesh(new THREE.CylinderGeometry(lm.radius, lm.radius, pin.length, 12), pinMat);
+        m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), pin.axis);
+        m.position.copy(pin.base).addScaledVector(pin.axis, pin.length / 2);
+        this.groups.prism.add(m);
+        // glue pad on the lens
+        const pad = new THREE.Mesh(new THREE.CylinderGeometry(lm.radius * 1.8, lm.radius * 1.8, 0.3, 16), pinMat);
+        pad.quaternion.copy(m.quaternion); pad.position.copy(pin.base).addScaledVector(pin.axis, pin.length - 0.15);
+        this.groups.prism.add(pad);
+      }
+      if (labels) {
+        const l = makeLabel(`${lm.pins.length} standoff pins bonded to the lens`, 'muted');
+        l.position.copy(lm.pins[0].base).addScaledVector(lm.pins[0].axis, lm.pins[0].length).add(new THREE.Vector3(0, -4, 0));
+        this.groups.prism.add(l);
+      }
     }
 
     // ---------------- waveguide plate (replaces the prism)

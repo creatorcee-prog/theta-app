@@ -25,10 +25,13 @@ import { partFrame, hostFrameInverse } from './model/parts.js';
 import { solveFocusDistance, solveFieldFocus } from './optics/focus.js';
 import { assessFocus } from './optics/Vision.js';
 import { applyLabelMode } from './render/labels.js';
+import { levelImage } from './optics/orient.js';
+const f1 = (x) => (Math.round(x * 10) / 10).toFixed(1);
 
 const $ = (s) => document.querySelector(s);
 
 let params = defaultParams();
+levelImage(params);
 let results = null, coverage = null, diag = null;
 let dirty = true, lastRun = 0, dragging = false;
 let selected = null;
@@ -269,7 +272,11 @@ function action(a) {
     params.intent.azimuth = params.targets.azimuth;
     params.intent.elevation = params.targets.elevation;
     params = alignChain(params);
+    levelImage(params);
     action('refocus');
+  } else if (a === 'level') {
+    const r = levelImage(params);
+    ui.flash(r.ok ? `Image levelled: OLED rolled, ${f1(r.tiltDeg)}° tilt left${r.mirrored ? ', driver flips it left–right' : ''}${Math.abs(r.shearDeg) > 3 ? `, ${f1(r.shearDeg)}° keystone remains` : ''}.` : 'Too little light reaches the pupil to measure the image.');
   } else if (a === 'lookAtHud' && coverage?.field.hCenter != null) {
     params.eye.gazeYaw = Math.round(coverage.field.hCenter * 2) / 2;
     params.eye.gazePitch = Math.round(coverage.field.vCenter * 2) / 2;
@@ -312,7 +319,7 @@ function action(a) {
   } else if (a === 'clearImage') {
     params.hud.image = null; params.hud.imageName = '';
   } else if (a === 'reset') {
-    params = defaultParams();
+    params = defaultParams(); levelImage(params);
     select(null);
     preset('full');
   }
@@ -368,6 +375,7 @@ $('#fpv-canvas').addEventListener('click', (e) => {
   params = alignChain(params);
   const c = computeCollimator(params.collimator, computeOled(params.oled), params.prism.n);
   if (c?.valid && params.collimator.mode !== 'thin') params.collimator.distance = c.frontFocalDistance;
+  levelImage(params);
   fpv.reach = null;
   ui.flash(`HUD aimed at ${params.intent.azimuth}° temporal, ${params.intent.elevation}° up. The prism, arm, lens and OLED were re-aligned; "Focus HUD for my eye" fine-tunes focus.`);
   ui.refresh(); schedule();

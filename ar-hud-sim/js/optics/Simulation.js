@@ -12,6 +12,7 @@ import { partFrame, computeWeights } from '../model/parts.js';
 import { boxAbsorber } from './RayTracer.js';
 import { computeWaveguide, waveguideObjects } from './Waveguide.js';
 import { computePatch, patchObjects } from './Combiner.js';
+import { computeLensMount, lensMountObjects } from './LensMount.js';
 
 function boxCornersOf(center, q, size) {
   const out = [];
@@ -43,12 +44,15 @@ export function buildSystem(params) {
     oled, prism, collimator, driver, arm, glasses, frame: params.frame, prismMaterial, lensMaterial, specMaterial,
     coating: params.prism.coating, guideObjects: patched ? patchObjects(prism, params) : guided ? waveguideObjects(prism, prismMaterial) : null,
   });
+  // standoff pins bonding the combiner to the lens back
+  const lensMount = params.frame.lensMount === false ? null : computeLensMount(prism, glasses, eye, params.targets.centralClear);
+  objects.push(...lensMountObjects(lensMount));
   // placeable hardware parts block light where they are put
   const parts = (params.parts ?? []).map((part) => ({ part, ...partFrame(part, { prism, oled }) }));
   for (const pf of parts) if (pf.part.blocksLight && pf.part.visible !== false) objects.push(boxAbsorber(`part:${pf.part.id}`, pf.part.name, pf.matrix, pf.size));
   objects.push(eyeDetector('eyeR', 'Right eye', eye));
   objects.push(eyeDetector('eyeL', 'Left eye', leftEye));
-  return { params, glasses, eye, leftEye, oled, prism, collimator, driver, arm, parts, objects, prismMaterial };
+  return { params, glasses, eye, leftEye, oled, prism, collimator, driver, arm, parts, objects, prismMaterial, lensMount };
 }
 
 // Sample pixel positions in [-1,1]^2 (edges included).
@@ -159,6 +163,11 @@ export function runSimulation(params) {
     else if (out.startsWith('absorbed:')) {
       const k = out.slice(9);
       counts.absorbed[k] = (counts.absorbed[k] ?? 0) + 1;
+      // mount pins: only light already heading back toward the eye is image light lost
+      if (k.startsWith('mount-')) {
+        const sg = path.segments[path.segments.length - 1];
+        if (sg && sg.b.clone().sub(sg.a).dot(eye.gaze) < 0) counts.mountEyeward = (counts.mountEyeward ?? 0) + 1;
+      }
       power.absorbed += path.finalWeight;
     }
     if (path.segments.some((s) => s.type === 'leak')) { counts.leaked++; power.leaked += path.finalWeight; }

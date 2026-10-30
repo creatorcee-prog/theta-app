@@ -282,6 +282,12 @@ test('every tuned make re-scores at >= 80% from scratch, matching the stored res
     const s = scoreDesign(r, cov, runDiagnostics(r, cov), p);
     assert.ok(s.overall >= 0.8, `${make.id}: ${(100 * s.overall).toFixed(1)}%`);
     near(s.overall, t.overall, 0.005, `${make.id} reproducible`);
+    const d = runDiagnostics(r, cov);
+    const o = d.checks.find((c) => c.id === 'orientation');
+    // upright and not mirrored (a warning may remain for keystone lean)
+    assert.notEqual(o.status, 'fail', `${make.id} image upright and readable: ${o.value}`);
+    assert.match(o.value, /^upright/);
+    if (!p.waveguide.enabled) assert.notEqual(d.checks.find((c) => c.id === 'lensMount')?.status ?? 'fail', 'fail', `${make.id} combiner bonded to the lens`);
   }
 });
 

@@ -5,12 +5,11 @@
 // choices and stores the best result in makes.tuned.js.
 
 import { baseParams, alignChain } from './defaults.js';
-import { computeCollimator, computeOled, computePrism } from '../optics/OpticalComponents.js';
-import { computeGlasses } from '../model/glassesGeometry.js';
-import { computeEye } from '../model/eye.js';
+import { computeCollimator, computeOled } from '../optics/OpticalComponents.js';
 import { solveFocusDistance, solveFieldFocus } from '../optics/focus.js';
 import { assessFocus } from '../optics/Vision.js';
 import { TUNED } from './makes.tuned.js';
+import { levelImage } from '../optics/orient.js';
 
 const src = {
   yx: { label: 'YX Microdisplay 0.23″ 640×400 kit with HDMI board ($175)', url: 'https://www.yxmicrodisplay.com/products/0-23-inch-640x400-micro-oled-display-3000nits-hdmi-kit' },
@@ -70,20 +69,10 @@ function commonOptics(lens, prism) {
     printed('barrel', 'Lens barrel (printed)', 'collimator'),
     printed('arm', 'Optics arm to the prism (printed)', 'arm'),
     printed('housing', 'Temple housing (printed)', 'housing'),
-    printed('prismMount', 'Prism bracket (printed)', null, 'prismMount'),
+    mountLine('prism'),
   ];
 }
 
-// Bracket on the triangular cap that faces away from the eye.
-function bracket(p) {
-  const pr = computePrism(p.prism);
-  const eye = computeEye({ ...p.eye, monoPD: p.eye.monoPDRight, side: 1 }, computeGlasses(p.frame));
-  const side = pr.w.dot(eye.pupilCenter.clone().sub(pr.center)) > 0 ? -1 : 1;
-  // plate stays inside the prism footprint on the entry and exit sides (the
-  // beam passes there) and may overhang only behind the hypotenuse
-  const lab = p.prism.size * Math.tan((p.prism.angle * Math.PI) / 180), L = p.prism.size;
-  return { id: 'prismMount', name: 'Prism bracket', size: { x: lab - 0.8, y: L - 0.8, z: 1.2 }, pos: { x: 0.4, y: 0.4, z: side * (p.prism.height / 2 + 0.7) }, rot: { yaw: 0, pitch: 0, roll: 0 }, attach: 'prism', color: '#56606e', blocksLight: true, custom: false };
-}
 
 // Waveguide (Lumen) optics: a hand-made geometric waveguide. Its partial
 // reflectors are slices of a stock 30R/70T beamsplitter plate bonded inside
@@ -104,12 +93,16 @@ function waveguideOptics(lens) {
 }
 
 // Mirage optics: a partially mirrored thin glass shell behind the lens.
+// Standoff pins (Ø1.5 mm glass rod or printed pins) glued between the
+// combiner and the back of the lens: the frame carries the optic.
+const mountLine = (what) => line({ id: 'lensMount', name: `Standoff pins + UV glue bonding the ${what} to the lens`, component: 'prism', unit: 6, sourced: false, weight: 0.1, weightBasis: 'estimate', note: what === 'patch' ? 'Estimate. Pins on the half of the rim away from the display; glue only the pin ends so the air gap behind the coating stays clear.' : 'Estimate. Pins on the prism corners nearest the lens, clear of the beam.' });
+
 function patchOptics(lens) {
   return [
     line({ id: 'collimator', name: lens.name, component: 'collimator', unit: lens.unit, sourced: lens.sourced, sources: lens.sources, note: lens.note, weight: 0, weightBasis: 'calc', autoWeight: true, weightNote: 'Full-diameter lens volume × 2.51 g/cm³.' }),
     line({ id: 'prism', name: 'Mirror patch: 1 mm glass shell (domed or flat watch crystal, cut down)', component: 'prism', unit: 3.95, sourced: true, sources: [src.crystal], weight: 0, weightBasis: 'calc', autoWeight: true, weightNote: 'Shell area × thickness × 2.5 g/cm³.', note: 'Dome radii are not published: measure the sag (R = d²/8s + s/2) and pick the crystal closest to the design radius.' }),
     line({ id: 'patchCoat', name: 'Partial-mirror coating on its concave face (R ≈ 30%)', unit: 40, sourced: false, sources: [src.curvedPR], weight: 0, weightBasis: 'calc', note: 'Estimate: a small-batch vacuum coating or a DIY partial silvering. A ready-made curved partial reflector costs from €75 (custom).' }),
-    line({ id: 'patchMount', name: 'Edge bond + spacer dots holding the patch behind the lens (UV optical adhesive)', component: 'prism', unit: 38, sourced: true, sources: [src.noa, src.noaT], weight: 0.1, weightBasis: 'estimate', note: 'Glue only the rim; an air gap (not glue) behind the coated area keeps the see-through view free of extra power.' }),
+    mountLine('patch'),
     printed('barrel', 'Lens barrel (printed)', 'collimator'),
     printed('housing', 'Temple housing (printed)', 'housing'),
   ];
@@ -220,8 +213,10 @@ export function buildMake(make, v, opts = {}) {
       if (ff.ok) p.collimator.distance = Math.round(ff.distance * 1000) / 1000;
     }
   }
+  // roll the display so the image reads level and unmirrored for the eye
+  if (opts.level !== false) levelImage(p);
   const el = make.electronics();
-  p.parts = guided || patched ? [...el.parts] : [bracket(p), ...el.parts];
+  p.parts = [...el.parts];
   const displayLines = make.display === 'ssd0.49'
     ? [
       line({ id: 'oled', name: '0.49″ 64×32 I2C OLED module', component: 'oled', unit: 2.65, sourced: true, sources: [src.ssd], weight: 1, weightBasis: 'estimate', note: '11.18 × 5.58 mm active area, 15 × 12 mm board (listings).' }),

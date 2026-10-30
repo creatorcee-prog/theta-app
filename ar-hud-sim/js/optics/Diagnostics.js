@@ -346,17 +346,21 @@ export function runDiagnostics(results, coverage) {
       }
       return solve3(M, r);
     };
-    const [a, b] = fit((p) => p.availableAngles.h);
-    const [d, e] = fit((p) => p.availableAngles.v);
+    let [a, b] = fit((p) => p.availableAngles.h);
+    let [d, e] = fit((p) => p.availableAngles.v);
+    // what the eye sees after the display driver's optional left-right flip
+    const flipped = !!params.hud.driverFlip;
+    if (flipped) { a = -a; d = -d; }
     if ([a, b, d, e].every(Number.isFinite)) {
       const det = a * e - b * d;
       const rot = (Math.atan2(d, a) * 180) / Math.PI;
       // tilt of the image's horizontal axis from horizontal, folded to ±90°
       const tilt = rot > 90 ? rot - 180 : rot < -90 ? rot + 180 : rot;
-      const how = det < 0 ? (a < 0 ? 'mirrored left–right' : 'mirrored top–bottom') : Math.abs(rot) > 90 ? 'rotated 180°' : 'upright';
+      const how = det < 0 ? (a < 0 ? 'mirrored left–right' : 'mirrored top–bottom') : Math.abs(rot) > 90 ? 'upside down' : 'upright';
+      const shear = (Math.atan2(b, e) * 180) / Math.PI + rot;
       add('Image', 'orientation', 'Image orientation', `${how}, tilted ${f1(tilt)}°`,
-        det < 0 || Math.abs(tilt) > 3 || Math.abs(rot) > 90 ? 'warn' : 'pass',
-        det < 0 ? 'A single reflection mirrors the image; flip it in the display driver.' : Math.abs(rot) > 3 ? 'Rotate the frame buffer or roll the OLED.' : '');
+        det < 0 || Math.abs(rot) > 3 ? 'fail' : Math.abs(shear) > 5 ? 'warn' : 'pass',
+        `${det < 0 ? 'The optics mirror the image: turn on "Driver mirrors image". ' : flipped ? 'The display driver flips the image left–right to undo the optics\' mirror. ' : ''}${Math.abs(rot) > 3 ? 'Text will not read level: use "Level the image" (Align section), which rolls the OLED about its axis. ' : ''}Vertical axis leans ${f1(shear)}° relative to the horizontal (keystone from the off-axis fold${Math.abs(shear) > 5 ? '; noticeable' : ''}).`);
     }
   } else {
     add('Image', 'orientation', 'Image orientation', 'not determinable', 'fail', 'Fewer than 3 pixel samples reach the pupil plane.');
@@ -378,6 +382,16 @@ export function runDiagnostics(results, coverage) {
     hClear >= 1 ? `Head model: lateral orbital rim ${f1(hd.hertelDepth)} mm behind the cornea, ${f1(hd.hertelBase)} mm rim-to-rim; temple gaps ${f1(hd.gap20)} / ${f1(hd.gap40)} mm at 20 / 40 mm behind the hinge.`
       : `The housing reaches ${f1(-hClear)} mm into your head. Reduce its depth or length, or bulge it outward.`);
   const canthusX = eye.pupilCenter.x - hd.canthusOffset;
+  // ---- standoff pins: is the combiner carried by the lens/frame?
+  const lm = system.lensMount;
+  if (lm) {
+    const stopped = Object.entries(counts.absorbed).filter(([k]) => k.startsWith('mount-')).reduce((s2, [, v]) => s2 + v, 0);
+    const blocked = counts.mountEyeward ?? 0;
+    const ok = lm.pins.length >= 2 && lm.longest <= 12;
+    add('Fit', 'lensMount', `${cname} bonded to the lens`, `${lm.pins.length} pins, longest ${f1(lm.longest)} mm`,
+      !ok ? 'fail' : blocked > 0.01 * counts.emitted ? 'warn' : 'pass',
+      `Ø${f1(2 * lm.radius)} mm standoff pins glued between the ${cname.toLowerCase()} and the back of the lens (the frame carries it).${lm.longest > 12 ? ' Longer than 12 mm: too flexible; move the part closer to the lens.' : ''} They stop ${blocked} rays heading for the eye${blocked > 0.01 * counts.emitted ? ': move them off the beam' : ''} (and ${stopped - blocked} stray rays going elsewhere).`);
+  }
   // ---- optics arm: does a rigid part connect the prism to the housing?
   const arm = system.arm;
   if (arm) {
