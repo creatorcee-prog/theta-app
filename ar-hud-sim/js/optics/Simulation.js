@@ -1,0 +1,210 @@
+// Builds the optical scene from parameters, generates OLED emission, runs
+// the tracer and reduces the paths into per-pixel and global results.
+// No rendering code here.
+
+import { Vector3 } from 'three';
+import { computeGlasses } from '../model/glassesGeometry.js';
+import { computeEye, directionToAngles } from '../model/eye.js';
+import { computeOled, computePrism, computeCollimator, computeDriver, buildOpticalObjects } from './OpticalComponents.js';
+import { trace, coneDirections, eyeDetector } from './RayTracer.js';
+import { makeGlass, WAVELENGTHS, criticalAngle, AIR } from './materials.js';
+
+export function buildSystem(params) {
+  const glasses = computeGlasses(params.frame);
+  const eye = computeEye({ ...params.eye, side: 1 }, glasses);
+  const leftEye = computeEye({ ipd: params.eye.ipd, eyeRelief: params.eye.eyeRelief, pupilDiameter: params.eye.pupilDiameter, side: -1 }, glasses);
+  const oled = computeOled(params.oled);
+  const prism = computePrism(params.prism);
+  const dispersive = params.sim.wavelengths === 'rgb';
+  const prismMaterial = makeGlass('BK7', params.prism.n, { dispersive });
+  const lensMaterial = makeGlass('BK7', params.prism.n, { dispersive });
+  const specMaterial = makeGlass('CR-39', params.frame.specLensN, { dispersive: false });
+  const collimator = computeCollimator(params.collimator, oled, params.prism.n);
+  const driver = computeDriver(params.driver);
+  const objects = buildOpticalObjects({
+    oled, prism, collimator, driver, glasses, frame: params.frame, prismMaterial, lensMaterial, specMaterial,
+    coating: params.prism.coating,
+  });
+  objects.push(eyeDetector('eyeR', 'Right eye', eye));
+  objects.push(eyeDetector('eyeL', 'Left eye', leftEye));
+  return { params, glasses, eye, leftEye, oled, prism, collimator, driver, objects, prismMaterial };
+}
+
+// Sample pixel positions in [-1,1]^2 (edges included).
+export function pixelGrid(nx, ny) {
+  const out = [];
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      out.push({ i, j, u: nx === 1 ? 0 : -1 + (2 * i) / (nx - 1), v: ny === 1 ? 0 : -1 + (2 * j) / (ny - 1) });
+    }
+  }
+  return out;
+}
+
+export function makeSources(system) {
+  const { params, oled } = system;
+  const { pixelsX, pixelsY, raysPerPixel, wavelengths } = params.sim;
+  const alpha = (params.oled.emissionHalfAngle * Math.PI) / 180;
+  const dirsLocal = coneDirections(raysPerPixel, alpha);
+  const pixels = pixelGrid(pixelsX, pixelsY);
+  const bands = WAVELENGTHS[wavelengths] ?? WAVELENGTHS.mono;
+  const brightness = params.oled.brightness / 100;
+  const sources = [];
+  // Lambertian emitter: equal-solid-angle samples weighted by cos(theta),
+  // normalised so the power inside the simulated cone sums to 1 per pixel
+  // per band (before brightness).
+  const cosSum = dirsLocal.reduce((s, d) => s + d.z, 0);
+  for (const band of bands) {
+    for (const px of pixels) {
+      const origin = oled.pointAt(px.u, px.v);
+      for (const dl of dirsLocal) {
+        const dir = new Vector3()
+          .addScaledVector(oled.xAxis, dl.x).addScaledVector(oled.yAxis, dl.y).addScaledVector(oled.normal, dl.z).normalize();
+        sources.push({ origin, dir, weight: (brightness * dl.z) / cosSum, lambda: band.nm, color: band.color, pixel: px, chief: false });
+      }
+    }
+  }
+  return { sources, pixels, bands, coneFractionOfHemisphere: Math.sin(alpha) ** 2 };
+}
+
+// The display-centre ray along the OLED normal. It is the design axis; it
+// is reported separately and not counted in the statistics.
+export function chiefSource(system) {
+  const { oled, params } = system;
+  return {
+    origin: oled.pointAt(0, 0), dir: oled.normal.clone(),
+    weight: params.oled.brightness / 100, lambda: 550, color: 0xffffff, pixel: { i: -1, j: -1, u: 0, v: 0 }, chief: true,
+  };
+}
+
+function planeHit(ray, center, normal) {
+  const denom = ray.dir.dot(normal);
+  if (Math.abs(denom) < 1e-9) return null;
+  const t = center.clone().sub(ray.origin).dot(normal) / denom;
+  if (t <= 0) return null;
+  return ray.origin.clone().addScaledVector(ray.dir, t);
+}
+
+export function runSimulation(params) {
+  const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const system = buildSystem(params);
+  const { sources, pixels, bands, coneFractionOfHemisphere } = makeSources(system);
+  const opts = { ghosts: params.sim.ghosts, ghostMin: params.sim.ghostMin };
+  const paths = trace({ objects: system.objects, escapeLength: 45 }, sources, opts);
+  const chiefPaths = trace({ objects: system.objects, escapeLength: 45 }, [chiefSource(system)], { ghosts: false });
+  const chief = chiefPaths[0];
+
+  const eye = system.eye;
+  const counts = { emitted: sources.length, pupil: 0, eyeMiss: 0, leftPupil: 0, leftEye: 0, escaped: 0, absorbed: {}, leaked: 0, trapped: 0 };
+  const power = { emitted: 0, pupil: 0, leftPupil: 0, ghostPupil: 0, leaked: 0, absorbed: 0, lensStray: 0 };
+  const hyp = { hits: 0, tir: 0, minInc: Infinity, maxInc: -Infinity, incidences: [] };
+  const perPixel = new Map();
+  const keyOf = (px) => `${px.i},${px.j}`;
+  for (const px of pixels) perPixel.set(keyOf(px), { px, pupilPower: 0, pupilRays: 0, dirSum: new Vector3(), finals: [], arrivals: [] });
+  const lensCrossings = [];
+  for (const s of sources) power.emitted += s.weight;
+
+  for (const path of paths) {
+    const out = path.outcome;
+    if (!path.primary) {
+      if (out === 'pupil:eyeR') power.ghostPupil += path.finalWeight;
+      continue;
+    }
+    const pp = perPixel.get(keyOf(path.pixel));
+    if (out === 'pupil:eyeR') {
+      counts.pupil++; power.pupil += path.finalWeight;
+      pp.pupilPower += path.finalWeight; pp.pupilRays++;
+      pp.dirSum.addScaledVector(path.finalRay.dir, path.finalWeight);
+      pp.arrivals.push({ dir: path.finalRay.dir, w: path.finalWeight, lambda: path.lambda });
+    } else if (out === 'eyeMiss:eyeR') counts.eyeMiss++;
+    else if (out === 'pupil:eyeL') { counts.leftPupil++; power.leftPupil += path.finalWeight; }
+    else if (out === 'eyeMiss:eyeL') counts.leftEye++;
+    else if (out === 'escaped') counts.escaped++;
+    else if (out === 'trapped' || out === 'maxDepth') counts.trapped++;
+    else if (out.startsWith('absorbed:')) {
+      const k = out.slice(9);
+      counts.absorbed[k] = (counts.absorbed[k] ?? 0) + 1;
+      power.absorbed += path.finalWeight;
+    }
+    if (path.segments.some((s) => s.type === 'leak')) { counts.leaked++; power.leaked += path.finalWeight; }
+    for (const ev of path.events) {
+      if (ev.obj === 'prism' && ev.face === 'hypotenuse' && !ev.entering) {
+        hyp.hits++; if (ev.tir) hyp.tir++;
+        hyp.minInc = Math.min(hyp.minInc, ev.incidenceDeg); hyp.maxInc = Math.max(hyp.maxInc, ev.incidenceDeg);
+        if (hyp.incidences.length < 4000) hyp.incidences.push(ev.incidenceDeg);
+      }
+      if ((ev.obj === 'specLensR' || ev.obj === 'specLensL') && ev.entering) {
+        lensCrossings.push({ point: ev.point, toPupil: out === 'pupil:eyeR', w: path.finalWeight, lens: ev.obj });
+        if (out !== 'pupil:eyeR') power.lensStray += path.finalWeight;
+      }
+    }
+    // Free final rays that left all optics (for eye-box sweeps / vergence)
+    if (path.finalRay && (out.startsWith('pupil') || out.startsWith('eyeMiss') || out === 'escaped')) {
+      const ph = planeHit(path.finalRay, eye.pupilCenter, eye.gaze);
+      if (ph && path.finalRay.dir.dot(eye.gaze) < 0) pp.finals.push({ point: ph, origin: path.finalRay.origin, dir: path.finalRay.dir, w: path.finalWeight });
+    }
+  }
+
+  // Per-pixel reductions
+  const pixelResults = [];
+  for (const pp of perPixel.values()) {
+    const visible = pp.pupilRays > 0;
+    const arrival = visible ? pp.dirSum.clone().normalize() : null;
+    const apparent = arrival ? arrival.clone().negate() : null;
+    const ang = apparent ? directionToAngles(apparent, 1) : null;
+    // Available (unclipped) direction: mean of rays crossing the pupil plane
+    // within 12 mm of the pupil centre, even if they miss the pupil.
+    const near = pp.finals.filter((f) => f.point.distanceTo(eye.pupilCenter) < 12);
+    let availAng = null;
+    if (near.length) {
+      const d = near.reduce((s, f) => s.addScaledVector(f.dir, f.w), new Vector3()).normalize().negate();
+      availAng = directionToAngles(d, 1);
+    }
+    // Vergence as the eye samples it: rays within 1.5 pupil radii of the
+    // pupil centre (falls back to the wider set if too few rays land there).
+    const inPupil = near.filter((f) => f.point.distanceTo(eye.pupilCenter) <= 1.5 * eye.pupilRadius);
+    const verg = bundleVergence(inPupil.length >= 8 ? inPupil : near, eye);
+    pixelResults.push({ ...pp.px, visible, pupilRays: pp.pupilRays, pupilPower: pp.pupilPower, apparent, angles: ang, availableAngles: availAng, vergence: verg, finals: pp.finals });
+  }
+
+  const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
+  return {
+    system, paths, chief, sources, pixels, bands, pixelResults, counts, power, hyp, lensCrossings,
+    coneFractionOfHemisphere, elapsedMs: elapsed,
+    critical: { bk7Deg: (criticalAngle(params.prism.n, AIR.n550) * 180) / Math.PI },
+  };
+}
+
+/**
+ * Vergence of a ray bundle at the pupil plane, from a least-squares fit of
+ * transverse slope against transverse position along the eye's right and up
+ * axes. Diopters; negative = diverging (virtual image in front of the eye),
+ * 0 = collimated (image at infinity), positive = converging (no virtual image).
+ * Also returns the residual angular spread after removing the fit (mrad).
+ */
+export function bundleVergence(rays, eye) {
+  if (rays.length < 8) return null;
+  const fit = (axis) => {
+    let sw = 0, sx = 0, ss = 0, sxx = 0, sxs = 0;
+    const pts = rays.map((r) => {
+      const x = r.point.clone().sub(eye.pupilCenter).dot(axis);
+      const dz = -r.dir.dot(eye.gaze);
+      const s = r.dir.dot(axis) / dz;
+      return { x, s, w: r.w };
+    });
+    for (const p of pts) { sw += p.w; sx += p.w * p.x; ss += p.w * p.s; sxx += p.w * p.x * p.x; sxs += p.w * p.x * p.s; }
+    const varX = sxx / sw - (sx / sw) ** 2;
+    if (varX < 0.09) return null; // rays must span >= ~0.3 mm rms for a stable slope
+    const slope = (sxs / sw - (sx / sw) * (ss / sw)) / varX; // 1/mm
+    const icpt = ss / sw - slope * (sx / sw);
+    let res = 0;
+    for (const p of pts) res += p.w * (p.s - (icpt + slope * p.x)) ** 2;
+    return { slope, rms: Math.sqrt(res / sw) };
+  };
+  const fx = fit(eye.right), fy = fit(eye.up);
+  if (!fx || !fy) return null;
+  // Rays travel toward -gaze; for a diverging bundle slope relative to the
+  // travel direction is positive. Convert to vergence (D): -1000*slope.
+  const Vx = -1000 * fx.slope, Vy = -1000 * fy.slope;
+  return { Vx, Vy, mean: (Vx + Vy) / 2, astig: Math.abs(Vx - Vy), residualMrad: 1000 * Math.hypot(fx.rms, fy.rms) / Math.SQRT2 };
+}
