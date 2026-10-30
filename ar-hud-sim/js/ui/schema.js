@@ -127,6 +127,20 @@ const SECTION_LIST = [
     ],
   },
   {
+    id: 'patch', title: 'Mirror patch (replaces the prism)',
+    controls: [
+      { key: 'patch.enabled', label: 'Use a mirror patch behind the lens', type: 'toggle', tag: 'design', help: 'A thin, partly mirrored glass shell behind the right lens reflects light from the temple into your eye (Focals-style). Re-align after changing it.' },
+      { key: 'patch.radius', label: 'Patch radius of curvature', min: 30, max: 5000, step: 1, unit: 'mm', tag: 'design', help: 'Concave toward the eye. Mirror focal length = R/2. Large R ≈ flat.' },
+      { key: 'patch.conicK', label: 'Patch conic constant', min: -3, max: 3, step: 0.05, unit: '', tag: 'design' },
+      { key: 'patch.diameter', label: 'Patch diameter', min: 4, max: 25, step: 0.5, unit: 'mm', tag: 'design' },
+      { key: 'patch.gap', label: 'Clearance to the lens', min: 0.1, max: 4, step: 0.1, unit: 'mm', tag: 'design' },
+      { key: 'patch.foldDeg', label: 'Fold angle (eye ↔ display)', min: 30, max: 130, step: 0.5, unit: '°', tag: 'design', help: 'Twice the incidence angle on the patch. Larger reaches the temple but adds astigmatism.' },
+      { key: 'patch.sourceTiltDeg', label: 'Display direction up/down', min: -40, max: 40, step: 0.5, unit: '°', tag: 'design' },
+      { key: 'patch.throw', label: 'Display distance from patch', min: 10, max: 60, step: 0.5, unit: 'mm', tag: 'design' },
+      { key: 'patch.reflectance', label: 'Patch reflectance', min: 0.05, max: 0.9, step: 0.01, unit: '', tag: 'assumed' },
+    ],
+  },
+  {
     id: 'waveguide', title: 'Waveguide (replaces the prism)',
     controls: [
       { key: 'waveguide.enabled', label: 'Use a waveguide instead of the prism', type: 'toggle', tag: 'design', help: 'A thin glass plate behind the right lens: light enters its temple end, is guided by total internal reflection and leaves through partial mirrors in front of the eye. Use "Re-align" (Align section) after changing it.' },
@@ -226,7 +240,7 @@ const SECTION_LIST = [
   },
 ];
 
-const ORDER = ['measure', 'vision', 'optics', 'hud', 'collimator', 'prism', 'waveguide', 'oled', 'driver', 'eye', 'frame', 'targets', 'align', 'sim'];
+const ORDER = ['measure', 'vision', 'optics', 'hud', 'collimator', 'prism', 'patch', 'waveguide', 'oled', 'driver', 'eye', 'frame', 'targets', 'align', 'sim'];
 export const SECTIONS = ORDER.map((id) => SECTION_LIST.find((s) => s.id === id));
 
 export const VISIBILITY = [

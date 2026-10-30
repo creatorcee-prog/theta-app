@@ -111,10 +111,10 @@ export function armSurfacePoints(arm, rings = 6, around = 12) {
 function hardwarePoints(system) {
   const { prism, oled, collimator, glasses } = system;
   const groups = {};
-  groups.prism = prism.kind === 'waveguide' ? [] : Object.values(prism.vertices); // a waveguide plate is see-through
+  groups.prism = prism.kind ? [] : Object.values(prism.vertices); // a waveguide plate or mirror patch is see-through
   // subdivide prism edges so silhouettes near 90 deg stay sensible
   const pv = prism.vertices, edges = [['A+', 'B+'], ['B+', 'C+'], ['C+', 'A+'], ['A-', 'B-'], ['B-', 'C-'], ['C-', 'A-'], ['A+', 'A-'], ['B+', 'B-'], ['C+', 'C-']];
-  if (prism.kind !== 'waveguide') for (const [a, b] of edges) for (let k = 1; k < 4; k++) groups.prism.push(pv[a].clone().lerp(pv[b], k / 4));
+  if (!prism.kind) for (const [a, b] of edges) for (let k = 1; k < 4; k++) groups.prism.push(pv[a].clone().lerp(pv[b], k / 4));
   const boxCorners = (center, q, size) => {
     const out = [];
     for (const sx of [-0.5, 0.5]) for (const sy of [-0.5, 0.5]) for (const sz of [-0.5, 0.5]) {

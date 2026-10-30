@@ -258,7 +258,9 @@ export class UIController {
       chip('Lens coverage', `${L.coveragePct.toFixed(1)}%`, st('lensCov')),
       chip('FOV', f.hfov != null ? `${f.hfov.toFixed(1)}°×${f.vfov.toFixed(1)}°` : '—', st('hfov')),
       chip('Offset', f.hCenter != null ? `${f.hCenter.toFixed(1)}° / ${f.vCenter.toFixed(1)}°` : '—', st('hoff')),
-      chip('TIR', diag.checks.find((c) => c.id === 'tir' || c.id === 'guideTIR')?.value ?? '—', st(diag.checks.some((c) => c.id === 'guideTIR') ? 'guideTIR' : 'tir')),
+      results.system.prism.kind === 'patch'
+        ? chip('Mirror incidence', diag.checks.find((c) => c.id === 'chiefInc')?.value ?? '—', st('chiefInc'))
+        : chip('TIR', diag.checks.find((c) => c.id === 'tir' || c.id === 'guideTIR')?.value ?? '—', st(diag.checks.some((c) => c.id === 'guideTIR') ? 'guideTIR' : 'tir')),
       chip('Parts total', money(bomTotals(this.cb.getParams().bom).total), 'info'),
       chip('Weight', `${bomTotals(this.cb.getParams().bom).grams.toFixed(1)} g`, 'info'),
       ...(this.cb.getScore?.() ? [chip('Goals', `${Math.round(100 * this.cb.getScore().overall)}%`, this.cb.getScore().meetsBar ? 'pass' : 'fail')] : []),
@@ -376,7 +378,7 @@ export class UIController {
           <h3>${esc(m.name)} <span class="tagline">${esc(m.tagline)}</span> <span class="score ${t.overall >= 0.8 ? 'ok' : 'bad'}">${pct(t.overall)}</span></h3>
           <p class="help">${esc(m.idea)}</p>
           ${bars(t.goals.map((g) => ({ ...g, label: { pupil: 'Pupil coverage', weight: 'Weight', cost: 'Cost', structure: 'Feasible structure' }[g.id] })))}
-          <p class="make-spec">${v.prism != null ? `${v.prism} mm K9 prism` : `${v.thick} mm waveguide, ${Math.round(v.facets)} facets, guided ${v.guide}°`} · ${esc(v.lens)} at ${v.stop} mm stop · HUD at ${v.az}° / ${v.el}° ·${v.tilt != null ? ` entry tilt ${v.tilt}° ·` : ''} FOV ${t.fov?.[0]?.toFixed(1)}° × ${t.fov?.[1]?.toFixed(1)}°</p>
+          <p class="make-spec">${v.prism != null ? `${v.prism} mm K9 prism` : v.radius != null ? `mirror patch Ø${v.diam} mm, R ${v.radius} mm, fold ${v.fold}°` : `${v.thick} mm waveguide, ${Math.round(v.facets)} facets, guided ${v.guide}°`} · ${esc(v.lens)} at ${v.stop} mm stop · HUD at ${v.az}° / ${v.el}° ·${v.tilt != null ? ` entry tilt ${v.tilt}° ·` : ''} FOV ${t.fov?.[0]?.toFixed(1)}° × ${t.fov?.[1]?.toFixed(1)}°</p>
           <div class="btn-row"><button type="button" class="btn small" data-act="loadMake:${m.id}">Load ${esc(m.name)}</button></div>
         </section>`;
       }).join('')}`;

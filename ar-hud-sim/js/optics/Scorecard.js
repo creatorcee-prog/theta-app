@@ -50,7 +50,10 @@ export function scoreDesign(results, coverage, diag, params) {
   // every placed part: must not block the beam or cut into the head
   for (const c of diag.checks.filter((x) => x.id.startsWith('part-'))) structural.push({ id: c.id, label: c.label, ok: false, value: c.value, explain: c.explain });
   // the prism needs something holding it
-  if (params.waveguide?.enabled) {
+  if (params.patch?.enabled) {
+    const clip = (params.bom ?? []).some((b) => b.id === 'patchMount' && b.include !== false);
+    structural.push({ id: 'prismMount', label: 'Mirror patch held on the lens', ok: clip, value: clip ? 'edge-bonded' : 'no', explain: clip ? '' : 'Add the edge bond / spacer dots that hold the patch behind the lens.' });
+  } else if (params.waveguide?.enabled) {
     const clip = (params.bom ?? []).some((b) => b.id === 'guideClip' && b.include !== false);
     structural.push({ id: 'prismMount', label: 'Waveguide held by the rim', ok: clip, value: clip ? 'rim clip' : 'no', explain: clip ? '' : 'Add a rim clip (parts list) that holds the plate behind the lens with an air gap.' });
   } else {

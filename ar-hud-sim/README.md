@@ -137,10 +137,10 @@ and the page says so.
 
 ## Makes
 
-The **Makes** tab holds five different ways to build the HUD. Four of them
+The **Makes** tab holds six different ways to build the HUD. Four of them
 use only parts that can be bought: catalog aspheres, stock K9 45-45-90
-prisms, and listed displays and boards. The fifth, Lumen, needs a hand-made
-waveguide.
+prisms, and listed displays and boards. Mirage needs a coated patch, and
+Lumen needs a hand-made waveguide.
 
 | Make | Idea |
 |---|---|
@@ -148,7 +148,49 @@ waveguide.
 | **Solo** | Standalone: Raspberry Pi Zero 2 W, battery and charger on the left temple to balance the optics on the right. |
 | **Kestrel** | Value monochrome: a $2.65 0.49″ 64×32 I2C OLED driven by an ESP32-C3 instead of the $175 micro-OLED kit. |
 | **Wisp** | Featherweight: the smallest stock prism and a compact housing; tethered over HDMI. |
+| **Mirage** | Mirror on the lens, Focals-style: the display and lens in the temple shine across the inside of the lens onto a small partly mirrored glass patch, which reflects the image into the eye. |
 | **Lumen** | Waveguide, after the Focals and waveguide reference images: the projector sits in the temple and a 3.3 mm glass plate behind the lens carries the image by TIR. Partial mirrors embedded in the plate couple it out to the eye. Nothing hangs in front of the lens. |
+
+### Mirage: the mirror-on-the-lens make
+
+- **What is modelled.** A thin glass shell sits behind the right lens with a
+  partial mirror (R 30%) on its concave face.
+  - A new tracer object splits every ray hitting it into a reflected branch
+    and a transmitted branch.
+  - The shell is slid back automatically until its tilted rim clears the
+    lens.
+  - The display and an aspheric lens sit in the temple housing and shine
+    across the inside of the lens onto it.
+  - Focals did this with a laser scanner and a holographic film
+    ([ITWorldCanada](https://itworldcanada.com/?p=410603)); neither is
+    buyable.
+- **The physics problem.** Light from the temple meets the patch at about
+  45°. A curved mirror used that far off-axis focuses horizontal and
+  vertical lines at f·cos i and f/cos i, which is built-in astigmatism.
+  - The diagnostics print it: about 18 D for R 60 mm at 40° incidence.
+  - The search therefore drove the patch almost flat (R ≈ 2.2 m), so the
+    asphere does the focusing.
+  - It also tilted the asphere about 17° to cancel some of the remaining
+    astigmatism.
+- **How it would be built.**
+  - Patch: a 1 mm mineral watch crystal
+    ([Esslinger, $3.95](https://www.esslinger.com/domed-watch-crystal-round-mineral-glass-crystal-1-00-mm-thick/))
+    cut to 12.5 mm and given a partial-mirror coating. The coating is an
+    estimate ($40); custom curved partial reflectors start at €75
+    ([Alien Photonics](https://findlight.net/uploads/products/datasheet/output-couplers-partial-reflectors-alien-photonics_1721050359.pdf)).
+  - Mount: glue only at the rim to the lens back, keeping an air gap.
+- **Result.**
+  - Overall 89.6%, the best score of any make.
+  - 100% of the display in the pupil and inside your zone.
+  - 20.6° × 18.3° field.
+  - 34.5 g.
+  - $300: the cost goal is 67% met.
+  - 11/12 structure checks pass. The one failure is whole-field focus,
+    as on every single-lens make: 90% of the field sits within about 4 D.
+  - Reach: 7 of 25 aim points fully visible and buildable.
+  - The fit needs millimetre accuracy, like the Focals fitting. The
+    viewing zone shrinks as you move the patch off the line to where the
+    HUD sits.
 
 ### Lumen: the waveguide make
 
@@ -216,6 +258,7 @@ four goal scores, and the bar is 80%.
   - no part blocking the beam
   - prism has a mount (waveguide: rim clip)
   - waveguide only: TIR across the beam, see-through ≥ 70%
+  - mirror patch only: see-through ≥ 70%, patch held on the lens
 
 Two physics findings the search kept running into:
 - **A single off-the-shelf asphere cannot focus a wide field.** At a 24°

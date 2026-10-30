@@ -89,12 +89,20 @@ export function runDiagnostics(results, coverage) {
   const crit = critical.bk7Deg;
   add('Prism', 'critical', 'BK7 critical angle (glass→air)', `${f2(crit)}°`, 'info',
     `θc = asin(1/n) with n = ${params.prism.n}.`);
-  const guided = prism.kind === 'waveguide';
-  const cname = guided ? 'Waveguide' : 'Prism';
+  const guided = prism.kind === 'waveguide', patched = prism.kind === 'patch';
+  const cname = guided ? 'Waveguide' : patched ? 'Mirror patch' : 'Prism';
   const chiefHyp = guided
     ? chief.events.find((e) => e.obj === 'guide' && (e.face === 'guideFront' || e.face === 'guideBack') && !e.entering && !e.facet)
     : chief.events.find((e) => e.obj === 'prism' && e.face === 'hypotenuse' && !e.entering);
-  if (guided) {
+  if (patched) {
+    const pt = prism, P = params.patch;
+    const hit = chief.events.find((e) => e.obj === 'patch');
+    add('Prism', 'chiefInc', 'Chief-ray incidence on the mirror patch', hit ? `${f1(hit.incidenceDeg)}°` : 'not reached', hit ? 'pass' : 'fail',
+      hit ? `Partial mirror R ${Math.round(100 * P.reflectance)}%. Off-axis, a spherical mirror (R ${P.radius} mm, f ${f1(pt.f)} mm) focuses tangential and sagittal rays at f·cos i and f / cos i: ≈ ${f1(pt.astigD)} D of built-in astigmatism at ${f1(pt.incidenceDeg)}°, before any correction by the collimator tilt or a conic shape.`
+        : `The display-centre ray never reaches the patch (outcome: ${chief.outcome}). Check the alignment.`);
+    add('Prism', 'seeThrough', 'See-through transmission (world light)', `≈ ${Math.round(100 * (1 - P.reflectance))}%`, grade(100 * (1 - P.reflectance), (v) => v >= 70, (v) => v >= 50),
+      'World light passes the coated patch once and loses its reflectance there; elsewhere the lens is unchanged. A thin shell of even thickness adds almost no power to the see-through view.');
+  } else if (guided) {
     const wg = prism;
     const inc = chiefHyp?.incidenceDeg;
     const margin = inc != null ? inc - crit : null;
@@ -123,7 +131,7 @@ export function runDiagnostics(results, coverage) {
   }
   const tirPct = hyp.hits ? (100 * hyp.tir) / hyp.hits : null;
   const coated = params.prism.coating === 'mirror';
-  if (!guided) add('Prism', 'tir', coated ? 'Hypotenuse reflection (mirror coating)' : 'Total internal reflection across beam',
+  if (!guided && !patched) add('Prism', 'tir', coated ? 'Hypotenuse reflection (mirror coating)' : 'Total internal reflection across beam',
     coated ? `${hyp.hits} hits, R = 90%` : tirPct == null ? 'no hits' : `${f1(tirPct)}% of ${hyp.hits} hits`,
     coated ? 'pass' : grade(tirPct, (v) => v >= 99, (v) => v >= 90),
     coated ? 'Aluminium coating assumed (R = 0.90); TIR not required. Adds absorption loss.'
@@ -201,12 +209,12 @@ export function runDiagnostics(results, coverage) {
   const occ = coverage.occlusion;
   add('Field', 'hwCentral', 'Central zone clear of hardware', `${f1(occ.minRadius)}° from axis`,
     grade(occ.minRadius, (v) => v >= t.centralClear, (v) => v >= t.centralClear * 0.6),
-    guided ? 'The waveguide plate is see-through (its transmission is a separate check); the input optics stay at the temple.' : occ.minRadius >= t.centralClear ? `Prism blocks ${f1(occ.prismLensPct)}% of the lens's angular area.`
+    patched ? 'The mirror patch is see-through (its transmission is a separate check); the display and lens stay in the temple.' : guided ? 'The waveguide plate is see-through (its transmission is a separate check); the input optics stay at the temple.' : occ.minRadius >= t.centralClear ? `Prism blocks ${f1(occ.prismLensPct)}% of the lens's angular area.`
       : `The prism silhouette reaches ${f1(occ.prism.minRadius)}° from the line of sight (inside the ${t.centralClear}° zone) and blocks ${f1(occ.prismLensPct)}% of the lens's angular area. A 10 mm prism this close to the eye subtends a large angle; move it outward/up or increase eye relief.`);
 
   // ---------------- eye geometry
   const cornea = eye.corneaVertex;
-  const prismClear = minDistanceToPrism(prism, cornea) - 0; // to corneal apex
+  const prismClear = patched ? Math.min(...Object.values(prism.vertices).map((v) => v.distanceTo(cornea))) : minDistanceToPrism(prism, cornea); // to corneal apex
   add('Eye', 'relief', 'Eye relief (lens back → cornea)', `${f1(params.eye.eyeRelief)} mm`,
     grade(params.eye.eyeRelief, (v) => v >= 10 && v <= 20, (v) => v >= 8 && v <= 25), 'Typical spectacle vertex distance is 12–14 mm.');
   const lash = params.eye.lashLength ?? 6;

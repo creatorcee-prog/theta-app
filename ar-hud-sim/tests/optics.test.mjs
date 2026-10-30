@@ -313,3 +313,26 @@ test('waveguide: light is guided by TIR and leaves through a facet into the pupi
   const copies = r.paths.filter((x) => x.outcome === 'pupil:eyeR' && x.primary).length;
   assert.ok(copies > r.counts.pupil, `copies ${copies} vs sources ${r.counts.pupil}`);
 });
+
+test('mirror patch: partial mirror splits R/T, chief ray reflects into the pupil, patch clears the lens', async () => {
+  const { baseParams, alignChain } = await import('../js/config/defaults.js');
+  let p = baseParams();
+  p.patch = { ...p.patch, enabled: true, radius: 400, diameter: 12, foldDeg: 95, throw: 25, reflectance: 0.3 };
+  p.frame.housingAuto = true; p.parts = [];
+  p.collimator = { ...p.collimator, enabled: true, mode: 'aspheric', conicK: -0.8, focalLength: 12.5, aperture: 10, glassDiameter: 12, edgeThickness: 0.8 };
+  p.intent = { ...p.intent, azimuth: 25, elevation: 5 };
+  p = alignChain(p);
+  const r = runSimulation(p);
+  assert.equal(r.system.prism.kind, 'patch');
+  assert.equal(r.chief.outcome, 'pupil:eyeR');
+  const ev = r.chief.events.filter((e) => e.obj === 'patch');
+  assert.equal(ev.length, 1);
+  near(ev[0].R + ev[0].T, 1, 1e-12);
+  near(ev[0].incidenceDeg, 47.5, 0.5, 'incidence = half the fold angle');
+  // the tilted patch's rim stays behind the lens back plane
+  const lf = r.system.glasses.lenses.R;
+  for (const v of Object.values(r.system.prism.vertices)) assert.ok(-v.clone().sub(lf.backCenter).dot(lf.normal) >= p.patch.gap - 0.01);
+  // off-axis spherical mirror: astigmatism grows with incidence (f/cos i - f cos i)
+  const pt = r.system.prism;
+  near(pt.astigD, (1000 / pt.f) * (Math.sin(rad(pt.incidenceDeg)) ** 2 / Math.cos(rad(pt.incidenceDeg))), 1e-9);
+});

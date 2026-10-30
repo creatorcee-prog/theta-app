@@ -190,7 +190,7 @@ function handleFor(id) {
   if (id === 'housing') return housingHandle;
   if (id?.startsWith('part:')) return partsModel.handles[id] ?? null;
   // the waveguide follows the spectacle lens (adjust it in the Waveguide section)
-  if (id === 'prism' && results?.system.prism.kind === 'waveguide') return null;
+  if (id === 'prism' && results?.system.prism.kind) return null;
   return optics.handles[id] ?? null;
 }
 

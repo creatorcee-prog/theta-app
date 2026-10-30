@@ -26,13 +26,13 @@ export function evaluateAim(params, h, v) {
   p = alignChain(p);
   const c = computeCollimator(p.collimator, computeOled(p.oled), p.prism.n);
   if (c?.valid && p.collimator.mode !== 'thin') p.collimator.distance = c.frontFocalDistance;
-  // a waveguide's facet copies only overlap into one image point when the beam
-  // is collimated, so refocus with the tracer (paraxial focus is not enough)
-  if (p.waveguide?.enabled) {
+  // waveguide copies and the off-axis mirror patch only form one sharp image
+  // point near the traced focus, so refocus with the tracer (paraxial is not enough)
+  if (p.waveguide?.enabled || p.patch?.enabled) {
     const fz = solveFocusDistance(p, assessFocus({ Vx: 0, Vy: 0 }, p.eye).targetVergence, { tol: 0.1, maxIter: 4 });
     if (fz.distance != null && Number.isFinite(fz.distance)) p.collimator.distance = fz.distance;
   }
-  p.sim = { ...p.sim, pixelsX: 7, pixelsY: 4, raysPerPixel: p.waveguide?.enabled ? 48 : 24, wavelengths: 'mono', ghosts: false };
+  p.sim = { ...p.sim, pixelsX: 7, pixelsY: 4, raysPerPixel: p.waveguide?.enabled || p.patch?.enabled ? 48 : 24, wavelengths: 'mono', ghosts: false };
   const r = runSimulation(p);
   const cov = analyzeCoverage(r);
   const d = runDiagnostics(r, cov);

@@ -175,6 +175,11 @@ export function orthonormalBasis(z) {
 // Convex dielectric solid bounded by faces (prism, real lens, spectacle lens).
 // exitType: segment type after leaving the solid (undefined -> 'emerge',
 // null -> keep the type the ray had before it entered).
+/** Partially reflective curved film (e.g. a coated thin shell) in air. */
+export function partialMirror(id, label, face, R, T) {
+  return { kind: 'mirror', id, label, face, R, T };
+}
+
 export function dielectricSolid(id, label, material, faces, exitType) {
   return { kind: 'solid', id, label, material, faces, exitType };
 }
@@ -250,6 +255,10 @@ function intersectObject(obj, ray, tMin, insideSolidId) {
     const pw = p.applyMatrix4(obj.matrixWorld);
     const t = pw.distanceTo(ray.origin);
     return t > tMin ? { t, point: pw, obj } : null;
+  }
+  if (obj.kind === 'mirror') {
+    const h = obj.face.intersect(ray, tMin);
+    return h ? { ...h, obj } : null;
   }
   if (obj.kind === 'eye') {
     const hp = obj.pupil.intersect(ray, tMin);
@@ -344,6 +353,27 @@ export function trace(scene, sources, options = {}) {
         path.lastOptic = obj.id;
         r.events.push({ obj: obj.id, kind: 'thinLens' });
         if (++depth > maxDepth) { path.outcome = 'maxDepth'; break; }
+        continue;
+      }
+
+      if (obj.kind === 'mirror') {
+        // thin partially reflective film in air (coating on a thin shell):
+        // reflects R, transmits T undeviated (a thin shell's two refractions cancel)
+        const N = hit.normal.clone();
+        const cosI = Math.abs(dir.dot(N));
+        const incidence = Math.acos(Math.min(1, cosI));
+        const R = obj.R, T = obj.T ?? 1 - obj.R;
+        r.events.push({ obj: obj.id, face: 'mirror', entering: false, incidenceDeg: (incidence * 180) / Math.PI, point: hit.point.clone(), mirror: true, facet: true, R, T, tir: false });
+        if (T > 0 && weight * T >= minWeight && depth < maxDepth) {
+          stack.push({ origin: hit.point.clone(), dir: dir.clone(), weight: weight * T, lambda: r.lambda, color: r.color,
+            pixel: r.pixel, source: r.source, chief: false, inside: null, depth: depth + 1, primary: r.primary,
+            lastType, parent: pathIndex, events: [...r.events] });
+        }
+        if (R <= 0) { path.outcome = `absorbed:${obj.id}`; break; }
+        weight *= R; dir = reflect(dir, N); origin = hit.point.clone();
+        lastType = r.primary ? 'reflect' : 'ghost';
+        path.lastOptic = obj.id;
+        if (++depth > maxDepth || weight < minWeight) { path.outcome = 'maxDepth'; break; }
         continue;
       }
 

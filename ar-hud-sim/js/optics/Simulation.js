@@ -11,6 +11,7 @@ import { makeGlass, WAVELENGTHS, criticalAngle, AIR } from './materials.js';
 import { partFrame, computeWeights } from '../model/parts.js';
 import { boxAbsorber } from './RayTracer.js';
 import { computeWaveguide, waveguideObjects } from './Waveguide.js';
+import { computePatch, patchObjects } from './Combiner.js';
 
 function boxCornersOf(center, q, size) {
   const out = [];
@@ -28,18 +29,19 @@ export function buildSystem(params) {
   const eye = computeEye({ ...params.eye, monoPD: params.eye.monoPDRight, side: 1 }, glasses);
   const leftEye = computeEye({ monoPD: params.eye.monoPDLeft, pupilHeight: params.eye.pupilHeightLeft, eyeRelief: params.eye.eyeRelief, pupilDiameter: params.eye.pupilDiameter, constants: params.eye.constants, side: -1 }, glasses);
   const oled = computeOled(params.oled);
-  const guided = !!params.waveguide?.enabled;
-  const prism = guided ? computeWaveguide(params, glasses, eye) : computePrism(params.prism);
+  const patched = !!params.patch?.enabled;
+  const guided = !patched && !!params.waveguide?.enabled;
+  const prism = patched ? computePatch(params, glasses, eye) : guided ? computeWaveguide(params, glasses, eye) : computePrism(params.prism);
   const dispersive = params.sim.wavelengths === 'rgb';
   const prismMaterial = makeGlass('BK7', params.prism.n, { dispersive });
   const lensMaterial = makeGlass('BK7', params.prism.n, { dispersive });
   const specMaterial = makeGlass('CR-39', params.frame.specLensN, { dispersive: false });
   const collimator = computeCollimator(params.collimator, oled, params.prism.n);
   const driver = computeDriver(params.driver);
-  const arm = params.frame.optArm === false ? null : computeArm(oled, collimator?.valid ? collimator : null, prism);
+  const arm = params.frame.optArm === false || patched ? null : computeArm(oled, collimator?.valid ? collimator : null, prism);
   const objects = buildOpticalObjects({
     oled, prism, collimator, driver, arm, glasses, frame: params.frame, prismMaterial, lensMaterial, specMaterial,
-    coating: params.prism.coating, guideObjects: guided ? waveguideObjects(prism, prismMaterial) : null,
+    coating: params.prism.coating, guideObjects: patched ? patchObjects(prism, params) : guided ? waveguideObjects(prism, prismMaterial) : null,
   });
   // placeable hardware parts block light where they are put
   const parts = (params.parts ?? []).map((part) => ({ part, ...partFrame(part, { prism, oled }) }));

@@ -30,6 +30,8 @@ const src = {
   bs: { label: 'Edmund 25 mm 30R/70T plate beamsplitter, 1 mm ($61)', url: 'https://www.edmundoptics.com/p/25mm-diameter-30r70t-plate-beamsplitter/5238/' },
   noa: { label: 'Edmund NOA61 optical adhesive, 1 oz ($38)', url: 'https://www.edmundoptics.com/p/1-oz-application-bottle-of-noa-61/4209/' },
   noaT: { label: 'Thorlabs NOA61 ($40.70)', url: 'https://www.thorlabs.us/_QLPopup.cfm?PN=NOA61' },
+  crystal: { label: 'Esslinger domed mineral watch crystal, 1.0 mm ($3.95)', url: 'https://www.esslinger.com/domed-watch-crystal-round-mineral-glass-crystal-1-00-mm-thick/' },
+  curvedPR: { label: 'Alien Photonics custom curved partial reflectors (from €75)', url: 'https://findlight.net/uploads/products/datasheet/output-couplers-partial-reflectors-alien-photonics_1721050359.pdf' },
   lumus: { label: 'Lumus: reflective (geometric) waveguides, licensed to OEMs', url: 'https://lumusvision.com' },
 };
 
@@ -101,6 +103,18 @@ function waveguideOptics(lens) {
   ];
 }
 
+// Mirage optics: a partially mirrored thin glass shell behind the lens.
+function patchOptics(lens) {
+  return [
+    line({ id: 'collimator', name: lens.name, component: 'collimator', unit: lens.unit, sourced: lens.sourced, sources: lens.sources, note: lens.note, weight: 0, weightBasis: 'calc', autoWeight: true, weightNote: 'Full-diameter lens volume × 2.51 g/cm³.' }),
+    line({ id: 'prism', name: 'Mirror patch: 1 mm glass shell (domed or flat watch crystal, cut down)', component: 'prism', unit: 3.95, sourced: true, sources: [src.crystal], weight: 0, weightBasis: 'calc', autoWeight: true, weightNote: 'Shell area × thickness × 2.5 g/cm³.', note: 'Dome radii are not published: measure the sag (R = d²/8s + s/2) and pick the crystal closest to the design radius.' }),
+    line({ id: 'patchCoat', name: 'Partial-mirror coating on its concave face (R ≈ 30%)', unit: 40, sourced: false, sources: [src.curvedPR], weight: 0, weightBasis: 'calc', note: 'Estimate: a small-batch vacuum coating or a DIY partial silvering. A ready-made curved partial reflector costs from €75 (custom).' }),
+    line({ id: 'patchMount', name: 'Edge bond + spacer dots holding the patch behind the lens (UV optical adhesive)', component: 'prism', unit: 38, sourced: true, sources: [src.noa, src.noaT], weight: 0.1, weightBasis: 'estimate', note: 'Glue only the rim; an air gap (not glue) behind the coated area keeps the see-through view free of extra power.' }),
+    printed('barrel', 'Lens barrel (printed)', 'collimator'),
+    printed('housing', 'Temple housing (printed)', 'housing'),
+  ];
+}
+
 // ---------------------------------------------------------------- makes
 
 export const MAKES = [
@@ -155,6 +169,13 @@ export const MAKES = [
     display: 'yx',
   },
   {
+    id: 'mirage', name: 'Mirage', tagline: 'Mirror on the lens (Focals-style)', kind: 'patch',
+    idea: 'The display and lens sit in the temple and shine across the inside of the lens onto a small, partly mirrored glass patch behind it, which reflects the image into your eye. Nothing sticks out and the frame keeps its normal shape. Focals did this with a laser scanner and a holographic film; this version uses parts you can get: the micro-OLED, a stock asphere and a coated watch-crystal patch.',
+    vars: { lens: ['eo125', 'acl1512', 'acl1210', 'eo19'], flip: [false, true], stop: [4, 11], az: [6, 44], el: [-28, 32], fold: [70, 110], stilt: [-20, 20], radius: [80, 3000], throw: [18, 40], tx: [-20, 20], ty: [-20, 20], diam: [8, 16] },
+    electronics: () => ({ parts: [], bom: [line({ id: 'cable', name: 'Thin HDMI cable to your phone/PC', unit: 8, sourced: false, weight: 2.5, weightBasis: 'estimate', note: 'Estimate. Your phone/PC is the HDMI source (not counted).' })] }),
+    display: 'yx',
+  },
+  {
     id: 'lumen', name: 'Lumen', tagline: 'See-through waveguide (your reference)', kind: 'waveguide',
     idea: 'Modelled on your reference images: the projector sits in the temple, and a thin glass waveguide behind the lens carries the image inward by total internal reflection. Embedded partial mirrors then send it into your eye, so nothing hangs in front of the lens. Retail waveguides use a diffraction grating or factory-coated facets. Here the facets are cut from a stock beamsplitter, because a grating cannot be ray-traced or bought for a hobby build.',
     vars: { lens: ['acl1512', 'eo125', 'acl1210', 'eo19'], flip: [false, true], stop: [3, 10], az: [6, 44], el: [-28, 32], thick: [2.5, 4.5], guide: [50, 64], facets: [2, 5], spacing: [2.5, 6], height: [9, 16], margin: [-8, 0] },
@@ -169,11 +190,14 @@ export function buildMake(make, v, opts = {}) {
   const lens = LENSES.find((l) => l.id === v.lens) ?? LENSES[1];
   const prism = PRISMS.find((x) => x.size === v.prism) ?? PRISMS[3];
   p.prism = { ...p.prism, size: prism.size, height: prism.size, angle: 45, coating: 'none' };
-  const guided = make.kind === 'waveguide';
+  const guided = make.kind === 'waveguide', patched = make.kind === 'patch';
+  if (patched) {
+    p.patch = { ...p.patch, enabled: true, radius: v.radius, diameter: v.diam, foldDeg: v.fold, sourceTiltDeg: v.stilt, throw: v.throw, reflectance: 0.3 };
+  }
   if (guided) {
     p.waveguide = { ...p.waveguide, enabled: true, coating: 'plain', facetR: 0.3, thickness: v.thick, guideAngle: v.guide, facets: Math.round(v.facets), facetSpacing: v.spacing, height: v.height, templeMargin: v.margin };
   }
-  p.collimator = { ...p.collimator, enabled: true, mode: 'aspheric', conicK: -0.8, focalLength: lens.f, aperture: Math.min(v.stop, lens.dia), glassDiameter: lens.dia, edgeThickness: 0.8, flip: !!v.flip };
+  p.collimator = { ...p.collimator, enabled: true, mode: 'aspheric', conicK: -0.8, focalLength: lens.f, aperture: Math.min(v.stop, lens.dia), glassDiameter: lens.dia, edgeThickness: 0.8, flip: !!v.flip, tiltX: patched ? v.tx : 0, tiltY: patched ? v.ty : 0 };
   if (make.display === 'ssd0.49') {
     p.oled = { ...p.oled, diagonalIn: 0.49, resX: 64, resY: 32, housingMarginX: 3.8, housingMarginY: 6.4, housingDepth: 3, peakLuminance: 150 };
     p.driver = { ...p.driver, length: 22.5, height: 18, thickness: 1.0 }; // ESP32-C3 SuperMini as the display driver
@@ -197,14 +221,14 @@ export function buildMake(make, v, opts = {}) {
     }
   }
   const el = make.electronics();
-  p.parts = guided ? [...el.parts] : [bracket(p), ...el.parts];
+  p.parts = guided || patched ? [...el.parts] : [bracket(p), ...el.parts];
   const displayLines = make.display === 'ssd0.49'
     ? [
       line({ id: 'oled', name: '0.49″ 64×32 I2C OLED module', component: 'oled', unit: 2.65, sourced: true, sources: [src.ssd], weight: 1, weightBasis: 'estimate', note: '11.18 × 5.58 mm active area, 15 × 12 mm board (listings).' }),
       line({ id: 'driver', name: 'ESP32-C3 Super Mini (drives the OLED)', component: 'driver', unit: 8, sourced: true, sources: [src.esp], weight: 2.2, weightBasis: 'spec', weightSources: [src.espW], note: 'Typical $3–8.' }),
     ]
     : yxKitLines();
-  p.bom = [frameLine(), ...displayLines, ...(guided ? waveguideOptics(lens) : commonOptics(lens, prism)), ...el.bom];
+  p.bom = [frameLine(), ...displayLines, ...(patched ? patchOptics(lens) : guided ? waveguideOptics(lens) : commonOptics(lens, prism)), ...el.bom];
   p.make = { id: make.id, name: make.name, vars: v };
   return p;
 }

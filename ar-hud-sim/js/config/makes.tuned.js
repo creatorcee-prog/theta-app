@@ -1168,6 +1168,234 @@ export const TUNED = {
       14.046015094220433
     ]
   },
+  "mirage": {
+    "reach": [
+      {
+        "h": 4.8,
+        "v": -25.9,
+        "visible": 0.75,
+        "buildable": false,
+        "failed": [
+          "oledFit"
+        ]
+      },
+      {
+        "h": 14.4,
+        "v": -25.9,
+        "visible": 0.929,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 24,
+        "v": -25.9,
+        "visible": 0.857,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 33.6,
+        "v": -25.9,
+        "visible": 0.893,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 43.2,
+        "v": -25.9,
+        "visible": 0.643,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 4.8,
+        "v": -11.7,
+        "visible": 0.821,
+        "buildable": false,
+        "failed": [
+          "oledFit"
+        ]
+      },
+      {
+        "h": 14.4,
+        "v": -11.7,
+        "visible": 1,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 24,
+        "v": -11.7,
+        "visible": 1,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 33.6,
+        "v": -11.7,
+        "visible": 1,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 43.2,
+        "v": -11.7,
+        "visible": 0.75,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 4.8,
+        "v": 2.5,
+        "visible": 0.786,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 14.4,
+        "v": 2.5,
+        "visible": 1,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 24,
+        "v": 2.5,
+        "visible": 1,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 33.6,
+        "v": 2.5,
+        "visible": 0.929,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 43.2,
+        "v": 2.5,
+        "visible": 0.643,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 4.8,
+        "v": 16.7,
+        "visible": 0.714,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 14.4,
+        "v": 16.7,
+        "visible": 1,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 24,
+        "v": 16.7,
+        "visible": 1,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 33.6,
+        "v": 16.7,
+        "visible": 0.964,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 43.2,
+        "v": 16.7,
+        "visible": 0.714,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 4.8,
+        "v": 30.9,
+        "visible": 0.75,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 14.4,
+        "v": 30.9,
+        "visible": 0.964,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 24,
+        "v": 30.9,
+        "visible": 0.929,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 33.6,
+        "v": 30.9,
+        "visible": 0.893,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "h": 43.2,
+        "v": 30.9,
+        "visible": 0.714,
+        "buildable": true,
+        "failed": []
+      }
+    ],
+    "vars": {
+      "lens": "eo19",
+      "flip": false,
+      "stop": 9.2,
+      "az": 19.2,
+      "el": -20.8,
+      "fold": 90.2,
+      "stilt": 12.8,
+      "radius": 2247.3,
+      "throw": 30.3,
+      "tx": -16.8,
+      "ty": 1.1,
+      "diam": 12.5
+    },
+    "overall": 0.8958277779629568,
+    "goals": [
+      {
+        "id": "pupil",
+        "value": "100% (45/45 px)",
+        "score": 1,
+        "met": true
+      },
+      {
+        "id": "weight",
+        "value": "34.5 g",
+        "score": 1,
+        "met": true
+      },
+      {
+        "id": "cost",
+        "value": "$300.01",
+        "score": 0.6666444451851605,
+        "met": false
+      },
+      {
+        "id": "structure",
+        "value": "11/12 checks",
+        "score": 0.9166666666666666,
+        "met": false
+      }
+    ],
+    "fov": [
+      20.58566057578939,
+      18.29082119878349
+    ]
+  },
   "lumen": {
     "reach": [
       {
