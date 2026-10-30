@@ -17,8 +17,11 @@ import { UIController, setPath } from './ui/UIController.js';
 import { NOTES_HTML } from './ui/notes.js';
 import { setImageReadyHandler } from './render/hudContent.js';
 import { PartsModel } from './render/PartsModel.js';
+import { computeHead } from './model/head.js';
+import { MAKES, TUNED, tunedParams, applyPrintedCosts } from './config/makes.js';
+import { scoreDesign } from './optics/Scorecard.js';
 import { partFrame, hostFrameInverse } from './model/parts.js';
-import { solveFocusDistance } from './optics/focus.js';
+import { solveFocusDistance, solveFieldFocus } from './optics/focus.js';
 import { assessFocus } from './optics/Vision.js';
 
 const $ = (s) => document.querySelector(s);
@@ -47,6 +50,7 @@ const ui = new UIController({
   visibilityEl: $('#visibility'), legendEl: $('#legend'), metricsEl: $('#metrics'),
 }, {
   getParams: () => params,
+  getScore: () => score,
   onChange: (key, value) => {
     setPath(params, key, value);
     // display content and animation speed do not change the optics: redraw only
@@ -87,6 +91,8 @@ const ui = new UIController({
 });
 ui.renderNotes(NOTES_HTML);
 ui.bindParts($('#parts'));
+ui.bindMakes($('#makes'));
+let score = null;
 setImageReadyHandler(() => redrawContent());
 
 function schedule() { dirty = true; }
@@ -113,8 +119,10 @@ function run() {
   const t0 = performance.now();
   try {
     results = runSimulation(params);
+    applyPrintedCosts(params);
     coverage = analyzeCoverage(results);
     diag = runDiagnostics(results, coverage);
+    score = scoreDesign(results, coverage, diag, params);
   } catch (err) {
     console.error(err);
     $('#status').textContent = `Simulation error: ${err.message}`;
@@ -123,7 +131,7 @@ function run() {
   // rebuild meshes from the same geometry the tracer used
   sm.clearClippable();
   for (const g of [glassesModel.root, glassesModel.overlay, eyeR.group, eyeL.group, partsModel.root, ...Object.values(optics.groups)]) disposeTree(g);
-  glassesModel.build(results.system.glasses, params.frame, params.head);
+  glassesModel.build(results.system.glasses, params.frame, computeHead(params, results.system.glasses, results.system.eye));
   partsModel.update(results.system);
   partsModel.setCentreOfMass(results.weights?.com, results.weights?.grams ?? 0);
   housingHandle.position.copy(results.system.glasses.housing.center);
@@ -136,7 +144,7 @@ function run() {
   drawRays();
   fpv.set(results, coverage, diag);
   ui.renderMetrics(results, coverage, diag);
-  if (!dragging) { ui.renderResults(results, coverage, diag); ui.renderParts(params, results); }
+  if (!dragging) { ui.renderResults(results, coverage, diag); ui.renderParts(params, results); ui.renderMakes(MAKES, TUNED, score, params.make?.id); }
   ui.refresh();
   $('#fpv-flip').checked = !!params.hud.driverFlip;
   rays.speed = params.sim.raySpeed;
@@ -254,7 +262,9 @@ function action(a) {
     const target = assessFocus({ Vx: 0, Vy: 0 }, params.eye).targetVergence;
     const r = solveFocusDistance(params, target);
     if (r.distance != null) params.collimator.distance = Math.round(r.distance * 1000) / 1000;
-    ui.flash(r.ok ? `OLED moved to ${r.distance.toFixed(2)} mm from the lens: HUD vergence ${r.vergence.toFixed(2)} D for your eye (target ${target.toFixed(2)} D).` : `Could not focus: ${r.reason}`);
+    const ff = r.ok ? solveFieldFocus(params) : null;
+    if (ff?.ok) params.collimator.distance = Math.round(ff.distance * 1000) / 1000;
+    ui.flash(r.ok ? `OLED moved to ${params.collimator.distance.toFixed(2)} mm from the lens: centre vergence matched to your eye (${target.toFixed(2)} D), then the whole field balanced (90% within ${ff?.ok ? ff.residual.toFixed(2) : '—'} D).` : `Could not focus: ${r.reason}`);
   } else if (a === 'addPart') {
     const n = params.parts.filter((p) => p.custom).length + 1;
     const id = `custom${Date.now().toString(36)}`;
@@ -265,6 +275,9 @@ function action(a) {
     params.parts = params.parts.filter((p) => p.id !== id);
     params.bom = params.bom.filter((b) => b.part !== id);
     if (selected === `part:${id}`) select(null);
+  } else if (a.startsWith('loadMake:')) {
+    const p = tunedParams(a.slice('loadMake:'.length));
+    if (p) { params = p; select(null); ui.flash(`Loaded ${p.make.name}. Every number is re-traced live; edit anything and the scorecard updates.`); }
   } else if (a.startsWith('selectComponent:')) {
     const id = a.slice('selectComponent:'.length);
     select(id);

@@ -267,3 +267,20 @@ test('weights: calculated lines follow geometry; typed values stick; totals and 
   runSimulation(p);
   assert.equal(line.weight, 3);
 });
+
+test('every tuned make re-scores at >= 80% from scratch, matching the stored result', async () => {
+  const { MAKES, TUNED, buildMake, applyPrintedCosts } = await import('../js/config/makes.js');
+  const { runDiagnostics } = await import('../js/optics/Diagnostics.js');
+  const { scoreDesign } = await import('../js/optics/Scorecard.js');
+  for (const make of MAKES) {
+    const t = TUNED[make.id];
+    assert.ok(t, `${make.id} has a tuned design`);
+    const p = buildMake(make, t.vars);
+    const r = runSimulation(p);
+    applyPrintedCosts(p);
+    const cov = analyzeCoverage(r);
+    const s = scoreDesign(r, cov, runDiagnostics(r, cov), p);
+    assert.ok(s.overall >= 0.8, `${make.id}: ${(100 * s.overall).toFixed(1)}%`);
+    near(s.overall, t.overall, 0.005, `${make.id} reproducible`);
+  }
+});

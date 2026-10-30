@@ -136,23 +136,23 @@ export class GlassesModel {
     lab.position.set(cav.center.x, cav.max.y + 2, cav.min.z + 6);
     hgp.add(lab);
 
-    // ---- side of the head beside the right temple (from your gap measurements)
+    // ---- side of the head beside the right temple (from your measurements)
     if (head) {
       const hg2 = g('head', 'Head (temple area)');
-      const innerX = -(glasses.hingeX - frame.templeThickness / 2);
       const pts = [], idx = [];
-      const zs = [glasses.hingeZ + 2, glasses.hingeZ - 10, glasses.hingeZ - 20, glasses.hingeZ - 35, glasses.hingeZ - 55, glasses.hingeZ - 75];
-      for (const z of zs) {
-        const gap = Math.max(0, head.gapAtHinge + (head.gapAt20 - head.gapAtHinge) * ((glasses.hingeZ - z) / 20));
-        for (const y of [glasses.hingeY - 18, glasses.hingeY + 14]) pts.push(innerX + gap, y, z);
-      }
+      const zs = [head.zRim, head.zRim - 10, head.zRim - 25, head.zRim - 45, head.zRim - 65];
+      for (const z of zs) for (const y of [glasses.hingeY - 18, glasses.hingeY + 14]) pts.push(head.skinX(z), y, z);
       for (let i = 0; i < zs.length - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+      // the orbital rim face, from the rim to the temple skin
+      const base = pts.length / 3;
+      pts.push(head.rimX, glasses.hingeY - 18, head.zRim, head.rimX, glasses.hingeY + 14, head.zRim);
+      idx.push(0, 1, base, 1, base + 1, base);
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
       geo.setIndex(idx); geo.computeVertexNormals();
       hg2.add(new THREE.Mesh(geo, this.mat({ color: 0xd9a58a, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false })));
-      const lab2 = makeLabel('Your head (temple-gap measurements)', 'muted');
-      lab2.position.set(pts[pts.length - 3], glasses.hingeY + 16, zs[zs.length - 2]);
+      const lab2 = makeLabel('Your head: orbital rim + temple (measurements)', 'muted');
+      lab2.position.set(head.skinX(zs[2]), glasses.hingeY + 16, zs[2]);
       hg2.add(lab2);
     }
 

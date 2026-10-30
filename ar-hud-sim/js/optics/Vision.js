@@ -43,3 +43,24 @@ export function assessFocus(vergence, eyeParams) {
     targetVergence: (Fh + Fv) / 2, // relaxed-eye sphere equivalent
   };
 }
+
+/**
+ * Whole-field focus: the eye holds one accommodation for the whole HUD.
+ * vergences: per-pixel { Vx, Vy }. Picks the accommodation that minimises
+ * the 90th-percentile residual and reports that percentile and the worst.
+ */
+export function assessFieldFocus(vergences, eyeParams) {
+  const m = meridianPowers(eyeParams.rx);
+  const Fh = cornealPower(m.h, eyeParams.eyeRelief), Fv = cornealPower(m.v, eyeParams.eyeRelief);
+  const amp = amplitudeFor(eyeParams);
+  const needs = vergences.map((v) => [Fh - v.Vx, Fv - v.Vy]);
+  const residualsFor = (A) => needs.map(([h, v]) => Math.max(Math.abs(h - A), Math.abs(v - A))).sort((a, b) => a - b);
+  const p90 = (arr) => arr[Math.min(arr.length - 1, Math.floor(0.9 * (arr.length - 1)))];
+  let best = { A: 0, p: Infinity };
+  for (let i = 0; i <= 160; i++) {
+    const A = (amp * i) / 160;
+    const r = residualsFor(A), p = p90(r);
+    if (p < best.p) best = { A, p, worst: r[r.length - 1], median: r[Math.floor(r.length / 2)] };
+  }
+  return { Fh, Fv, amp, accommodation: best.A, p90: best.p, worst: best.worst, median: best.median, blurRad: (eyeParams.pupilDiameter * best.p) / 1000, targetVergence: (Fh + Fv) / 2 };
+}

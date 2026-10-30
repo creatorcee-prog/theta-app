@@ -82,7 +82,7 @@ export function computeGlasses(frame) {
   const {
     lensWidth, lensHeight, lensCorner, lensThickness, bridge, endpiece,
     rimDepth, templeLength, templeThickness, templeHeight, templeSplayDeg,
-    housingLength, housingDepth, housingHeight, housingWall, hingeY = 0, housingOffsetY = 0, housingOffsetZ = 0,
+    housingLength, housingDepth, housingHeight, housingWall, hingeY = 0, housingOffsetY = 0, housingOffsetZ = 0, housingOutward = 0,
   } = frame;
   const rightLensCenter = new Vector3(-(bridge / 2 + lensWidth / 2), 0, 0);
   const leftLensCenter = new Vector3(-rightLensCenter.x, 0, 0);
@@ -125,10 +125,11 @@ export function computeGlasses(frame) {
   });
 
   // Right-temple display housing near the hinge. It bulges inward (toward
-  // the face, +x) from the temple's outer surface.
+  // the face, +x) by housingDepth from the temple's outer surface and,
+  // optionally, outward (away from the head) by housingOutward.
   const outerX = -(hingeX + templeThickness / 2);
   const housing = {
-    min: new Vector3(outerX, hingeY + housingOffsetY - housingHeight / 2, hingeZ - housingOffsetZ - housingLength),
+    min: new Vector3(outerX - housingOutward, hingeY + housingOffsetY - housingHeight / 2, hingeZ - housingOffsetZ - housingLength),
     max: new Vector3(outerX + housingDepth, hingeY + housingOffsetY + housingHeight / 2, hingeZ - housingOffsetZ),
   };
   housing.center = housing.min.clone().add(housing.max).multiplyScalar(0.5);

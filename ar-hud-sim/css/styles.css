@@ -225,3 +225,18 @@ table.kv tr + tr { border-top: 1px solid var(--line); }
   .toolbar { width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+
+/* ---------------- makes */
+.make-card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.make-card.current { border-color: var(--accent); }
+.make-card h3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.make-card .tagline { font: 500 12px var(--font-body); color: var(--muted); }
+.make-card .score { margin-left: auto; font: 700 15px var(--font-mono); }
+.score.ok { color: var(--pass); } .score.bad { color: var(--fail); }
+.goal { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "l v" "b p"; gap: 2px 8px; margin: 6px 0; font-size: 12.5px; }
+.g-label { grid-area: l; } .g-val { grid-area: v; font: 600 12px var(--font-mono); text-align: right; }
+.g-bar { grid-area: b; height: 6px; border-radius: 3px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; align-self: center; }
+.g-bar i { display: block; height: 100%; background: var(--fail); }
+.goal.near .g-bar i { background: var(--warn); } .goal.met .g-bar i { background: var(--pass); }
+.g-pct { grid-area: p; font: 600 11.5px var(--font-mono); text-align: right; color: var(--muted); }
+.make-spec { margin: 4px 0 8px; font: 11.5px/1.5 var(--font-mono); color: var(--muted); }

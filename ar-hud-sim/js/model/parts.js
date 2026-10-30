@@ -85,7 +85,7 @@ const boxVol = (s) => s.x * s.y * s.z; // mm^3
 
 function lensVolume(collimator, nGlass, f) {
   // plano-convex of the modelled aperture; thin lens -> equivalent spherical lens
-  const a = collimator.apertureRadius;
+  const a = (collimator.glassDiameter ?? 2 * collimator.apertureRadius) / 2;
   const c = collimator.mode === 'thin' ? 1 / (f * (nGlass - 1)) : collimator.c;
   const k = collimator.mode === 'aspheric' ? collimator.k : 0;
   const sag = (r) => { const q = 1 - (1 + k) * c * c * r * r; return q > 0 ? (c * r * r) / (1 + Math.sqrt(q)) : NaN; };
@@ -106,7 +106,7 @@ export function computeWeights(params, system) {
   const calc = {};
   calc.prism = (prism.volumeMm3 / 1000) * DENSITY.bk7;
   if (collimator) {
-    calc.collimator = (lensVolume({ ...collimator, edgeThickness: params.collimator.edgeThickness }, params.prism.n, collimator.f) / 1000) * DENSITY.bk7;
+    calc.collimator = (lensVolume({ ...collimator, edgeThickness: params.collimator.edgeThickness, glassDiameter: params.collimator.glassDiameter }, params.prism.n, collimator.f) / 1000) * DENSITY.bk7;
     const len = Math.max(0, collimator.center.clone().sub(oled.center).dot(oled.normal));
     const r = collimator.apertureRadius + 0.25;
     calc.barrel = ((Math.PI * ((r + 0.8) ** 2 - r * r) * len) / 1000) * DENSITY.pla;

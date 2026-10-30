@@ -261,6 +261,7 @@ export class UIController {
       chip('TIR', diag.checks.find((c) => c.id === 'tir')?.value ?? '—', st('tir')),
       chip('Parts total', money(bomTotals(this.cb.getParams().bom).total), 'info'),
       chip('Weight', `${bomTotals(this.cb.getParams().bom).grams.toFixed(1)} g`, 'info'),
+      ...(this.cb.getScore?.() ? [chip('Goals', `${Math.round(100 * this.cb.getScore().overall)}%`, this.cb.getScore().meetsBar ? 'pass' : 'fail')] : []),
       chip('Checks', `<b class="ok">${s.pass}</b> · <b class="warn">${s.warn}</b> · <b class="bad">${s.fail}</b>`, ''),
     ].join('');
   }
@@ -343,6 +344,47 @@ export class UIController {
     el.hidden = false;
     clearTimeout(this._flashT);
     this._flashT = setTimeout(() => { el.hidden = true; }, 6000);
+  }
+
+  // ------------------------------------------------------------ makes
+  renderMakes(makes, tuned, current, activeId) {
+    const el = this.makesEl;
+    if (!el) return;
+    const pct = (x) => `${Math.round(100 * x)}%`;
+    const bars = (goals) => goals.map((g) => `
+      <div class="goal ${g.met ? 'met' : g.score >= 0.8 ? 'near' : 'miss'}">
+        <span class="g-label">${esc(g.label)}</span><span class="g-val">${esc(g.value)}</span>
+        <span class="g-bar" aria-hidden="true"><i style="width:${Math.round(100 * g.score)}%"></i></span><span class="g-pct">${pct(g.score)}</span>
+      </div>`).join('');
+    const cur = current ? `
+      <section class="res-block make-card current">
+        <h3>Current design${activeId ? ` · ${esc(makes.find((m) => m.id === activeId)?.name ?? '')}` : ''} <span class="score ${current.meetsBar ? 'ok' : 'bad'}">${pct(current.overall)}</span></h3>
+        ${bars(current.goals)}
+        ${current.structural.some((s) => !s.ok) ? `<p class="help">Failing structure checks: ${current.structural.filter((s) => !s.ok).map((s) => esc(s.label)).join(' · ')}</p>` : ''}
+      </section>` : '';
+    el.innerHTML = `
+      <section class="res-block">
+        <h3>Makes</h3>
+        <p class="help">Four different ways to build the same HUD, each from parts that can be bought. A search ran each make's own design choices through the full tracer and kept the best result. Goals: 100% pupil coverage, ≤ 48 g, &lt; $200, every structure check passing. Each goal scores 0–100% (weight and cost as target ÷ actual), and the overall score is their mean; the bar is 80%.</p>
+      </section>
+      ${cur}
+      ${makes.map((m) => {
+        const t = tuned[m.id];
+        if (!t) return '';
+        const v = t.vars;
+        return `<section class="res-block make-card">
+          <h3>${esc(m.name)} <span class="tagline">${esc(m.tagline)}</span> <span class="score ${t.overall >= 0.8 ? 'ok' : 'bad'}">${pct(t.overall)}</span></h3>
+          <p class="help">${esc(m.idea)}</p>
+          ${bars(t.goals.map((g) => ({ ...g, label: { pupil: 'Pupil coverage', weight: 'Weight', cost: 'Cost', structure: 'Feasible structure' }[g.id] })))}
+          <p class="make-spec">${v.prism} mm K9 prism · ${esc(v.lens)} at ${v.stop} mm stop · HUD at ${v.az}° / ${v.el}° · entry tilt ${v.tilt}° · housing ${v.hLen}×${v.hHeight} mm, ${v.hDepth} in / ${v.hOut ?? 0} out · FOV ${t.fov?.[0]?.toFixed(1)}° × ${t.fov?.[1]?.toFixed(1)}°</p>
+          <div class="btn-row"><button type="button" class="btn small" data-act="loadMake:${m.id}">Load ${esc(m.name)}</button></div>
+        </section>`;
+      }).join('')}`;
+  }
+
+  bindMakes(el) {
+    this.makesEl = el;
+    el.addEventListener('click', (e) => { const b = e.target.closest('[data-act]'); if (b) this.cb.onAction(b.dataset.act); });
   }
 
   // ------------------------------------------------------------ parts & cost

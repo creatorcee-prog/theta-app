@@ -27,7 +27,7 @@ export function baseParams() {
     frame: {
       lensWidth: 50, lensHeight: 38, lensCorner: 12, lensThickness: 2, bridge: 18, endpiece: 7,
       rimDepth: 4, rimWidth: 3, templeLength: 145, templeThickness: 4.5, templeHeight: 6, templeSplayDeg: 2,
-      housingLength: 40, housingDepth: 13, housingHeight: 16, housingWall: 1, hingeY: 6, housingOffsetY: -3, housingOffsetZ: 0,
+      housingLength: 40, housingDepth: 13, housingHeight: 16, housingWall: 1, hingeY: 6, housingOffsetY: -3, housingOffsetZ: 0, housingOutward: 0,
       lensesPresent: true, specLensN: 1.498,
       sizeCode: '50□18-145', lensShape: 'roundrect', lensExponent: 4, customOutline: '',
       pantoTiltDeg: 0, wrapDeg: 0,
@@ -61,11 +61,11 @@ export function baseParams() {
     sim: { pixelsX: 9, pixelsY: 5, raysPerPixel: 40, wavelengths: 'mono', ghosts: false, ghostMin: 0.005, drawRays: 900, raySpeed: 22 },
     targets: { hfov: 35, vfov: 20, azimuth: 25, elevation: 10, coverageMin: 40, coverageMax: 50, centralClear: 10 },
     // head clearance beside the right temple (your measurements)
-    head: { gapAtHinge: 10, gapAt20: 7, canthusToTemple: 0, canthusOffset: 14 },
+    head: { gap20: 10, gap40: 7, hertelDepth: 15.5, hertelBase: 114, canthusToTemple: 0, canthusOffset: 14 },
     parts: defaultParts(),
     bom: defaultBom(),
     // design intent used only by the alignment helper
-    intent: { azimuth: 25, elevation: 10, prismClearance: 1.0, oledInset: 0.5 },
+    intent: { azimuth: 25, elevation: 10, prismClearance: 1.0, oledInset: 0.5, entryTiltDeg: 0 },
   };
 }
 
@@ -92,7 +92,11 @@ export function alignChain(params) {
   // Align on the reflected path even where TIR fails (the full trace then
   // reports the leak); geometry of the reflection is the same either way.
   local.faces.hypotenuse.mirrorR = 1;
-  const dIn = new Vector3(1, 0, 0);
+  // entryTiltDeg tilts the input ray inside the fold plane so it meets the
+  // entry face off-normal; positive values raise the hypotenuse incidence
+  // (more TIR margin on a stock 45° prism).
+  const tilt = ((p.intent.entryTiltDeg ?? 0) * Math.PI) / 180;
+  const dIn = new Vector3(Math.cos(tilt), -Math.sin(tilt), 0);
   const entry = local.entryCenter.clone();
   const [path] = trace({ objects: [dielectricSolid('prism', 'prism', glass, Object.values(local.faces))] },
     [{ origin: entry.clone().addScaledVector(dIn, -5), dir: dIn, weight: 1 }]);

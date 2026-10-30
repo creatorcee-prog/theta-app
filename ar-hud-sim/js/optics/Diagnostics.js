@@ -3,9 +3,10 @@
 // status: 'pass' (green, meets the modeled requirement), 'warn' (yellow,
 // needs adjustment), 'fail' (red), 'info' (reported value, no requirement).
 
-import { Vector3 } from 'three';
+import { Vector3, Quaternion } from 'three';
 import { pointInBox } from '../model/glassesGeometry.js';
-import { assessFocus, amplitudeFor } from './Vision.js';
+import { assessFocus, assessFieldFocus, amplitudeFor } from './Vision.js';
+import { computeHead } from '../model/head.js';
 import { bomTotals } from '../model/parts.js';
 
 const f1 = (x) => (x == null || !Number.isFinite(x) ? '—' : x.toFixed(1));
@@ -223,23 +224,25 @@ export function runDiagnostics(results, coverage) {
     const imgDist = meanV < -0.05 ? `virtual image ≈ ${f1(1000 / -meanV)} mm away` : meanV > 0.05 ? 'converging bundle (focus "beyond infinity")' : 'image at optical infinity';
     add('Collimation', 'vergence', 'Measured bundle vergence at pupil', `${f2(meanV)} D`, 'info',
       `From traced rays: ${imgDist}. Horizontal ${f2(Vx)} D, vertical ${f2(Vy)} D, astigmatism up to ${f2(maxAst)} D. Residual aberration spread ${f2(blurArcmin)}′ vs pixel size ${f2(pixelArcmin)}′.`);
-    // ---- focus for this wearer's eye (prescription + accommodation)
+    // ---- focus for this wearer's eye (prescription + accommodation), whole field
     focus = assessFocus({ Vx, Vy }, params.eye);
+    const field = assessFieldFocus(verg, params.eye);
+    Object.assign(focus, { field, residual: field.p90, accommodation: field.accommodation, blurRad: field.blurRad });
     focus.aberrationArcmin = blurArcmin;
     const defocusArcmin = (focus.blurRad * 180 * 60) / Math.PI;
     focus.blurDeg = (focus.blurRad + blurMrad / 1000) * (180 / Math.PI);
     const rx = params.eye.rx;
     const rxText = `Rx ${rx.sphere >= 0 ? '+' : ''}${f2(rx.sphere)} / ${f2(rx.cyl)} × ${Math.round(rx.axis)}° → at cornea ${f2(focus.Fh)} D (horizontal), ${f2(focus.Fv)} D (vertical); accommodation range ${f1(focus.amp)} D`;
-    const st = focus.residual <= 0.25 && blurArcmin <= 2 * pixelArcmin ? 'pass' : focus.residual <= 0.75 ? 'warn' : 'fail';
-    const why = focus.tooConverging ? 'The HUD focuses farther than your eye can relax to (typical when short-sighted, because the HUD light bypasses your spectacle lens).'
-      : focus.tooDiverging ? 'The HUD image is closer than your near point.'
-        : Math.abs(focus.needH - focus.needV) > 0.5 ? 'Your eye and the HUD disagree between meridians (astigmatism); refocusing cannot fix that, a cylindrical corrector in the HUD path can.' : '';
-    add('Vision', 'eyeFocus', 'HUD in focus for your eye', `${f2(focus.residual)} D off, ${f1(defocusArcmin)}′ blur`, st,
-      `${rxText}. Best accommodation ${f2(focus.accommodation)} D. ${why} ${st !== 'pass' && !why.includes('cylindrical') ? 'Use "Focus HUD for my eye" to move the OLED to the matching distance.' : ''}`.trim());
-    const supports = focus.residual <= 0.5 && blurArcmin <= 2 * pixelArcmin;
+    const st = field.p90 <= 0.25 && blurArcmin <= 2 * pixelArcmin ? 'pass' : field.p90 <= 0.75 ? 'warn' : 'fail';
+    const why = maxAst > 1 ? `Field astigmatism up to ${f1(maxAst)} D (typical of a single lens at wide field angles) cannot be focused away; a smaller field (longer focal length) or a two-element eyepiece reduces it.`
+      : focus.tooConverging ? 'The HUD focuses farther than your eye can relax to (typical when short-sighted, because the HUD light bypasses your spectacle lens).'
+        : focus.tooDiverging ? 'The HUD image is closer than your near point.' : '';
+    add('Vision', 'eyeFocus', 'HUD in focus for your eye', `90% of field within ${f2(field.p90)} D (worst ${f1(field.worst)} D)`, st,
+      `${rxText}. One accommodation (${f2(field.accommodation)} D) has to serve the whole image. ${why} ${st !== 'pass' && !why.includes('astigmatism') ? 'Use "Focus HUD for my eye" to move the OLED to the best distance.' : ''}`.trim());
+    const supports = field.p90 <= 0.5 && blurArcmin <= 2 * pixelArcmin;
     add('Collimation', 'virtualImage', 'Focused virtual image', supports ? 'supported' : 'not supported', supports ? (st === 'pass' ? 'pass' : 'warn') : 'fail',
-      supports ? 'The traced bundles form a virtual image within your eye\'s focusing range, with sub-2-pixel aberration.'
-        : 'The traced bundles do not form a virtual image your eye can bring into focus (vergence outside your range, astigmatic mismatch, or too much aberration).');
+      supports ? 'At least 90% of the field focuses within 0.5 D of one accommodation, with sub-2-pixel aberration.'
+        : `Not enough of the field focuses at once (90th percentile ${f2(field.p90)} D; needs ≤ 0.5 D) or the aberration spread (${f1(blurArcmin)}′) exceeds 2 pixels (${f1(2 * pixelArcmin)}′).`);
   } else {
     add('Collimation', 'vergence', 'Measured bundle vergence at pupil', 'insufficient rays', 'fail', 'Fewer than 4 rays per pixel reach the pupil region; vergence cannot be measured.');
   }
@@ -315,14 +318,30 @@ export function runDiagnostics(results, coverage) {
 
   // ---------------- head and face fit (right side)
   const fr = params.frame, hd = params.head;
-  const innerTempleX = -(glasses.hingeX - fr.templeThickness / 2);
-  const skinX = (z) => innerTempleX + Math.max(0, hd.gapAtHinge + (hd.gapAt20 - hd.gapAtHinge) * ((glasses.hingeZ - z) / 20));
+  const head = computeHead(params, glasses, eye);
+  const innerTempleX = head.innerTempleX;
   const hs = glasses.housing;
-  const hClear = Math.min(skinX(hs.max.z) - hs.max.x, skinX(hs.min.z) - hs.max.x);
-  add('Fit', 'headHousing', 'Temple housing clears your head', `${f1(hClear)} mm`, grade(hClear, (v) => v >= 1, (v) => v >= 0),
-    hClear >= 1 ? `Temple-to-head gap ${f1(hd.gapAtHinge)} mm at the hinge, ${f1(hd.gapAt20)} mm 20 mm back (extrapolated linearly).`
-      : `The housing's inner face reaches ${f1(-hClear)} mm into your temple area. Reduce housing depth or length, or move it forward.`);
+  const housingInto = Math.max(...boxCorners(hs.center, new Quaternion(), hs.size).map(head.intrusion));
+  const hClear = Number.isFinite(housingInto) ? -housingInto : 99;
+  add('Fit', 'headHousing', 'Temple housing clears your head', hClear >= 99 ? 'fully in front of the head' : `${f1(hClear)} mm`, grade(hClear, (v) => v >= 1, (v) => v >= 0),
+    hClear >= 1 ? `Head model: lateral orbital rim ${f1(hd.hertelDepth)} mm behind the cornea, ${f1(hd.hertelBase)} mm rim-to-rim; temple gaps ${f1(hd.gap20)} / ${f1(hd.gap40)} mm at 20 / 40 mm behind the hinge.`
+      : `The housing reaches ${f1(-hClear)} mm into your head. Reduce its depth or length, or bulge it outward.`);
   const canthusX = eye.pupilCenter.x - hd.canthusOffset;
+  // Lens + barrel ("optics pod"): the full glass diameter and the barrel must
+  // stay clear of the head beside the temple and must start at the housing.
+  if (collimator) {
+    const gd = params.collimator.glassDiameter ?? collimator.aperture;
+    const ref = Math.abs(collimator.axis.y) < 0.9 ? new Vector3(0, 1, 0) : new Vector3(1, 0, 0);
+    const e1 = new Vector3().crossVectors(collimator.axis, ref).normalize(), e2 = new Vector3().crossVectors(collimator.axis, e1).normalize();
+    const pts = [];
+    const rings = [[collimator.center, gd / 2 + 0.8], [collimator.center.clone().addScaledVector(collimator.axis, collimator.thickness || 1), gd / 2 + 0.8], [oled.center, collimator.apertureRadius + 1.05]];
+    for (const [c0, r] of rings) for (let i = 0; i < 24; i++) { const a = (i / 24) * Math.PI * 2; pts.push(c0.clone().addScaledVector(e1, r * Math.cos(a)).addScaledVector(e2, r * Math.sin(a))); }
+    const into = Math.max(...pts.map(head.intrusion));
+    const corneaHit = Math.min(...pts.map((c) => c.distanceTo(eye.corneaVertex)));
+    const ok = into <= 0 && corneaHit >= lash;
+    add('Fit', 'lensPod', 'Lens + barrel clear your head', ok ? 'yes' : into > 0 ? `${f1(into)} mm into head` : `${f1(corneaHit)} mm from cornea`, ok ? 'pass' : 'fail',
+      ok ? `Ø${f1(gd)} mm lens in a barrel from the OLED housing (an optics pod, as in Google Glass-style designs).` : into > 0 ? 'The lens or its barrel cuts into the side of your head.' : 'The lens or barrel comes closer to the eye than your lashes allow.');
+  }
   const modelCanthus = canthusX - innerTempleX;
   if (hd.canthusToTemple > 0) {
     const diff = modelCanthus - hd.canthusToTemple;
@@ -337,7 +356,7 @@ export function runDiagnostics(results, coverage) {
     const corners = boxCorners(pf.position, pf.quaternion, pf.size);
     // the temple-side skin surface applies outboard of the eye corner and
     // behind the cornea; parts in front of the eye are checked elsewhere
-    const intoHead = Math.max(...corners.filter((c) => c.x < canthusX && c.z < eye.corneaVertex.z && c.z > glasses.hingeZ - 90).map((c) => c.x - skinX(c.z)), -Infinity);
+    const intoHead = Math.max(...corners.map(head.intrusion));
     const notes = [];
     if (blocked) notes.push(`blocks ${blocked} rays`);
     if (intoHead > 0) notes.push(`cuts ${f1(intoHead)} mm into your head`);
