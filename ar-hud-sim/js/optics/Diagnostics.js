@@ -96,12 +96,19 @@ export function runDiagnostics(results, coverage) {
     : chief.events.find((e) => e.obj === 'prism' && e.face === 'hypotenuse' && !e.entering);
   if (patched) {
     const pt = prism, P = params.patch;
-    const hit = chief.events.find((e) => e.obj === 'patch');
-    const bare = P.coating === 'bare';
+    const hit = chief.events.find((e) => e.obj === 'patch' || (e.facet && e.obj === 'specLensR'));
+    const bare = P.coating === 'bare' && pt.mode !== 'embedded';
+    if (pt.mode === 'embedded') {
+      const ok = pt.valid && pt.fitMargin >= 0.3;
+      add('Fit', 'castFit', 'Partial mirror fits inside the lens', pt.valid ? `${f1(pt.fitMargin)} mm to the nearest surface` : 'no', ok ? 'pass' : 'fail',
+        !pt.valid ? 'With this fold angle the display light would have to enter the lens from the front; the buried mirror cannot be lit from the temple.'
+          : ok ? `Ø${P.diameter} mm mirror cast at ${f1(pt.incidenceDeg)}° incidence inside a ${f1(params.frame.lensThicknessR ?? params.frame.lensThickness)} mm right lens.`
+            : `The tilted Ø${P.diameter} mm mirror pokes ${f1(-pt.fitMargin)} mm out of the ${f1(params.frame.lensThicknessR ?? params.frame.lensThickness)} mm lens: make the lens thicker or the mirror smaller.`);
+    }
     add('Prism', 'chiefInc', 'Chief-ray incidence on the mirror patch', hit ? `${f1(hit.incidenceDeg)}°` : 'not reached', hit ? 'pass' : 'fail',
       hit ? `${bare ? `Bare glass (n ${P.glassN}): Fresnel reflection from both faces, R ${f1(100 * hit.R)}% at this angle (a thin plate keeps the two reflections within a fraction of a pixel).` : `Partial mirror R ${Math.round(100 * P.reflectance)}%.`} Off-axis, a spherical mirror (R ${P.radius} mm, f ${f1(pt.f)} mm) focuses tangential and sagittal rays at f·cos i and f / cos i: ≈ ${f1(pt.astigD)} D of built-in astigmatism at ${f1(pt.incidenceDeg)}°, before any correction by the collimator tilt or a conic shape.`
         : `The display-centre ray never reaches the patch (outcome: ${chief.outcome}). Check the alignment.`);
-    const Rw = bare ? (() => { const r0 = ((P.glassN - 1) / (P.glassN + 1)) ** 2; return (2 * r0) / (1 + r0); })() : P.reflectance;
+    const Rw = bare || (pt.mode === 'lensback' && P.coating === 'bare') ? (() => { const r0 = ((P.glassN - 1) / (P.glassN + 1)) ** 2; return (2 * r0) / (1 + r0); })() : P.reflectance;
     if (system.fold) {
       const fp = hyp.hits ? (100 * hyp.tir) / hyp.hits : null;
       add('Prism', 'foldTIR', 'Fold prism: total internal reflection', fp == null ? 'no hits' : `${f1(fp)}% of ${hyp.hits} hits`, grade(fp, (v) => v >= 99, (v) => v >= 90),
@@ -114,7 +121,9 @@ export function runDiagnostics(results, coverage) {
         problems.length ? `The block around the fold prism ${problems.join(' and ')}.` : `A ${f1(hb.size.x)} × ${f1(hb.size.y)} × ${f1(hb.size.z)} mm printed block in the endpiece holds the fold prism and joins the temple housing (an L-shaped housing). The beam leaves through a window toward the patch.`);
     }
     add('Prism', 'seeThrough', 'See-through transmission (world light)', `≈ ${Math.round(100 * (1 - Rw))}%`, grade(100 * (1 - Rw), (v) => v >= 70, (v) => v >= 50),
-      'World light passes the coated patch once and loses its reflectance there; elsewhere the lens is unchanged. A thin shell of even thickness adds almost no power to the see-through view.');
+      pt.mode === 'lensback' ? (P.coating === 'bare' ? 'The reflector is the plain lens surface: world light loses only the ~8% any uncoated lens reflects. An anti-reflection coating on your lens would remove most of the HUD reflection too.' : 'The coating on the lens back reflects part of the world light away across the whole lens.')
+        : pt.mode === 'embedded' ? 'World light crosses the buried partial mirror where it sits and loses its reflectance there; elsewhere the lens is unchanged.'
+          : 'World light passes the coated patch once and loses its reflectance there; elsewhere the lens is unchanged. A thin shell of even thickness adds almost no power to the see-through view.');
   } else if (guided) {
     const wg = prism;
     const inc = chiefHyp?.incidenceDeg;
@@ -229,7 +238,7 @@ export function runDiagnostics(results, coverage) {
 
   // ---------------- eye geometry
   const cornea = eye.corneaVertex;
-  const prismClear = patched ? Math.min(...Object.values(prism.vertices).map((v) => v.distanceTo(cornea))) : minDistanceToPrism(prism, cornea); // to corneal apex
+  const prismClear = patched && prism.mode ? glasses.lenses.R.backCenter.distanceTo(cornea) : patched ? Math.min(...Object.values(prism.vertices).map((v) => v.distanceTo(cornea))) : minDistanceToPrism(prism, cornea); // to corneal apex
   add('Eye', 'relief', 'Eye relief (lens back → cornea)', `${f1(params.eye.eyeRelief)} mm`,
     grade(params.eye.eyeRelief, (v) => v >= 10 && v <= 20, (v) => v >= 8 && v <= 25), 'Typical spectacle vertex distance is 12–14 mm.');
   const lash = params.eye.lashLength ?? 6;
@@ -237,8 +246,9 @@ export function runDiagnostics(results, coverage) {
     grade(prismClear, (v) => v >= lash, (v) => v >= 2),
     prismClear >= lash ? '' : prismClear >= 2 ? `Closer than your ${f1(lash)} mm lash length: lashes will likely brush or smear the prism.` : 'Prism touches or nearly touches the cornea.');
   const lfR = glasses.lenses.R;
-  const lensGap = Math.min(...Object.values(prism.vertices).map((v) => -v.clone().sub(lfR.backCenter).dot(lfR.normal)));
-  add('Eye', 'prismLens', `${cname} clearance to lens back surface`, `${f1(lensGap)} mm`,
+  const lensGap = patched && prism.mode ? 0 : Math.min(...Object.values(prism.vertices).map((v) => -v.clone().sub(lfR.backCenter).dot(lfR.normal)));
+  if (patched && prism.mode) add('Eye', 'prismLens', 'Reflector and lens', prism.mode === 'embedded' ? 'cast inside the lens' : 'the lens back surface itself', 'pass', 'No separate part behind the lens.');
+  else add('Eye', 'prismLens', `${cname} clearance to lens back surface`, `${f1(lensGap)} mm`,
     grade(lensGap, (v) => v >= 0.3, (v) => v >= 0), lensGap < 0 ? `${cname} intersects the (tilted/wrapped) spectacle lens plane.` : 'Measured to the lens back plane, including tilt and wrap.');
   const eb = coverage.eyebox;
   add('Eye', 'eyebox', 'Eye-box (full field visible)', `${f1(eb.full.width)} × ${f1(eb.full.height)} mm`,
@@ -345,7 +355,13 @@ export function runDiagnostics(results, coverage) {
   const driverOk = boxCorners(dEnv.envCenter, dEnv.quaternion, dEnv.envelope).every((c) => pointInBox(c, glasses.cavity, 0.01));
   add('Alignment', 'driverFit', 'Driver board inside temple cavity', driverOk ? 'yes' : 'no', driverOk ? 'pass' : 'fail',
     driverOk ? `Board ${dEnv.size.z}×${dEnv.size.y} mm (assumed compact driver; common HDMI boards are larger).` : 'The driver board does not fit in the cavity.');
-  const collInside = collimator ? pointInBox(collimator.center, glasses.cavity, 0.01) : null;
+  // conformal shell: the lens sits in the printed barrel section of the housing
+  const collInside = collimator ? (system.housingShell ? system.housingShell.parts.some((q) => q.id === 'barrel') : pointInBox(collimator.center, glasses.cavity, 0.01)) : null;
+  if (system.housingShell) {
+    const loose = system.housingShell.loose;
+    add('Fit', 'shellJoined', 'Housing joined to the temple', loose.length ? `${loose.join(', ')} not joined` : 'yes', loose.length ? 'fail' : 'pass',
+      loose.length ? `These shell sections do not touch the rest of the housing or the temple arm: ${loose.join(', ')}. They would float.` : `Every section (${system.housingShell.parts.map((q) => q.label).join(', ')}) connects through the others to the right temple arm.`);
+  }
   if (collimator) add('Alignment', 'collFit', 'Collimator inside temple cavity', collInside ? 'yes' : 'no', collInside ? 'pass' : 'warn',
     collInside ? '' : 'The collimator sits outside the temple housing and needs its own enclosure.');
 

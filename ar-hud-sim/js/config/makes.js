@@ -104,8 +104,21 @@ const mountLine = (what) => line({ id: 'lensMount', name: `Standoff pins + UV gl
 // stock K9 right-angle prism folding the beam at the hinge (TIR, no coating)
 const foldLine = (size) => { const pr = PRISMS.find((x) => x.size === size) ?? PRISMS[3]; return line({ id: 'fold', name: `Fold prism at the hinge: K9 right-angle prism ${size} mm`, component: 'fold', unit: pr.unit, sourced: pr.sourced, sources: [src.k9, src.k9w], weight: 0, weightBasis: 'calc', autoWeight: true, note: 'Half of a 2-pack. Sits inside the temple housing.' }); };
 
-function patchOptics(lens, bare, trim) {
+function patchOptics(lens, bare, trim, mode) {
   const lensLine = line({ id: 'collimator', name: trim && trim < lens.dia ? `${lens.name}, trimmed to Ø${trim} mm` : lens.name, component: 'collimator', unit: lens.unit, sourced: lens.sourced, sources: lens.sources, note: lens.note, weight: 0, weightBasis: 'calc', autoWeight: true, weightNote: `Full-diameter lens volume × ${lens.density ?? 2.51} g/cm³.` });
+  const shell = [printed('barrel', 'Lens barrel (printed)', 'collimator'), printed('housing', 'Temple housing (printed)', 'housing')];
+  if (mode === 'lensback') {
+    return [lensLine, ...(bare ? [] : [line({ id: 'lensCoat', name: 'Partial-mirror (mirror-tint) coating on the back of your right lens, R ≈ 30%', unit: 40, sourced: false, weight: 0, weightBasis: 'calc', note: 'Estimate. Optical labs usually mirror-coat the front of a lens; a back-surface partial mirror is a special order.' })]), ...shell];
+  }
+  if (mode === 'embedded') {
+    return [
+      lensLine,
+      line({ id: 'castMirror', name: 'Partial mirror for the insert (30R/70T plate beamsplitter, cut to size)', unit: 61, sourced: true, sources: [src.bs], weight: 0, weightBasis: 'calc', note: 'Its coating is buried in resin of about the same index, so only the coating reflects.' }),
+      line({ id: 'castLens', name: 'Thick right lens cast in clear resin around the mirror', component: 'castLens', unit: 15, sourced: false, weight: 0, weightBasis: 'calc', autoWeight: true, weightNote: 'Extra lens volume × 1.18 g/cm³ (clear casting resin).', note: 'Estimate (resin + mould). DIY casting gives a plano lens; with a prescription an optical lab would have to make it (price unknown).' }),
+      line({ id: 'castPolish', name: 'Polish the cast lens faces', unit: 20, sourced: false, weight: 0, weightBasis: 'calc', note: 'Estimate. Both faces must be optically flat/smooth for a sharp see-through view.' }),
+      ...shell,
+    ];
+  }
   if (bare) {
     return [
       lensLine,
@@ -186,6 +199,20 @@ export const MAKES = [
     display: 'yx',
   },
   {
+    id: 'mirageCoat', name: 'Mirage Coat', tagline: 'The lens itself is the reflector', kind: 'patch', patchMode: 'lensback',
+    idea: 'No extra part in front of the eye: the back surface of your right lens reflects the display into your eye, either bare glass (a few %) or with a partial mirror coating. The lens faces you almost straight on, so the display must sit where the lens mirrors your line of sight: behind the eye, beside the temple. That only works for a HUD far to the side, and the beam has to clear the outer corner of the eye socket.',
+    vars: { lens: ['cb45', 'eo19', 'eo125'], coat: ['bare', 'coated'], relay: [true, false], fsize: [8, 10, 12], fdist: [10, 40], trim: [10, 25], flip: [false, true], stop: [4, 22], az: [6, 50], el: [-28, 32], throw: [18, 62], tx: [-12, 12], ty: [-12, 12] },
+    electronics: () => ({ parts: [], bom: [line({ id: 'cable', name: 'Thin HDMI cable to your phone/PC', unit: 8, sourced: false, weight: 2.5, weightBasis: 'estimate', note: 'Estimate. Your phone/PC is the HDMI source (not counted).' })] }),
+    display: 'yx',
+  },
+  {
+    id: 'mirageCast', name: 'Mirage Cast', tagline: 'Partial mirror cast inside the lens', kind: 'patch', patchMode: 'embedded',
+    idea: 'A thicker right lens with a tilted partial mirror cast inside it, so the reflector is part of the lens. Light from the temple enters through the back of the lens, reflects off the buried mirror and leaves toward your eye; the tracer refracts it at every surface. The lens has to be thick enough to hold the tilted mirror.',
+    vars: { lens: ['cb45', 'eo19', 'eo125'], relay: [true, false], fsize: [8, 10, 12], fdist: [10, 40], trim: [10, 25], flip: [false, true], stop: [4, 22], az: [6, 44], el: [-28, 32], fold: [40, 110], stilt: [-25, 25], throw: [18, 62], tx: [-12, 12], ty: [-12, 12], diam: [4, 16], thick: [3, 12] },
+    electronics: () => ({ parts: [], bom: [line({ id: 'cable', name: 'Thin HDMI cable to your phone/PC', unit: 8, sourced: false, weight: 2.5, weightBasis: 'estimate', note: 'Estimate. Your phone/PC is the HDMI source (not counted).' })] }),
+    display: 'yx',
+  },
+  {
     id: 'lumen', name: 'Lumen', tagline: 'See-through waveguide (your reference)', kind: 'waveguide',
     idea: 'Modelled on your reference images: the projector sits in the temple, and a thin glass waveguide behind the lens carries the image inward by total internal reflection. Embedded partial mirrors then send it into your eye, so nothing hangs in front of the lens. Retail waveguides use a diffraction grating or factory-coated facets. Here the facets are cut from a stock beamsplitter, because a grating cannot be ray-traced or bought for a hobby build.',
     vars: { lens: ['acl1512', 'eo125', 'acl1210', 'eo19'], flip: [false, true], stop: [3, 10], az: [6, 44], el: [-28, 32], thick: [2.5, 4.5], guide: [50, 64], facets: [2, 5], spacing: [2.5, 6], height: [9, 16], margin: [-8, 0] },
@@ -206,7 +233,8 @@ export function buildMake(make, v, opts = {}) {
   if (patched) {
     const bare = v.coat === 'bare';
     // bare: a flat cover slip (22 mm square: a ≤ 22 mm circle is used)
-    p.patch = { ...p.patch, enabled: true, gap: v.gap ?? p.patch.gap, coating: bare ? 'bare' : 'coated', radius: bare ? 1e6 : v.radius, diameter: bare ? Math.min(22, v.diam) : v.diam, thickness: bare ? 0.17 : 1, foldDeg: v.fold, sourceTiltDeg: v.stilt, throw: v.throw, reflectance: 0.3,
+    if (make.patchMode === 'embedded') p.frame = { ...p.frame, lensThicknessR: v.thick };
+    p.patch = { ...p.patch, enabled: true, mode: make.patchMode, gap: v.gap ?? p.patch.gap, coating: bare ? 'bare' : 'coated', radius: bare ? 1e6 : v.radius, diameter: bare ? Math.min(22, v.diam) : v.diam, thickness: bare ? 0.17 : 1, foldDeg: v.fold, sourceTiltDeg: v.stilt, throw: v.throw, reflectance: 0.3,
       fold: { enabled: !!v.relay, size: v.fsize ?? 10, dist: v.fdist ?? 22 } };
     // sample emission only toward the lens: rays outside this cone end on the
     // absorbing barrel wall anyway (sampling efficiency, not a change in physics)
@@ -223,7 +251,7 @@ export function buildMake(make, v, opts = {}) {
   } else {
     p.oled = { ...p.oled, peakLuminance: 3000 };
   }
-  p.frame = { ...p.frame, housingAuto: true, housingShape: patched && v.relay ? 'conformal' : 'box' };
+  p.frame = { ...p.frame, housingAuto: true, housingShape: patched ? 'conformal' : 'box' };
   p.intent = { ...p.intent, azimuth: v.az, elevation: v.el, entryTiltDeg: v.tilt, oledInset: v.inset, prismClearance: 1 };
   p = alignChain(p);
   // focus: start at the paraxial front focal distance, then let the tracer
@@ -249,7 +277,7 @@ export function buildMake(make, v, opts = {}) {
       line({ id: 'driver', name: 'ESP32-C3 Super Mini (drives the OLED)', component: 'driver', unit: 8, sourced: true, sources: [src.esp], weight: 2.2, weightBasis: 'spec', weightSources: [src.espW], note: 'Typical $3–8.' }),
     ]
     : yxKitLines();
-  p.bom = [frameLine(), ...displayLines, ...(patched ? [...patchOptics(lens, v.coat === 'bare', lens.mode === 'biconvex' ? v.trim : null), ...(v.relay ? [foldLine(v.fsize ?? 10)] : [])] : guided ? waveguideOptics(lens) : commonOptics(lens, prism)), ...el.bom];
+  p.bom = [frameLine(), ...displayLines, ...(patched ? [...patchOptics(lens, v.coat === 'bare', lens.mode === 'biconvex' ? v.trim : null, make.patchMode), ...(v.relay ? [foldLine(v.fsize ?? 10)] : [])] : guided ? waveguideOptics(lens) : commonOptics(lens, prism)), ...el.bom];
   p.make = { id: make.id, name: make.name, vars: v };
   return p;
 }

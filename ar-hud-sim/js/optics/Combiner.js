@@ -5,13 +5,15 @@
 // hitting a curved mirror off-axis adds astigmatism, which the tracer measures.
 
 import { Vector3, Quaternion, Matrix4 } from 'three';
-import { conicFace, partialMirror } from './RayTracer.js';
+import { conicFace, partialMirror, polygonFace, refract } from './RayTracer.js';
 import { computePrism, eulerDegFromBasis } from './OpticalComponents.js';
 import { anglesToDirection } from '../model/eye.js';
 
 // The patch is tilted, so its rim reaches further toward the lens than its
 // vertex: slide it along the HUD line until every rim point keeps `gap`.
 export function computePatch(p, glasses, eye) {
+  if (p.patch.mode === 'lensback') return lensBackReflector(p, glasses, eye);
+  if (p.patch.mode === 'embedded') return embeddedReflector(p, glasses, eye);
   const lf = glasses.lenses.R;
   let shift = 0;
   for (let i = 0; i < 3; i++) {
@@ -75,6 +77,7 @@ function patchAt(p, glasses, eye, shift) {
 }
 
 export function patchObjects(patch, params) {
+  if (patch.mode === 'embedded') return []; // its mirror is a face of the lens solid
   // 'bare': uncoated glass (e.g. a cover slip); reflectance follows Fresnel per ray
   const bare = params.patch.coating === 'bare';
   return [partialMirror('patch', bare ? 'Glass reflector' : 'Mirror patch', patch.face, params.patch.reflectance, undefined, bare ? params.patch.glassN ?? 1.523 : undefined)];
@@ -99,4 +102,90 @@ export function computeFoldPrism(p, patch) {
   const exitW = patch.vertex.clone().addScaledVector(patch.toSource, F.dist);
   const center = exitW.clone().addScaledVector(v, L / 2);
   return computePrism({ size: L, height: L, angle: 45, pos: { x: center.x, y: center.y, z: center.z }, rot: eulerDegFromBasis(u, v, w) });
+}
+
+// ---------------------------------------------------------------- the lens as the reflector
+const AIR_N = 1.000293;
+const tangentBasis = (n) => {
+  const ref = Math.abs(n.y) < 0.9 ? new Vector3(0, 1, 0) : new Vector3(1, 0, 0);
+  const u = new Vector3().crossVectors(ref, n).normalize();
+  return { u, v: new Vector3().crossVectors(n, u) };
+};
+
+/**
+ * Option 3: the back surface of the right spectacle lens is the reflector
+ * (bare glass, or a partial mirror coating on it). Its tilt is the lens's
+ * own tilt, so the display has to sit at the mirror image of the eye's
+ * line of sight, reflected about the lens normal.
+ */
+function lensBackReflector(p, glasses, eye) {
+  const lf = glasses.lenses.R;
+  const nEye = lf.normal.clone().negate(); // back surface faces the eye
+  const A = anglesToDirection(p.intent.azimuth, p.intent.elevation, 1);
+  const plane = lf.backCenter.clone().addScaledVector(lf.normal, -0.02);
+  const t = plane.clone().sub(eye.pupilCenter).dot(lf.normal) / A.dot(lf.normal);
+  const M = eye.pupilCenter.clone().addScaledVector(A, t);
+  const toEye = eye.pupilCenter.clone().sub(M).normalize();
+  const toSource = nEye.clone().multiplyScalar(2 * toEye.dot(nEye)).sub(toEye).normalize();
+  const outline = glasses.outline.map(([x, y]) => lf.toWorld(x, y, -lf.thickness / 2 - 0.02));
+  const face = polygonFace(outline, { role: 'lensback' });
+  const vertices = Object.fromEntries(outline.map((q, i) => [`o${i}`, q]));
+  const { u, v } = tangentBasis(nEye);
+  const incidenceDeg = (Math.acos(Math.min(1, toEye.dot(nEye))) * 180) / Math.PI;
+  return {
+    kind: 'patch', mode: 'lensback', face, vertex: M, center: M.clone(), entryCenter: M.clone(), exitCenter: M.clone(), toEye, toSource, normal: nEye, axis: lf.normal.clone(),
+    vertices, outline, u, v, a: 0, incidenceDeg, f: Infinity, astigD: 0, templeBack: glasses.temples.find((q) => q.side === 1)?.dir.clone().normalize(),
+    quaternion: lf.quaternion.clone(), w: v.clone(), Lac: 0, H: 0, faces: {}, volumeMm3: 0,
+  };
+}
+
+/**
+ * Option 2: a flat partial mirror cast inside a thicker right lens. Light
+ * from the temple enters through the lens back, reflects off the buried
+ * mirror and leaves through the lens back toward the eye; every surface is
+ * refracted by the tracer. The mirror (diameter `diameter`) must fit inside
+ * the lens thickness.
+ */
+function embeddedReflector(p, glasses, eye) {
+  const P = p.patch, lf = glasses.lenses.R, nL = p.frame.specLensN;
+  const back = lf.normal.clone().negate(); // outward normal of the back face
+  const A = anglesToDirection(p.intent.azimuth, p.intent.elevation, 1);
+  // eye -> lens back -> into the glass, to the lens mid-plane
+  const tB = lf.backCenter.clone().sub(eye.pupilCenter).dot(lf.normal) / A.dot(lf.normal);
+  const B = eye.pupilCenter.clone().addScaledVector(A, tB);
+  const Ag = refract(A.clone(), back, AIR_N, nL) ?? A.clone();
+  const E = B.clone().addScaledVector(Ag, (lf.thickness / 2) / Ag.dot(lf.normal));
+  const toEyeG = Ag.clone().negate(); // in glass, from the mirror toward the eye
+  // source direction in air: the eye direction turned toward the temple by the fold angle
+  const toEye = eye.pupilCenter.clone().sub(B).normalize();
+  const temporal = new Vector3(-1, 0, 0);
+  const e2 = temporal.clone().addScaledVector(toEye, -temporal.dot(toEye)).normalize();
+  const fold = (P.foldDeg * Math.PI) / 180, tilt = (P.sourceTiltDeg * Math.PI) / 180;
+  const e3 = new Vector3().crossVectors(toEye, e2).normalize();
+  const toSource = toEye.clone().multiplyScalar(Math.cos(fold)).addScaledVector(e2, Math.sin(fold)).multiplyScalar(Math.cos(tilt)).addScaledVector(e3, Math.sin(tilt)).normalize();
+  // light from the source enters the back face (must travel forward into the lens)
+  const dInAir = toSource.clone().negate();
+  const valid = dInAir.dot(lf.normal) > 0.05;
+  const dInG = valid ? refract(dInAir.clone(), back, AIR_N, nL) : null;
+  const nf = dInG ? dInG.clone().sub(toEyeG).normalize() : lf.normal.clone();
+  const { u, v } = tangentBasis(nf);
+  const a = P.diameter / 2;
+  const ring = [];
+  for (let k = 0; k < 24; k++) { const ang = (k / 24) * Math.PI * 2; ring.push(E.clone().addScaledVector(u, a * Math.cos(ang)).addScaledVector(v, a * Math.sin(ang))); }
+  const face = polygonFace(ring, { role: 'facet' });
+  face.facetR = P.reflectance; face.facetT = 1 - P.reflectance;
+  // the entry point on the back face, where the beam from the display arrives
+  const sEntry = dInG ? -(lf.thickness / 2) / dInG.dot(lf.normal) : 0;
+  const entry = dInG ? E.clone().addScaledVector(dInG, sEntry) : B.clone();
+  // how far the mirror's rim comes to either lens surface
+  const depths = ring.map((q) => q.clone().sub(lf.center).dot(lf.normal));
+  const margin = lf.thickness / 2 - Math.max(...depths.map(Math.abs));
+  const vertices = Object.fromEntries(ring.map((q, i) => [`r${i}`, q]));
+  const incidenceDeg = dInG ? (Math.acos(Math.min(1, Math.abs(dInG.dot(nf)))) * 180) / Math.PI : 90;
+  return {
+    kind: 'patch', mode: 'embedded', face: null, embeddedFace: valid ? face : null, valid, fitMargin: margin, vertex: entry, center: E.clone(), entryCenter: entry, exitCenter: B, toEye, toSource, normal: nf, axis: nf.clone().negate(),
+    vertices, u, v, a, incidenceDeg, f: Infinity, astigD: 0, templeBack: glasses.temples.find((q) => q.side === 1)?.dir.clone().normalize(),
+    at: (r, ang) => E.clone().addScaledVector(u, r * Math.cos(ang)).addScaledVector(v, r * Math.sin(ang)),
+    quaternion: new Quaternion().setFromRotationMatrix(new Matrix4().makeBasis(u, v, nf)), w: v.clone(), Lac: 0, H: 0, faces: {}, volumeMm3: 0,
+  };
 }

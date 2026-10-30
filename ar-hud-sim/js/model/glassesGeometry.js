@@ -104,8 +104,10 @@ export function computeGlasses(frame) {
     const normal = new Vector3(0, 0, 1).applyQuaternion(q);
     const toWorld = (x, y, z = 0) => new Vector3(x, y, z).applyQuaternion(q).add(center);
     const toLocal = (p) => p.clone().sub(center).applyQuaternion(qi);
-    const backCenter = toWorld(0, 0, -lensThickness / 2);
-    return { center, side, quaternion: q, normal, toWorld, toLocal, backCenter, frontCenter: toWorld(0, 0, lensThickness / 2) };
+    // the right lens may be thicker (a combiner cast inside it)
+    const thickness = side === 1 ? frame.lensThicknessR ?? lensThickness : lensThickness;
+    const backCenter = toWorld(0, 0, -thickness / 2);
+    return { center, side, quaternion: q, normal, toWorld, toLocal, backCenter, thickness, frontCenter: toWorld(0, 0, thickness / 2) };
   };
   const lenses = { R: lensFrame(rightLensCenter, 1), L: lensFrame(leftLensCenter, -1) };
   // lensBackZ: z of the right lens back surface at its centre (eye relief datum)

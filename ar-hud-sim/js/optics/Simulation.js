@@ -9,6 +9,7 @@ import { computeOled, computePrism, computeCollimator, computeDriver, computeArm
 import { trace, coneDirections, eyeDetector } from './RayTracer.js';
 import { makeGlass, WAVELENGTHS, criticalAngle, AIR } from './materials.js';
 import { partFrame, computeWeights } from '../model/parts.js';
+import { computeHead } from '../model/head.js';
 import { boxAbsorber } from './RayTracer.js';
 import { computeWaveguide, waveguideObjects } from './Waveguide.js';
 import { computePatch, patchObjects, computeFoldPrism } from './Combiner.js';
@@ -23,17 +24,34 @@ function boxCornersOf(center, q, size) {
 
 // Conformal printed housing (folded designs): a wall around each part instead
 // of one box, so the shell follows the splayed temple and the side of the head.
-function conformalShell(params, oled, driver, hingeBlock) {
+function conformalShell(params, oled, driver, hingeBlock, collimator, glasses) {
   if (params.frame.housingShape !== 'conformal') return null;
   const w = params.frame.housingWall;
   const grow = (s) => new Vector3(s.x + 2 * w, s.y + 2 * w, s.z + 2 * w);
   const parts = [
-    { id: 'oled', center: oled.housing.center, quaternion: oled.quaternion, size: grow(oled.housing.size) },
-    { id: 'driver', center: driver.envCenter, quaternion: driver.quaternion, size: grow(driver.envelope) },
+    { id: 'oled', label: 'display module', center: oled.housing.center, quaternion: oled.quaternion, size: grow(oled.housing.size) },
+    { id: 'driver', label: 'driver board', center: driver.envCenter, quaternion: driver.quaternion, size: grow(driver.envelope) },
   ];
-  if (hingeBlock) parts.push({ id: 'hinge', center: hingeBlock.center, quaternion: new Quaternion(), size: hingeBlock.size });
+  if (collimator) {
+    // printed barrel around the whole lens, from the display module to the lens
+    const br = Math.max(collimator.apertureRadius + 0.25, (collimator.glassDiameter ?? 0) / 2 + 0.1) + 0.8;
+    const len = Math.max(0.5, collimator.center.clone().sub(oled.center).dot(oled.normal) + (collimator.thickness || 0) + 0.5);
+    parts.push({ id: 'barrel', label: 'lens barrel', center: oled.center.clone().addScaledVector(oled.normal, len / 2), quaternion: oled.quaternion, size: new Vector3(2 * br, 2 * br, len) });
+  }
+  if (hingeBlock) parts.push({ id: 'hinge', label: 'hinge block', center: hingeBlock.center, quaternion: new Quaternion(), size: hingeBlock.size });
   const points = parts.flatMap((p) => boxCornersOf(p.center, p.quaternion, p.size));
-  return { parts, points, wall: w };
+  // is every part joined (≤ 1 mm, bounding boxes) through the others to the right temple?
+  const aabb = (corners) => ({ min: new Vector3(Math.min(...corners.map((c) => c.x)), Math.min(...corners.map((c) => c.y)), Math.min(...corners.map((c) => c.z))), max: new Vector3(Math.max(...corners.map((c) => c.x)), Math.max(...corners.map((c) => c.y)), Math.max(...corners.map((c) => c.z))) });
+  const gap = (a, b) => Math.max(0, a.min.x - b.max.x, b.min.x - a.max.x, a.min.y - b.max.y, b.min.y - a.max.y, a.min.z - b.max.z, b.min.z - a.max.z);
+  const t = glasses.temples.find((q) => q.side === 1);
+  const nodes = [{ id: 'temple', box: aabb(boxCornersOf(t.center, t.quaternion, t.size)) }, ...parts.map((p) => ({ id: p.id, label: p.label, box: aabb(boxCornersOf(p.center, p.quaternion, p.size)) }))];
+  const reached = new Set(['temple']);
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const n of nodes) if (!reached.has(n.id) && nodes.some((m) => reached.has(m.id) && gap(n.box, m.box) <= 1)) { reached.add(n.id); changed = true; }
+  }
+  const loose = nodes.filter((n) => !reached.has(n.id)).map((n) => n.label);
+  return { parts, points, wall: w, loose };
 }
 
 export function buildSystem(params) {
@@ -42,7 +60,7 @@ export function buildSystem(params) {
     // when the optics are folded along the temple, the lens barrel and fold prism
     const o = computeOled(params.oled), d = computeDriver(params.driver);
     const pts = [...boxCornersOf(o.housing.center, o.quaternion, o.housing.size), ...boxCornersOf(d.envCenter, d.quaternion, d.envelope)];
-    if (params.patch?.enabled && params.patch.fold?.enabled) {
+    if (params.patch?.enabled) {
       const g0 = computeGlasses(params.frame);
       const e0 = computeEye({ ...params.eye, monoPD: params.eye.monoPDRight, side: 1 }, g0);
       // (the fold prism gets its own hinge block, see below)
@@ -90,7 +108,7 @@ export function buildSystem(params) {
   const arm = params.frame.optArm === false || patched ? null : computeArm(oled, collimator?.valid ? collimator : null, prism);
   const objects = buildOpticalObjects({
     oled, prism, collimator, driver, arm, glasses, frame: params.frame, prismMaterial, lensMaterial, specMaterial,
-    coating: params.prism.coating, guideObjects: patched ? [...patchObjects(prism, params), ...(fold ? [dielectricSolid('fold', 'Fold prism', prismMaterial, Object.values(fold.faces))] : [])] : guided ? waveguideObjects(prism, prismMaterial) : null,
+    coating: params.prism.coating, embeddedFacet: patched ? prism.embeddedFace ?? null : null, guideObjects: patched ? [...patchObjects(prism, params), ...(fold ? [dielectricSolid('fold', 'Fold prism', prismMaterial, Object.values(fold.faces))] : [])] : guided ? waveguideObjects(prism, prismMaterial) : null,
   });
   // standoff pins bonding the combiner to the lens back
   const lensMount = params.frame.lensMount === false ? null : computeLensMount(prism, glasses, eye, params.targets.centralClear);
@@ -100,7 +118,7 @@ export function buildSystem(params) {
   for (const pf of parts) if (pf.part.blocksLight && pf.part.visible !== false) objects.push(boxAbsorber(`part:${pf.part.id}`, pf.part.name, pf.matrix, pf.size));
   objects.push(eyeDetector('eyeR', 'Right eye', eye));
   objects.push(eyeDetector('eyeL', 'Left eye', leftEye));
-  return { params, glasses, eye, leftEye, oled, prism, collimator, driver, arm, parts, objects, prismMaterial, lensMount, fold, hingeBlock, housingShell: conformalShell(params, oled, driver, hingeBlock) };
+  return { params, glasses, eye, leftEye, oled, prism, collimator, driver, arm, parts, objects, prismMaterial, lensMount, fold, hingeBlock, housingShell: conformalShell(params, oled, driver, hingeBlock, collimator?.valid ? collimator : null, glasses) };
 }
 
 // Sample pixel positions in [-1,1]^2 (edges included).
@@ -179,7 +197,22 @@ export function runSimulation(params) {
   }
 
   const eye = system.eye;
-  const counts = { emitted: sources.length, pupil: 0, eyeMiss: 0, leftPupil: 0, leftEye: 0, escaped: 0, absorbed: {}, leaked: 0, trapped: 0 };
+  // The head is not a traced surface, so any path that runs through it (e.g. a
+  // beam skimming past the outer corner of the eye) is stopped here.
+  const head = computeHead(params, system.glasses, eye);
+  const throughHead = (path) => {
+    for (const sg of path.segments) {
+      const L = sg.a.distanceTo(sg.b), n = Math.max(2, Math.ceil(L / 1.5));
+      for (let i = 1; i < n; i++) { const q = sg.a.clone().lerp(sg.b, i / n); if (head.intrusion(q) > 0.3) return q; }
+    }
+    return null;
+  };
+  let headBlocked = 0;
+  for (const path of [...paths, ...chiefPaths]) {
+    if (!path.outcome.includes('eyeR') && !path.outcome.includes('eyeL')) continue;
+    if (throughHead(path)) { path.outcome = 'absorbed:head'; path.finalRay = null; headBlocked++; }
+  }
+  const counts = { emitted: sources.length, pupil: 0, eyeMiss: 0, leftPupil: 0, leftEye: 0, escaped: 0, absorbed: {}, leaked: 0, trapped: 0, headBlocked };
   const power = { emitted: 0, pupil: 0, leftPupil: 0, ghostPupil: 0, leaked: 0, absorbed: 0, lensStray: 0 };
   const hyp = { hits: 0, tir: 0, minInc: Infinity, maxInc: -Infinity, incidences: [] };
   const perPixel = new Map();

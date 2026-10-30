@@ -28,8 +28,10 @@ export const STRUCTURE_CHECKS = [
   ['guideTIR', 'Light stays guided in the waveguide'],
   ['seeThrough', 'World stays visible through the combiner'],
   ['foldTIR', 'Fold prism reflects by TIR'],
+  ['castFit', 'Mirror fits inside the lens'],
   ['foldFit', 'Fold prism inside the housing'],
   ['collFit', 'Lens inside the housing'],
+  ['shellJoined', 'Housing joined to the temple'],
 ];
 
 export function scoreDesign(results, coverage, diag, params) {
@@ -59,7 +61,9 @@ export function scoreDesign(results, coverage, diag, params) {
   // every placed part: must not block the beam or cut into the head
   for (const c of diag.checks.filter((x) => x.id.startsWith('part-'))) structural.push({ id: c.id, label: c.label, ok: false, value: c.value, explain: c.explain });
   // the prism needs something holding it
-  if (!params.waveguide?.enabled) {
+  if (params.patch?.enabled && params.patch.mode) {
+    structural.push({ id: 'prismMount', label: 'Reflector is part of the lens', ok: true, value: params.patch.mode === 'embedded' ? 'cast in the lens' : 'lens back surface', explain: '' });
+  } else if (!params.waveguide?.enabled) {
     // prism or mirror patch: bonded to the lens back by standoff pins
     const c = checks.lensMount;
     const ok = !!c && c.status !== 'fail';

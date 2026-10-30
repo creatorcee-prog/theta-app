@@ -294,6 +294,17 @@ export class OpticalMeshes {
 
   drawPatch(pt, params, labels) {
     const pg = this.groups.prism;
+    if (pt.mode === 'lensback') {
+      // the lens back surface is the reflector: tint it
+      const o = pt.outline, pos = [];
+      for (let i = 1; i < o.length - 1; i++) for (const q of [o[0], o[i], o[i + 1]]) pos.push(q.x, q.y, q.z);
+      const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.computeVertexNormals();
+      const m = new THREE.Mesh(geo, new THREE.MeshPhysicalMaterial({ color: 0xffc46b, transparent: true, opacity: params.patch.coating === 'bare' ? 0.12 : 0.3, metalness: 0.4, roughness: 0.1, side: THREE.DoubleSide, depthWrite: false }));
+      m.renderOrder = 4; pg.add(m);
+      if (labels) { const l = makeLabel(params.patch.coating === 'bare' ? 'Lens back surface reflects (bare glass)' : 'Lens back surface: partial mirror coating'); l.position.copy(pt.center).add(new THREE.Vector3(0, 8, 0)); pg.add(l); }
+      this.handles.prism.position.copy(pt.center);
+      return;
+    }
     const NR = 6, NA = 32, pos = [], idx = [];
     for (let i = 0; i <= NR; i++) for (let j = 0; j < NA; j++) { const q = pt.at((pt.a * i) / NR, (j / NA) * Math.PI * 2); pos.push(q.x, q.y, q.z); }
     for (let i = 0; i < NR; i++) for (let j = 0; j < NA; j++) {
@@ -308,7 +319,7 @@ export class OpticalMeshes {
     pg.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(rim), new THREE.LineBasicMaterial({ color: 0xffc46b })));
     if (labels) {
       const P = params.patch;
-      const l = makeLabel(`Mirror patch Ø${P.diameter} mm, R ${P.radius} mm, ${Math.round(100 * P.reflectance)}% reflective`);
+      const l = makeLabel(pt.mode === 'embedded' ? `Partial mirror Ø${P.diameter} mm cast inside the lens` : P.coating === 'bare' ? `Glass reflector Ø${P.diameter} mm (bare cover slip)` : `Mirror patch Ø${P.diameter} mm, R ${P.radius} mm, ${Math.round(100 * P.reflectance)}% reflective`);
       l.position.copy(pt.center).add(new THREE.Vector3(0, pt.a + 5, 0)); pg.add(l);
     }
     this.handles.prism.position.copy(pt.center);

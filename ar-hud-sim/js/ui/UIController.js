@@ -411,7 +411,7 @@ export class UIController {
           <h3>${esc(m.name)} <span class="tagline">${esc(m.tagline)}</span> <span class="score ${t.overall >= 0.8 ? 'ok' : 'bad'}">${pct(t.overall)}</span></h3>
           <p class="help">${esc(m.idea)}</p>
           ${bars(t.goals.map((g) => ({ ...g, label: { pupil: 'Pupil coverage', weight: 'Weight', cost: 'Cost', structure: 'Feasible structure' }[g.id] })))}
-          <p class="make-spec">${v.prism != null ? `${v.prism} mm K9 prism` : v.radius != null ? `mirror patch Ø${v.diam} mm, R ${v.radius} mm, fold ${v.fold}°` : `${v.thick} mm waveguide, ${Math.round(v.facets)} facets, guided ${v.guide}°`} · ${esc(v.lens)} at ${v.stop} mm stop · HUD at ${v.az}° / ${v.el}° ·${v.tilt != null ? ` entry tilt ${v.tilt}° ·` : ''} FOV ${t.fov?.[0]?.toFixed(1)}° × ${t.fov?.[1]?.toFixed(1)}°</p>
+          <p class="make-spec">${v.prism != null ? `${v.prism} mm K9 prism` : m.patchMode === 'lensback' ? `lens back surface (${v.coat === 'bare' ? 'bare glass' : 'partial mirror coating'})` : m.patchMode === 'embedded' ? `Ø${v.diam} mm mirror cast in a ${v.thick} mm lens` : v.radius != null ? `${v.coat === 'bare' ? 'cover-slip reflector' : 'mirror patch'} Ø${v.diam} mm${v.relay ? ', fold prism at the hinge' : ''}` : `${v.thick} mm waveguide, ${Math.round(v.facets)} facets, guided ${v.guide}°`} · ${esc(v.lens)} at ${v.stop} mm stop · HUD at ${v.az}° / ${v.el}° ·${v.tilt != null ? ` entry tilt ${v.tilt}° ·` : ''} FOV ${t.fov?.[0]?.toFixed(1)}° × ${t.fov?.[1]?.toFixed(1)}°</p>
           <div class="btn-row"><button type="button" class="btn small" data-act="loadMake:${m.id}">Load ${esc(m.name)}</button></div>
         </section>`;
       }).join('')}`;

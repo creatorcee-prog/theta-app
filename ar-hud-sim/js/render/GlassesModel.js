@@ -72,14 +72,14 @@ export class GlassesModel {
       frameGrp.add(end);
 
       const lensGrp = g(side === 1 ? 'lensR' : 'lensL', side === 1 ? 'Right lens' : 'Left lens');
-      const lens = new THREE.Mesh(new THREE.ExtrudeGeometry(shapeFrom(outlineL), { depth: frame.lensThickness, bevelEnabled: false }), lensMat);
+      const lens = new THREE.Mesh(new THREE.ExtrudeGeometry(shapeFrom(outlineL), { depth: lf.thickness, bevelEnabled: false }), lensMat);
       const lensHolder = new THREE.Group();
       lensHolder.position.copy(c); lensHolder.quaternion.copy(lf.quaternion);
-      lens.position.set(0, 0, -frame.lensThickness / 2);
+      lens.position.set(0, 0, -lf.thickness / 2);
       lens.renderOrder = 2;
       lensHolder.add(lens);
       lensGrp.add(lensHolder);
-      const edge = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(outlineL.map(([x, y]) => lf.toWorld(x, y, -frame.lensThickness / 2 - 0.02))),
+      const edge = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(outlineL.map(([x, y]) => lf.toWorld(x, y, -lf.thickness / 2 - 0.02))),
         new THREE.LineBasicMaterial({ color: 0x7fa6d9, transparent: true, opacity: 0.6 }));
       lensGrp.add(edge);
       lensGrp.visible = frame.lensesPresent;

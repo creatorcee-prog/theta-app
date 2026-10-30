@@ -9,6 +9,8 @@ import { cylinderFace } from './RayTracer.js';
 export const PIN_RADIUS = 0.75;
 
 export function computeLensMount(combiner, glasses, eye, centralClearDeg = 10) {
+  // a reflecting lens surface or a mirror cast in the lens needs no mount
+  if (combiner.kind === 'patch' && combiner.mode) return null;
   if (!combiner.kind || combiner.kind === 'patch') {
     const lf = glasses.lenses.R;
     const depth = (q) => -q.clone().sub(lf.backCenter).dot(lf.normal);

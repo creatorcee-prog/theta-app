@@ -191,7 +191,7 @@ export function computeArm(oled, collimator, prism, wall = 0.8) {
 
 // ------------------------------------------------------------ to tracer objects
 
-export function buildOpticalObjects({ oled, prism, collimator, driver, arm, glasses, frame, prismMaterial, lensMaterial, specMaterial, coating, guideObjects }) {
+export function buildOpticalObjects({ oled, prism, collimator, driver, arm, glasses, frame, prismMaterial, lensMaterial, specMaterial, coating, guideObjects, embeddedFacet }) {
   const objects = [];
   if (arm && arm.length > 0.6) objects.push({ kind: 'absorber', shape: 'cylinder', id: 'arm', label: 'Optics arm', face: cylinderFace(arm.start, arm.axis, arm.radius, arm.length - 0.4, { absorb: true }) });
   if (driver) objects.push(boxAbsorber('driver', 'HDMI driver board', driver.matrix, driver.envelope));
@@ -252,7 +252,7 @@ export function buildOpticalObjects({ oled, prism, collimator, driver, arm, glas
   if (frame.lensesPresent) {
     for (const side of [1, -1]) {
       const lf = side === 1 ? glasses.lenses.R : glasses.lenses.L;
-      const t2 = frame.lensThickness / 2;
+      const t2 = lf.thickness / 2;
       // outline is defined for the right lens seen from the front; mirror it for the left
       const ol = side === 1 ? glasses.outline : glasses.outline.map(([x, y]) => [-x, y]).reverse();
       const front = ol.map(([x, y]) => lf.toWorld(x, y, t2));
@@ -267,6 +267,8 @@ export function buildOpticalObjects({ oled, prism, collimator, driver, arm, glas
         const want = f.role === 'lensFront' ? 1 : -1;
         if (Math.sign(f.normal.dot(lf.normal)) !== want) f.normal.negate();
       }
+      // a partial mirror cast inside the right lens is one more face of its solid
+      if (side === 1 && embeddedFacet) faces.push(embeddedFacet);
       objects.push(dielectricSolid(side === 1 ? 'specLensR' : 'specLensL', side === 1 ? 'Right lens' : 'Left lens', specMaterial, faces, null));
     }
   }

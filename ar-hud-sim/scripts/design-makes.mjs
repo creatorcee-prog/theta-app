@@ -23,7 +23,9 @@ export function evaluate(make, v) {
   const s = scoreDesign(r, cov, d, p);
   // tie-breakers inside a score level: wider visible field, then lighter
   const met = s.goals.filter((g) => g.met).length;
-  const obj = s.overall + 0.05 * met + 0.002 * (cov.field.hfov ?? 0) - 0.0005 * s.totals.grams;
+  // a housing that does not connect to the temple would float: never accept it
+  const floating = d.checks.some((c) => c.id === 'shellJoined' && c.status !== 'pass');
+  const obj = s.overall - (floating ? 1 : 0) + 0.05 * met + 0.002 * (cov.field.hfov ?? 0) - 0.0005 * s.totals.grams;
   return { v, s, obj, fov: cov.field.hfov, vfov: cov.field.vfov };
 }
 

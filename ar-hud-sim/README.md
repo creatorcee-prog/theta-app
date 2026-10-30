@@ -207,6 +207,52 @@ attached to the frame.
 - A form-factor check now applies to every make: the housing may bulge at
   most 8 mm beyond the temple (assumed). Lumen fails it.
 
+### Mirage Coat and Mirage Cast: the lens itself as the reflector
+
+These two variants answer the question "can the spectacle lens be the
+semi-reflective element?" Both use Mirage's display and Cardboard lens.
+
+**Mirage Coat: the lens back surface reflects** (100%)
+
+- **Geometry.** The lens faces you almost straight on, so the display has
+  to sit at the mirror image of your line of sight, reflected about the
+  lens normal. For a HUD about 31° temporal, that puts it behind the eye,
+  beside the temple.
+- **No fold prism.** A 90° fold forces the beam square to the temple, and
+  then it runs through your head. The new head check (below) stops it.
+- **The found design** uses bare glass:
+  - about 8.6% reflection at 32°;
+  - $183.81, 39.2 g;
+  - housing 7.4 mm outside the temple, 2.8 mm clear of your head.
+- **Caveats.**
+  - It is dim (about 180 cd/m², indoors only).
+  - It needs a lens without anti-reflection coating; most prescription
+    lenses have one, which would cut the reflection about 8×.
+  - The real lens back is curved for a prescription; this model is plano.
+- **Rejected search result.** A first search scored 96.7% with a housing
+  that did not reach the temple (floating). The search now rejects
+  floating housings.
+
+**Mirage Cast: a partial mirror cast inside a thicker right lens** (92.9%)
+
+- **Geometry.** A Ø9.2 mm mirror sits inside a 3.6 mm lens, 1.6 mm thicker
+  than standard. Light enters and leaves through the lens back, and every
+  surface is refracted by the tracer.
+- **Results.** All 16 structure checks pass, with 100% coverage and
+  40.2 g.
+- **Cost:** $280. The insert is a [30R/70T beamsplitter ($61)](https://www.edmundoptics.com/p/25mm-diameter-30r70t-plate-beamsplitter/5238/),
+  plus estimated resin ($15) and polishing ($20). A DIY cast lens is
+  plano; a prescription version would need an optical lab (price unknown).
+
+**Head check (all makes).** The head is now an obstacle for light. Any
+traced path that passes through the head model (orbital rim, side of the
+head) is stopped, so a design cannot "reach the eye" through your skull.
+
+**Housing joined to the temple.** For the mirror-type makes the printed
+housing is modelled as sections: display module, driver board, lens
+barrel and hinge block. A check requires every section to connect through
+the others to the right temple arm.
+
 ### Lumen: the waveguide make
 
 - **What is modelled.** A geometric (reflective, Lumus-type) waveguide is

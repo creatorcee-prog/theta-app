@@ -107,6 +107,12 @@ export function computeWeights(params, system) {
   const { prism, collimator, glasses, driver, oled } = system;
   const calc = {};
   calc.prism = (prism.volumeMm3 / 1000) * DENSITY.bk7;
+  // extra thickness of a right lens with a mirror cast inside (clear resin, ~1.18 g/cm³)
+  if (system.prism?.mode === 'embedded') {
+    const ol = system.glasses.outline; let area = 0;
+    for (let i = 0; i < ol.length; i++) { const [x1, y1] = ol[i], [x2, y2] = ol[(i + 1) % ol.length]; area += x1 * y2 - x2 * y1; }
+    calc.castLens = ((Math.abs(area) / 2) * Math.max(0, system.glasses.lenses.R.thickness - params.frame.lensThickness) / 1000) * 1.18;
+  }
   calc.fold = system.fold ? (system.fold.volumeMm3 / 1000) * DENSITY.bk7 : 0;
   if (collimator) {
     calc.collimator = (lensVolume({ ...collimator, edgeThickness: params.collimator.edgeThickness, glassDiameter: params.collimator.glassDiameter }, params.collimator.n ?? params.prism.n, collimator.f) / 1000) * (params.collimator.density ?? DENSITY.bk7);
@@ -135,6 +141,7 @@ export function computeWeights(params, system) {
       case 'collimator': return collimator ? collimator.center : oled.center;
       case 'prism': return prism.center;
       case 'fold': return system.fold ? system.fold.center : prism.center;
+      case 'castLens': return glasses.lenses.R.center;
       case 'housing': return glasses.housing.center;
       case 'arm': return arm ? arm.start.clone().lerp(arm.end, 0.5) : prism.center;
       case 'frame': return null; // symmetric: split evenly between sides, placed below

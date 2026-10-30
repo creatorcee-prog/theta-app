@@ -287,7 +287,8 @@ test('every tuned make re-scores at >= 80% from scratch, matching the stored res
     // upright and not mirrored (a warning may remain for keystone lean)
     assert.notEqual(o.status, 'fail', `${make.id} image upright and readable: ${o.value}`);
     assert.match(o.value, /^upright/);
-    if (!p.waveguide.enabled) assert.notEqual(d.checks.find((c) => c.id === 'lensMount')?.status ?? 'fail', 'fail', `${make.id} combiner bonded to the lens`);
+    if (!p.waveguide.enabled && !p.patch.mode) assert.notEqual(d.checks.find((c) => c.id === 'lensMount')?.status ?? 'fail', 'fail', `${make.id} combiner bonded to the lens`);
+    if (p.frame.housingShape === 'conformal') assert.equal(d.checks.find((c) => c.id === 'shellJoined').status, 'pass', `${make.id} housing joined to the temple`);
   }
 });
 
@@ -372,4 +373,27 @@ test('bare cover-slip reflector: reflectance follows Fresnel for a thin plate', 
     near(ev.R, (2 * r) / (1 + r), 1e-9);
     near(ev.R + ev.T, 1, 1e-12);
   }
+});
+
+test('lens as reflector: back-surface reflection geometry, cast-in mirror, and light through the head is blocked', async () => {
+  const { MAKES, buildMake } = await import('../js/config/makes.js');
+  const { SEEDS } = await import('../js/config/makes.seeds.js');
+  // option 3: the display direction is the eye direction mirrored about the lens normal
+  const coat = buildMake(MAKES.find((m) => m.id === 'mirageCoat'), SEEDS.mirageCoat[0]);
+  const rc = runSimulation(coat);
+  const pt = rc.system.prism, n = pt.normal;
+  near(pt.toSource.dot(n), pt.toEye.dot(n), 1e-9, 'equal angles to the normal');
+  near(pt.toSource.clone().add(pt.toEye).normalize().dot(n), 1, 1e-9, 'normal bisects source and eye');
+  // option 2: the chief ray refracts into the right lens, reflects off the buried mirror, refracts out
+  const cast = buildMake(MAKES.find((m) => m.id === 'mirageCast'), SEEDS.mirageCast[0]);
+  const r2 = runSimulation(cast);
+  assert.equal(r2.chief.outcome, 'pupil:eyeR');
+  const ev = r2.chief.events.filter((e) => e.obj === 'specLensR');
+  assert.ok(ev.some((e) => e.facet), 'reflects off the cast-in mirror');
+  assert.ok(ev.filter((e) => !e.facet && e.T != null).length >= 2, 'enters and leaves through the lens back');
+  // a fold prism forces the beam square to the temple: here it would run through the head
+  const bad = buildMake(MAKES.find((m) => m.id === 'mirageCoat'), { ...SEEDS.mirageCoat[0], relay: true, az: 30 });
+  const r3 = runSimulation(bad);
+  assert.ok(r3.counts.headBlocked > 0);
+  assert.equal(r3.counts.pupil, 0, 'no light reaches the eye through the head');
 });
