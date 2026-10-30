@@ -156,8 +156,8 @@ export function runDiagnostics(results, coverage) {
   const z = t.zone;
   if (z) {
     const vis = fld.visiblePixels, inZ = fld.inZone ?? 0;
-    if (fld.scrambled) add('Field', 'scrambled', 'Pixels arriving scrambled', `${fld.scrambled} px`, 'warn',
-      'Their light reaches the pupil from many directions (> 1° spread) after extra reflections inside the prism, so they smear instead of forming an image. Usually the beam is wider than the prism.');
+    if (fld.scrambled) add('Field', 'scrambled', 'Pixels arriving scrambled or as ghosts', `${fld.scrambled} px`, 'warn',
+      'Their light reaches the pupil either from many directions (> 1° spread) or displaced more than 1.5° from the image (a ghost from an extra reflection, e.g. off a prism end face). They are not counted as coverage. Usually the beam is wider than the prism.');
     add('Field', 'zone', 'HUD inside your zone', `${inZ}/${vis} visible px, fills ${f1(fld.zoneCoveredPct)}% of it`,
       vis > 0 && inZ === vis ? 'pass' : inZ > 0 ? 'warn' : 'fail',
       `Zone ${z.hMin}…${z.hMax}° × ${z.vMin}…${z.vMax}° (${f1(fld.zoneArea)} deg²). The HUD can be placed anywhere inside it (click in the eye view, or map the reach), but one ${f2(oled.diagonalMm / 25.4)}″ display spans only ≈ ${f1(fld.availHfov)}° × ${f1(fld.availVfov)}° at f = ${collimator?.f ?? '—'} mm, so it cannot fill the whole zone at once.`);

@@ -205,6 +205,34 @@ function visibleWithEye(pixelResults, eye) {
   return pixelResults.length ? vis / pixelResults.length : 0;
 }
 
+function fitAffine(pts, get) {
+  const M = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], r = [0, 0, 0];
+  for (const p of pts) { const x = [p.u, p.v, 1], y = get(p); for (let i = 0; i < 3; i++) { r[i] += x[i] * y; for (let j = 0; j < 3; j++) M[i][j] += x[i] * x[j]; } }
+  const det = (m) => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+  const D = det(M);
+  if (Math.abs(D) < 1e-9) return null;
+  return [0, 1, 2].map((k) => det(M.map((row, i) => row.map((v, j) => (j === k ? r[i] : v)))) / D);
+}
+
+function findGhostPixels(pts, tolDeg = 1.5) {
+  let keep = pts.slice();
+  for (let iter = 0; iter < 4 && keep.length >= 4; iter++) {
+    const fh = fitAffine(keep, (p) => p.angles.h), fv = fitAffine(keep, (p) => p.angles.v);
+    if (!fh || !fv) break;
+    const res = (p) => Math.hypot(p.angles.h - (fh[0] * p.u + fh[1] * p.v + fh[2]), p.angles.v - (fv[0] * p.u + fv[1] * p.v + fv[2]));
+    // drop the worst offenders first, then re-fit
+    const sorted = keep.map((p) => [p, res(p)]).sort((a, b) => b[1] - a[1]);
+    const bad = sorted.filter(([, e]) => e > tolDeg);
+    if (!bad.length) break;
+    const drop = new Set(bad.slice(0, Math.max(1, Math.ceil(bad.length / 2))).map(([p]) => p));
+    keep = keep.filter((p) => !drop.has(p));
+  }
+  if (keep.length < 4) return pts.length >= 4 ? pts : [];
+  const fh = fitAffine(keep, (p) => p.angles.h), fv = fitAffine(keep, (p) => p.angles.v);
+  if (!fh || !fv) return [];
+  return pts.filter((p) => Math.hypot(p.angles.h - (fh[0] * p.u + fh[1] * p.v + fh[2]), p.angles.v - (fv[0] * p.u + fv[1] * p.v + fv[2])) > tolDeg);
+}
+
 export function analyzeCoverage(results) {
   const { system, pixelResults, counts, power } = results;
   const { glasses, eye, params } = system;
@@ -212,8 +240,16 @@ export function analyzeCoverage(results) {
   const lensPoly = glasses.outline.map(([x, y]) => [x, y]);
   const lensArea = glasses.lensArea;
 
-  // ---- visual field from visible pixels
-  const visible = pixelResults.filter((p) => p.visible);
+  // ---- visual field from pixels that form the image
+  // A pixel counts when its light reaches the pupil as one coherent point
+  // (spread <= 1 deg) AND lands where the display-to-eye mapping puts it.
+  // Light that took an extra reflection (e.g. off a prism end face) forms a
+  // displaced ghost; an affine fit (u, v) -> (h, v) with outlier rejection
+  // finds those.
+  const coherent = pixelResults.filter((p) => p.visible && p.imaged !== false);
+  const ghosts = new Set(findGhostPixels(coherent));
+  for (const p of pixelResults) p.ghost = ghosts.has(p);
+  const visible = coherent.filter((p) => !ghosts.has(p));
   const field = { visiblePixels: visible.length, totalPixels: pixelResults.length };
   if (visible.length) {
     const hs = visible.map((p) => p.angles.h), vs = visible.map((p) => p.angles.v);
@@ -238,13 +274,13 @@ export function analyzeCoverage(results) {
   if (z) {
     const inZ = (a) => a.h >= z.hMin && a.h <= z.hMax && a.v >= z.vMin && a.v <= z.vMax;
     field.inZone = visible.filter((p) => inZ(p.angles)).length;
-    field.imagedInZone = visible.filter((p) => p.imaged && inZ(p.angles)).length;
-    field.scrambled = visible.filter((p) => !p.imaged).length;
+    field.imagedInZone = field.inZone;
+    field.scrambled = pixelResults.filter((p) => p.visible && (p.imaged === false || p.ghost)).length;
     const rect = [[z.hMin, z.vMin], [z.hMax, z.vMin], [z.hMax, z.vMax], [z.hMin, z.vMax]];
     const inter = field.hull?.length >= 3 ? clipPolygon(field.hull, rect) : [];
     field.zoneArea = (z.hMax - z.hMin) * (z.vMax - z.vMin);
     field.zoneCoveredPct = field.zoneArea > 0 && inter.length >= 3 ? (100 * polygonArea(inter)) / field.zoneArea : 0;
-  } else { field.inZone = visible.length; field.imagedInZone = visible.filter((p) => p.imaged).length; field.scrambled = visible.length - field.imagedInZone; field.zoneCoveredPct = 0; }
+  } else { field.inZone = visible.length; field.imagedInZone = visible.length; field.scrambled = pixelResults.filter((p) => p.visible && (p.imaged === false || p.ghost)).length; field.zoneCoveredPct = 0; }
   field.pupilRayPct = (100 * counts.pupil) / Math.max(1, counts.emitted);
   field.pupilPowerPct = (100 * power.pupil) / Math.max(1e-12, power.emitted);
 

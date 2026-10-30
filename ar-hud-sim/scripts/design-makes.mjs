@@ -8,6 +8,8 @@ import { analyzeCoverage } from '../js/optics/CoverageAnalyzer.js';
 import { runDiagnostics } from '../js/optics/Diagnostics.js';
 import { scoreDesign } from '../js/optics/Scorecard.js';
 import { reachPoints, evaluateAim } from '../js/optics/reach.js';
+import { TUNED as PREVIOUS } from '../js/config/makes.tuned.js';
+import { SEEDS } from '../js/config/makes.seeds.js';
 
 const EVALS = Number(process.argv[2] ?? 260);
 
@@ -51,9 +53,11 @@ const tuned = {};
 for (const make of MAKES) {
   const t0 = Date.now();
   let best = null;
-  const nRandom = Math.round(EVALS * 0.4);
-  for (let i = 0; i < EVALS; i++) {
-    const v = i < nRandom || !best ? randomVars(make) : mutate(make, best.v, i < EVALS * 0.75 ? 0.25 : 0.08);
+  // warm start: earlier good designs for this make are candidates too
+  const warm = [PREVIOUS[make.id]?.vars, ...(SEEDS[make.id] ?? [])].filter(Boolean);
+  const nRandom = Math.round(EVALS * 0.35);
+  for (let i = 0; i < EVALS + warm.length; i++) {
+    const v = i < warm.length ? { ...randomVars(make), ...warm[i] } : (i - warm.length < nRandom || !best ? randomVars(make) : mutate(make, best.v, i < EVALS * 0.75 ? 0.25 : 0.08));
     let e;
     try { e = evaluate(make, v); } catch (err) { continue; }
     if (!best || e.obj > best.obj) best = e;
