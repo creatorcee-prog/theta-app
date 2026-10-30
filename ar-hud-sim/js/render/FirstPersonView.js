@@ -88,6 +88,61 @@ export class FirstPersonView {
 
     // ---------------- annotations
     if (C) this.drawAnnotations(ctx, X, Y, scale, R, C, w, h);
+    // ---------------- close-up of the HUD (it covers only a few degrees)
+    if (R && showHud && this.inset !== false) this.drawInset(ctx, X, Y, R, w, h);
+    ctx.restore();
+  }
+
+  drawInset(ctx, X, Y, R, w, h) {
+    const vis = R.pixelResults.filter((p) => p.visible && p.angles);
+    if (vis.length < 3) return;
+    const hs = vis.map((p) => p.angles.h), vs = vis.map((p) => p.angles.v);
+    const hMin = Math.min(...hs), hMax = Math.max(...hs), vMin = Math.min(...vs), vMax = Math.max(...vs);
+    const pad = 0.25 * Math.max(hMax - hMin, vMax - vMin, 1);
+    const sw = X(hMax + pad) - X(hMin - pad), sh = Y(vMin - pad) - Y(vMax + pad);
+    if (sw < 2 || sh < 2) return;
+    const dw = Math.round(Math.min(w * 0.36, h * 0.45 * (sw / sh))), dh = Math.round(dw * (sh / sw));
+    const m = Math.round(w * 0.015), dx = w - dw - m, dy = h - dh - m - Math.round(h * 0.09);
+    const zoom = dw / sw;
+    // re-render the world and the traced HUD at the zoomed scale: enlarging
+    // screen pixels would add blur the eye would not see. Only the real
+    // defocus blur, which scales with the zoom, remains.
+    this.insetSrc ??= document.createElement('canvas');
+    const t = this.insetSrc; t.width = dw; t.height = dh;
+    const tctx = t.getContext('2d');
+    const zs = dw / (hMax - hMin + 2 * pad);
+    const Xi = (hd) => (hd - (hMin - pad)) * zs, Yi = (vd) => (vMax + pad - vd) * zs;
+    if (this.mode !== 'overlay') this.drawWorld(tctx, Xi, Yi, dw, dh, zs);
+    else { tctx.fillStyle = '#000'; tctx.fillRect(0, 0, dw, dh); }
+    const keepBlur = this.blurDeg;
+    this.drawHud(tctx, Xi, Yi, zs, R, this.lastCoverage);
+    this.blurDeg = keepBlur;
+    ctx.save();
+    ctx.fillStyle = 'rgba(10,12,16,0.85)';
+    const lh = Math.max(11, Math.round(h * 0.024));
+    ctx.fillRect(dx - 4, dy - lh * 3.6, dw + 8, dh + lh * 3.6 + 4);
+    ctx.drawImage(t, dx, dy);
+    ctx.strokeStyle = 'rgba(57,255,136,0.9)'; ctx.lineWidth = 2; ctx.strokeRect(dx, dy, dw, dh);
+    // what it amounts to in real life
+    const params = R.system.params, hfov = hMax - hMin, vfov = vMax - vMin;
+    const share = { glance: 0.5, nav: 0.38, fitness: 0.45, speed: 0.38, notify: 0.17, captions: 0.16, teleprompter: 0.15, compass: 0.2, text: (params.hud.textSize ?? 120) / 400 * 0.75 }[params.hud.mode] ?? 0.2;
+    const charDeg = share * vfov;
+    const mmAt1m = Math.tan((charDeg * Math.PI) / 180) * 1000;
+    const lumTxt = this.lastDiag?.checks?.find((c) => c.id === 'lum')?.value ?? '';
+    const lum = parseFloat(lumTxt);
+    const lines = [
+      [600, `Close-up ×${zoom.toFixed(1)} · HUD ${hfov.toFixed(1)}° × ${vfov.toFixed(1)}°`],
+      [500, `Big text ≈ ${charDeg.toFixed(1)}° tall (${Math.round(mmAt1m)} mm letters at 1 m)`],
+      [500, Number.isFinite(lum) ? `≈ ${Math.round(lum)} cd/m²: ${lum >= 1000 ? 'daylight-readable' : lum >= 150 ? 'indoors / shade' : 'dark rooms only'}` : ''],
+    ];
+    ctx.fillStyle = '#d7e2f0'; ctx.textBaseline = 'top';
+    lines.forEach(([wt, txt], i) => {
+      let fs = i ? Math.round(lh * 0.9) : lh;
+      ctx.font = `${wt} ${fs}px "IBM Plex Mono", ui-monospace, monospace`;
+      const tw = ctx.measureText(txt).width;
+      if (tw > dw) { fs = Math.max(8, Math.floor((fs * dw) / tw)); ctx.font = `${wt} ${fs}px "IBM Plex Mono", ui-monospace, monospace`; }
+      ctx.fillText(txt, dx, dy - lh * (3.4 - 1.15 * i));
+    });
     ctx.restore();
   }
 

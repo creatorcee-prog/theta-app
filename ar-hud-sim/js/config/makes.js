@@ -303,6 +303,9 @@ export function buildMake(make, v, opts = {}) {
     ]
     : yxKitLines();
   p.bom = [frameLine(), ...displayLines, ...(patched ? [...patchOptics(lens, v.coat === 'bare', lens.mode === 'biconvex' ? v.trim : null, make.patchMode), ...(route === 'prism' ? [foldLine(v.fsize ?? 10)] : []), ...(route === 'inline' ? [mirrorLine()] : [])] : guided ? waveguideOptics(lens) : commonOptics(lens, prism)), ...el.bom];
+  // small images (the mirror makes, ~4-8 degrees): default to the boldest
+  // layout so the characters are as large as the HUD allows
+  if (patched) p.hud = { ...p.hud, mode: 'glance', line1: '12:45', line2: 'Meeting in 15 min', line3: '' };
   p.make = { id: make.id, name: make.name, vars: v };
   return p;
 }

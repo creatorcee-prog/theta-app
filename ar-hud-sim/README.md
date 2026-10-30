@@ -317,6 +317,26 @@ vertical lines lean (Mirage Cast: about 37° before correction).
 - The cost is panel width, which the orientation check reports.
 - A test checks the correction algebraically.
 
+### Making the small mirror HUDs easier to see
+
+The folding mirror makes are limited to about 6–8° by geometry: their lens
+sits about 55 mm from the eye along the folded path, and only about 9 mm
+of lens fits.
+
+- **Mirage Coat** now uses a partial-mirror coating on the lens back
+  (R ≈ 30%) instead of bare glass (≈ 8.6%).
+  - Luminance about 530 cd/m², about 3× brighter.
+  - Cost $239.25 (an estimate for the coating).
+  - World see-through about 70% across the coated lens. Masking the
+    coating to the spot the beam uses would keep the rest clear; the model
+    coats the whole lens.
+- **Default content:** the mirror makes load the bold Glance style, so the
+  characters are as large as the HUD allows.
+- **Eye-view close-up:** a magnified inset re-renders the world and the
+  traced HUD at the zoomed scale, so only real defocus blur shows. It is
+  labelled with the HUD's angular size, the height of its large characters
+  (for example 2.0° = 35 mm letters at 1 m) and its luminance class.
+
 ### Lumen: the waveguide make
 
 - **What is modelled.** A geometric (reflective, Lumus-type) waveguide is

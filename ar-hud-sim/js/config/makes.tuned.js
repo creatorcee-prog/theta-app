@@ -558,7 +558,7 @@ export const TUNED = {
         "label": "Top, temple side",
         "h": 44.1,
         "v": 24.4,
-        "visible": 0.5,
+        "visible": 0.536,
         "buildable": true,
         "failed": []
       },
@@ -596,7 +596,7 @@ export const TUNED = {
     ],
     "vars": {
       "lens": "cb45",
-      "coat": "bare",
+      "coat": "coated",
       "route": "inline",
       "inset": -1.1,
       "trim": 8.8,
@@ -608,7 +608,7 @@ export const TUNED = {
       "tx": -3.9,
       "ty": -0.1
     },
-    "overall": 0.9611111111111111,
+    "overall": 0.9200975269940788,
     "goals": [
       {
         "id": "pupil",
@@ -624,9 +624,9 @@ export const TUNED = {
       },
       {
         "id": "cost",
-        "value": "$199.25",
-        "score": 1,
-        "met": true
+        "value": "$239.25",
+        "score": 0.8359456635318704,
+        "met": false
       },
       {
         "id": "structure",
@@ -636,8 +636,8 @@ export const TUNED = {
       }
     ],
     "fov": [
-      5.640398292019839,
-      3.9842378802678757
+      5.640381424602026,
+      3.9842311319350827
     ]
   },
   "mirageCast": {
