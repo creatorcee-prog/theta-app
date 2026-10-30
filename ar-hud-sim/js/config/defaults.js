@@ -12,7 +12,7 @@ import { computeGlasses } from '../model/glassesGeometry.js';
 import { computeEye, anglesToDirection } from '../model/eye.js';
 import { eulerDegFromBasis, computePrism, computeCollimator, computeOled } from '../optics/OpticalComponents.js';
 import { computeWaveguide } from '../optics/Waveguide.js';
-import { computePatch, computeFoldPrism } from '../optics/Combiner.js';
+import { computePatch, computeFoldPrism, computeFoldMirror } from '../optics/Combiner.js';
 import { defaultParts, defaultBom } from '../model/parts.js';
 import { trace, dielectricSolid } from '../optics/RayTracer.js';
 import { makeGlass } from '../optics/materials.js';
@@ -73,7 +73,7 @@ export function baseParams() {
     intent: { azimuth: 25, elevation: 10, prismClearance: 1.0, oledInset: 0.5, entryTiltDeg: 0 },
     // geometric (reflective) waveguide that replaces the prism when enabled
     // curved partial mirror behind the lens, fed from the temple (replaces the prism when enabled)
-    patch: { enabled: false, radius: 60, conicK: 0, diameter: 12, gap: 0.6, foldDeg: 80, sourceTiltDeg: 0, throw: 30, reflectance: 0.3, coating: 'coated', glassN: 1.523, thickness: 1, fold: { enabled: false, size: 10, dist: 22 } },
+    patch: { enabled: false, radius: 60, conicK: 0, diameter: 12, gap: 0.6, foldDeg: 80, sourceTiltDeg: 0, throw: 30, reflectance: 0.3, coating: 'coated', glassN: 1.523, thickness: 1, fold: { enabled: false, size: 10, dist: 22 }, route: 'direct', inline: { dist: 10, inset: -2, dy: 0, mirrorD: 12, mirrorR: 0.85 } },
     waveguide: { enabled: false, thickness: 2.5, height: 9, gapToLens: 0.4, guideAngle: 55, facets: 3, facetSpacing: 3.5, facetR: 0.25, coating: 'selective', templeMargin: 2, mount: 'rim' },
   };
 }
@@ -214,8 +214,15 @@ export function alignPatchChain(params) {
   const eye = computeEye({ ...p.eye, monoPD: p.eye.monoPDRight, side: 1, gazeYaw: 0, gazePitch: 0 }, glasses);
   const pt = computePatch(p, glasses, eye);
   const fold = computeFoldPrism(p, pt);
+  const fm = computeFoldMirror(p, pt, glasses);
   let oledCenter, z;
-  if (fold) {
+  if (fm) {
+    // display + lens along the temple, behind the fold mirror
+    const c = computeCollimator({ ...p.collimator, enabled: true }, computeOled(p.oled), p.collimator.n ?? p.prism.n);
+    const s = (c?.valid ? c.frontFocalDistance + (c.thickness || 0) : p.collimator.focalLength) + 2;
+    oledCenter = fm.center.clone().addScaledVector(fm.dIn, -s);
+    z = fm.dIn.clone();
+  } else if (fold) {
     // display + lens along the temple behind the fold prism's entry face
     const c = computeCollimator({ ...p.collimator, enabled: true }, computeOled(p.oled), p.collimator.n ?? p.prism.n);
     const s = (c?.valid ? c.frontFocalDistance + (c.thickness || 0) : p.collimator.focalLength) + 2;

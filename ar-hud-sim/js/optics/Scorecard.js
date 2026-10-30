@@ -23,6 +23,7 @@ export const STRUCTURE_CHECKS = [
   ['driverFit', 'Driver board fits in the housing'],
   ['headHousing', 'Housing clears the head'],
   ['formFactor', 'Normal-glasses form factor'],
+  ['foldable', 'Glasses can be closed'],
   ['virtualImage', 'Focusable virtual image'],
   ['left', 'No light in the left pupil'],
   ['guideTIR', 'Light stays guided in the waveguide'],

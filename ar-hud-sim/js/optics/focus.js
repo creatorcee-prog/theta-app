@@ -6,7 +6,7 @@ import { assessFieldFocus } from './Vision.js';
 
 function centreVergence(params) {
   const p = structuredClone(params);
-  p.sim = { ...p.sim, pixelsX: 3, pixelsY: 3, raysPerPixel: 90, wavelengths: 'mono', ghosts: false };
+  p.sim = { ...p.sim, pixelsX: 3, pixelsY: 3, raysPerPixel: Math.max(90, 2 * (params.sim.raysPerPixel ?? 40)), wavelengths: 'mono', ghosts: false };
   p.parts = []; // focus does not depend on parts; skip their absorbers
   const r = runSimulation(p);
   const c = r.pixelResults.find((x) => x.i === 1 && x.j === 1);
@@ -37,7 +37,7 @@ export function solveFocusDistance(params, targetV, { tol = 0.03, maxIter = 8 } 
 function fieldResidual(params, distance) {
   const p = structuredClone(params);
   p.collimator.distance = distance;
-  p.sim = { ...p.sim, pixelsX: 5, pixelsY: 3, raysPerPixel: 60, wavelengths: 'mono', ghosts: false };
+  p.sim = { ...p.sim, pixelsX: 5, pixelsY: 3, raysPerPixel: Math.max(60, Math.round(1.5 * (params.sim.raysPerPixel ?? 40))), wavelengths: 'mono', ghosts: false };
   p.parts = [];
   const r = runSimulation(p);
   const v = r.pixelResults.map((x) => x.vergence).filter(Boolean);

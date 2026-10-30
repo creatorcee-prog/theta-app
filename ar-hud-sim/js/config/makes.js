@@ -31,6 +31,7 @@ const src = {
   noaT: { label: 'Thorlabs NOA61 ($40.70)', url: 'https://www.thorlabs.us/_QLPopup.cfm?PN=NOA61' },
   cardboard: { label: 'Black Enterprise: Cardboard 45 mm lens pair, $1.24 (dated review)', url: 'https://www.blackenterprise.com/black-enterprise-tech-review-google-cardboard/' },
   cardboardSpec: { label: 'Listing: 25 mm × 45 mm biconvex Cardboard lenses', url: 'https://www.daraz.pk/products/10pcslot-25mm-x-45mm-biconvex-lens-for-google-cardboard-diy-3d-virtual-reality-vr-glasses-ultra-clear-convex-len-high-quality-i429745812.html' },
+  mirrorTile: { label: 'Artcove Crafts 1″ square craft mirrors, 100 pcs ($15.49)', url: 'https://artcovecrafts.patternbyetsy.com/listing/632362896/1-inch-small-mini-square-craft-mirror' },
   coverslip: { label: 'Microscope World glass cover slips 22×22 mm, 0.13–0.17 mm, 100 pcs ($4.50)', url: 'https://www.microscopeworld.com/p-373-cover-slips.aspx' },
   crystal: { label: 'Esslinger domed mineral watch crystal, 1.0 mm ($3.95)', url: 'https://www.esslinger.com/domed-watch-crystal-round-mineral-glass-crystal-1-00-mm-thick/' },
   curvedPR: { label: 'Alien Photonics custom curved partial reflectors (from €75)', url: 'https://findlight.net/uploads/products/datasheet/output-couplers-partial-reflectors-alien-photonics_1721050359.pdf' },
@@ -100,6 +101,9 @@ function waveguideOptics(lens) {
 // Standoff pins (Ø1.5 mm glass rod or printed pins) glued between the
 // combiner and the back of the lens: the frame carries the optic.
 const mountLine = (what) => line({ id: 'lensMount', name: `Standoff pins + UV glue bonding the ${what} to the lens`, component: 'prism', unit: 6, sourced: false, weight: 0.1, weightBasis: 'estimate', note: what === 'patch' ? 'Estimate. Pins on the half of the rim away from the display; glue only the pin ends so the air gap behind the coating stays clear.' : 'Estimate. Pins on the prism corners nearest the lens, clear of the beam.' });
+
+// back-silvered craft mirror tile, cut to ~12 mm, at the front of the temple
+const mirrorLine = () => line({ id: 'foldMirror', name: 'Fold mirror: glass craft mirror tile cut to 12 mm', unit: 15.49, sourced: true, sources: [src.mirrorTile], weight: 0.6, weightBasis: 'estimate', note: 'Pack of 100 (one used). Back-silvered: the faint front-surface reflection leaves parallel to the main one, so a collimated beam shows no double image. Craft-grade flatness is not specified; pick a flat one.' });
 
 // stock K9 right-angle prism folding the beam at the hinge (TIR, no coating)
 const foldLine = (size) => { const pr = PRISMS.find((x) => x.size === size) ?? PRISMS[3]; return line({ id: 'fold', name: `Fold prism at the hinge: K9 right-angle prism ${size} mm`, component: 'fold', unit: pr.unit, sourced: pr.sourced, sources: [src.k9, src.k9w], weight: 0, weightBasis: 'calc', autoWeight: true, note: 'Half of a 2-pack. Sits inside the temple housing.' }); };
@@ -194,21 +198,21 @@ export const MAKES = [
   {
     id: 'mirage', name: 'Mirage', tagline: 'Mirror on the lens (Focals-style)', kind: 'patch',
     idea: 'The display and lens sit in the temple and shine across the inside of the lens onto a small, partly mirrored glass patch behind it, which reflects the image into your eye. Nothing sticks out and the frame keeps its normal shape. Focals did this with a laser scanner and a holographic film; this version uses parts you can get: the micro-OLED, a stock asphere and a coated watch-crystal patch.',
-    vars: { lens: ['cb45', 'eo19', 'eo125', 'acl1512'], coat: ['bare', 'coated'], relay: [true, false], fsize: [8, 10, 12], fdist: [10, 40], trim: [10, 25], flip: [false, true], stop: [4, 22], az: [6, 44], el: [-28, 32], fold: [60, 110], stilt: [-25, 25], radius: [80, 3000], throw: [18, 62], tx: [-12, 12], ty: [-12, 12], diam: [8, 22] },
+    vars: { lens: ['cb45', 'eo19', 'eo125', 'acl1512'], coat: ['bare', 'coated'], route: ['prism', 'direct', 'inline'], fsize: [8, 10, 12], fdist: [10, 40], idist: [2, 30], inset: [-8, 4], idy: [-8, 8], trim: [10, 25], flip: [false, true], stop: [4, 22], az: [6, 44], el: [-28, 32], fold: [60, 110], stilt: [-25, 25], radius: [80, 3000], throw: [18, 62], tx: [-12, 12], ty: [-12, 12], diam: [8, 22] },
     electronics: () => ({ parts: [], bom: [line({ id: 'cable', name: 'Thin HDMI cable to your phone/PC', unit: 8, sourced: false, weight: 2.5, weightBasis: 'estimate', note: 'Estimate. Your phone/PC is the HDMI source (not counted).' })] }),
     display: 'yx',
   },
   {
     id: 'mirageCoat', name: 'Mirage Coat', tagline: 'The lens itself is the reflector', kind: 'patch', patchMode: 'lensback',
     idea: 'No extra part in front of the eye: the back surface of your right lens reflects the display into your eye, either bare glass (a few %) or with a partial mirror coating. The lens faces you almost straight on, so the display must sit where the lens mirrors your line of sight: behind the eye, beside the temple. That only works for a HUD far to the side, and the beam has to clear the outer corner of the eye socket.',
-    vars: { lens: ['cb45', 'eo19', 'eo125'], coat: ['bare', 'coated'], relay: [true, false], fsize: [8, 10, 12], fdist: [10, 40], trim: [10, 25], flip: [false, true], stop: [4, 22], az: [6, 50], el: [-28, 32], throw: [18, 62], tx: [-12, 12], ty: [-12, 12] },
+    vars: { lens: ['cb45', 'eo19', 'eo125'], coat: ['bare', 'coated'], route: ['inline', 'direct'], inset: [-8, 4], trim: [8, 25], flip: [false, true], stop: [4, 14], az: [6, 50], el: [-28, 32], throw: [18, 62], tx: [-12, 12], ty: [-12, 12] },
     electronics: () => ({ parts: [], bom: [line({ id: 'cable', name: 'Thin HDMI cable to your phone/PC', unit: 8, sourced: false, weight: 2.5, weightBasis: 'estimate', note: 'Estimate. Your phone/PC is the HDMI source (not counted).' })] }),
     display: 'yx',
   },
   {
     id: 'mirageCast', name: 'Mirage Cast', tagline: 'Partial mirror cast inside the lens', kind: 'patch', patchMode: 'embedded',
     idea: 'A thicker right lens with a tilted partial mirror cast inside it, so the reflector is part of the lens. Light from the temple enters through the back of the lens, reflects off the buried mirror and leaves toward your eye; the tracer refracts it at every surface. The lens has to be thick enough to hold the tilted mirror.',
-    vars: { lens: ['cb45', 'eo19', 'eo125'], relay: [true, false], fsize: [8, 10, 12], fdist: [10, 40], trim: [10, 25], flip: [false, true], stop: [4, 22], az: [6, 44], el: [-28, 32], fold: [40, 110], stilt: [-25, 25], throw: [18, 62], tx: [-12, 12], ty: [-12, 12], diam: [4, 16], thick: [3, 12] },
+    vars: { lens: ['cb45', 'eo19', 'eo125'], route: ['inline', 'direct'], idist: [2, 30], inset: [-8, 4], idy: [-8, 8], trim: [8, 25], flip: [false, true], stop: [4, 22], az: [6, 44], el: [-28, 32], fold: [40, 110], stilt: [-25, 25], throw: [18, 62], tx: [-12, 12], ty: [-12, 12], diam: [4, 16], thick: [3, 12] },
     electronics: () => ({ parts: [], bom: [line({ id: 'cable', name: 'Thin HDMI cable to your phone/PC', unit: 8, sourced: false, weight: 2.5, weightBasis: 'estimate', note: 'Estimate. Your phone/PC is the HDMI source (not counted).' })] }),
     display: 'yx',
   },
@@ -230,14 +234,21 @@ export function buildMake(make, v, opts = {}) {
   const prism = PRISMS.find((x) => x.size === v.prism) ?? PRISMS[3];
   p.prism = { ...p.prism, size: prism.size, height: prism.size, angle: 45, coating: 'none' };
   const guided = make.kind === 'waveguide', patched = make.kind === 'patch';
+  let route = null;
   if (patched) {
     const bare = v.coat === 'bare';
+    // light route from the temple: 'inline' (fold mirror at the front of the
+    // temple, folds with it), 'prism' (fold prism at the hinge) or 'direct'
+    route = v.route ?? (v.relay ? 'prism' : 'direct');
     // bare: a flat cover slip (22 mm square: a ≤ 22 mm circle is used)
     if (make.patchMode === 'embedded') p.frame = { ...p.frame, lensThicknessR: v.thick };
     p.patch = { ...p.patch, enabled: true, mode: make.patchMode, gap: v.gap ?? p.patch.gap, coating: bare ? 'bare' : 'coated', radius: bare ? 1e6 : v.radius, diameter: bare ? Math.min(22, v.diam) : v.diam, thickness: bare ? 0.17 : 1, foldDeg: v.fold, sourceTiltDeg: v.stilt, throw: v.throw, reflectance: 0.3,
-      fold: { enabled: !!v.relay, size: v.fsize ?? 10, dist: v.fdist ?? 22 } };
+      fold: { enabled: route === 'prism', size: v.fsize ?? 10, dist: v.fdist ?? 22 }, route,
+      inline: { ...p.patch.inline, dist: v.idist ?? 10, inset: v.inset ?? -2, dy: v.idy ?? 0 } };
     // sample emission only toward the lens: rays outside this cone end on the
     // absorbing barrel wall anyway (sampling efficiency, not a change in physics)
+    // long relays leave a small eye-box: sample more rays so focus stays measurable
+    p.sim = { ...p.sim, raysPerPixel: 100 };
     const halfDiag = (p.oled.diagonalIn * 25.4) / 2;
     p.oled = { ...p.oled, emissionHalfAngle: Math.min(40, Math.max(8, (Math.atan((Math.min(v.stop, glassDia) / 2 + halfDiag + 1) / lens.f) * 180) / Math.PI + 2)) };
   }
@@ -277,7 +288,7 @@ export function buildMake(make, v, opts = {}) {
       line({ id: 'driver', name: 'ESP32-C3 Super Mini (drives the OLED)', component: 'driver', unit: 8, sourced: true, sources: [src.esp], weight: 2.2, weightBasis: 'spec', weightSources: [src.espW], note: 'Typical $3–8.' }),
     ]
     : yxKitLines();
-  p.bom = [frameLine(), ...displayLines, ...(patched ? [...patchOptics(lens, v.coat === 'bare', lens.mode === 'biconvex' ? v.trim : null, make.patchMode), ...(v.relay ? [foldLine(v.fsize ?? 10)] : [])] : guided ? waveguideOptics(lens) : commonOptics(lens, prism)), ...el.bom];
+  p.bom = [frameLine(), ...displayLines, ...(patched ? [...patchOptics(lens, v.coat === 'bare', lens.mode === 'biconvex' ? v.trim : null, make.patchMode), ...(route === 'prism' ? [foldLine(v.fsize ?? 10)] : []), ...(route === 'inline' ? [mirrorLine()] : [])] : guided ? waveguideOptics(lens) : commonOptics(lens, prism)), ...el.bom];
   p.make = { id: make.id, name: make.name, vars: v };
   return p;
 }

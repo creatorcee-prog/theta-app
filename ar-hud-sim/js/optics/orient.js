@@ -36,7 +36,7 @@ export function fitOrientation(pixelResults) {
 
 function measure(p) {
   const q = structuredClone(p);
-  q.sim = { ...q.sim, pixelsX: 5, pixelsY: 3, raysPerPixel: 40, wavelengths: 'mono', ghosts: false };
+  q.sim = { ...q.sim, pixelsX: 5, pixelsY: 3, raysPerPixel: Math.max(40, p.sim.raysPerPixel ?? 40), wavelengths: 'mono', ghosts: false };
   return fitOrientation(runSimulation(q).pixelResults);
 }
 

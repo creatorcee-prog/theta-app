@@ -392,8 +392,23 @@ test('lens as reflector: back-surface reflection geometry, cast-in mirror, and l
   assert.ok(ev.some((e) => e.facet), 'reflects off the cast-in mirror');
   assert.ok(ev.filter((e) => !e.facet && e.T != null).length >= 2, 'enters and leaves through the lens back');
   // a fold prism forces the beam square to the temple: here it would run through the head
-  const bad = buildMake(MAKES.find((m) => m.id === 'mirageCoat'), { ...SEEDS.mirageCoat[0], relay: true, az: 30 });
+  const bad = buildMake(MAKES.find((m) => m.id === 'mirageCoat'), { ...SEEDS.mirageCoat[0], route: 'prism', az: 30 });
   const r3 = runSimulation(bad);
   assert.ok(r3.counts.headBlocked > 0);
   assert.equal(r3.counts.pupil, 0, 'no light reaches the eye through the head');
+});
+
+test('in-line route: the fold mirror on the temple sends the temple-axis beam to the reflector', async () => {
+  const { MAKES, buildMake } = await import('../js/config/makes.js');
+  const { SEEDS } = await import('../js/config/makes.seeds.js');
+  const p = buildMake(MAKES.find((m) => m.id === 'mirageCoat'), SEEDS.mirageCoat[0]);
+  const r = runSimulation(p);
+  const fm = r.system.foldMirror;
+  assert.ok(fm, 'fold mirror present');
+  // law of reflection maps the temple-axis direction onto the mirror -> reflector direction
+  near(reflect(fm.dIn, fm.normal).dot(fm.dOut), 1, 1e-9);
+  // the display looks along the temple into the mirror
+  near(r.system.oled.normal.dot(fm.dIn), 1, 1e-6);
+  const t = r.system.glasses.temples.find((q) => q.side === 1);
+  near(fm.dIn.dot(t.dir.clone().normalize()), -1, 1e-9, 'beam runs forward along the temple');
 });

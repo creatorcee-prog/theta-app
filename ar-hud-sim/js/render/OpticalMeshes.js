@@ -200,7 +200,18 @@ export class OpticalMeshes {
 
     // ---------------- waveguide plate (replaces the prism)
     if (prism.kind === 'waveguide') { this.drawWaveguide(prism, params, labels); return; }
-    if (prism.kind === 'patch') { this.drawPatch(prism, params, labels); if (system.fold) this.drawFold(system.fold, labels); return; }
+    if (prism.kind === 'patch') {
+      this.drawPatch(prism, params, labels);
+      if (system.fold) this.drawFold(system.fold, labels);
+      const fm = system.foldMirror;
+      if (fm) {
+        const disc = new THREE.Mesh(new THREE.CircleGeometry(fm.radius, 32), new THREE.MeshStandardMaterial({ color: 0xd8dde6, metalness: 0.9, roughness: 0.15, side: THREE.DoubleSide }));
+        disc.position.copy(fm.center); disc.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), fm.normal);
+        this.groups.prism.add(disc);
+        if (labels) { const l = makeLabel(`Fold mirror (folds with the temple), turns the beam ${fm.deviationDeg.toFixed(0)}°`); l.position.copy(fm.center).add(new THREE.Vector3(0, fm.radius + 5, 0)); this.groups.prism.add(l); }
+      }
+      return;
+    }
 
     // ---------------- prism
     const pg = this.groups.prism;

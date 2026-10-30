@@ -5,9 +5,28 @@
 // hitting a curved mirror off-axis adds astigmatism, which the tracer measures.
 
 import { Vector3, Quaternion, Matrix4 } from 'three';
-import { conicFace, partialMirror, polygonFace, refract } from './RayTracer.js';
+import { conicFace, partialMirror, polygonFace, refract, discFace } from './RayTracer.js';
 import { computePrism, eulerDegFromBasis } from './OpticalComponents.js';
 import { anglesToDirection } from '../model/eye.js';
+
+// Right temple axes: S hinge point on the temple centre line, d backward along
+// the temple, i inward (toward the head), up.
+export function templeAxes(glasses) {
+  const t = glasses.temples.find((q) => q.side === 1);
+  const d = t.dir.clone().normalize();
+  const i = new Vector3(1, 0, 0).addScaledVector(d, -d.x).normalize();
+  const up = new Vector3().crossVectors(d, i).normalize();
+  if (up.y < 0) up.negate();
+  return { S: t.start.clone(), d, i, up };
+}
+
+// In-line route: the display and lens lie along the temple and a small fold
+// mirror at the front of the temple turns the beam toward the reflector, so
+// everything folds with the temple. Its position on the temple:
+export function inlineFoldPoint(p, glasses) {
+  const I = p.patch.inline, { S, d, i, up } = templeAxes(glasses);
+  return S.addScaledVector(d, I.dist).addScaledVector(i, I.inset).addScaledVector(up, I.dy);
+}
 
 // The patch is tilted, so its rim reaches further toward the lens than its
 // vertex: slide it along the HUD line until every rim point keeps `gap`.
@@ -41,7 +60,10 @@ function patchAt(p, glasses, eye, shift) {
   const fold = (P.foldDeg * Math.PI) / 180, tilt = (P.sourceTiltDeg * Math.PI) / 180;
   let toSource;
   const temple = glasses.temples.find((t) => t.side === 1);
-  if (P.fold?.enabled && temple) {
+  const foldPoint = P.route === 'inline' ? inlineFoldPoint(p, glasses) : null;
+  if (foldPoint) {
+    toSource = foldPoint.clone().sub(M).normalize();
+  } else if (P.fold?.enabled && temple) {
     // folded optics: the beam reaches the patch square to the temple, so the
     // display and lens behind the fold prism lie along the temple
     const back = temple.dir.clone().normalize();
@@ -68,7 +90,7 @@ function patchAt(p, glasses, eye, shift) {
   // off-axis spherical mirror: tangential / sagittal focal lengths f cos(i), f / cos(i)
   const f = P.radius / 2, ci = Math.cos((incidenceDeg * Math.PI) / 180);
   return {
-    kind: 'patch', templeBack: glasses.temples.find((t) => t.side === 1)?.dir.clone().normalize(), face, vertex: M, center: M.clone(), entryCenter: M.clone(), exitCenter: M.clone(), toEye, toSource, normal: nM, axis,
+    kind: 'patch', route: P.route, foldPoint, templeBack: glasses.temples.find((t) => t.side === 1)?.dir.clone().normalize(), face, vertex: M, center: M.clone(), entryCenter: M.clone(), exitCenter: M.clone(), toEye, toSource, normal: nM, axis,
     vertices, at, u, v, a, incidenceDeg, f, astigD: 1000 / (f * ci) - 1000 * ci / f,
     quaternion: new Quaternion().setFromRotationMatrix(new Matrix4().makeBasis(u, v, axis)),
     w: v.clone(), Lac: P.diameter, H: P.diameter, faces: {},
@@ -127,13 +149,21 @@ function lensBackReflector(p, glasses, eye) {
   const M = eye.pupilCenter.clone().addScaledVector(A, t);
   const toEye = eye.pupilCenter.clone().sub(M).normalize();
   const toSource = nEye.clone().multiplyScalar(2 * toEye.dot(nEye)).sub(toEye).normalize();
+  // in-line route: the fold mirror must sit where this fixed line reaches the temple
+  let foldPoint = null, inlineValid = true;
+  if (p.patch.route === 'inline') {
+    const { S, d, i } = templeAxes(glasses);
+    const t = (p.patch.inline.inset - M.clone().sub(S).dot(i)) / toSource.dot(i);
+    foldPoint = M.clone().addScaledVector(toSource, t);
+    inlineValid = t > 0 && foldPoint.clone().sub(S).dot(d) > 0;
+  }
   const outline = glasses.outline.map(([x, y]) => lf.toWorld(x, y, -lf.thickness / 2 - 0.02));
   const face = polygonFace(outline, { role: 'lensback' });
   const vertices = Object.fromEntries(outline.map((q, i) => [`o${i}`, q]));
   const { u, v } = tangentBasis(nEye);
   const incidenceDeg = (Math.acos(Math.min(1, toEye.dot(nEye))) * 180) / Math.PI;
   return {
-    kind: 'patch', mode: 'lensback', face, vertex: M, center: M.clone(), entryCenter: M.clone(), exitCenter: M.clone(), toEye, toSource, normal: nEye, axis: lf.normal.clone(),
+    kind: 'patch', mode: 'lensback', route: p.patch.route, foldPoint, inlineValid, face, vertex: M, center: M.clone(), entryCenter: M.clone(), exitCenter: M.clone(), toEye, toSource, normal: nEye, axis: lf.normal.clone(),
     vertices, outline, u, v, a: 0, incidenceDeg, f: Infinity, astigD: 0, templeBack: glasses.temples.find((q) => q.side === 1)?.dir.clone().normalize(),
     quaternion: lf.quaternion.clone(), w: v.clone(), Lac: 0, H: 0, faces: {}, volumeMm3: 0,
   };
@@ -162,7 +192,20 @@ function embeddedReflector(p, glasses, eye) {
   const e2 = temporal.clone().addScaledVector(toEye, -temporal.dot(toEye)).normalize();
   const fold = (P.foldDeg * Math.PI) / 180, tilt = (P.sourceTiltDeg * Math.PI) / 180;
   const e3 = new Vector3().crossVectors(toEye, e2).normalize();
-  const toSource = toEye.clone().multiplyScalar(Math.cos(fold)).addScaledVector(e2, Math.sin(fold)).multiplyScalar(Math.cos(tilt)).addScaledVector(e3, Math.sin(tilt)).normalize();
+  let toSource = toEye.clone().multiplyScalar(Math.cos(fold)).addScaledVector(e2, Math.sin(fold)).multiplyScalar(Math.cos(tilt)).addScaledVector(e3, Math.sin(tilt)).normalize();
+  const foldPoint = P.route === 'inline' ? inlineFoldPoint(p, glasses) : null;
+  if (foldPoint) {
+    // aim from the fold mirror at the point where the refracted beam enters the lens back
+    let entry0 = B.clone();
+    for (let k = 0; k < 6; k++) {
+      toSource = foldPoint.clone().sub(entry0).normalize();
+      const dg = refract(toSource.clone().negate(), back, AIR_N, nL);
+      if (!dg || dg.dot(lf.normal) <= 0) break;
+      // the entry point is where the in-glass ray from the mirror centre meets the back face
+      const sE = (lf.thickness / 2) / dg.dot(lf.normal);
+      entry0 = E.clone().addScaledVector(dg, -sE);
+    }
+  }
   // light from the source enters the back face (must travel forward into the lens)
   const dInAir = toSource.clone().negate();
   const valid = dInAir.dot(lf.normal) > 0.05;
@@ -183,9 +226,20 @@ function embeddedReflector(p, glasses, eye) {
   const vertices = Object.fromEntries(ring.map((q, i) => [`r${i}`, q]));
   const incidenceDeg = dInG ? (Math.acos(Math.min(1, Math.abs(dInG.dot(nf)))) * 180) / Math.PI : 90;
   return {
-    kind: 'patch', mode: 'embedded', face: null, embeddedFace: valid ? face : null, valid, fitMargin: margin, vertex: entry, center: E.clone(), entryCenter: entry, exitCenter: B, toEye, toSource, normal: nf, axis: nf.clone().negate(),
+    kind: 'patch', mode: 'embedded', route: P.route, foldPoint, face: null, embeddedFace: valid ? face : null, valid, fitMargin: margin, vertex: entry, center: E.clone(), entryCenter: entry, exitCenter: B, toEye, toSource, normal: nf, axis: nf.clone().negate(),
     vertices, u, v, a, incidenceDeg, f: Infinity, astigD: 0, templeBack: glasses.temples.find((q) => q.side === 1)?.dir.clone().normalize(),
     at: (r, ang) => E.clone().addScaledVector(u, r * Math.cos(ang)).addScaledVector(v, r * Math.sin(ang)),
     quaternion: new Quaternion().setFromRotationMatrix(new Matrix4().makeBasis(u, v, nf)), w: v.clone(), Lac: 0, H: 0, faces: {}, volumeMm3: 0,
   };
+}
+
+/** Fold mirror of the in-line route (back-silvered craft mirror tile). */
+export function computeFoldMirror(p, patch, glasses) {
+  if (p.patch.route !== 'inline' || !patch.foldPoint) return null;
+  const { d } = templeAxes(glasses);
+  const dIn = d.clone().negate(); // the beam runs forward along the temple
+  const dOut = patch.toSource.clone().negate(); // mirror -> reflector
+  const normal = dIn.clone().sub(dOut).normalize();
+  const radius = p.patch.inline.mirrorD / 2;
+  return { center: patch.foldPoint.clone(), normal, radius, dIn, dOut, face: discFace(patch.foldPoint.clone(), normal, radius), deviationDeg: (Math.acos(Math.max(-1, Math.min(1, dIn.dot(dOut)))) * 180) / Math.PI };
 }

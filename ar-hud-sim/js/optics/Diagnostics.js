@@ -418,6 +418,40 @@ export function runDiagnostics(results, coverage) {
     hClear >= 1 ? `Head model: lateral orbital rim ${f1(hd.hertelDepth)} mm behind the cornea, ${f1(hd.hertelBase)} mm rim-to-rim; temple gaps ${f1(hd.gap20)} / ${f1(hd.gap40)} mm at 20 / 40 mm behind the hinge.`
       : `The housing reaches ${f1(-hClear)} mm into your head. Reduce its depth or length, or bulge it outward.`);
   const canthusX = eye.pupilCenter.x - hd.canthusOffset;
+  // ---- can the glasses close? Folding swings the right temple about its hinge
+  // until it lies behind the lenses, `foldClearance` mm behind the lens back
+  // (assumed; an extended hinge gives more). Anything on the temple that sticks
+  // inward lands that much closer to the lens, and whatever already sits behind
+  // the lens (prism, patch, waveguide) takes up part of the room.
+  {
+    const tR2 = glasses.temples.find((t) => t.side === 1);
+    const d = tR2.dir.clone().normalize();
+    const iw = new Vector3(1, 0, 0).addScaledVector(d, -d.x).normalize();
+    const templePts = system.housingShell ? [...system.housingShell.points]
+      : [...boxCorners(hs.center, new Quaternion(), hs.size), ...(system.arm && system.arm.length > 0.6 ? armSurfacePoints(system.arm) : [])];
+    // prism makes: the prism hangs on the optics arm, so it swings with the temple too
+    if (!prism.kind) templePts.push(...Object.values(prism.vertices));
+    let prot = 0;
+    for (const q of templePts) {
+      const rel = q.clone().sub(tR2.start);
+      if (rel.dot(d) < -1) continue; // ahead of the hinge: swings outward
+      prot = Math.max(prot, rel.dot(iw) - fr.templeThickness / 2);
+    }
+    // what sits behind the right lens on the frame front
+    const lfr = glasses.lenses.R;
+    const behind = (q) => -q.clone().sub(lfr.backCenter).dot(lfr.normal);
+    let dObs = 0, obsName = '';
+    if (prism.kind === 'waveguide') { dObs = Math.max(...Object.values(prism.vertices).map(behind)); obsName = 'the waveguide plate'; }
+    if (prism.kind === 'patch' && !prism.mode) {
+      dObs = Math.max(...Object.values(prism.vertices).map(behind), ...(system.lensMount?.pins ?? []).map((pn) => behind(pn.base)));
+      obsName = 'the reflector on its pins';
+    }
+    const clearance = fr.foldClearance ?? 4;
+    const room = clearance - dObs - 0.5;
+    const ok = prot <= room;
+    add('Fit', 'foldable', 'Glasses can be closed', ok ? 'yes' : 'no', ok ? 'pass' : 'fail',
+      `Parts on the temple stick ${f1(prot)} mm inward of it; folded, the temple lies ${f1(clearance)} mm behind the lens (assumed)${dObs > 0 ? ` and ${obsName} already takes ${f1(dObs)} mm of that` : ''}, leaving ${f1(room)} mm. ${ok ? 'The right temple folds flat with everything on it.' : !prism.kind ? 'The prism and its arm hang in front of the eye from the temple: they would hit the lens when folding.' : dObs > 0 && room < 0 ? `Remove what sits behind the lens, or use an extended hinge (more than ${f1(dObs + prot + 0.5)} mm).` : 'Move the housing in line with the temple or outward.'}`);
+  }
   // ---- form factor: how far the housing bulges out beyond the temple
   // conformal shell: measured from the temple's outer face at each point along it
   const tR = glasses.temples.find((t) => t.side === 1);

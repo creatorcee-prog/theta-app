@@ -253,6 +253,38 @@ housing is modelled as sections: display module, driver board, lens
 barrel and hinge block. A check requires every section to connect through
 the others to the right temple arm.
 
+### Closing the glasses: fold check and the in-line route
+
+**Fold check (every make).** When the right temple folds it swings about
+the hinge until it lies behind the lenses, assumed 4 mm behind the lens
+back (`frame.foldClearance`; an extended hinge gives more).
+
+- Anything on the temple that sticks inward lands that much closer to the
+  lens.
+- Anything already mounted behind the lens takes part of the room: the
+  prism and its arm, the cover slip on its pins, the waveguide plate.
+- Searches now reject designs that cannot close.
+
+**In-line route.** The display and lens lie along the temple, and a back-
+silvered glass craft mirror tile ([$15.49 per 100](https://artcovecrafts.patternbyetsy.com/listing/632362896/1-inch-small-mini-square-craft-mirror))
+at the front of the temple turns the beam toward the reflector. Everything
+folds with the temple and only light crosses the hinge. Unlike the 45°
+fold prism, the mirror can turn the beam by any angle (Mirage Coat: 42°).
+
+**Focus-fit fix.** The per-pixel focus fit now uses only rays arriving
+within 3° of the pixel's main direction. A few stray rays from another
+path had been producing false −16 D readings.
+
+**Results**
+
+| Make | Closes | Score | Note |
+|---|---|---|---|
+| Mirage Coat | yes | 96.1% | 84% coverage: the folded path is long, so corner pixels miss the pupil; HUD sits ~44° temporal |
+| Mirage | no | 96.9% | The cover slip sits up to 8 mm behind the lens, where the folded temple goes |
+| Mirage Cast | yes | 89.0% | Bulge 9.6 mm, focus fails |
+| Prism makes | no | — | The prism hangs in front of the eye on its arm |
+| Lumen | no | — | Plate behind the lens plus a 5 mm housing bulge |
+
 ### Lumen: the waveguide make
 
 - **What is modelled.** A geometric (reflective, Lumus-type) waveguide is

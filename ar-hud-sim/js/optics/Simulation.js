@@ -2,7 +2,7 @@
 // the tracer and reduces the paths into per-pixel and global results.
 // No rendering code here.
 
-import { Vector3, Quaternion } from 'three';
+import { Vector3, Quaternion, Matrix4 } from 'three';
 import { computeGlasses, autoFitHousing } from '../model/glassesGeometry.js';
 import { computeEye, directionToAngles } from '../model/eye.js';
 import { computeOled, computePrism, computeCollimator, computeDriver, computeArm, buildOpticalObjects } from './OpticalComponents.js';
@@ -12,7 +12,8 @@ import { partFrame, computeWeights } from '../model/parts.js';
 import { computeHead } from '../model/head.js';
 import { boxAbsorber } from './RayTracer.js';
 import { computeWaveguide, waveguideObjects } from './Waveguide.js';
-import { computePatch, patchObjects, computeFoldPrism } from './Combiner.js';
+import { computePatch, patchObjects, computeFoldPrism, computeFoldMirror } from './Combiner.js';
+import { partialMirror } from './RayTracer.js';
 import { dielectricSolid } from './RayTracer.js';
 import { computeLensMount, lensMountObjects } from './LensMount.js';
 
@@ -24,7 +25,7 @@ function boxCornersOf(center, q, size) {
 
 // Conformal printed housing (folded designs): a wall around each part instead
 // of one box, so the shell follows the splayed temple and the side of the head.
-function conformalShell(params, oled, driver, hingeBlock, collimator, glasses) {
+function conformalShell(params, oled, driver, hingeBlock, collimator, glasses, foldMirror) {
   if (params.frame.housingShape !== 'conformal') return null;
   const w = params.frame.housingWall;
   const grow = (s) => new Vector3(s.x + 2 * w, s.y + 2 * w, s.z + 2 * w);
@@ -39,6 +40,13 @@ function conformalShell(params, oled, driver, hingeBlock, collimator, glasses) {
     parts.push({ id: 'barrel', label: 'lens barrel', center: oled.center.clone().addScaledVector(oled.normal, len / 2), quaternion: oled.quaternion, size: new Vector3(2 * br, 2 * br, len) });
   }
   if (hingeBlock) parts.push({ id: 'hinge', label: 'hinge block', center: hingeBlock.center, quaternion: new Quaternion(), size: hingeBlock.size });
+  if (foldMirror) {
+    // holder around the mirror tile at the front of the temple
+    const n = foldMirror.normal, ref = Math.abs(n.y) < 0.9 ? new Vector3(0, 1, 0) : new Vector3(1, 0, 0);
+    const ex = new Vector3().crossVectors(ref, n).normalize(), ey = new Vector3().crossVectors(n, ex);
+    const q = new Quaternion().setFromRotationMatrix(new Matrix4().makeBasis(ex, ey, n));
+    parts.push({ id: 'mirror', label: 'fold-mirror holder', center: foldMirror.center.clone().addScaledVector(n, -1), quaternion: q, size: new Vector3(2 * foldMirror.radius + 2 * w, 2 * foldMirror.radius + 2 * w, 2 + 2 * w) });
+  }
   const points = parts.flatMap((p) => boxCornersOf(p.center, p.quaternion, p.size));
   // is every part joined (≤ 1 mm, bounding boxes) through the others to the right temple?
   const aabb = (corners) => ({ min: new Vector3(Math.min(...corners.map((c) => c.x)), Math.min(...corners.map((c) => c.y)), Math.min(...corners.map((c) => c.z))), max: new Vector3(Math.max(...corners.map((c) => c.x)), Math.max(...corners.map((c) => c.y)), Math.max(...corners.map((c) => c.z))) });
@@ -91,6 +99,7 @@ export function buildSystem(params) {
   const collimator = computeCollimator(params.collimator, oled, params.collimator.n ?? params.prism.n);
   const driver = computeDriver(params.driver);
   const fold = patched ? computeFoldPrism(params, prism) : null;
+  const foldMirror = patched ? computeFoldMirror(params, prism, glasses) : null;
   // hinge block: printed block around the fold prism, in the endpiece, joined to
   // the temple housing (an L-shaped housing overall)
   let hingeBlock = null;
@@ -108,7 +117,9 @@ export function buildSystem(params) {
   const arm = params.frame.optArm === false || patched ? null : computeArm(oled, collimator?.valid ? collimator : null, prism);
   const objects = buildOpticalObjects({
     oled, prism, collimator, driver, arm, glasses, frame: params.frame, prismMaterial, lensMaterial, specMaterial,
-    coating: params.prism.coating, embeddedFacet: patched ? prism.embeddedFace ?? null : null, guideObjects: patched ? [...patchObjects(prism, params), ...(fold ? [dielectricSolid('fold', 'Fold prism', prismMaterial, Object.values(fold.faces))] : [])] : guided ? waveguideObjects(prism, prismMaterial) : null,
+    coating: params.prism.coating, embeddedFacet: patched ? prism.embeddedFace ?? null : null, guideObjects: patched ? [...patchObjects(prism, params), ...(fold ? [dielectricSolid('fold', 'Fold prism', prismMaterial, Object.values(fold.faces))] : []),
+      // back-silvered glass tile: silver behind thin glass, R ≈ 0.85 overall (assumed)
+      ...(foldMirror ? [partialMirror('foldMirror', 'Fold mirror', foldMirror.face, params.patch.inline.mirrorR ?? 0.85, 0)] : [])] : guided ? waveguideObjects(prism, prismMaterial) : null,
   });
   // standoff pins bonding the combiner to the lens back
   const lensMount = params.frame.lensMount === false ? null : computeLensMount(prism, glasses, eye, params.targets.centralClear);
@@ -118,7 +129,7 @@ export function buildSystem(params) {
   for (const pf of parts) if (pf.part.blocksLight && pf.part.visible !== false) objects.push(boxAbsorber(`part:${pf.part.id}`, pf.part.name, pf.matrix, pf.size));
   objects.push(eyeDetector('eyeR', 'Right eye', eye));
   objects.push(eyeDetector('eyeL', 'Left eye', leftEye));
-  return { params, glasses, eye, leftEye, oled, prism, collimator, driver, arm, parts, objects, prismMaterial, lensMount, fold, hingeBlock, housingShell: conformalShell(params, oled, driver, hingeBlock, collimator?.valid ? collimator : null, glasses) };
+  return { params, glasses, eye, leftEye, oled, prism, collimator, driver, arm, parts, objects, prismMaterial, lensMount, fold, foldMirror, hingeBlock, housingShell: conformalShell(params, oled, driver, hingeBlock, collimator?.valid ? collimator : null, glasses, foldMirror) };
 }
 
 // Sample pixel positions in [-1,1]^2 (edges included).
@@ -282,7 +293,18 @@ export function runSimulation(params) {
     const ang = apparent ? directionToAngles(apparent, 1) : null;
     // Available (unclipped) direction: mean of rays crossing the pupil plane
     // within 12 mm of the pupil centre, even if they miss the pupil.
-    const near = pp.finals.filter((f) => f.point.distanceTo(eye.pupilCenter) < 12);
+    let near = pp.finals.filter((f) => f.point.distanceTo(eye.pupilCenter) < 12);
+    // keep the rays of the main image path: stray rays (an extra reflection,
+    // light skirting a part) reach the pupil plane from a different direction
+    // and would corrupt the focus fit. Image rays of one pixel differ by well
+    // under 3° even 10 D out of focus over the 12 mm region.
+    if (near.length >= 3) {
+      const med = (k) => { const v = near.map((f) => f.dir[k]).sort((a, b) => a - b); return v[v.length >> 1]; };
+      const m = new Vector3(med('x'), med('y'), med('z')).normalize();
+      const cos3 = Math.cos((3 * Math.PI) / 180);
+      const main = near.filter((f) => f.dir.dot(m) >= cos3);
+      if (main.length >= 3) near = main;
+    }
     let availAng = null;
     if (near.length) {
       const d = near.reduce((s, f) => s.addScaledVector(f.dir, f.w), new Vector3()).normalize().negate();
