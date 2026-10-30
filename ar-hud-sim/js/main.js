@@ -15,6 +15,7 @@ import { RayRenderer } from './render/RayRenderer.js';
 import { FirstPersonView } from './render/FirstPersonView.js';
 import { UIController, setPath } from './ui/UIController.js';
 import { NOTES_HTML } from './ui/notes.js';
+import { setImageReadyHandler } from './render/hudContent.js';
 
 const $ = (s) => document.querySelector(s);
 
@@ -38,7 +39,13 @@ const ui = new UIController({
   visibilityEl: $('#visibility'), legendEl: $('#legend'), metricsEl: $('#metrics'),
 }, {
   getParams: () => params,
-  onChange: (key, value) => { setPath(params, key, value); schedule(); if (key.startsWith('collimator.mode') || key === 'collimator.enabled') ui.refresh(); },
+  onChange: (key, value) => {
+    setPath(params, key, value);
+    // display content and animation speed do not change the optics: redraw only
+    if (key.startsWith('hud.') || key === 'sim.raySpeed') { redrawContent(); ui.refresh(); return; }
+    schedule();
+    if (key.startsWith('collimator.mode') || key === 'collimator.enabled' || key === 'sim.ghosts') ui.refresh();
+  },
   onAction: (a) => action(a),
   onVisibility: (id, on) => { visibility[id] = on; applyVisibility(); },
   onRayFilter: (k, on) => { rays.filters[k] = on; drawRays(); },
@@ -46,8 +53,19 @@ const ui = new UIController({
   onGizmoMode: (id, mode) => sm.attachGizmo(handleFor(id), mode),
 });
 ui.renderNotes(NOTES_HTML);
+setImageReadyHandler(() => redrawContent());
 
 function schedule() { dirty = true; }
+
+function redrawContent() {
+  rays.speed = params.sim.raySpeed;
+  $('#fpv-flip').checked = !!params.hud.driverFlip;
+  if (!results) return;
+  for (const g of Object.values(optics.groups)) disposeTree(g);
+  optics.update(results.system, params);
+  applyVisibility();
+  fpv.draw();
+}
 
 function disposeTree(obj) {
   obj.traverse((o) => {
@@ -83,6 +101,8 @@ function run() {
   ui.renderMetrics(results, coverage, diag);
   if (!dragging) ui.renderResults(results, coverage, diag);
   ui.refresh();
+  $('#fpv-flip').checked = !!params.hud.driverFlip;
+  rays.speed = params.sim.raySpeed;
   applyVisibility();
   $('#status').textContent = `${results.counts.emitted} rays traced in ${(performance.now() - t0).toFixed(0)} ms`;
 }
@@ -140,10 +160,11 @@ sm.onGizmoChange = (h) => {
     params.collimator.offsetY = r3(d.dot(oled.yAxis));
   } else if (id === 'eyeR') {
     const sys = results.system;
-    const C = h.position.clone().addScaledVector(sys.eye.gaze, -13.5);
+    const vr = params.eye.constants.vertexToRotationCenter;
+    const C = h.position.clone().addScaledVector(sys.eye.gaze, -vr);
     params.eye.dx = r3(C.x + params.eye.ipd / 2);
     params.eye.dy = r3(C.y);
-    params.eye.eyeRelief = r3(Math.max(4, sys.glasses.lensBackZ - (C.z + 13.5)));
+    params.eye.eyeRelief = r3(Math.max(4, sys.glasses.lensBackZ - (C.z + vr)));
   } else if (id === 'driver') {
     params.driver.pos = { x: r3(h.position.x), y: r3(h.position.y), z: r3(h.position.z) };
   }
@@ -166,6 +187,8 @@ function action(a) {
     params.eye.gazePitch = Math.round(coverage.field.vCenter * 2) / 2;
   } else if (a === 'lookAhead') {
     params.eye.gazeYaw = 0; params.eye.gazePitch = 0;
+  } else if (a === 'clearImage') {
+    params.hud.image = null; params.hud.imageName = '';
   } else if (a === 'reset') {
     params = defaultParams();
     select(null);
@@ -214,7 +237,7 @@ document.querySelectorAll('[data-fpv]').forEach((b) => b.addEventListener('click
   document.querySelectorAll('[data-fpv]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
   fpv.draw();
 }));
-$('#fpv-flip').addEventListener('change', (e) => { fpv.driverFlip = e.target.checked; fpv.draw(); });
+$('#fpv-flip').addEventListener('change', (e) => { params.hud.driverFlip = e.target.checked; ui.refresh(); redrawContent(); });
 $('#fpv-expand').addEventListener('click', () => {
   const pip = $('#fpv');
   const on = pip.classList.toggle('expanded');

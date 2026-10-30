@@ -12,7 +12,7 @@ import { makeGlass, WAVELENGTHS, criticalAngle, AIR } from './materials.js';
 export function buildSystem(params) {
   const glasses = computeGlasses(params.frame);
   const eye = computeEye({ ...params.eye, side: 1 }, glasses);
-  const leftEye = computeEye({ ipd: params.eye.ipd, eyeRelief: params.eye.eyeRelief, pupilDiameter: params.eye.pupilDiameter, side: -1 }, glasses);
+  const leftEye = computeEye({ ipd: params.eye.ipd, eyeRelief: params.eye.eyeRelief, pupilDiameter: params.eye.pupilDiameter, constants: params.eye.constants, side: -1 }, glasses);
   const oled = computeOled(params.oled);
   const prism = computePrism(params.prism);
   const dispersive = params.sim.wavelengths === 'rgb';

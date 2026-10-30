@@ -2,7 +2,7 @@
 // angular coordinates (linear in degrees). The HUD is placed only where the
 // tracer found rays entering the pupil; clipped regions are shown as such.
 
-import { drawHudContent } from './OpticalMeshes.js';
+import { renderHud } from './hudContent.js';
 
 const H_MIN = -55, H_MAX = 75, V_MIN = -42, V_MAX = 48;
 
@@ -11,9 +11,7 @@ export class FirstPersonView {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.mode = 'hud'; // normal | hud | off | overlay
-    this.driverFlip = false;
     this.hud = document.createElement('canvas');
-    this.hud.width = 640; this.hud.height = 400;
     this.lastResults = null;
     this.lastCoverage = null;
     new ResizeObserver(() => this.draw()).observe(canvas);
@@ -113,7 +111,8 @@ export class FirstPersonView {
 
   drawHud(ctx, X, Y, scale, R, C) {
     const params = R.system.params;
-    drawHudContent(this.hud.getContext('2d'), 640, 400, { mirrored: this.driverFlip });
+    renderHud(this.hud, params.hud, params.oled, { mirrored: params.hud.driverFlip });
+    const TW = this.hud.width, TH = this.hud.height;
     const nx = params.sim.pixelsX, ny = params.sim.pixelsY;
     const by = new Map(R.pixelResults.map((p) => [`${p.i},${p.j}`, p]));
     const maxPow = Math.max(1e-12, ...R.pixelResults.map((p) => p.pupilPower));
@@ -141,7 +140,7 @@ export class FirstPersonView {
       const pw = q.reduce((s, p) => s + p.pupilPower, 0) / 4 / maxPow;
       lctx.globalAlpha = Math.min(1, (allVis ? 1 : 0.45) * (0.35 + 0.65 * pw) * (0.4 + 0.8 * bright));
       // texture coords of the pixel sample (u right, v up on the OLED)
-      const tc = q.map((p) => [((p.u + 1) / 2) * 640, ((1 - p.v) / 2) * 400]);
+      const tc = q.map((p) => [((p.u + 1) / 2) * TW, ((1 - p.v) / 2) * TH]);
       const sc = q.map((p) => { const a = p.visible ? p.angles : p.availableAngles; return [X(a.h), Y(a.v)]; });
       drawTexturedTri(lctx, this.hud, tc[0], tc[1], tc[2], sc[0], sc[1], sc[2]);
       drawTexturedTri(lctx, this.hud, tc[0], tc[2], tc[3], sc[0], sc[2], sc[3]);

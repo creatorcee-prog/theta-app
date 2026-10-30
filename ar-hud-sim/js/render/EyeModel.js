@@ -31,7 +31,7 @@ export class EyeModel {
     const q = eye.quaternion;
     const fwd = eye.gaze;
     // iris at the real pupil plane (~3.6 mm behind vertex), radius 6 mm
-    const irisPlane = eye.corneaVertex.clone().addScaledVector(fwd, -3.6);
+    const irisPlane = eye.pupilCenter.clone().addScaledVector(fwd, -0.55);
     const iris = new THREE.Mesh(new THREE.RingGeometry(eye.pupilRadius / 1.13, 6, 48), mat({ color: 0x4a6b8a, roughness: 0.7, side: THREE.DoubleSide }));
     iris.position.copy(irisPlane);
     iris.quaternion.copy(q);

@@ -127,6 +127,12 @@ button, input, select { font: inherit; color: inherit; }
 .ctl .num { width: 76px; text-align: right; font: 13px var(--font-mono); font-variant-numeric: tabular-nums; padding: 2px 5px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-2); }
 .ctl .unit { width: 40px; font: 12px var(--font-mono); color: var(--muted); }
 .ctl input[type=range] { width: 100%; accent-color: var(--accent); margin: 2px 0; }
+.ctl input[type=text] { width: 100%; padding: 5px 7px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface-2); }
+.ctl input[type=file] { width: 100%; font-size: 12px; }
+.color-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.color-row span { flex: 1; }
+.color-row input[type=color] { width: 44px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); }
+.file-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .ctl select { width: 100%; padding: 5px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface-2); }
 .ctl-select label { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
 .ctl-toggle { flex-direction: row; justify-content: space-between; align-items: center; }

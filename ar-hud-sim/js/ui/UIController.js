@@ -43,7 +43,7 @@ export class UIController {
       const body = document.createElement('div');
       body.className = 'ctl-body';
       for (const c of sec.controls) body.appendChild(this.makeControl(sec, c, p));
-      if (sec.id === 'prism' || sec.id === 'oled') {
+      if (sec.id === 'prism' || sec.id === 'oled' || sec.id === 'align') {
         const row = document.createElement('div');
         row.className = 'btn-row';
         row.innerHTML = `<button type="button" class="btn small" data-action="align">Re-align chain to target direction</button>`;
@@ -71,6 +71,42 @@ export class UIController {
       input = wrap.querySelector('input');
       input.checked = !!v;
       input.addEventListener('change', () => this.cb.onChange(c.key, input.checked));
+    } else if (c.type === 'text') {
+      wrap.innerHTML = `<label for="${id}">${esc(c.label)} ${tag}</label><input type="text" id="${id}" maxlength="40" autocomplete="off">`;
+      input = wrap.querySelector('input');
+      input.value = v ?? '';
+      input.addEventListener('input', () => this.cb.onChange(c.key, input.value));
+    } else if (c.type === 'color') {
+      wrap.innerHTML = `<label class="color-row" for="${id}"><span>${esc(c.label)}</span>${tag}<input type="color" id="${id}"></label>`;
+      input = wrap.querySelector('input');
+      input.value = v;
+      input.addEventListener('input', () => this.cb.onChange(c.key, input.value));
+    } else if (c.type === 'file') {
+      wrap.innerHTML = `<label for="${id}">${esc(c.label)} ${tag}</label>
+        <input type="file" id="${id}" accept="image/*">
+        <div class="file-row"><span class="file-name muted"></span><button type="button" class="btn small ghost" data-action="clearImage">Remove image</button></div>`;
+      input = wrap.querySelector('input');
+      input.addEventListener('change', () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          // downscale to the display's pixel grid so the page state stays small
+          const img = new Image();
+          img.onload = () => {
+            const p2 = this.cb.getParams();
+            const k = Math.min(1, Math.max(p2.oled.resX, 64) / img.naturalWidth, Math.max(p2.oled.resY, 40) / img.naturalHeight);
+            const cv = document.createElement('canvas');
+            cv.width = Math.max(1, Math.round(img.naturalWidth * k)); cv.height = Math.max(1, Math.round(img.naturalHeight * k));
+            cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+            this.cb.onChange('hud.imageName', file.name);
+            this.cb.onChange(c.key, cv.toDataURL('image/png'));
+          };
+          img.onerror = () => { wrap.querySelector('.file-name').textContent = 'That file could not be read as an image.'; };
+          img.src = reader.result;
+        };
+        reader.readAsDataURL(file);
+      });
     } else if (c.type === 'select') {
       wrap.innerHTML = `<label for="${id}">${esc(c.label)} ${tag}</label><select id="${id}">${c.options.map(([val, lab]) => `<option value="${val}">${esc(lab)}</option>`).join('')}</select>`;
       input = wrap.querySelector('select');
@@ -84,7 +120,13 @@ export class UIController {
       const num = wrap.querySelector('input.num');
       input.value = v; num.value = fmt(v, c.step);
       input.addEventListener('input', () => { num.value = fmt(+input.value, c.step); this.cb.onChange(c.key, +input.value); });
-      num.addEventListener('change', () => { const x = +num.value; if (Number.isFinite(x)) { input.value = x; this.cb.onChange(c.key, x); } });
+      // typed values are clamped to the control's range
+      num.addEventListener('change', () => {
+        let x = +num.value;
+        if (!Number.isFinite(x)) { num.value = fmt(+input.value, c.step); return; }
+        x = Math.min(c.max, Math.max(c.min, x));
+        num.value = fmt(x, c.step); input.value = x; this.cb.onChange(c.key, x);
+      });
       input._num = num;
     }
     if (c.help) {
@@ -116,9 +158,13 @@ export class UIController {
     const p = this.cb.getParams();
     for (const { c, input, wrap } of this.inputs) {
       const v = getPath(p, c.key);
-      if (document.activeElement !== input) {
+      if (c.type === 'file') {
+        wrap.querySelector('.file-name').textContent = p.hud.image ? (p.hud.imageName || 'Image loaded') : 'No image loaded';
+        wrap.querySelector('[data-action=clearImage]').hidden = !p.hud.image;
+        if (!p.hud.image) input.value = '';
+      } else if (document.activeElement !== input) {
         if (c.type === 'toggle') input.checked = !!v;
-        else input.value = v;
+        else input.value = v ?? '';
         if (input._num && document.activeElement !== input._num) input._num.value = fmt(v, c.step);
       }
       wrap.hidden = c.showIf ? !c.showIf(p) : false;
@@ -167,7 +213,7 @@ export class UIController {
       <div class="btn-row">${movable.map((m) => `<button type="button" class="btn small" data-sel="${m}">${m === 'translate' ? 'Drag to move' : 'Drag to rotate'}</button>`).join('')}
       ${section ? `<button type="button" class="btn small ghost" data-sel="edit">Edit values</button>` : ''}
       <button type="button" class="btn small ghost" data-sel="hide">Hide</button></div>
-      ${movable.length ? '<p class="help">Drag the gizmo in the 3D view. Every change is re-traced.</p>' : '<p class="help">This part is fixed by the frame dimensions.</p>'}`;
+      ${movable.length ? '<p class="help">Drag the gizmo in the 3D view. Every change is re-traced.</p>' : '<p class="help">Its size and position come from the frame dimensions: use Edit values.</p>'}`;
     this.selectionEl.onclick = (e) => {
       const b = e.target.closest('[data-sel]');
       if (!b) return;

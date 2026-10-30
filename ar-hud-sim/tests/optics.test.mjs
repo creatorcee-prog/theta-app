@@ -194,3 +194,14 @@ test('measured vergence matches thin-lens prediction for a defocused source', as
   near(v.mean, -1000 / (-si + L), 0.05, 'vergence D');
   near(v.astig, 0, 1e-6);
 });
+
+test('alignment helper aims the real exit ray at the pupil for any prism angle', async () => {
+  const { baseParams, alignChain } = await import('../js/config/defaults.js');
+  for (const angle of [42, 45, 52, 56]) {
+    const p = baseParams();
+    p.prism.angle = angle;
+    p.prism.coating = 'mirror'; // TIR fails at the low angles; isolate the geometry
+    const r = runSimulation(alignChain(p));
+    assert.equal(r.chief.outcome, 'pupil:eyeR', `angle ${angle}: ${r.chief.outcome}`);
+  }
+});

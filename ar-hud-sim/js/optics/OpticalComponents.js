@@ -80,7 +80,7 @@ export function computePrism(p) {
   const L = p.size;
   const Lac = L;
   const Lab = L * Math.tan((p.angle * Math.PI) / 180);
-  const H = L;
+  const H = p.height ?? L;
   const q = quatFromEulerDeg(p.rot);
   const a = axes(q);
   const center = new Vector3(p.pos.x, p.pos.y, p.pos.z);

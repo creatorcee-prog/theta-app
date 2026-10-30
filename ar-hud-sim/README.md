@@ -106,6 +106,49 @@ From `node scripts/smoke.mjs`; nothing below is tuned to look good.
 - With the ideal lens at its focal plane, bundles are collimated (vergence 0.00 D), so a focused virtual image at infinity is supported. With real singlets (spherical or conic plano-convex, f/1.5) the measured vergence is off by several diopters and astigmatism is large. That's what a single fast element does; the page reports it and doesn't claim a focused image.
 - One reflection mirrors the image left–right, so the driver must flip it. The left pupil receives no rays, but leaked light lands on the left eye area.
 
+## What you can adjust
+
+Every input is a control in the Adjust tab. Each has a provenance tag, and
+typed values are clamped to the control's range.
+- **Optics:**
+  - prism angle (20–70°), entry-face leg, height, BK7 index and hypotenuse coating
+  - OLED resolution, diagonal, brightness, emission cone and peak luminance
+  - collimator: installed or not, lens model, focal length, aperture, conic constant, edge thickness, orientation, distance, decentre and tilt
+- **Placement:**
+  - position and yaw/pitch/roll of the prism and OLED (sliders or the drag gizmo)
+  - OLED housing size
+  - driver board position and size, ribbon width
+  - eye: IPD, offset, eye relief, pupil size and gaze
+  - schematic-eye constants
+- **Frame:** lens size, corner radius, thickness and index; bridge, rim, endpiece, hinge height; temple thickness, height and splay; housing length, depth, height, vertical offset and wall.
+- **Projected content:**
+  - text mode: three text lines, text size, arrow, border
+  - a grid test pattern with corner tags
+  - an uploaded image (fit, fill or stretch)
+  - colour and background, and the driver's mirror flip
+
+  Content is visual only: the tracer works on pixel positions, so changing it re-draws without re-tracing.
+- **Targets, alignment helper and simulation:**
+  - FOV, position and coverage targets, central clear zone
+  - helper settings: prism gap to lens, OLED inset
+  - pixel and ray sampling, wavelengths, ghost reflections and cut-off, rays drawn, animation speed
+
+**Re-align chain** traces the axial ray through the prism as currently shaped,
+so it also works for prism angles other than 45°. With an uncoated prism, the
+result at each angle is:
+
+| Prism angle | Hypotenuse TIR | Rays reaching pupil (of 1800) |
+|---|---|---|
+| 42° | 57% | 105 |
+| 45° | 73% | 165 |
+| 48° | 91% | 228 |
+| 52° | 100% | 269 |
+| 56° | 100% | 296 |
+
+At 52° the whole sampled display is visible with no leakage. The cost is a
+12.8 mm exit leg and only 2.9 mm of clearance between prism and cornea. The
+45° default stays because it is the part in the brief.
+
 ## Limitations
 
 - Geometric optics only. No diffraction, multi-surface polarisation tracking (each Fresnel step is the unpolarised average), AR coatings, scattering or bulk absorption.

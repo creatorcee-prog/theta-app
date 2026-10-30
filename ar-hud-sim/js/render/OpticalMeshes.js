@@ -4,34 +4,7 @@
 
 import * as THREE from 'three';
 import { makeLabel } from './labels.js';
-
-export function drawHudContent(ctx, w, h, { mirrored = false } = {}) {
-  ctx.save();
-  if (mirrored) { ctx.translate(w, 0); ctx.scale(-1, 1); }
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, w, h);
-  const s = w / 640;
-  ctx.strokeStyle = '#39ff88';
-  ctx.lineWidth = 6 * s;
-  ctx.strokeRect(6 * s, 6 * s, w - 12 * s, h - 12 * s);
-  ctx.fillStyle = '#39ff88';
-  ctx.font = `700 ${120 * s}px "IBM Plex Mono", ui-monospace, monospace`;
-  ctx.textBaseline = 'top';
-  ctx.fillText('12:45', 40 * s, 40 * s);
-  ctx.font = `500 ${46 * s}px "IBM Plex Mono", ui-monospace, monospace`;
-  ctx.fillText('NEXT 200 m', 44 * s, 190 * s);
-  ctx.fillText('64 BPM', 44 * s, 260 * s);
-  // turn arrow
-  ctx.beginPath();
-  ctx.moveTo(470 * s, 330 * s); ctx.lineTo(470 * s, 170 * s); ctx.lineTo(430 * s, 170 * s);
-  ctx.lineTo(500 * s, 80 * s); ctx.lineTo(570 * s, 170 * s); ctx.lineTo(530 * s, 170 * s); ctx.lineTo(530 * s, 330 * s);
-  ctx.closePath(); ctx.fill();
-  // corner markers to read orientation
-  ctx.font = `700 ${34 * s}px "IBM Plex Mono", ui-monospace, monospace`;
-  ctx.fillText('R', w - 52 * s, h - 52 * s);
-  ctx.fillText('1', 18 * s, h - 52 * s);
-  ctx.restore();
-}
+import { renderHud } from './hudContent.js';
 
 function ribbonGeometry(curve, width, upHint, segments = 48) {
   const pos = [], idx = [];
@@ -74,10 +47,7 @@ export class OpticalMeshes {
       this.handles[id] = h;
     }
     this.hudCanvas = document.createElement('canvas');
-    this.hudCanvas.width = 640; this.hudCanvas.height = 400;
-    drawHudContent(this.hudCanvas.getContext('2d'), 640, 400);
-    this.hudTexture = new THREE.CanvasTexture(this.hudCanvas);
-    this.hudTexture.colorSpace = THREE.SRGBColorSpace;
+    this.hudTexture = null;
   }
 
   update(system, params, { labels = true } = {}) {
@@ -91,6 +61,16 @@ export class OpticalMeshes {
     housing.position.copy(oled.housing.center);
     housing.quaternion.copy(oled.quaternion);
     og.add(housing);
+    // The emitting surface shows the content as the OLED displays it (after
+    // the optional driver flip), so the 3D panel matches the eye view.
+    const prevSize = [this.hudCanvas.width, this.hudCanvas.height];
+    renderHud(this.hudCanvas, params.hud, params.oled, { mirrored: params.hud.driverFlip });
+    if (!this.hudTexture || prevSize[0] !== this.hudCanvas.width || prevSize[1] !== this.hudCanvas.height) {
+      this.hudTexture?.dispose();
+      this.hudTexture = new THREE.CanvasTexture(this.hudCanvas);
+      this.hudTexture.colorSpace = THREE.SRGBColorSpace;
+    }
+    this.hudTexture.needsUpdate = true;
     const b = params.oled.brightness / 100;
     const screen = new THREE.Mesh(new THREE.PlaneGeometry(oled.width, oled.height),
       new THREE.MeshBasicMaterial({ map: this.hudTexture, color: new THREE.Color(b, b, b), toneMapped: false }));
@@ -129,7 +109,7 @@ export class OpticalMeshes {
     const mid1 = start.clone().addScaledVector(oled.normal, -4);
     const mid2 = end.clone().add(new THREE.Vector3(3, 0, 5));
     const curve = new THREE.CatmullRomCurve3([start, mid1, mid1.clone().lerp(mid2, 0.5).add(new THREE.Vector3(0, -1.5, 0)), mid2, end]);
-    const ribbon = new THREE.Mesh(ribbonGeometry(curve, 3.2, oled.yAxis.clone().cross(oled.normal).normalize()),
+    const ribbon = new THREE.Mesh(ribbonGeometry(curve, params.driver.ribbonWidth, oled.yAxis.clone().cross(oled.normal).normalize()),
       new THREE.MeshStandardMaterial({ color: 0xd9822b, roughness: 0.5, side: THREE.DoubleSide }));
     rg.add(ribbon);
 
@@ -209,7 +189,7 @@ export class OpticalMeshes {
     for (let k = 1; k < 6; k++) { const t = k / 6; hatch.push(hv[0].clone().lerp(hv[3], t), hv[1].clone().lerp(hv[2], t)); }
     pg.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(hatch), new THREE.LineBasicMaterial({ color: coated ? 0xffffff : 0xff7ad9, transparent: true, opacity: 0.6 })));
     if (labels) {
-      const l = makeLabel(`BK7 prism ${params.prism.size} mm`); l.position.copy(prism.center).add(new THREE.Vector3(0, 9, 0)); pg.add(l);
+      const l = makeLabel(`BK7 prism ${params.prism.size}×${params.prism.height} mm, ${params.prism.angle}°`); l.position.copy(prism.center).add(new THREE.Vector3(0, 9, 0)); pg.add(l);
       const lh = makeLabel(coated ? 'Hypotenuse (mirror)' : 'Hypotenuse (TIR face)', 'accent');
       lh.position.copy(prism.faces.hypotenuse.centroid).addScaledVector(prism.faces.hypotenuse.normal, 3); pg.add(lh);
     }

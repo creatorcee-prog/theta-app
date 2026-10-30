@@ -18,7 +18,7 @@ export const EYE_CONSTANTS = {
  * with the eye looking straight ahead (the spectacle vertex distance).
  */
 export function computeEye(p, glasses) {
-  const C = EYE_CONSTANTS;
+  const C = { ...EYE_CONSTANTS, ...(p.constants ?? {}) };
   const side = p.side ?? 1;
   const vertexZ = glasses.lensBackZ - p.eyeRelief;
   const rotationCenter = new Vector3(-side * (p.ipd / 2) + (p.dx ?? 0), p.dy ?? 0, vertexZ - C.vertexToRotationCenter);
