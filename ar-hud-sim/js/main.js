@@ -20,6 +20,7 @@ import { PartsModel } from './render/PartsModel.js';
 import { computeHead } from './model/head.js';
 import { MAKES, TUNED, tunedParams, applyPrintedCosts } from './config/makes.js';
 import { scoreDesign } from './optics/Scorecard.js';
+import { mapReach } from './optics/reach.js';
 import { partFrame, hostFrameInverse } from './model/parts.js';
 import { solveFocusDistance, solveFieldFocus } from './optics/focus.js';
 import { assessFocus } from './optics/Vision.js';
@@ -280,7 +281,7 @@ function action(a) {
     if (selected === `part:${id}`) select(null);
   } else if (a.startsWith('loadMake:')) {
     const p = tunedParams(a.slice('loadMake:'.length));
-    if (p) { params = p; select(null); ui.flash(`Loaded ${p.make.name}. Every number is re-traced live; edit anything and the scorecard updates.`); }
+    if (p) { params = p; fpv.reach = TUNED[p.make.id]?.reach ?? null; select(null); ui.flash(`Loaded ${p.make.name}. Every number is re-traced live; edit anything and the scorecard updates.`); }
   } else if (a.startsWith('selectComponent:')) {
     const id = a.slice('selectComponent:'.length);
     select(id);
@@ -341,6 +342,29 @@ document.querySelectorAll('[data-fpv]').forEach((b) => b.addEventListener('click
   document.querySelectorAll('[data-fpv]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
   fpv.draw();
 }));
+// click in the eye view: aim the HUD there (re-aligns the same parts)
+$('#fpv-canvas').addEventListener('click', (e) => {
+  const a = fpv.toAngles(e.clientX, e.clientY);
+  if (!a || fpv.mode === 'normal') return;
+  params.intent.azimuth = Math.round(a.h * 2) / 2;
+  params.intent.elevation = Math.round(a.v * 2) / 2;
+  params = alignChain(params);
+  const c = computeCollimator(params.collimator, computeOled(params.oled), params.prism.n);
+  if (c?.valid && params.collimator.mode !== 'thin') params.collimator.distance = c.frontFocalDistance;
+  fpv.reach = null;
+  ui.flash(`HUD aimed at ${params.intent.azimuth}° temporal, ${params.intent.elevation}° up. The prism, arm, lens and OLED were re-aligned; "Focus HUD for my eye" fine-tunes focus.`);
+  ui.refresh(); schedule();
+});
+$('#fpv-reach').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  const res = await mapReach(params, { onProgress: (d, n) => { btn.textContent = `Mapping ${d}/${n}`; } });
+  fpv.reach = res;
+  btn.disabled = false; btn.textContent = 'Map reach';
+  const good = res.filter((p) => p.buildable && p.visible >= 0.999).length;
+  ui.flash(`Reach map: ${good} of ${res.length} aim points in your zone give a fully visible HUD with buildable hardware (green). Amber: partly visible or a fit problem; red: not visible.`);
+  fpv.draw();
+});
 $('#fpv-flip').addEventListener('change', (e) => { params.hud.driverFlip = e.target.checked; ui.refresh(); redrawContent(); });
 $('#fpv-expand').addEventListener('click', () => {
   const pip = $('#fpv');

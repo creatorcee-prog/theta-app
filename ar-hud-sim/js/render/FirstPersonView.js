@@ -17,6 +17,14 @@ export class FirstPersonView {
     new ResizeObserver(() => this.draw()).observe(canvas);
   }
 
+  // canvas client coordinates -> head-fixed angles (degrees)
+  toAngles(clientX, clientY) {
+    if (!this.map) return null;
+    const r = this.canvas.getBoundingClientRect();
+    const x = (clientX - r.left) * this.map.dpr, y = (clientY - r.top) * this.map.dpr;
+    return { h: (x - this.map.ox) / this.map.scale + H_MIN, v: V_MAX - (y - this.map.oy) / this.map.scale };
+  }
+
   set(results, coverage, diagnostics) {
     this.lastResults = results; this.lastCoverage = coverage; this.lastDiag = diagnostics;
     this.draw();
@@ -34,7 +42,7 @@ export class FirstPersonView {
     const ox = (w - spanH * scale) / 2, oy = (h - spanV * scale) / 2;
     const X = (hd) => ox + (hd - H_MIN) * scale;
     const Y = (vd) => oy + (V_MAX - vd) * scale;
-    this.map = { X, Y, scale };
+    this.map = { X, Y, scale, ox, oy, dpr };
     ctx.save();
     ctx.clearRect(0, 0, w, h);
     const R = this.lastResults, C = this.lastCoverage;
@@ -155,6 +163,25 @@ export class FirstPersonView {
     const fs = Math.max(10, Math.round(w / 70));
     ctx.font = `500 ${fs}px "IBM Plex Mono", ui-monospace, monospace`;
     ctx.textBaseline = 'top';
+    // the wearer's HUD zone and, when computed, where the HUD can be placed
+    const z = params?.targets?.zone;
+    if (z) {
+      ctx.fillStyle = 'rgba(60, 210, 110, 0.10)';
+      ctx.fillRect(X(z.hMin), Y(z.vMax), (z.hMax - z.hMin) * scale, (z.vMax - z.vMin) * scale);
+      ctx.strokeStyle = 'rgba(60, 210, 110, 0.9)'; ctx.setLineDash([6, 4]); ctx.lineWidth = 1.5;
+      ctx.strokeRect(X(z.hMin), Y(z.vMax), (z.hMax - z.hMin) * scale, (z.vMax - z.vMin) * scale);
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(60, 210, 110, 0.95)';
+      ctx.fillText('your HUD zone (click to aim the HUD)', X(z.hMin) + 4, Y(z.vMin) - fs - 4);
+    }
+    if (this.reach?.length) {
+      for (const pt of this.reach) {
+        const ok = pt.buildable && pt.visible >= 0.999, part = pt.visible > 0;
+        ctx.beginPath(); ctx.arc(X(pt.h), Y(pt.v), Math.max(4, scale * 1.4), 0, Math.PI * 2);
+        ctx.fillStyle = ok ? 'rgba(60,210,110,0.9)' : part ? 'rgba(242,201,76,0.9)' : 'rgba(255,90,79,0.9)';
+        ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 1; ctx.stroke();
+      }
+    }
     // central clear zone
     if (t) {
       ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.setLineDash([4, 4]); ctx.lineWidth = 1.2;

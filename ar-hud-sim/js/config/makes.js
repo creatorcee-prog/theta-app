@@ -62,6 +62,7 @@ function commonOptics(lens, prism) {
     line({ id: 'collimator', name: lens.name, component: 'collimator', unit: lens.unit, sourced: lens.sourced, sources: lens.sources, note: lens.note, weight: 0, weightBasis: 'calc', autoWeight: true, weightNote: 'Full-diameter lens volume × 2.51 g/cm³.' }),
     line({ id: 'prism', name: `K9 right-angle prism ${prism.size} mm`, component: 'prism', unit: prism.unit, sourced: prism.sourced, sources: [src.k9, src.k9w], note: prism.sourced ? 'Half of a 2-pack.' : 'Size not in the retrieved listings; price assumed like the 8/10 mm parts.', weight: 0, weightBasis: 'calc', autoWeight: true }),
     printed('barrel', 'Lens barrel (printed)', 'collimator'),
+    printed('arm', 'Optics arm to the prism (printed)', 'arm'),
     printed('housing', 'Temple housing (printed)', 'housing'),
     printed('prismMount', 'Prism bracket (printed)', null, 'prismMount'),
   ];
@@ -84,14 +85,14 @@ export const MAKES = [
   {
     id: 'atlas', name: 'Atlas', tagline: 'Tethered optics-first',
     idea: 'Puts the money into optics. A 10–12 mm prism and a wide lens give a large eye-box. No computer or battery is worn: the HUD plugs into your phone or PC over HDMI.',
-    vars: { prism: [8, 10, 12], lens: ['acl1512', 'eo125', 'acl1210', 'eo19'], flip: [false, true], stop: [4, 12], az: [24, 48], el: [6, 30], tilt: [0, 10], inset: [0, 18], hOut: [0, 12], hDepth: [4, 14], hLen: [22, 55], hHeight: [14, 22] },
+    vars: { prism: [8, 10, 12], lens: ['acl1512', 'eo125', 'acl1210', 'eo19'], flip: [false, true], stop: [4, 12], az: [6, 44], el: [-28, 32], tilt: [0, 10], inset: [-8, 14] },
     electronics: () => ({ parts: [], bom: [line({ id: 'cable', name: 'HDMI cable to your phone/PC', unit: 8, sourced: false, weight: 3, weightBasis: 'estimate', weightNote: 'On-frame share of the cable.', note: 'Estimate. Your phone/PC is the HDMI source (not counted).' })] }),
     display: 'yx',
   },
   {
     id: 'solo', name: 'Solo', tagline: 'Standalone, nothing to plug in',
     idea: 'Everything is on the frame: a Raspberry Pi Zero 2 W behind the left ear as the HDMI source, with the battery and charger on the left temple to balance the optics on the right.',
-    vars: { prism: [6, 8, 10], lens: ['acl1512', 'acl1210', 'eo125', 'eo19'], flip: [false, true], stop: [4, 12], az: [24, 48], el: [6, 30], tilt: [0, 10], inset: [0, 18], hOut: [0, 12], hDepth: [4, 14], hLen: [22, 55], hHeight: [14, 22] },
+    vars: { prism: [6, 8, 10], lens: ['acl1512', 'acl1210', 'eo125', 'eo19'], flip: [false, true], stop: [4, 12], az: [6, 44], el: [-28, 32], tilt: [0, 10], inset: [-8, 14] },
     electronics: () => ({
       parts: [
         { id: 'compute', name: 'Raspberry Pi Zero 2 W', size: { x: 5, y: 30, z: 65 }, pos: { x: 72, y: -4, z: -128 }, rot: { yaw: 0, pitch: 0, roll: 0 }, attach: null, color: '#1f6b3a', blocksLight: true, custom: false },
@@ -110,7 +111,7 @@ export const MAKES = [
   {
     id: 'kestrel', name: 'Kestrel', tagline: 'Value monochrome',
     idea: 'Swaps the $175 micro-OLED for a $2.65 0.49″ 64×32 I2C OLED driven by an ESP32-C3. You get a coarse, bright notification HUD instead of a 640×400 screen, and it is self-powered and very cheap.',
-    vars: { prism: [8, 10, 12], lens: ['eo19', 'acl1512', 'eo125'], flip: [false, true], stop: [4, 12], az: [24, 48], el: [6, 30], tilt: [0, 10], inset: [0, 18], hOut: [0, 12], hDepth: [4, 14], hLen: [26, 70], hHeight: [18, 26] },
+    vars: { prism: [8, 10, 12], lens: ['eo19', 'acl1512', 'eo125'], flip: [false, true], stop: [4, 12], az: [6, 44], el: [-28, 32], tilt: [0, 10], inset: [-8, 14] },
     electronics: () => ({
       parts: [
         { id: 'battery', name: 'LiPo 150 mAh (501230)', size: { x: 5, y: 12, z: 30 }, pos: { x: 71, y: 6, z: -60 }, rot: { yaw: 0, pitch: 0, roll: 0 }, attach: null, color: '#3c6fb0', blocksLight: true, custom: false },
@@ -127,7 +128,7 @@ export const MAKES = [
   {
     id: 'wisp', name: 'Wisp', tagline: 'Featherweight, out of sight',
     idea: 'The smallest stock prism (5–6 mm) and a compact housing keep mass down and the line of sight clear. It trades eye-box size for that, and it is tethered over HDMI like Atlas.',
-    vars: { prism: [5, 6, 8], lens: ['acl1210', 'eo125', 'acl1512', 'eo19'], flip: [false, true], stop: [3, 8], az: [26, 48], el: [8, 30], tilt: [0, 10], inset: [0, 18], hOut: [0, 12], hDepth: [4, 12], hLen: [22, 45], hHeight: [13, 18] },
+    vars: { prism: [5, 6, 8], lens: ['acl1210', 'eo125', 'acl1512', 'eo19'], flip: [false, true], stop: [3, 8], az: [6, 44], el: [-28, 32], tilt: [0, 10], inset: [-8, 14] },
     electronics: () => ({ parts: [], bom: [line({ id: 'cable', name: 'Thin HDMI cable to your phone/PC', unit: 8, sourced: false, weight: 2.5, weightBasis: 'estimate', note: 'Estimate. Your phone/PC is the HDMI source (not counted).' })] }),
     display: 'yx',
   },
@@ -146,7 +147,7 @@ export function buildMake(make, v, opts = {}) {
   } else {
     p.oled = { ...p.oled, peakLuminance: 3000 };
   }
-  p.frame = { ...p.frame, housingDepth: v.hDepth, housingLength: v.hLen, housingHeight: v.hHeight, housingOffsetY: -3, housingOutward: v.hOut ?? 0 };
+  p.frame = { ...p.frame, housingAuto: true };
   p.intent = { ...p.intent, azimuth: v.az, elevation: v.el, entryTiltDeg: v.tilt, oledInset: v.inset, prismClearance: 1 };
   p = alignChain(p);
   // focus: start at the paraxial front focal distance, then let the tracer

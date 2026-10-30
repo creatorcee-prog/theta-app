@@ -7,6 +7,7 @@ import { Vector3, Quaternion } from 'three';
 import { pointInBox } from '../model/glassesGeometry.js';
 import { assessFocus, assessFieldFocus, amplitudeFor } from './Vision.js';
 import { computeHead } from '../model/head.js';
+import { armSurfacePoints } from './CoverageAnalyzer.js';
 import { bomTotals } from '../model/parts.js';
 
 const f1 = (x) => (x == null || !Number.isFinite(x) ? '—' : x.toFixed(1));
@@ -152,6 +153,13 @@ export function runDiagnostics(results, coverage) {
     fld.hCenter == null ? 'No visible field.' : `Target ≈ ${t.azimuth}° outward. Visible span ${f1(fld.hMin)}° to ${f1(fld.hMax)}°.`);
   add('Field', 'voff', 'Vertical offset (up +)', `${f1(fld.vCenter)}°`, grade(fld.vCenter, (v) => v > 0, (v) => v > -5),
     fld.vCenter == null ? 'No visible field.' : `Upper field required. Visible span ${f1(fld.vMin)}° to ${f1(fld.vMax)}°.`);
+  const z = t.zone;
+  if (z) {
+    const vis = fld.visiblePixels, inZ = fld.inZone ?? 0;
+    add('Field', 'zone', 'HUD inside your zone', `${inZ}/${vis} visible px, fills ${f1(fld.zoneCoveredPct)}% of it`,
+      vis > 0 && inZ === vis ? 'pass' : inZ > 0 ? 'warn' : 'fail',
+      `Zone ${z.hMin}…${z.hMax}° × ${z.vMin}…${z.vMax}° (${f1(fld.zoneArea)} deg²). The HUD can be placed anywhere inside it (click in the eye view, or map the reach), but one ${f2(oled.diagonalMm / 25.4)}″ display spans only ≈ ${f1(fld.availHfov)}° × ${f1(fld.availVfov)}° at f = ${collimator?.f ?? '—'} mm, so it cannot fill the whole zone at once.`);
+  }
   add('Field', 'central', 'Central zone clear of HUD', fld.minRadius == null ? '—' : `${f1(fld.minRadius)}° from axis`,
     grade(fld.minRadius, (v) => v >= t.centralClear, (v) => v >= t.centralClear * 0.6),
     fld.minRadius >= t.centralClear ? `Nearest HUD edge is outside the ${t.centralClear}° central zone.` : `HUD intrudes into the ${t.centralClear}° central zone.`);
@@ -327,6 +335,22 @@ export function runDiagnostics(results, coverage) {
     hClear >= 1 ? `Head model: lateral orbital rim ${f1(hd.hertelDepth)} mm behind the cornea, ${f1(hd.hertelBase)} mm rim-to-rim; temple gaps ${f1(hd.gap20)} / ${f1(hd.gap40)} mm at 20 / 40 mm behind the hinge.`
       : `The housing reaches ${f1(-hClear)} mm into your head. Reduce its depth or length, or bulge it outward.`);
   const canthusX = eye.pupilCenter.x - hd.canthusOffset;
+  // ---- optics arm: does a rigid part connect the prism to the housing?
+  const arm = system.arm;
+  if (arm) {
+    const pts = armSurfacePoints(arm);
+    const into = Math.max(...pts.map(head.intrusion));
+    const lf = glasses.lenses.R;
+    const lensGapArm = Math.min(...pts.map((p) => -p.clone().sub(lf.backCenter).dot(lf.normal)));
+    const corneaGap = Math.min(...pts.map((p) => p.distanceTo(eye.corneaVertex)));
+    const problems = [];
+    if (!arm.reachesPrism) problems.push('does not meet the prism entry face');
+    if (into > 0) problems.push(`cuts ${f1(into)} mm into your head`);
+    if (lensGapArm < 0.3) problems.push(`hits the spectacle lens (${f1(lensGapArm)} mm)`);
+    if (corneaGap < lash) problems.push(`passes ${f1(corneaGap)} mm from the cornea`);
+    add('Fit', 'armFit', 'Prism held by an arm to the housing', problems.length ? 'no' : `yes, ${f1(arm.length)} mm arm`, problems.length ? 'fail' : 'pass',
+      problems.length ? `The optics arm ${problems.join('; ')}.` : `Ø${f1(2 * (arm.radius + arm.wall))} mm printed tube from the lens to the prism carries it and shields the beam.`);
+  }
   // Lens + barrel ("optics pod"): the full glass diameter and the barrel must
   // stay clear of the head beside the temple and must start at the housing.
   if (collimator) {

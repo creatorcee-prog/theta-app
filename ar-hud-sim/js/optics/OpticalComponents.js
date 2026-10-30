@@ -150,10 +150,31 @@ export function computeCollimator(p, oled, nGlass) {
   };
 }
 
+// ------------------------------------------------------------ optics arm
+// A rigid printed tube from the collimator (or the OLED when there is no
+// lens) along the beam axis to the prism's entry face: it carries the prism
+// and shields the collimated beam, like the optics arm of Google Glass-style
+// designs. Absorbing inner wall.
+export function computeArm(oled, collimator, prism, wall = 0.8) {
+  const axis = (collimator ? collimator.axis : oled.normal).clone();
+  const start = collimator
+    ? collimator.center.clone().addScaledVector(axis, (collimator.thickness || 0) + 0.3)
+    : oled.center.clone().addScaledVector(oled.normal, 0.5);
+  const f = prism.faces.entry;
+  const denom = axis.dot(f.normal);
+  const t = Math.abs(denom) > 1e-6 ? f.centroid.clone().sub(start).dot(f.normal) / denom : NaN;
+  const ok = Number.isFinite(t) && t > 0;
+  const end = ok ? start.clone().addScaledVector(axis, t) : start.clone();
+  const radius = (collimator ? collimator.apertureRadius : 2) + 0.4;
+  const reachesPrism = ok && end.distanceTo(f.centroid) <= 0.7 * Math.max(prism.Lac, prism.H);
+  return { start, end, axis, length: ok ? t : 0, radius, wall, reachesPrism };
+}
+
 // ------------------------------------------------------------ to tracer objects
 
-export function buildOpticalObjects({ oled, prism, collimator, driver, glasses, frame, prismMaterial, lensMaterial, specMaterial, coating }) {
+export function buildOpticalObjects({ oled, prism, collimator, driver, arm, glasses, frame, prismMaterial, lensMaterial, specMaterial, coating }) {
   const objects = [];
+  if (arm && arm.length > 0.6) objects.push({ kind: 'absorber', shape: 'cylinder', id: 'arm', label: 'Optics arm', face: cylinderFace(arm.start, arm.axis, arm.radius, arm.length - 0.4, { absorb: true }) });
   if (driver) objects.push(boxAbsorber('driver', 'HDMI driver board', driver.matrix, driver.envelope));
 
   // OLED housing (absorbing, sits behind the emitting surface)

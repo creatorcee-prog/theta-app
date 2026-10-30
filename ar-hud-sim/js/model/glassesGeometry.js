@@ -148,6 +148,27 @@ export function computeGlasses(frame) {
   };
 }
 
+// Size the right-temple housing around a set of points (OLED module and
+// driver board corners) with `clearance` + wall, keeping it attached to the
+// temple (it always spans the temple's outer face and starts at the hinge
+// or behind it). Returns the frame fields to override.
+export function autoFitHousing(frame, points, clearance = 0.6) {
+  const hingeX = frame.bridge / 2 + frame.lensWidth + frame.endpiece;
+  const hingeZ = -frame.rimDepth / 2 - 1;
+  const outerX = -(hingeX + frame.templeThickness / 2);
+  const w = frame.housingWall + clearance;
+  const xs = points.map((p) => p.x), ys = points.map((p) => p.y), zs = points.map((p) => p.z);
+  const minX = Math.min(outerX - 0.0, Math.min(...xs) - w), maxX = Math.max(outerX + frame.templeThickness, Math.max(...xs) + w);
+  const maxZ = Math.min(hingeZ, Math.max(...zs) + w), minZ = Math.min(maxZ - 10, Math.min(...zs) - w);
+  const minY = Math.min(...ys) - w, maxY = Math.max(...ys) + w;
+  const hingeY = frame.hingeY ?? 0;
+  return {
+    housingOutward: Math.max(0, outerX - minX), housingDepth: maxX - outerX,
+    housingOffsetZ: Math.max(0, hingeZ - maxZ), housingLength: maxZ - minZ,
+    housingHeight: Math.max(frame.templeHeight, maxY - minY), housingOffsetY: (minY + maxY) / 2 - hingeY,
+  };
+}
+
 // Outward offset of a CCW convex polygon by d (miter at each vertex).
 export function offsetPolygon(poly, d) {
   const n = poly.length;

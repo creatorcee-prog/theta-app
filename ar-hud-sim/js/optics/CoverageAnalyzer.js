@@ -97,6 +97,17 @@ function projectToLens(origin, dir, lf) {
   return [l.x, l.y];
 }
 
+export function armSurfacePoints(arm, rings = 6, around = 12) {
+  const ref = Math.abs(arm.axis.y) < 0.9 ? new Vector3(0, 1, 0) : new Vector3(1, 0, 0);
+  const e1 = new Vector3().crossVectors(arm.axis, ref).normalize(), e2 = new Vector3().crossVectors(arm.axis, e1).normalize();
+  const r = arm.radius + arm.wall, pts = [];
+  for (let i = 0; i <= rings; i++) {
+    const c = arm.start.clone().addScaledVector(arm.axis, (arm.length * i) / rings);
+    for (let k = 0; k < around; k++) { const a = (k / around) * Math.PI * 2; pts.push(c.clone().addScaledVector(e1, r * Math.cos(a)).addScaledVector(e2, r * Math.sin(a))); }
+  }
+  return pts;
+}
+
 function hardwarePoints(system) {
   const { prism, oled, collimator, glasses } = system;
   const groups = {};
@@ -128,6 +139,7 @@ function hardwarePoints(system) {
   }
   const h = glasses.housing;
   groups.housing = boxCorners(h.center, new Quaternion(), h.size);
+  if (system.arm && system.arm.length > 0.6) groups.arm = armSurfacePoints(system.arm);
   return groups;
 }
 
@@ -221,6 +233,16 @@ export function analyzeCoverage(results) {
     field.availHull = convexHull(avail.map((p) => [p.availableAngles.h, p.availableAngles.v]));
   }
   field.clippedPct = 100 * (1 - visible.length / Math.max(1, pixelResults.length));
+  // HUD zone (where the wearer wants the HUD)
+  const z = params.targets.zone;
+  if (z) {
+    const inZ = (a) => a.h >= z.hMin && a.h <= z.hMax && a.v >= z.vMin && a.v <= z.vMax;
+    field.inZone = visible.filter((p) => inZ(p.angles)).length;
+    const rect = [[z.hMin, z.vMin], [z.hMax, z.vMin], [z.hMax, z.vMax], [z.hMin, z.vMax]];
+    const inter = field.hull?.length >= 3 ? clipPolygon(field.hull, rect) : [];
+    field.zoneArea = (z.hMax - z.hMin) * (z.vMax - z.vMin);
+    field.zoneCoveredPct = field.zoneArea > 0 && inter.length >= 3 ? (100 * polygonArea(inter)) / field.zoneArea : 0;
+  } else { field.inZone = visible.length; field.zoneCoveredPct = 0; }
   field.pupilRayPct = (100 * counts.pupil) / Math.max(1, counts.emitted);
   field.pupilPowerPct = (100 * power.pupil) / Math.max(1e-12, power.emitted);
 

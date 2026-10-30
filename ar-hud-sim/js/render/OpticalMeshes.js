@@ -160,6 +160,22 @@ export class OpticalMeshes {
       this.handles.collimator.quaternion.copy(collimator.quaternion);
     }
 
+    // ---------------- optics arm (tube from the lens to the prism)
+    const arm = system.arm;
+    if (arm && arm.length > 0.6) {
+      const r = arm.radius + arm.wall / 2;
+      const tube = new THREE.Mesh(new THREE.CylinderGeometry(r, r, arm.length, 28, 1, true),
+        new THREE.MeshStandardMaterial({ color: 0x8a94a6, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false, roughness: 0.6 }));
+      tube.geometry.rotateX(Math.PI / 2);
+      tube.position.copy(arm.start).addScaledVector(arm.axis, arm.length / 2);
+      tube.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), arm.axis);
+      cg.add(tube);
+      const rings = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.CylinderGeometry(r, r, arm.length, 14, 1, true).rotateX(Math.PI / 2)), new THREE.LineBasicMaterial({ color: 0xaab4c6, transparent: true, opacity: 0.5 }));
+      rings.position.copy(tube.position); rings.quaternion.copy(tube.quaternion);
+      cg.add(rings);
+      if (labels) { const l = makeLabel('Optics arm (holds the prism)'); l.position.copy(tube.position).add(new THREE.Vector3(0, r + 5, 0)); cg.add(l); }
+    }
+
     // ---------------- prism
     const pg = this.groups.prism;
     const V = prism.vertices;

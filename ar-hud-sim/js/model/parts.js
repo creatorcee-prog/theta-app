@@ -53,6 +53,7 @@ export function defaultBom() {
       note: 'Average of uncoated and AR-coated ACL1512 (Ø15 mm, larger than the modelled 8 mm aperture). Prices are from an obsolete 2015 Thorlabs catalog page as reported by a web search; I could not open the PDF to verify them, and current prices are likely higher.', sources: [S.acl1512] },
     { id: 'prism', name: '10 mm N-BK7 right-angle prism', component: 'prism', qty: 1, unit: 63, include: true, sourced: true, weight: 0, weightBasis: 'calc', autoWeight: true, weightNote: 'Modelled prism volume × 2.51 g/cm³.', weightSources: [S.bk7],
       note: 'Uncoated. Edmund UK lists a similar part at £74.80. Aluminium-hypotenuse versions exist (Newport BRAP13-AV) but no price was retrieved.', sources: [S.newportPrism, S.edmundPrism, S.newportAl] },
+    { id: 'arm', name: 'Optics arm to the prism (3D printed)', component: 'arm', qty: 1, unit: 1, include: true, sourced: false, weight: 0, weightBasis: 'calc', autoWeight: true, weightNote: 'Tube shell (0.8 mm wall) × 1.24 g/cm³ (typical PLA).', note: 'Estimate: material only. Holds the prism and shields the beam.', sources: [] },
     { id: 'barrel', name: 'Collimator barrel / lens mount (3D printed)', component: 'collimator', qty: 1, unit: 1, include: true, sourced: false, weight: 0, weightBasis: 'calc', autoWeight: true, weightNote: 'Barrel tube (0.8 mm wall) × 1.24 g/cm³ (typical PLA).', note: 'Estimate: material only.', sources: [] },
     { id: 'prismMount', name: 'Prism mount bracket (3D printed)', part: 'prismMount', qty: 1, unit: 2, include: true, sourced: false, weight: 0, weightBasis: 'calc', autoWeight: true, weightNote: 'Part volume × 1.24 g/cm³ (typical PLA, solid).', note: 'Estimate: filament/resin cost only.', sources: [] },
     { id: 'housing', name: 'Temple display housing (3D printed)', component: 'housing', qty: 1, unit: 5, include: true, sourced: false, weight: 0, weightBasis: 'calc', autoWeight: true, weightNote: 'Shell volume (housing minus cavity) × 1.24 g/cm³ (typical PLA, solid walls).', note: 'Estimate: material only.', sources: [] },
@@ -112,6 +113,8 @@ export function computeWeights(params, system) {
     calc.barrel = ((Math.PI * ((r + 0.8) ** 2 - r * r) * len) / 1000) * DENSITY.pla;
   } else { calc.collimator = 0; calc.barrel = 0; }
   calc.housing = ((boxVol(glasses.housing.size) - boxVol(glasses.cavity.size)) / 1000) * DENSITY.pla;
+  const arm = system.arm;
+  calc.arm = arm ? ((Math.PI * ((arm.radius + arm.wall) ** 2 - arm.radius ** 2) * arm.length) / 1000) * DENSITY.pla : 0;
   calc.driver = (boxVol(driver.size) / 1000) * DENSITY.fr4 + 1.5;
   const partPos = Object.fromEntries((system.parts ?? []).map((pf) => [pf.part.id, pf]));
   for (const pf of system.parts ?? []) calc[`part:${pf.part.id}`] = (boxVol(pf.size) / 1000) * DENSITY.pla;
@@ -125,6 +128,7 @@ export function computeWeights(params, system) {
       case 'collimator': return collimator ? collimator.center : oled.center;
       case 'prism': return prism.center;
       case 'housing': return glasses.housing.center;
+      case 'arm': return arm ? arm.start.clone().lerp(arm.end, 0.5) : prism.center;
       case 'frame': return null; // symmetric: split evenly between sides, placed below
       default: return driver.center; // wiring etc. near the electronics
     }

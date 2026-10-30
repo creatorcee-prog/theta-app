@@ -192,6 +192,33 @@ adult mean about 15.5 mm behind the cornea, about 114 mm rim to rim
 Space beside the eye in front of the rim is open air; behind it, the side of
 the head runs back at your measured temple gaps.
 
+### Optics arm, HUD zone and reach
+
+- **Optics arm:** a printed tube along the beam from the collimator to the
+  prism's entry face. It holds the prism, links it rigidly to the temple
+  housing, and shields the beam: its inner wall is traced as an absorber.
+  The "Prism held by an arm" check requires that it reaches the prism and
+  that it clears your head, the spectacle lens and your lashes. Its outline
+  counts toward central-vision occlusion.
+- **Why the prism doesn't sit against the temple:** the prism has to lie on
+  the line from your pupil toward where the HUD appears. Pushed to the
+  inside of the temple (about 60 mm from centre), it would sit about 67° to
+  the side. That is beyond the edge of the lens (about 58°) and at the far
+  edge of peripheral vision.
+- **HUD zone:** the green rectangle in the eye view, by default the temporal
+  half of the right lens from your sketch: 0–48° temporal, −33° to +38°.
+  The pupil-coverage goal now counts only pixels that reach the pupil
+  inside this zone.
+- **Click to aim:** clicking in the eye view re-aligns the same parts to put
+  the HUD there.
+- **Map reach:** traces 25 aim points across the zone and marks each one.
+  Green means fully visible with buildable hardware, amber means partly
+  visible or a fit problem, red means nothing reaches the pupil. Each tuned
+  make ships with its reach map.
+- **Display size limit:** one 0.23″ display at f = 12–19 mm spans only
+  about 15–23° × 9–16°. It can be placed anywhere in the zone but cannot
+  fill all of it at once.
+
 ## Parts, placement and cost
 
 Every hardware part can be selected in 3D, then dragged or rotated with the

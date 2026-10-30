@@ -3,15 +3,26 @@
 // No rendering code here.
 
 import { Vector3 } from 'three';
-import { computeGlasses } from '../model/glassesGeometry.js';
+import { computeGlasses, autoFitHousing } from '../model/glassesGeometry.js';
 import { computeEye, directionToAngles } from '../model/eye.js';
-import { computeOled, computePrism, computeCollimator, computeDriver, buildOpticalObjects } from './OpticalComponents.js';
+import { computeOled, computePrism, computeCollimator, computeDriver, computeArm, buildOpticalObjects } from './OpticalComponents.js';
 import { trace, coneDirections, eyeDetector } from './RayTracer.js';
 import { makeGlass, WAVELENGTHS, criticalAngle, AIR } from './materials.js';
 import { partFrame, computeWeights } from '../model/parts.js';
 import { boxAbsorber } from './RayTracer.js';
 
+function boxCornersOf(center, q, size) {
+  const out = [];
+  for (const sx of [-0.5, 0.5]) for (const sy of [-0.5, 0.5]) for (const sz of [-0.5, 0.5]) out.push(new Vector3(sx * size.x, sy * size.y, sz * size.z).applyQuaternion(q).add(center));
+  return out;
+}
+
 export function buildSystem(params) {
+  if (params.frame.housingAuto) {
+    // printed housing shaped around the OLED module and the driver board
+    const o = computeOled(params.oled), d = computeDriver(params.driver);
+    Object.assign(params.frame, autoFitHousing(params.frame, [...boxCornersOf(o.housing.center, o.quaternion, o.housing.size), ...boxCornersOf(d.envCenter, d.quaternion, d.envelope)]));
+  }
   const glasses = computeGlasses(params.frame);
   const eye = computeEye({ ...params.eye, monoPD: params.eye.monoPDRight, side: 1 }, glasses);
   const leftEye = computeEye({ monoPD: params.eye.monoPDLeft, pupilHeight: params.eye.pupilHeightLeft, eyeRelief: params.eye.eyeRelief, pupilDiameter: params.eye.pupilDiameter, constants: params.eye.constants, side: -1 }, glasses);
@@ -23,8 +34,9 @@ export function buildSystem(params) {
   const specMaterial = makeGlass('CR-39', params.frame.specLensN, { dispersive: false });
   const collimator = computeCollimator(params.collimator, oled, params.prism.n);
   const driver = computeDriver(params.driver);
+  const arm = params.frame.optArm === false ? null : computeArm(oled, collimator?.valid ? collimator : null, prism);
   const objects = buildOpticalObjects({
-    oled, prism, collimator, driver, glasses, frame: params.frame, prismMaterial, lensMaterial, specMaterial,
+    oled, prism, collimator, driver, arm, glasses, frame: params.frame, prismMaterial, lensMaterial, specMaterial,
     coating: params.prism.coating,
   });
   // placeable hardware parts block light where they are put
@@ -32,7 +44,7 @@ export function buildSystem(params) {
   for (const pf of parts) if (pf.part.blocksLight && pf.part.visible !== false) objects.push(boxAbsorber(`part:${pf.part.id}`, pf.part.name, pf.matrix, pf.size));
   objects.push(eyeDetector('eyeR', 'Right eye', eye));
   objects.push(eyeDetector('eyeL', 'Left eye', leftEye));
-  return { params, glasses, eye, leftEye, oled, prism, collimator, driver, parts, objects, prismMaterial };
+  return { params, glasses, eye, leftEye, oled, prism, collimator, driver, arm, parts, objects, prismMaterial };
 }
 
 // Sample pixel positions in [-1,1]^2 (edges included).

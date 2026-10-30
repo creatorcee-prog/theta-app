@@ -19,6 +19,7 @@ export const STRUCTURE_CHECKS = [
   ['hwCentral', 'Hardware keeps central vision clear'],
   ['oledFit', 'OLED module fits in the housing'],
   ['lensPod', 'Lens + barrel clear the head'],
+  ['armFit', 'Prism held by an arm to the housing'],
   ['driverFit', 'Driver board fits in the housing'],
   ['headHousing', 'Housing clears the head'],
   ['virtualImage', 'Focusable virtual image'],
@@ -29,7 +30,8 @@ export function scoreDesign(results, coverage, diag, params) {
   const checks = Object.fromEntries(diag.checks.map((c) => [c.id, c]));
   const tot = bomTotals(params.bom ?? []);
 
-  const vis = coverage.field.visiblePixels, all = coverage.field.totalPixels;
+  // pixels that reach the pupil AND appear inside the wearer's HUD zone
+  const vis = coverage.field.inZone ?? coverage.field.visiblePixels, all = coverage.field.totalPixels;
   const pupil = all ? vis / all : 0;
   const weight = tot.grams > 0 ? Math.min(1, GOALS.weightG / tot.grams) : 1;
   const cost = tot.total > 0 ? Math.min(1, GOALS.costUSD / tot.total) : 1;
@@ -50,7 +52,7 @@ export function scoreDesign(results, coverage, diag, params) {
   const structure = structural.filter((s) => s.ok).length / structural.length;
 
   const goals = [
-    { id: 'pupil', label: 'Pupil coverage', target: '100% of display', value: `${(100 * pupil).toFixed(0)}% (${vis}/${all} px)`, score: pupil, met: pupil >= 0.999 },
+    { id: 'pupil', label: 'Pupil coverage in your zone', target: '100% of display', value: `${(100 * pupil).toFixed(0)}% (${vis}/${all} px)`, score: pupil, met: pupil >= 0.999 },
     { id: 'weight', label: 'Weight', target: `≤ ${GOALS.weightG} g`, value: `${tot.grams.toFixed(1)} g`, score: weight, met: tot.grams <= GOALS.weightG + 1e-9 },
     { id: 'cost', label: 'Cost', target: `< $${GOALS.costUSD}`, value: `$${tot.total.toFixed(2)}`, score: cost, met: tot.total < GOALS.costUSD },
     { id: 'structure', label: 'Feasible structure', target: 'all checks pass', value: `${structural.filter((s) => s.ok).length}/${structural.length} checks`, score: structure, met: structure >= 0.999 },

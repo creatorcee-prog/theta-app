@@ -27,7 +27,7 @@ export function baseParams() {
     frame: {
       lensWidth: 50, lensHeight: 38, lensCorner: 12, lensThickness: 2, bridge: 18, endpiece: 7,
       rimDepth: 4, rimWidth: 3, templeLength: 145, templeThickness: 4.5, templeHeight: 6, templeSplayDeg: 2,
-      housingLength: 40, housingDepth: 13, housingHeight: 16, housingWall: 1, hingeY: 6, housingOffsetY: -3, housingOffsetZ: 0, housingOutward: 0,
+      housingLength: 40, housingDepth: 13, housingHeight: 16, housingWall: 1, hingeY: 6, housingOffsetY: -3, housingOffsetZ: 0, housingOutward: 0, housingAuto: false,
       lensesPresent: true, specLensN: 1.498,
       sizeCode: '50□18-145', lensShape: 'roundrect', lensExponent: 4, customOutline: '',
       pantoTiltDeg: 0, wrapDeg: 0,
@@ -59,7 +59,9 @@ export function baseParams() {
       image: null, imageName: '', imageFit: 'contain', driverFlip: false,
     },
     sim: { pixelsX: 9, pixelsY: 5, raysPerPixel: 40, wavelengths: 'mono', ghosts: false, ghostMin: 0.005, drawRays: 900, raySpeed: 22 },
-    targets: { hfov: 35, vfov: 20, azimuth: 25, elevation: 10, coverageMin: 40, coverageMax: 50, centralClear: 10 },
+    // zone: where the HUD may appear (degrees from the line of sight, temporal + / up +);
+    // default traced from the wearer's sketch: the temporal half of the right lens
+    targets: { hfov: 35, vfov: 20, azimuth: 25, elevation: 10, coverageMin: 40, coverageMax: 50, centralClear: 10, zone: { hMin: 0, hMax: 48, vMin: -33, vMax: 38 } },
     // head clearance beside the right temple (your measurements)
     head: { gap20: 10, gap40: 7, hertelDepth: 15.5, hertelBase: 114, canthusToTemple: 0, canthusOffset: 14 },
     parts: defaultParts(),
@@ -137,7 +139,10 @@ export function alignChain(params) {
   const entryWorld = prismCenter.clone().add(toWorld(entry));
   const lensToOled = p.collimator.mode === 'thin' || !p.collimator.enabled ? p.collimator.focalLength : null;
   p.collimator.distance = lensToOled ?? p.collimator.distance;
-  const targetX = glasses.cavity.max.x - p.frame.housingWall - p.intent.oledInset - 1.5;
+  // fixed housing: OLED near the cavity's inner wall; auto-sized housing:
+  // OLED `oledInset` mm inward of the temple's outer face (negative = outward)
+  const outerX = -(glasses.hingeX + p.frame.templeThickness / 2);
+  const targetX = p.frame.housingAuto ? outerX + p.intent.oledInset : glasses.cavity.max.x - p.frame.housingWall - p.intent.oledInset - 1.5;
   // distance from the entry face, kept between "just fits the lens" and 60 mm
   const s = Math.min(60, Math.max(1 + p.collimator.distance, (entryWorld.x - targetX) / Math.max(0.05, inWorld.x)));
   const oledCenter = entryWorld.clone().addScaledVector(inWorld, -s);
@@ -151,7 +156,14 @@ export function alignChain(params) {
 
   // driver board flat against the temple's outer wall at the rear of the cavity
   const cav = glasses.cavity;
-  p.driver.pos = round3(new Vector3(cav.min.x + p.driver.thickness / 2 + 0.3, cav.center.y, cav.min.z + p.driver.length / 2 + 0.5));
+  if (p.frame.housingAuto) {
+    // board flat against the temple, just behind the OLED module
+    const oz = oledCenter.z - 6;
+    p.driver.pos = round3(new Vector3(outerX + p.driver.thickness / 2 + 0.3, oledCenter.y, Math.min(oz, glasses.hingeZ - 1) - p.driver.length / 2));
+    p.driver.rot = { yaw: 0, pitch: 0, roll: 0 };
+  } else {
+    p.driver.pos = round3(new Vector3(cav.min.x + p.driver.thickness / 2 + 0.3, cav.center.y, cav.min.z + p.driver.length / 2 + 0.5));
+  }
   p._alignInfo = { traced, deviationDeg: (Math.acos(Math.min(1, Math.max(-1, cos))) * 180) / Math.PI, distanceAlongHudDir: t, entryToOled: s };
   return p;
 }
