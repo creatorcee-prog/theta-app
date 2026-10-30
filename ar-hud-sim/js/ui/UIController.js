@@ -16,6 +16,8 @@ export function setPath(obj, key, value) {
 const TAG_TEXT = { spec: 'spec', assumed: 'assumed', design: 'design', measured: 'measured' };
 const TAG_TITLE = { spec: 'Value given in the brief', assumed: 'Unknown for the real hardware: adjustable assumption', design: 'Placement / design choice', measured: 'Enter your own measurement (default is a typical adult value)' };
 const money = (x) => `$${(Number(x) || 0).toFixed(2)}`;
+const grams = (x) => `${(Number(x) || 0).toFixed(1)} g`;
+const WEIGHT_BASIS = { calc: 'Volume of the modelled part × material density', spec: 'Taken from a product listing', estimate: 'No published weight found', measured: 'Enter your own measurement' };
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fmt = (v, step) => {
   if (typeof v !== 'number') return v;
@@ -258,6 +260,7 @@ export class UIController {
       chip('Offset', f.hCenter != null ? `${f.hCenter.toFixed(1)}° / ${f.vCenter.toFixed(1)}°` : '—', st('hoff')),
       chip('TIR', diag.checks.find((c) => c.id === 'tir')?.value ?? '—', st('tir')),
       chip('Parts total', money(bomTotals(this.cb.getParams().bom).total), 'info'),
+      chip('Weight', `${bomTotals(this.cb.getParams().bom).grams.toFixed(1)} g`, 'info'),
       chip('Checks', `<b class="ok">${s.pass}</b> · <b class="warn">${s.warn}</b> · <b class="bad">${s.fail}</b>`, ''),
     ].join('');
   }
@@ -347,6 +350,7 @@ export class UIController {
     const el = this.partsEl;
     if (!el || el.contains(document.activeElement)) return; // don't rebuild under the cursor
     const tot = bomTotals(params.bom);
+    const w = results?.weights;
     const partById = Object.fromEntries(params.parts.map((p) => [p.id, p]));
     const blocked = (pid) => results?.counts.absorbed[`part:${pid}`] ?? 0;
     const num = (attr, v, step = 0.1, w = 'w5') => `<input class="num ${w}" type="number" step="${step}" value="${v}" ${attr}>`;
@@ -382,6 +386,13 @@ export class UIController {
           <label>Unit $ ${num(`data-bom="${b.id}" data-key="unit"`, b.unit, 0.01, 'w5')}</label>
           <span class="bom-sub">${money(b.unit * b.qty)}</span>
         </div>
+        <div class="bom-nums">
+          <label>Weight g ${num(`data-bom="${b.id}" data-key="weight"`, Math.round((b.weight || 0) * 100) / 100, 0.01, 'w5')}</label>
+          <span class="bom-badge w-${b.weightBasis}" title="${WEIGHT_BASIS[b.weightBasis]}">${b.weightBasis === 'calc' ? 'calculated' : b.weightBasis}</span>
+          ${b.weightBasis === 'calc' ? `<label class="chk"><input type="checkbox" data-bom="${b.id}" data-key="autoWeight"${b.autoWeight !== false ? ' checked' : ''}><span>from geometry</span></label>` : ''}
+          <span class="bom-sub">${grams((b.weight || 0) * b.qty)}</span>
+        </div>
+        ${b.weightNote ? `<p class="help">Weight: ${esc(b.weightNote)}${(b.weightSources ?? []).map((s) => ` <a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.label)}</a>`).join(';')}</p>` : ''}
         ${b.note ? `<p class="help">${esc(b.note)}</p>` : ''}
         ${srcs ? `<p class="bom-src">${srcs}</p>` : ''}
         <div class="btn-row">${placeBtn}</div>
@@ -397,6 +408,13 @@ export class UIController {
           <div><span class="m-label2">Estimates</span>${money(tot.estimated)}</div>
           <div><span class="m-label2">Excluded</span>${money(tot.excluded)}</div>
         </div>
+        <div class="totals">
+          <div><span class="m-label2">Total weight (worn)</span><b>${grams(tot.grams)}</b></div>
+          <div><span class="m-label2">Of which estimated</span>${grams(tot.gramsEstimated)}</div>
+          ${w ? `<div><span class="m-label2">Right / left side</span>${grams(w.right)} / ${grams(w.left)}</div>
+          <div><span class="m-label2">Centre of mass</span>${w.com ? `x ${w.com.x.toFixed(0)}, z ${w.com.z.toFixed(0)} mm` : '—'}</div>` : ''}
+        </div>
+        <p class="help">Weights are per unit × quantity. <b>Calculated</b> lines come from the modelled geometry (N-BK7 2.51 g/cm³, PLA 1.24 g/cm³, FR-4 1.85 g/cm³) and update as you resize parts; typing a value overrides it. <b>Spec</b> lines come from a listing, <b>estimate</b> lines have no source, <b>measured</b> means enter your own. Centre of mass: −x is your right, z = 0 at the lenses, negative toward the ears. For comparison, Ray-Ban Meta glasses weigh about 48.6 g.</p>
         <p class="help">Single-unit retail prices from the linked listings (October 2026 snapshot), excluding shipping and tax. "Estimate" lines have no source; replace them with your quotes. Untick a line to leave it out of the total.</p>
         <ul class="bom">${rows}</ul>
         <div class="btn-row"><button type="button" class="btn small" data-act="addPart">Add a custom part</button></div>

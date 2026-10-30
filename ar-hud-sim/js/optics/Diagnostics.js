@@ -361,6 +361,15 @@ export function runDiagnostics(results, coverage) {
   // ---------------- cost
   const tot = bomTotals(params.bom ?? []);
   add('Cost', 'bom', 'Parts total', `$${tot.total.toFixed(2)}`, 'info', `$${tot.sourced.toFixed(2)} from sourced prices + $${tot.estimated.toFixed(2)} estimated. Details under Parts & cost.`);
+  const wt = results.weights;
+  if (wt) {
+    add('Weight', 'weight', 'Total worn weight', `${tot.grams.toFixed(1)} g`, 'info',
+      `${tot.gramsEstimated.toFixed(1)} g of it is estimated. Ray-Ban Meta smart glasses weigh about 48.6 g; the Meta Ray-Ban Display about 69 g.`);
+    const share = wt.grams ? Math.max(wt.right, wt.left) / wt.grams : 0.5;
+    add('Weight', 'balance', 'Left / right balance', `${wt.right.toFixed(1)} g right / ${wt.left.toFixed(1)} g left`,
+      share <= 0.6 ? 'pass' : share <= 0.7 ? 'warn' : 'fail',
+      `${(100 * share).toFixed(0)}% on the ${wt.right >= wt.left ? 'right' : 'left'} side${wt.com ? `; centre of mass ${Math.abs(wt.com.x).toFixed(0)} mm ${wt.com.x < 0 ? 'right' : 'left'} of centre, ${Math.abs(wt.com.z).toFixed(0)} mm behind the lenses` : ''}. The 60% / 70% comfort thresholds are modelling assumptions. To balance, move parts to the left temple (the battery and charger are already there).`);
+  }
 
   const summary = { pass: 0, warn: 0, fail: 0, info: 0 };
   for (const c of checks) summary[c.status]++;

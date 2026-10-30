@@ -251,3 +251,19 @@ test('placed parts block light; BOM totals split sourced and estimated', async (
   const t = bomTotals([{ unit: 10, qty: 2, include: true, sourced: true }, { unit: 5, qty: 1, include: true, sourced: false }, { unit: 99, qty: 1, include: false, sourced: true }]);
   assert.deepEqual([t.sourced, t.estimated, t.total, t.excluded], [20, 5, 25, 99]);
 });
+
+test('weights: calculated lines follow geometry; typed values stick; totals and balance add up', async () => {
+  const { bomTotals } = await import('../js/model/parts.js');
+  const p = defaultParams();
+  const r = runSimulation(p);
+  near(p.bom.find((b) => b.id === 'prism').weight, 1.255, 0.01, 'prism g'); // 0.5 cm^3 x 2.51 g/cm^3
+  const t = bomTotals(p.bom);
+  near(t.grams, r.weights.grams, 1e-6);
+  near(r.weights.right + r.weights.left, r.weights.grams, 1e-6);
+  p.prism.size = 20; p.prism.height = 20;
+  runSimulation(p);
+  near(p.bom.find((b) => b.id === 'prism').weight, 10.04, 0.02, 'prism scales with volume');
+  const line = p.bom.find((b) => b.id === 'prism'); line.weight = 3; line.autoWeight = false;
+  runSimulation(p);
+  assert.equal(line.weight, 3);
+});

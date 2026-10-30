@@ -61,7 +61,8 @@ const ui = new UIController({
   onBomChange: (id, key, value) => {
     const b = params.bom.find((x) => x.id === id);
     if (!b) return;
-    b[key] = key === 'qty' ? Math.max(0, Math.round(value)) : key === 'unit' ? Math.max(0, value) : value;
+    b[key] = key === 'qty' ? Math.max(0, Math.round(value)) : (key === 'unit' || key === 'weight') ? Math.max(0, value) : value;
+    if (key === 'weight' && b.weightBasis === 'calc') b.autoWeight = false; // typed value overrides geometry
     ui.renderParts(params, results); ui.renderMetrics(results, coverage, diag);
     schedule();
   },
@@ -124,6 +125,7 @@ function run() {
   for (const g of [glassesModel.root, glassesModel.overlay, eyeR.group, eyeL.group, partsModel.root, ...Object.values(optics.groups)]) disposeTree(g);
   glassesModel.build(results.system.glasses, params.frame, params.head);
   partsModel.update(results.system);
+  partsModel.setCentreOfMass(results.weights?.com, results.weights?.grams ?? 0);
   housingHandle.position.copy(results.system.glasses.housing.center);
   glassesModel.updateOverlay(coverage, results.system.glasses, visibility.coverage !== false);
   eyeR.update(results.system.eye);

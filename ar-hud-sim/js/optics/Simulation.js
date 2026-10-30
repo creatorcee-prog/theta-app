@@ -8,7 +8,7 @@ import { computeEye, directionToAngles } from '../model/eye.js';
 import { computeOled, computePrism, computeCollimator, computeDriver, buildOpticalObjects } from './OpticalComponents.js';
 import { trace, coneDirections, eyeDetector } from './RayTracer.js';
 import { makeGlass, WAVELENGTHS, criticalAngle, AIR } from './materials.js';
-import { partFrame } from '../model/parts.js';
+import { partFrame, computeWeights } from '../model/parts.js';
 import { boxAbsorber } from './RayTracer.js';
 
 export function buildSystem(params) {
@@ -172,9 +172,19 @@ export function runSimulation(params) {
     pixelResults.push({ ...pp.px, visible, pupilRays: pp.pupilRays, pupilPower: pp.pupilPower, apparent, angles: ang, availableAngles: availAng, vergence: verg, finals: pp.finals });
   }
 
+  // Weights: calculated lines follow the current geometry (written back so
+  // the parts list shows them); typed values are kept.
+  let weights = null;
+  if (params.bom) {
+    weights = computeWeights(params, system);
+    for (const l of weights.lines) {
+      const b = params.bom.find((x) => x.id === l.id);
+      if (b && b.weightBasis === 'calc' && b.autoWeight !== false) b.weight = l.grams;
+    }
+  }
   const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
   return {
-    system, paths, chief, sources, pixels, bands, pixelResults, counts, power, hyp, lensCrossings,
+    system, paths, chief, sources, pixels, bands, pixelResults, counts, power, hyp, lensCrossings, weights,
     coneFractionOfHemisphere, elapsedMs: elapsed,
     critical: { bk7Deg: (criticalAngle(params.prism.n, AIR.n550) * 180) / Math.PI },
   };

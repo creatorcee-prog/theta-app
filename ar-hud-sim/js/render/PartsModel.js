@@ -48,4 +48,20 @@ export class PartsModel {
     }
     for (const id of Object.keys(this.handles)) if (!seen.has(id)) { this.sm.scene.remove(this.handles[id]); delete this.handles[id]; }
   }
+
+  setCentreOfMass(com, gramsTotal) {
+    this.comGroup?.parent?.remove(this.comGroup);
+    if (!com) return;
+    const g = new THREE.Group();
+    g.userData.componentId = 'com';
+    const s = new THREE.Mesh(new THREE.SphereGeometry(1.6, 16, 12), new THREE.MeshBasicMaterial({ color: 0xffb000 }));
+    s.position.set(com.x, com.y, com.z);
+    g.add(s);
+    const l = makeLabel(`Centre of mass · ${gramsTotal.toFixed(1)} g`, 'accent');
+    l.position.set(com.x, com.y + 5, com.z);
+    g.add(l);
+    this.root.add(g);
+    this.comGroup = g;
+    this.groups.com = g;
+  }
 }

@@ -209,7 +209,7 @@ export const VISIBILITY = [
   ['head', 'Head surface'], ['frame', 'Front frame'], ['lensR', 'Right lens'], ['lensL', 'Left lens'], ['templeR', 'Right temple'], ['templeL', 'Left temple'],
   ['hingeR', 'Right hinge'], ['hingeL', 'Left hinge'], ['housing', 'Temple housing + cavity'], ['eyeR', 'Right eye'], ['eyeL', 'Left eye'],
   ['oled', 'Micro-OLED'], ['driver', 'HDMI driver'], ['ribbon', 'Ribbon cable'], ['collimator', 'Collimator'], ['prism', 'Prism'],
-  ['rays', 'Light rays'], ['coverage', 'Coverage overlay'], ['labels', 'Labels'], ['grid', 'Grid'],
+  ['com', 'Centre of mass'], ['rays', 'Light rays'], ['coverage', 'Coverage overlay'], ['labels', 'Labels'], ['grid', 'Grid'],
 ];
 
 export const COMPONENT_NAMES = Object.fromEntries(VISIBILITY);

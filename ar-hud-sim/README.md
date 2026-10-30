@@ -164,6 +164,26 @@ shipping and tax:
 | Raspberry Pi Zero 2 W | $15 | [2021 launch MSRP](https://betanews.com/2021/10/28/raspberry-pi-zero-2-w); retail often higher |
 | FPC, housing, bracket, wiring, IMU | estimates | no source found; enter your quotes |
 
+### Weight
+
+Every line also has a weight, a total worn weight, a right/left split and a
+centre of mass (shown as an orange marker in 3D). The left/right balance check
+uses 60% / 70% thresholds, which are modelling assumptions.
+
+| Basis | Lines | How |
+|---|---|---|
+| calculated | prism, collimator, barrel, housing, bracket, driver PCB | Modelled volume × density, updated live: N-BK7 2.51 g/cm³ ([PGO](https://www.pgo-online.com/intl/BK7.html)), PLA 1.24 g/cm³ and FR-4 1.85 g/cm³ (typical values). Typing a value overrides it. |
+| spec | Raspberry Pi Zero 2 W, 16 g | [Kubii listing](https://kubii.com/en/nano-computers/3455-raspberry-pi-zero-2-w-wh.html); other retailers list 9–25 g |
+| measured | your existing glasses (25 g placeholder) | weigh them and enter it |
+| estimate | OLED panel, FPC, battery, charger, IMU, wiring | no published weight found |
+
+Default build: **58.1 g** worn, 9.9 g of it estimated, with 70% on the right
+side. For comparison, Ray-Ban Meta glasses weigh about
+[48.6 g](https://www.uk.shi.com/Product/47381750/Ray-Ban---Meta-Smart-glasses)
+and the Meta Ray-Ban Display about
+[69 g](https://www.tomsguide.com/computing/smart-glasses/meta-ray-ban-display-glasses-features-neural-link-price-and-availability).
+
+
 ## What you can adjust
 
 Every input is a control in the Adjust tab. Each has a provenance tag, and
