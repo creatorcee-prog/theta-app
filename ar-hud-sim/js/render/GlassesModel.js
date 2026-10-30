@@ -3,7 +3,7 @@
 // model/glassesGeometry.js so rendering matches what is traced.
 
 import * as THREE from 'three';
-import { roundedRectOutline } from '../model/glassesGeometry.js';
+import { offsetPolygon } from '../model/glassesGeometry.js';
 import { makeLabel } from './labels.js';
 
 const FRAME_COLOR = 0x2a2f38;
@@ -33,7 +33,7 @@ export class GlassesModel {
     return m;
   }
 
-  build(glasses, frame) {
+  build(glasses, frame, head) {
     this.root.clear();
     const g = (id, label) => {
       const grp = new THREE.Group();
@@ -50,12 +50,19 @@ export class GlassesModel {
     const frameGrp = g('frame', 'Front frame');
     for (const side of [1, -1]) {
       const c = side === 1 ? glasses.rightLensCenter : glasses.leftLensCenter;
-      const outer = roundedRectOutline(frame.lensWidth + 2 * frame.rimWidth, frame.lensHeight + 2 * frame.rimWidth, frame.lensCorner + frame.rimWidth);
+      const lf = side === 1 ? glasses.lenses.R : glasses.lenses.L;
+      // the outline is defined for the right lens seen from the front; the
+      // left lens is its mirror image
+      const outlineL = side === 1 ? glasses.outline : glasses.outline.map(([x, y]) => [-x, y]).reverse();
+      const outer = offsetPolygon(outlineL, frame.rimWidth);
       const shape = shapeFrom(outer);
-      shape.holes.push(new THREE.Path(glasses.outline.slice().reverse().map(([x, y]) => new THREE.Vector2(x, y))));
+      shape.holes.push(new THREE.Path(outlineL.slice().reverse().map(([x, y]) => new THREE.Vector2(x, y))));
       const rim = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: frame.rimDepth, bevelEnabled: false, curveSegments: 6 }), frameMat);
-      rim.position.set(c.x, c.y, -frame.rimDepth / 2);
-      frameGrp.add(rim);
+      const rimHolder = new THREE.Group();
+      rimHolder.position.copy(c); rimHolder.quaternion.copy(lf.quaternion);
+      rim.position.set(0, 0, -frame.rimDepth / 2);
+      rimHolder.add(rim);
+      frameGrp.add(rimHolder);
       // endpiece to hinge
       const sx = Math.sign(c.x);
       const ex0 = sx * (Math.abs(c.x) + frame.lensWidth / 2 + frame.rimWidth / 2);
@@ -65,11 +72,14 @@ export class GlassesModel {
       frameGrp.add(end);
 
       const lensGrp = g(side === 1 ? 'lensR' : 'lensL', side === 1 ? 'Right lens' : 'Left lens');
-      const lens = new THREE.Mesh(new THREE.ExtrudeGeometry(shapeFrom(glasses.outline), { depth: frame.lensThickness, bevelEnabled: false }), lensMat);
-      lens.position.set(c.x, c.y, glasses.lensBackZ);
+      const lens = new THREE.Mesh(new THREE.ExtrudeGeometry(shapeFrom(outlineL), { depth: frame.lensThickness, bevelEnabled: false }), lensMat);
+      const lensHolder = new THREE.Group();
+      lensHolder.position.copy(c); lensHolder.quaternion.copy(lf.quaternion);
+      lens.position.set(0, 0, -frame.lensThickness / 2);
       lens.renderOrder = 2;
-      lensGrp.add(lens);
-      const edge = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(glasses.outline.map(([x, y]) => new THREE.Vector3(c.x + x, c.y + y, glasses.lensBackZ - 0.02))),
+      lensHolder.add(lens);
+      lensGrp.add(lensHolder);
+      const edge = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(outlineL.map(([x, y]) => lf.toWorld(x, y, -frame.lensThickness / 2 - 0.02))),
         new THREE.LineBasicMaterial({ color: 0x7fa6d9, transparent: true, opacity: 0.6 }));
       lensGrp.add(edge);
       lensGrp.visible = frame.lensesPresent;
@@ -126,6 +136,26 @@ export class GlassesModel {
     lab.position.set(cav.center.x, cav.max.y + 2, cav.min.z + 6);
     hgp.add(lab);
 
+    // ---- side of the head beside the right temple (from your gap measurements)
+    if (head) {
+      const hg2 = g('head', 'Head (temple area)');
+      const innerX = -(glasses.hingeX - frame.templeThickness / 2);
+      const pts = [], idx = [];
+      const zs = [glasses.hingeZ + 2, glasses.hingeZ - 10, glasses.hingeZ - 20, glasses.hingeZ - 35, glasses.hingeZ - 55, glasses.hingeZ - 75];
+      for (const z of zs) {
+        const gap = Math.max(0, head.gapAtHinge + (head.gapAt20 - head.gapAtHinge) * ((glasses.hingeZ - z) / 20));
+        for (const y of [glasses.hingeY - 18, glasses.hingeY + 14]) pts.push(innerX + gap, y, z);
+      }
+      for (let i = 0; i < zs.length - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+      geo.setIndex(idx); geo.computeVertexNormals();
+      hg2.add(new THREE.Mesh(geo, this.mat({ color: 0xd9a58a, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false })));
+      const lab2 = makeLabel('Your head (temple-gap measurements)', 'muted');
+      lab2.position.set(pts[pts.length - 3], glasses.hingeY + 16, zs[zs.length - 2]);
+      hg2.add(lab2);
+    }
+
     this.glasses = glasses;
     this.frame = frame;
     for (const grp of Object.values(this.groups)) this.sm.pickables.push(grp);
@@ -135,39 +165,43 @@ export class GlassesModel {
     this.overlay.clear();
     this.overlay.visible = show;
     if (!coverage) return;
-    const c = glasses.rightLensCenter;
-    const z = glasses.lensBackZ - 0.08;
+    // overlay lives in the right lens's own (tilted/wrapped) frame
+    const lf = glasses.lenses.R;
+    const holder = new THREE.Group();
+    holder.position.copy(lf.center); holder.quaternion.copy(lf.quaternion);
+    this.overlay.add(holder);
+    const z = -this.frame.lensThickness / 2 - 0.08;
     const L = coverage.lens;
     const fillPoly = (poly, color, opacity, dz = 0) => {
       if (poly.length < 3) return;
       const m = new THREE.Mesh(new THREE.ShapeGeometry(shapeFrom(poly)),
         new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false }));
-      m.position.set(c.x, c.y, z + dz);
+      m.position.set(0, 0, z + dz);
       m.renderOrder = 5;
-      this.overlay.add(m);
+      holder.add(m);
     };
     const outline = (poly, color, dashed = false, dz = 0) => {
       if (poly.length < 2) return;
-      const geo = new THREE.BufferGeometry().setFromPoints(poly.map(([x, y]) => new THREE.Vector3(c.x + x, c.y + y, z + dz)));
+      const geo = new THREE.BufferGeometry().setFromPoints(poly.map(([x, y]) => new THREE.Vector3(x, y, z + dz)));
       const mat = dashed ? new THREE.LineDashedMaterial({ color, dashSize: 1.2, gapSize: 0.8 }) : new THREE.LineBasicMaterial({ color });
       const line = new THREE.LineLoop(geo, mat);
       if (dashed) line.computeLineDistances();
       line.renderOrder = 6;
-      this.overlay.add(line);
+      holder.add(line);
     };
     fillPoly(L.inside, 0x32d27a, 0.38);
     outline(L.footprint, L.outsidePct > 1 ? 0xff5a4f : 0x32d27a);
     outline(L.targetHull, 0xf2c94c, true, -0.01);
     if (L.physicalFootprint.length >= 3) outline(L.physicalFootprint, 0x5fb3ff, false, -0.02);
     if (L.strayHits.length) {
-      const pts = new THREE.Points(new THREE.BufferGeometry().setFromPoints(L.strayHits.map(([x, y]) => new THREE.Vector3(c.x + x, c.y + y, glasses.lensBackZ - 0.05))),
+      const pts = new THREE.Points(new THREE.BufferGeometry().setFromPoints(L.strayHits.map(([x, y]) => new THREE.Vector3(x, y, z + 0.03))),
         new THREE.PointsMaterial({ color: 0xff9f43, size: 2.2, sizeAttenuation: false }));
-      this.overlay.add(pts);
+      holder.add(pts);
     }
     const lab = makeLabel(`HUD footprint ${L.coveragePct.toFixed(1)}% of lens`, 'good');
     const cx = L.inside.length ? L.inside.reduce((s, p) => s + p[0], 0) / L.inside.length : 0;
     const cy = L.inside.length ? L.inside.reduce((s, p) => s + p[1], 0) / L.inside.length : 0;
-    lab.position.set(c.x + cx, c.y + cy + 4, z);
-    this.overlay.add(lab);
+    lab.position.set(cx, cy + 4, z);
+    holder.add(lab);
   }
 }

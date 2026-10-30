@@ -65,12 +65,14 @@
     <aside class="panel">
       <div class="tabs" role="tablist" aria-label="Panels">
         <button type="button" role="tab" id="t-adjust" aria-controls="tab-adjust" aria-selected="true">Adjust</button>
-        <button type="button" role="tab" id="t-results" aria-controls="tab-results" aria-selected="false">Results &amp; diagnostics</button>
-        <button type="button" role="tab" id="t-notes" aria-controls="tab-notes" aria-selected="false">Model notes</button>
+        <button type="button" role="tab" id="t-results" aria-controls="tab-results" aria-selected="false">Results</button>
+        <button type="button" role="tab" id="t-parts" aria-controls="tab-parts" aria-selected="false">Parts &amp; cost</button>
+        <button type="button" role="tab" id="t-notes" aria-controls="tab-notes" aria-selected="false">Notes</button>
       </div>
       <div role="tabpanel" id="tab-adjust" aria-labelledby="t-adjust" class="tabpanel">
+        <div id="flash" class="flash" role="status" hidden></div>
         <div id="selection" class="selection" hidden></div>
-        <p class="hint">Tap a component in the 3D view to select and drag it. Tags show where a value comes from: <span class="tag tag-spec">spec</span> brief, <span class="tag tag-assumed">assumed</span> unknown hardware value, <span class="tag tag-design">design</span> placement.</p>
+        <p class="hint">Tap a component in the 3D view to select and drag it. Tags show where a value comes from: <span class="tag tag-spec">spec</span> brief, <span class="tag tag-assumed">assumed</span> unknown hardware value, <span class="tag tag-design">design</span> placement, <span class="tag tag-measured">measured</span> replace with your own measurement.</p>
         <div id="controls"></div>
         <details class="ctl-section">
           <summary>Light paths</summary>
@@ -83,6 +85,9 @@
       </div>
       <div role="tabpanel" id="tab-results" aria-labelledby="t-results" class="tabpanel" hidden>
         <div id="results"></div>
+      </div>
+      <div role="tabpanel" id="tab-parts" aria-labelledby="t-parts" class="tabpanel" hidden>
+        <div id="parts"></div>
       </div>
       <div role="tabpanel" id="tab-notes" aria-labelledby="t-notes" class="tabpanel" hidden>
         <div id="notes"></div>

@@ -16,6 +16,10 @@ import { FirstPersonView } from './render/FirstPersonView.js';
 import { UIController, setPath } from './ui/UIController.js';
 import { NOTES_HTML } from './ui/notes.js';
 import { setImageReadyHandler } from './render/hudContent.js';
+import { PartsModel } from './render/PartsModel.js';
+import { partFrame, hostFrameInverse } from './model/parts.js';
+import { solveFocusDistance } from './optics/focus.js';
+import { assessFocus } from './optics/Vision.js';
 
 const $ = (s) => document.querySelector(s);
 
@@ -32,6 +36,10 @@ const eyeR = new EyeModel(sm, 'eyeR', 'Right eye');
 const eyeL = new EyeModel(sm, 'eyeL', 'Left eye');
 const optics = new OpticalMeshes(sm);
 const rays = new RayRenderer(sm);
+const partsModel = new PartsModel(sm);
+const housingHandle = new THREE.Object3D();
+housingHandle.userData.componentId = 'housing';
+sm.scene.add(housingHandle);
 const fpv = new FirstPersonView($('#fpv-canvas'));
 
 const ui = new UIController({
@@ -50,9 +58,34 @@ const ui = new UIController({
   onVisibility: (id, on) => { visibility[id] = on; applyVisibility(); },
   onRayFilter: (k, on) => { rays.filters[k] = on; drawRays(); },
   onSelect: (id) => select(id),
+  onBomChange: (id, key, value) => {
+    const b = params.bom.find((x) => x.id === id);
+    if (!b) return;
+    b[key] = key === 'qty' ? Math.max(0, Math.round(value)) : key === 'unit' ? Math.max(0, value) : value;
+    ui.renderParts(params, results); ui.renderMetrics(results, coverage, diag);
+    schedule();
+  },
+  onPartChange: (id, key, value) => {
+    const part = params.parts.find((x) => x.id === id);
+    if (!part) return;
+    if (key === 'attach') {
+      // keep the part where it is in the world when changing what it is attached to
+      const before = partFrame(part, results.system);
+      part.attach = value;
+      const host = partFrame(part, results.system).host;
+      let pos = before.position.clone(), q = before.quaternion.clone();
+      if (host) { pos = hostFrameInverse(host)(pos); q = host.quaternion.clone().invert().multiply(q); }
+      part.pos = { x: +pos.x.toFixed(2), y: +pos.y.toFixed(2), z: +pos.z.toFixed(2) };
+      part.rot = eulerFromQuat(q);
+    } else if (key.startsWith('size.')) setPath(part, key, Math.max(0.2, value));
+    else setPath(part, key, value);
+    if (key === 'name') { const b = params.bom.find((x) => x.part === id); if (b) b.name = value; }
+    schedule();
+  },
   onGizmoMode: (id, mode) => sm.attachGizmo(handleFor(id), mode),
 });
 ui.renderNotes(NOTES_HTML);
+ui.bindParts($('#parts'));
 setImageReadyHandler(() => redrawContent());
 
 function schedule() { dirty = true; }
@@ -88,8 +121,10 @@ function run() {
   }
   // rebuild meshes from the same geometry the tracer used
   sm.clearClippable();
-  for (const g of [glassesModel.root, glassesModel.overlay, eyeR.group, eyeL.group, ...Object.values(optics.groups)]) disposeTree(g);
-  glassesModel.build(results.system.glasses, params.frame);
+  for (const g of [glassesModel.root, glassesModel.overlay, eyeR.group, eyeL.group, partsModel.root, ...Object.values(optics.groups)]) disposeTree(g);
+  glassesModel.build(results.system.glasses, params.frame, params.head);
+  partsModel.update(results.system);
+  housingHandle.position.copy(results.system.glasses.housing.center);
   glassesModel.updateOverlay(coverage, results.system.glasses, visibility.coverage !== false);
   eyeR.update(results.system.eye);
   eyeL.update(results.system.leftEye);
@@ -99,7 +134,7 @@ function run() {
   drawRays();
   fpv.set(results, coverage, diag);
   ui.renderMetrics(results, coverage, diag);
-  if (!dragging) ui.renderResults(results, coverage, diag);
+  if (!dragging) { ui.renderResults(results, coverage, diag); ui.renderParts(params, results); }
   ui.refresh();
   $('#fpv-flip').checked = !!params.hud.driverFlip;
   rays.speed = params.sim.raySpeed;
@@ -115,7 +150,7 @@ function drawRays() {
 function applyVisibility() {
   const map = {
     ...glassesModel.groups, eyeR: eyeR.group, eyeL: eyeL.group, ...optics.groups,
-    rays: rays.group, coverage: glassesModel.overlay, grid: sm.grid,
+    rays: rays.group, coverage: glassesModel.overlay, grid: sm.grid, ...partsModel.groups,
   };
   for (const [id, obj] of Object.entries(map)) if (obj) obj.visible = visibility[id] !== false && !(id === 'eyeR' && currentPreset === 'eye');
   sm.labelRenderer.domElement.style.display = visibility.labels === false ? 'none' : '';
@@ -124,6 +159,8 @@ function applyVisibility() {
 // ------------------------------------------------------------ selection + gizmo
 function handleFor(id) {
   if (id === 'eyeR') return eyeR.handle;
+  if (id === 'housing') return housingHandle;
+  if (id?.startsWith('part:')) return partsModel.handles[id] ?? null;
   return optics.handles[id] ?? null;
 }
 
@@ -162,14 +199,34 @@ sm.onGizmoChange = (h) => {
     const sys = results.system;
     const vr = params.eye.constants.vertexToRotationCenter;
     const C = h.position.clone().addScaledVector(sys.eye.gaze, -vr);
-    params.eye.dx = r3(C.x + params.eye.ipd / 2);
-    params.eye.dy = r3(C.y);
+    params.eye.monoPDRight = r3(Math.max(20, -C.x));
+    params.eye.pupilHeight = r3(C.y - sys.glasses.outlineMinY);
     params.eye.eyeRelief = r3(Math.max(4, sys.glasses.lensBackZ - (C.z + vr)));
   } else if (id === 'driver') {
     params.driver.pos = { x: r3(h.position.x), y: r3(h.position.y), z: r3(h.position.z) };
+    params.driver.rot = eulerFromQuat(h.quaternion);
+  } else if (id === 'housing') {
+    const g = results.system.glasses, f = params.frame;
+    // only the vertical position and the position along the temple can move
+    f.housingOffsetY = r3(h.position.y - g.hingeY);
+    f.housingOffsetZ = r3(Math.max(0, g.hingeZ - (h.position.z + f.housingLength / 2)));
+  } else if (id.startsWith('part:')) {
+    const part = params.parts.find((p) => `part:${p.id}` === id);
+    if (part) {
+      const host = partFrame(part, results.system).host;
+      let pos = h.position.clone(), q = h.quaternion.clone();
+      if (host) { pos = hostFrameInverse(host)(pos); q = host.quaternion.clone().invert().multiply(q); }
+      part.pos = { x: r3(pos.x), y: r3(pos.y), z: r3(pos.z) };
+      part.rot = eulerFromQuat(q);
+    }
   }
   schedule();
 };
+
+function eulerFromQuat(q) {
+  const x = new THREE.Vector3(1, 0, 0).applyQuaternion(q), y = new THREE.Vector3(0, 1, 0).applyQuaternion(q), z = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
+  return eulerDegFromBasis(x, y, z);
+}
 
 // ------------------------------------------------------------ actions
 function action(a) {
@@ -187,6 +244,35 @@ function action(a) {
     params.eye.gazePitch = Math.round(coverage.field.vCenter * 2) / 2;
   } else if (a === 'lookAhead') {
     params.eye.gazeYaw = 0; params.eye.gazePitch = 0;
+  } else if (a === 'applySizeCode') {
+    const m = String(params.frame.sizeCode).match(/(\d+(?:\.\d+)?)\D+?(\d+(?:\.\d+)?)\D+?(\d+(?:\.\d+)?)/);
+    if (m) { params.frame.lensWidth = +m[1]; params.frame.bridge = +m[2]; params.frame.templeLength = +m[3]; ui.flash('Frame size applied: lens ' + m[1] + ' mm, bridge ' + m[2] + ' mm, temple ' + m[3] + ' mm.'); }
+    else ui.flash('Enter the code printed inside the temple arm, like 52□18-145.');
+  } else if (a === 'focusForEye') {
+    const target = assessFocus({ Vx: 0, Vy: 0 }, params.eye).targetVergence;
+    const r = solveFocusDistance(params, target);
+    if (r.distance != null) params.collimator.distance = Math.round(r.distance * 1000) / 1000;
+    ui.flash(r.ok ? `OLED moved to ${r.distance.toFixed(2)} mm from the lens: HUD vergence ${r.vergence.toFixed(2)} D for your eye (target ${target.toFixed(2)} D).` : `Could not focus: ${r.reason}`);
+  } else if (a === 'addPart') {
+    const n = params.parts.filter((p) => p.custom).length + 1;
+    const id = `custom${Date.now().toString(36)}`;
+    params.parts.push({ id, name: `Custom part ${n}`, size: { x: 5, y: 10, z: 15 }, pos: { x: -72, y: 6, z: -60 }, rot: { yaw: 0, pitch: 0, roll: 0 }, attach: null, color: '#8a7350', blocksLight: true, custom: true });
+    params.bom.push({ id, name: `Custom part ${n}`, part: id, qty: 1, unit: 0, include: true, sourced: false, note: 'Enter your price.', sources: [] });
+  } else if (a.startsWith('deletePart:')) {
+    const id = a.slice('deletePart:'.length);
+    params.parts = params.parts.filter((p) => p.id !== id);
+    params.bom = params.bom.filter((b) => b.part !== id);
+    if (selected === `part:${id}`) select(null);
+  } else if (a.startsWith('selectComponent:')) {
+    const id = a.slice('selectComponent:'.length);
+    select(id);
+    if (handleFor(id)) sm.attachGizmo(handleFor(id), 'translate');
+    return;
+  } else if (a.startsWith('selectPart:')) {
+    const id = `part:${a.slice('selectPart:'.length)}`;
+    select(id);
+    if (handleFor(id)) sm.attachGizmo(handleFor(id), 'translate');
+    return;
   } else if (a === 'clearImage') {
     params.hud.image = null; params.hud.imageName = '';
   } else if (a === 'reset') {

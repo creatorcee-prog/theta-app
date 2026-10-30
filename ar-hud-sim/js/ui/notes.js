@@ -9,7 +9,7 @@ export const NOTES_HTML = `
     <li><span class="tag tag-assumed">assumed</span> Unknown for the real glasses and exposed as adjustable inputs: frame and lens dimensions, hinge height, temple cavity size, eye relief (14 mm), IPD (63 mm), pupil diameter (4 mm), OLED emission cone (±20°, Lambertian), OLED housing size, collimator aperture (8 mm), driver board size, spectacle lens index (CR-39, 1.498), peak luminance (1000 cd/m²).</li>
     <li><span class="tag tag-design">design</span> Component positions and orientations. The defaults come from an alignment helper that places the prism on the line from the pupil toward the 25°/10° target direction, as far forward as the lens allows, and puts the OLED and collimator on its input axis inside the temple. The helper only sets inputs; it does not decide whether light reaches the eye.</li>
     <li><span class="tag tag-calc">calculated</span> Everything in Results and Diagnostics is computed from the traced rays and the geometry above.</li>
-    <li>No values are measured. No physical glasses were measured for this model.</li>
+    <li><span class="tag tag-measured">measured</span> Fields for your own measurements (frame code, lens outline, tilt, wrap, monocular PD, pupil height, vertex distance, temple gaps, lashes, prescription). Until you change them they hold typical adult values, not measurements.</li>
   </ul>
 </section>
 <section class="res-block">
@@ -33,6 +33,8 @@ export const NOTES_HTML = `
     <li>Lens coverage is an apparent footprint: the region of the lens the HUD overlays when seen from the pupil centre. It is not light physically passing through the lens.</li>
     <li>The first-person view is drawn in linear angular coordinates. HUD brightness and blur are indicative; blur combines measured vergence (eye focused at infinity) and residual aberration.</li>
     <li>Peripheral acuity is far below foveal acuity. A HUD at 25° is readable only by looking at it, and the Diagnostics show how rotating the eye moves the pupil relative to the eye-box.</li>
+    <li>The prescription check uses the horizontal and vertical meridians only; oblique cylinder axes also have a torsional component that is not modelled. The spectacle lens is traced as plano: its power changes your view of the world, not the HUD path.</li>
+    <li>Part prices are single-unit retail snapshots with linked sources; "estimate" lines have none. Shipping, tax, tooling and assembly are not included.</li>
     <li>The 40–50% lens-coverage target and the 35°×20° FOV target are not compatible for a spectacle lens 15–20 mm from the eye. The Diagnostics report the coverage that meeting the FOV target would actually give.</li>
   </ul>
 </section>

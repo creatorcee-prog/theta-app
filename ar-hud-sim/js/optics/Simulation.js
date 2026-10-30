@@ -8,11 +8,13 @@ import { computeEye, directionToAngles } from '../model/eye.js';
 import { computeOled, computePrism, computeCollimator, computeDriver, buildOpticalObjects } from './OpticalComponents.js';
 import { trace, coneDirections, eyeDetector } from './RayTracer.js';
 import { makeGlass, WAVELENGTHS, criticalAngle, AIR } from './materials.js';
+import { partFrame } from '../model/parts.js';
+import { boxAbsorber } from './RayTracer.js';
 
 export function buildSystem(params) {
   const glasses = computeGlasses(params.frame);
-  const eye = computeEye({ ...params.eye, side: 1 }, glasses);
-  const leftEye = computeEye({ ipd: params.eye.ipd, eyeRelief: params.eye.eyeRelief, pupilDiameter: params.eye.pupilDiameter, constants: params.eye.constants, side: -1 }, glasses);
+  const eye = computeEye({ ...params.eye, monoPD: params.eye.monoPDRight, side: 1 }, glasses);
+  const leftEye = computeEye({ monoPD: params.eye.monoPDLeft, pupilHeight: params.eye.pupilHeightLeft, eyeRelief: params.eye.eyeRelief, pupilDiameter: params.eye.pupilDiameter, constants: params.eye.constants, side: -1 }, glasses);
   const oled = computeOled(params.oled);
   const prism = computePrism(params.prism);
   const dispersive = params.sim.wavelengths === 'rgb';
@@ -25,9 +27,12 @@ export function buildSystem(params) {
     oled, prism, collimator, driver, glasses, frame: params.frame, prismMaterial, lensMaterial, specMaterial,
     coating: params.prism.coating,
   });
+  // placeable hardware parts block light where they are put
+  const parts = (params.parts ?? []).map((part) => ({ part, ...partFrame(part, { prism, oled }) }));
+  for (const pf of parts) if (pf.part.blocksLight && pf.part.visible !== false) objects.push(boxAbsorber(`part:${pf.part.id}`, pf.part.name, pf.matrix, pf.size));
   objects.push(eyeDetector('eyeR', 'Right eye', eye));
   objects.push(eyeDetector('eyeL', 'Left eye', leftEye));
-  return { params, glasses, eye, leftEye, oled, prism, collimator, driver, objects, prismMaterial };
+  return { params, glasses, eye, leftEye, oled, prism, collimator, driver, parts, objects, prismMaterial };
 }
 
 // Sample pixel positions in [-1,1]^2 (edges included).

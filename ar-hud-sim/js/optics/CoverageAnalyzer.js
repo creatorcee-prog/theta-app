@@ -87,11 +87,14 @@ export function minRadius(hull) {
 
 // ---------------------------------------------------------------- analysis
 
-function projectToLens(origin, dir, z) {
-  if (Math.abs(dir.z) < 1e-9) return null;
-  const t = (z - origin.z) / dir.z;
+// Intersect a ray with the right lens's mid-plane; returns lens-local [x, y].
+function projectToLens(origin, dir, lf) {
+  const denom = dir.dot(lf.normal);
+  if (Math.abs(denom) < 1e-9) return null;
+  const t = lf.center.clone().sub(origin).dot(lf.normal) / denom;
   if (t <= 0) return null;
-  return origin.clone().addScaledVector(dir, t);
+  const l = lf.toLocal(origin.clone().addScaledVector(dir, t));
+  return [l.x, l.y];
 }
 
 function hardwarePoints(system) {
@@ -193,10 +196,9 @@ function visibleWithEye(pixelResults, eye) {
 export function analyzeCoverage(results) {
   const { system, pixelResults, counts, power } = results;
   const { glasses, eye, params } = system;
-  const lc = glasses.rightLensCenter;
+  const lf = glasses.lenses.R;
   const lensPoly = glasses.outline.map(([x, y]) => [x, y]);
   const lensArea = glasses.lensArea;
-  const lensZ = 0;
 
   // ---- visual field from visible pixels
   const visible = pixelResults.filter((p) => p.visible);
@@ -226,8 +228,8 @@ export function analyzeCoverage(results) {
   const lens = { area: lensArea };
   const fp = [];
   for (const p of visible) {
-    const hit = projectToLens(eye.pupilCenter, p.apparent, lensZ);
-    if (hit) fp.push([hit.x - lc.x, hit.y - lc.y]);
+    const hit = projectToLens(eye.pupilCenter, p.apparent, lf);
+    if (hit) fp.push(hit);
   }
   lens.footprint = fp.length >= 3 ? convexHull(fp) : [];
   lens.footprintArea = lens.footprint.length >= 3 ? polygonArea(lens.footprint) : 0;
@@ -246,7 +248,7 @@ export function analyzeCoverage(results) {
     tgtPts.push([t.azimuth - t.hfov / 2 + (t.hfov * i) / N, t.elevation + (sv * t.vfov) / 2]);
     tgtPts.push([t.azimuth + (sv * t.hfov) / 2, t.elevation - t.vfov / 2 + (t.vfov * i) / N]);
   }
-  const tgtFp = tgtPts.map(([h, v]) => projectToLens(eye.pupilCenter, anglesToDirection(h, v, 1), lensZ)).filter(Boolean).map((p) => [p.x - lc.x, p.y - lc.y]);
+  const tgtFp = tgtPts.map(([h, v]) => projectToLens(eye.pupilCenter, anglesToDirection(h, v, 1), lf)).filter(Boolean);
   const tgtHull = convexHull(tgtFp);
   const tgtInside = clipPolygon(tgtHull, lensPoly);
   lens.targetFovCoveragePct = (100 * (tgtInside.length >= 3 ? polygonArea(tgtInside) : 0)) / lensArea;
@@ -254,7 +256,7 @@ export function analyzeCoverage(results) {
 
   // Field that 40-50% of the lens corresponds to: whole-lens angular size
   const lensAng = lensPoly.map(([x, y]) => {
-    const d = new Vector3(lc.x + x, lc.y + y, lensZ).sub(eye.pupilCenter).normalize();
+    const d = lf.toWorld(x, y, 0).sub(eye.pupilCenter).normalize();
     const a = directionToAngles(d, 1);
     return [a.h, a.v];
   });
@@ -265,10 +267,11 @@ export function analyzeCoverage(results) {
 
   // ---- physical beam footprint on the lens (rays that actually cross it)
   const phys = results.lensCrossings.filter((c) => c.lens === 'specLensR');
-  const physPupil = phys.filter((c) => c.toPupil).map((c) => [c.point.x - lc.x, c.point.y - lc.y]);
+  const loc = (pt) => { const l = lf.toLocal(pt); return [l.x, l.y]; };
+  const physPupil = phys.filter((c) => c.toPupil).map((c) => loc(c.point));
   lens.physicalFootprint = physPupil.length >= 3 ? convexHull(physPupil) : [];
   lens.physicalArea = lens.physicalFootprint.length >= 3 ? polygonArea(clipPolygon(lens.physicalFootprint, lensPoly)) : 0;
-  lens.strayHits = phys.filter((c) => !c.toPupil).map((c) => [c.point.x - lc.x, c.point.y - lc.y]);
+  lens.strayHits = phys.filter((c) => !c.toPupil).map((c) => loc(c.point));
   lens.strayPowerPct = (100 * power.lensStray) / Math.max(1e-12, power.emitted);
 
   // ---- hardware occlusion in the angular field
@@ -288,7 +291,7 @@ export function analyzeCoverage(results) {
   const eyebox = eyeboxSweep(pixelResults, eye);
   let gaze = null;
   if (field.hCenter != null) {
-    const gEye = computeEye({ ...params.eye, side: 1, gazeYaw: field.hCenter, gazePitch: field.vCenter }, glasses);
+    const gEye = computeEye({ ...params.eye, monoPD: params.eye.monoPDRight, side: 1, gazeYaw: field.hCenter, gazePitch: field.vCenter }, glasses);
     gaze = { yaw: field.hCenter, pitch: field.vCenter, visibleFrac: visibleWithEye(pixelResults, gEye), pupilShift: gEye.pupilCenter.distanceTo(eye.pupilCenter) };
   }
 

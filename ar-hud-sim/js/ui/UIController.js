@@ -3,6 +3,7 @@
 
 import { SECTIONS, VISIBILITY, COMPONENT_NAMES } from './schema.js';
 import { SEGMENT_STYLE } from '../render/RayRenderer.js';
+import { bomTotals } from '../model/parts.js';
 
 export const getPath = (obj, key) => key.split('.').reduce((o, k) => o?.[k], obj);
 export function setPath(obj, key, value) {
@@ -12,7 +13,9 @@ export function setPath(obj, key, value) {
   o[ks[ks.length - 1]] = value;
 }
 
-const TAG_TEXT = { spec: 'spec', assumed: 'assumed', design: 'design' };
+const TAG_TEXT = { spec: 'spec', assumed: 'assumed', design: 'design', measured: 'measured' };
+const TAG_TITLE = { spec: 'Value given in the brief', assumed: 'Unknown for the real hardware: adjustable assumption', design: 'Placement / design choice', measured: 'Enter your own measurement (default is a typical adult value)' };
+const money = (x) => `$${(Number(x) || 0).toFixed(2)}`;
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fmt = (v, step) => {
   if (typeof v !== 'number') return v;
@@ -63,7 +66,7 @@ export class UIController {
     const id = `ctl-${sec.id}-${c.key.replace(/\./g, '-')}`;
     const wrap = document.createElement('div');
     wrap.className = `ctl ctl-${c.type ?? 'range'}`;
-    const tag = `<span class="tag tag-${c.tag}" title="${c.tag === 'spec' ? 'Value given in the brief' : c.tag === 'assumed' ? 'Unknown for the real hardware: adjustable assumption' : 'Placement / design choice'}">${TAG_TEXT[c.tag]}</span>`;
+    const tag = `<span class="tag tag-${c.tag}" title="${TAG_TITLE[c.tag]}">${TAG_TEXT[c.tag]}</span>`;
     const v = getPath(p, c.key);
     let input;
     if (c.type === 'toggle') {
@@ -71,6 +74,11 @@ export class UIController {
       input = wrap.querySelector('input');
       input.checked = !!v;
       input.addEventListener('change', () => this.cb.onChange(c.key, input.checked));
+    } else if (c.type === 'textarea') {
+      wrap.innerHTML = `<label for="${id}">${esc(c.label)} ${tag}</label><textarea id="${id}" rows="4" spellcheck="false"></textarea>`;
+      input = wrap.querySelector('textarea');
+      input.value = v ?? '';
+      input.addEventListener('change', () => this.cb.onChange(c.key, input.value));
     } else if (c.type === 'text') {
       wrap.innerHTML = `<label for="${id}">${esc(c.label)} ${tag}</label><input type="text" id="${id}" maxlength="40" autocomplete="off">`;
       input = wrap.querySelector('input');
@@ -140,6 +148,13 @@ export class UIController {
       b.textContent = 'Place OLED at focal plane';
       wrap.appendChild(b);
     }
+    const buttons = { applySizeCode: 'Apply size code', focusForEye: 'Focus HUD for my eye' };
+    if (buttons[c.after]) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'btn small'; b.dataset.action = c.after;
+      b.textContent = buttons[c.after];
+      wrap.appendChild(b);
+    }
     if (c.after === 'lookAtHud') {
       const b = document.createElement('button');
       b.type = 'button'; b.className = 'btn small'; b.dataset.action = 'lookAtHud';
@@ -206,21 +221,26 @@ export class UIController {
   showSelection(id) {
     if (!id) { this.selectionEl.hidden = true; return; }
     this.selectionEl.hidden = false;
-    const movable = { oled: ['translate', 'rotate'], prism: ['translate', 'rotate'], collimator: ['translate'], eyeR: ['translate'], driver: ['translate'] }[id] ?? [];
-    const section = { oled: 'oled', prism: 'prism', collimator: 'collimator', eyeR: 'eye', eyeL: 'eye', driver: 'oled', ribbon: 'oled', frame: 'frame', lensR: 'frame', lensL: 'frame', templeR: 'frame', templeL: 'frame', housing: 'frame', hingeR: 'frame', hingeL: 'frame' }[id];
-    this.selectionEl.innerHTML = `<div class="sel-head"><span class="sel-dot"></span><strong>${esc(COMPONENT_NAMES[id] ?? id)}</strong>
+    const isPart = id.startsWith('part:');
+    const movable = isPart ? ['translate', 'rotate'] : { oled: ['translate', 'rotate'], prism: ['translate', 'rotate'], collimator: ['translate'], eyeR: ['translate'], driver: ['translate', 'rotate'], housing: ['translate'] }[id] ?? [];
+    const section = isPart ? null : { oled: 'oled', prism: 'prism', collimator: 'collimator', eyeR: 'measure', eyeL: 'measure', driver: 'driver', ribbon: 'driver', frame: 'frame', lensR: 'measure', lensL: 'measure', templeR: 'frame', templeL: 'frame', housing: 'frame', hingeR: 'frame', hingeL: 'frame', head: 'measure' }[id];
+    const name = isPart ? (this.cb.getParams().parts.find((p) => `part:${p.id}` === id)?.name ?? id) : (COMPONENT_NAMES[id] ?? id);
+    this.selectionEl.innerHTML = `<div class="sel-head"><span class="sel-dot"></span><strong>${esc(name)}</strong>
       <button type="button" class="btn small ghost" data-sel="close" aria-label="Clear selection">Clear</button></div>
       <div class="btn-row">${movable.map((m) => `<button type="button" class="btn small" data-sel="${m}">${m === 'translate' ? 'Drag to move' : 'Drag to rotate'}</button>`).join('')}
       ${section ? `<button type="button" class="btn small ghost" data-sel="edit">Edit values</button>` : ''}
       <button type="button" class="btn small ghost" data-sel="hide">Hide</button></div>
-      ${movable.length ? '<p class="help">Drag the gizmo in the 3D view. Every change is re-traced.</p>' : '<p class="help">Its size and position come from the frame dimensions: use Edit values.</p>'}`;
+      ${movable.length ? `<p class="help">Drag the gizmo in the 3D view. Every change is re-traced.${id === 'housing' ? ' The housing moves up/down and along the temple.' : ''}${isPart ? ' Exact values: Parts &amp; cost tab.' : ''}</p>` : '<p class="help">Its size and position come from the frame dimensions: use Edit values.</p>'}`;
     this.selectionEl.onclick = (e) => {
       const b = e.target.closest('[data-sel]');
       if (!b) return;
       const a = b.dataset.sel;
       if (a === 'close') this.cb.onSelect(null);
       else if (a === 'edit') this.openSection(section);
-      else if (a === 'hide') { this.cb.onVisibility(id, false); this.setVisibilityChecked(id, false); }
+      else if (a === 'hide') {
+        if (isPart) this.cb.onPartChange(id.slice(5), 'visible', false);
+        else { this.cb.onVisibility(id, false); this.setVisibilityChecked(id, false); }
+      }
       else this.cb.onGizmoMode(id, a);
     };
   }
@@ -237,6 +257,7 @@ export class UIController {
       chip('FOV', f.hfov != null ? `${f.hfov.toFixed(1)}°×${f.vfov.toFixed(1)}°` : '—', st('hfov')),
       chip('Offset', f.hCenter != null ? `${f.hCenter.toFixed(1)}° / ${f.vCenter.toFixed(1)}°` : '—', st('hoff')),
       chip('TIR', diag.checks.find((c) => c.id === 'tir')?.value ?? '—', st('tir')),
+      chip('Parts total', money(bomTotals(this.cb.getParams().bom).total), 'info'),
       chip('Checks', `<b class="ok">${s.pass}</b> · <b class="warn">${s.warn}</b> · <b class="bad">${s.fail}</b>`, ''),
     ].join('');
   }
@@ -311,4 +332,90 @@ export class UIController {
   }
 
   renderNotes(html) { this.notesEl.innerHTML = html; }
+
+  flash(text) {
+    const el = document.getElementById('flash');
+    if (!el) return;
+    el.textContent = text;
+    el.hidden = false;
+    clearTimeout(this._flashT);
+    this._flashT = setTimeout(() => { el.hidden = true; }, 6000);
+  }
+
+  // ------------------------------------------------------------ parts & cost
+  renderParts(params, results) {
+    const el = this.partsEl;
+    if (!el || el.contains(document.activeElement)) return; // don't rebuild under the cursor
+    const tot = bomTotals(params.bom);
+    const partById = Object.fromEntries(params.parts.map((p) => [p.id, p]));
+    const blocked = (pid) => results?.counts.absorbed[`part:${pid}`] ?? 0;
+    const num = (attr, v, step = 0.1, w = 'w5') => `<input class="num ${w}" type="number" step="${step}" value="${v}" ${attr}>`;
+    const rows = params.bom.map((b) => {
+      const part = b.part ? partById[b.part] : null;
+      const srcs = b.sources.map((s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.label)}</a>`).join('<br>');
+      const placeBtn = part ? `<button type="button" class="btn small ghost" data-act="selectPart:${part.id}">Select &amp; drag</button>`
+        : b.component && ['oled', 'driver', 'collimator', 'prism', 'housing'].includes(b.component) ? `<button type="button" class="btn small ghost" data-act="selectComponent:${b.component}">Select &amp; drag</button>` : '';
+      const editor = part ? `
+        <details class="part-edit"><summary>Placement, size and options${blocked(part.id) ? ` · <span class="bad">blocks ${blocked(part.id)} rays</span>` : ''}</summary>
+          <div class="grid3">
+            ${['x', 'y', 'z'].map((k) => `<label>Pos ${k}${num(`data-part="${part.id}" data-key="pos.${k}"`, part.pos[k])}</label>`).join('')}
+            ${['yaw', 'pitch', 'roll'].map((k) => `<label>${k}${num(`data-part="${part.id}" data-key="rot.${k}"`, part.rot[k], 0.5)}</label>`).join('')}
+            ${['x', 'y', 'z'].map((k) => `<label>Size ${k}${num(`data-part="${part.id}" data-key="size.${k}"`, part.size[k])}</label>`).join('')}
+          </div>
+          <div class="part-opts">
+            <label>Attached to <select data-part="${part.id}" data-key="attach"><option value="">Nothing (world)</option><option value="prism"${part.attach === 'prism' ? ' selected' : ''}>Prism</option><option value="oled"${part.attach === 'oled' ? ' selected' : ''}>Micro-OLED</option></select></label>
+            <label class="chk"><input type="checkbox" data-part="${part.id}" data-key="blocksLight"${part.blocksLight ? ' checked' : ''}><span>Blocks light</span></label>
+            <label class="chk"><input type="checkbox" data-part="${part.id}" data-key="visible"${part.visible !== false ? ' checked' : ''}><span>Shown</span></label>
+            <input type="color" value="${part.color}" data-part="${part.id}" data-key="color" aria-label="Colour">
+            ${part.custom ? `<input type="text" value="${esc(part.name)}" data-part="${part.id}" data-key="name" aria-label="Part name">` : ''}
+            ${part.custom ? `<button type="button" class="btn small ghost" data-act="deletePart:${part.id}">Delete part</button>` : ''}
+          </div>
+          <p class="help">Positions in mm (world: −x = your right, +z forward${part.attach ? `; relative to the ${part.attach === 'prism' ? 'prism' : 'OLED'} when attached` : ''}).</p>
+        </details>` : '';
+      return `<li class="bom-row${b.include ? '' : ' off'}">
+        <div class="bom-main">
+          <label class="chk"><input type="checkbox" data-bom="${b.id}" data-key="include"${b.include ? ' checked' : ''}><span class="bom-name">${esc(b.name)}</span></label>
+          <span class="bom-badge ${b.sourced ? 'src' : 'est'}">${b.sourced ? 'sourced' : 'estimate'}</span>
+        </div>
+        <div class="bom-nums">
+          <label>Qty ${num(`data-bom="${b.id}" data-key="qty"`, b.qty, 1, 'w3')}</label>
+          <label>Unit $ ${num(`data-bom="${b.id}" data-key="unit"`, b.unit, 0.01, 'w5')}</label>
+          <span class="bom-sub">${money(b.unit * b.qty)}</span>
+        </div>
+        ${b.note ? `<p class="help">${esc(b.note)}</p>` : ''}
+        ${srcs ? `<p class="bom-src">${srcs}</p>` : ''}
+        <div class="btn-row">${placeBtn}</div>
+        ${editor}
+      </li>`;
+    }).join('');
+    el.innerHTML = `
+      <section class="res-block">
+        <h3>Parts &amp; cost</h3>
+        <div class="totals">
+          <div><span class="m-label2">Grand total</span><b>${money(tot.total)}</b></div>
+          <div><span class="m-label2">Sourced prices</span>${money(tot.sourced)}</div>
+          <div><span class="m-label2">Estimates</span>${money(tot.estimated)}</div>
+          <div><span class="m-label2">Excluded</span>${money(tot.excluded)}</div>
+        </div>
+        <p class="help">Single-unit retail prices from the linked listings (October 2026 snapshot), excluding shipping and tax. "Estimate" lines have no source; replace them with your quotes. Untick a line to leave it out of the total.</p>
+        <ul class="bom">${rows}</ul>
+        <div class="btn-row"><button type="button" class="btn small" data-act="addPart">Add a custom part</button></div>
+      </section>`;
+  }
+
+  bindParts(el) {
+    this.partsEl = el;
+    el.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-act]');
+      if (b) this.cb.onAction(b.dataset.act);
+    });
+    const onEdit = (e) => {
+      const t = e.target;
+      const val = t.type === 'checkbox' ? t.checked : t.type === 'number' ? +t.value : t.value;
+      if (t.type === 'number' && !Number.isFinite(val)) return;
+      if (t.dataset.bom) this.cb.onBomChange(t.dataset.bom, t.dataset.key, val);
+      else if (t.dataset.part) this.cb.onPartChange(t.dataset.part, t.dataset.key, t.dataset.key === 'attach' ? (val || null) : val);
+    };
+    el.addEventListener('change', onEdit);
+  }
 }

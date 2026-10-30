@@ -99,15 +99,17 @@ export class OpticalMeshes {
     board.add(hdmi);
     const dp = system.driver;
     board.position.copy(dp.center);
+    board.quaternion.copy(dp.quaternion);
     dg.add(board);
     if (labels) { const l = makeLabel('HDMI driver'); l.position.copy(dp.center).add(new THREE.Vector3(0, bs.y / 2 + 3, 0)); dg.add(l); }
     this.handles.driver.position.copy(dp.center);
+    this.handles.driver.quaternion.copy(dp.quaternion);
 
     const rg = this.groups.ribbon;
     const start = oled.housing.center.clone().addScaledVector(oled.normal, -oled.housing.size.z / 2 - 0.2);
-    const end = dp.center.clone().add(new THREE.Vector3(bs.x / 2 + 0.3, 0, bs.z / 2 - 2));
+    const end = new THREE.Vector3(bs.x / 2 + 0.3, 0, bs.z / 2 - 2).applyQuaternion(dp.quaternion).add(dp.center);
     const mid1 = start.clone().addScaledVector(oled.normal, -4);
-    const mid2 = end.clone().add(new THREE.Vector3(3, 0, 5));
+    const mid2 = end.clone().add(new THREE.Vector3(3, 0, 5).applyQuaternion(dp.quaternion));
     const curve = new THREE.CatmullRomCurve3([start, mid1, mid1.clone().lerp(mid2, 0.5).add(new THREE.Vector3(0, -1.5, 0)), mid2, end]);
     const ribbon = new THREE.Mesh(ribbonGeometry(curve, params.driver.ribbonWidth, oled.yAxis.clone().cross(oled.normal).normalize()),
       new THREE.MeshStandardMaterial({ color: 0xd9822b, roughness: 0.5, side: THREE.DoubleSide }));

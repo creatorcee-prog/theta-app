@@ -106,6 +106,64 @@ From `node scripts/smoke.mjs`; nothing below is tuned to look good.
 - With the ideal lens at its focal plane, bundles are collimated (vergence 0.00 D), so a focused virtual image at infinity is supported. With real singlets (spherical or conic plano-convex, f/1.5) the measured vergence is off by several diopters and astigmatism is large. That's what a single fast element does; the page reports it and doesn't claim a focused image.
 - One reflection mirrors the image left–right, so the driver must flip it. The left pupil receives no rays, but leaked light lands on the left eye area.
 
+## Your measurements and vision
+
+The **Your measurements** and **Vision** sections replace the typical-adult
+defaults (tagged <code>measured</code>) with your own numbers.
+
+**Frame and lens:**
+- the frame size code (e.g. `52□18-145` sets lens width, bridge and temple length)
+- lens height
+- lens outline: rounded rectangle, superellipse, or your own traced `x,y` points. A non-convex trace is replaced by its convex hull, with a warning.
+- pantoscopic tilt and frame wrap. Both are traced: the lens solids, the coverage projection, the prism-to-lens clearance and the alignment helper all use the tilted lens plane.
+
+**Eyes and head:**
+- right and left monocular PD and pupil heights
+- vertex distance, pupil diameter, eyelash length (used as the prism's required clearance)
+- temple-to-head gaps at the hinge and 20 mm behind it. These form a head surface checked against the housing and any part beside the temple.
+- outer-eye-corner-to-temple, cross-checked against the model
+
+**Vision:**
+- right sphere, cylinder and axis, reading add
+- age (accommodation from Hofstetter's average 18.5 − 0.3 × age) or a measured amplitude
+- dominant eye, right-eye condition
+
+The HUD light bypasses your spectacle lens, so the page converts the
+prescription to the corneal plane. It then checks whether the traced HUD
+vergence, per horizontal and vertical meridian, falls within your focusing
+range. "Focus HUD for my eye" moves the OLED with the real tracer until the
+vergence matches your relaxed eye. Astigmatism can't be fixed by refocusing,
+and the page says so.
+
+## Parts, placement and cost
+
+Every hardware part can be selected in 3D, then dragged or rotated with the
+gizmo:
+- the OLED, prism, collimator and driver board
+- the temple housing, which moves along the temple and up/down
+- the eye
+- generic parts: prism mount bracket, LiPo battery, USB-C charger, Raspberry Pi Zero 2 W, IMU, and any custom parts you add
+
+Generic parts can be attached to the prism or the OLED so they move with it.
+They are traced as light absorbers, so a part left in the beam shows up as
+blocked rays. Each has editable size, position, rotation and colour.
+
+The **Parts & cost** tab lists every part with quantity, unit price and
+sources, and keeps a live grand total split into sourced prices and
+estimates. Prices are single-unit retail snapshots (October 2026), excluding
+shipping and tax:
+
+| Part | Default | Basis |
+|---|---|---|
+| 0.23″ 640×400 Micro-OLED panel | $166 | average of [DisplayModule $139](https://displaymodule.com/products/0-23-inch-micro-oled-display-640x400), [Bonanza $159](https://www.bonanza.com/items/like/1730698481), [Walmart $199](https://www.walmart.com/c/kp/micro-oled). Kits with an HDMI board: [Tindie $275](https://www.tindie.com/products/oled-modules/microdisplay-023-inch-micro-oled-display-640x400/), [DisplayModule $599](https://displaymodule.com/products/0-23-inch-micro-oled-display) |
+| HDMI driver board | $199 | [DisplayModule DMRXHMB](https://www.displaymodule.com/products/dmrxhmb-hdmi-micro-driver-board-typec-oled-amoled-evaluation-demo); compatibility not confirmed |
+| 10 mm N-BK7 right-angle prism | $63 | [Newport ValuMax BRP-10](https://np.s2.mks.com/f/valumax-right-angle-prisms); [Edmund £74.80](https://www.edmundoptics.co.uk/p/10mm-uncoated-n-bk7-high-tolerance-ra-prism/2409/) |
+| f ≈ 12 mm asphere | $21.20 | Thorlabs ACL1512, $16.20 uncoated / $26.20 AR in a 2015 catalog as reported by search. Not verified, likely outdated. |
+| LiPo 150 mAh (501230) | $6.15 | [eBay listing](https://www.ebay.com/itm/174683669832) |
+| USB-C LiPo charger | $5.95 | [Adafruit #4410](https://www.adafruit.com/product/4410) |
+| Raspberry Pi Zero 2 W | $15 | [2021 launch MSRP](https://betanews.com/2021/10/28/raspberry-pi-zero-2-w); retail often higher |
+| FPC, housing, bracket, wiring, IMU | estimates | no source found; enter your quotes |
+
 ## What you can adjust
 
 Every input is a control in the Adjust tab. Each has a provenance tag, and

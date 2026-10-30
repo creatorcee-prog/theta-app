@@ -61,10 +61,12 @@ export function computeOled(p) {
 // ------------------------------------------------------------ Driver board
 export function computeDriver(p) {
   const center = new Vector3(p.pos.x, p.pos.y, p.pos.z);
+  const q = quatFromEulerDeg(p.rot ?? { yaw: 0, pitch: 0, roll: 0 });
   const size = new Vector3(p.thickness + 3.5, p.height, p.length); // PCB + parts + connector
   const pcbSize = new Vector3(p.thickness, p.height, p.length);
-  // parts sit on the face side (+x) of the board
-  return { center, size: pcbSize, envelope: size, matrix: new Matrix4().makeTranslation(center.x + 1.75, center.y, center.z) };
+  // parts sit on the board's local +x side (the face side by default)
+  const envCenter = new Vector3(1.75, 0, 0).applyQuaternion(q).add(center);
+  return { center, quaternion: q, size: pcbSize, envelope: size, envCenter, matrix: new Matrix4().compose(envCenter, q, new Vector3(1, 1, 1)) };
 }
 
 // ------------------------------------------------------------ Prism
@@ -201,9 +203,12 @@ export function buildOpticalObjects({ oled, prism, collimator, driver, glasses, 
   // Spectacle lenses (plano CR-39, rim edge absorbs)
   if (frame.lensesPresent) {
     for (const side of [1, -1]) {
-      const c = side === 1 ? glasses.rightLensCenter : glasses.leftLensCenter;
-      const front = glasses.outline.map(([x, y]) => new Vector3(c.x + x, c.y + y, glasses.lensFrontZ));
-      const back = glasses.outline.map(([x, y]) => new Vector3(c.x + x, c.y + y, glasses.lensBackZ));
+      const lf = side === 1 ? glasses.lenses.R : glasses.lenses.L;
+      const t2 = frame.lensThickness / 2;
+      // outline is defined for the right lens seen from the front; mirror it for the left
+      const ol = side === 1 ? glasses.outline : glasses.outline.map(([x, y]) => [-x, y]).reverse();
+      const front = ol.map(([x, y]) => lf.toWorld(x, y, t2));
+      const back = ol.map(([x, y]) => lf.toWorld(x, y, -t2));
       const faces = [polygonFace(front, { role: 'lensFront' }), polygonFace(back.slice().reverse(), { role: 'lensBack' })];
       for (let i = 0; i < front.length; i++) {
         const j = (i + 1) % front.length;
@@ -212,7 +217,7 @@ export function buildOpticalObjects({ oled, prism, collimator, driver, glasses, 
       // fix orientation of front/back if needed
       for (const f of faces.slice(0, 2)) {
         const want = f.role === 'lensFront' ? 1 : -1;
-        if (Math.sign(f.normal.z) !== want) f.normal.negate();
+        if (Math.sign(f.normal.dot(lf.normal)) !== want) f.normal.negate();
       }
       objects.push(dielectricSolid(side === 1 ? 'specLensR' : 'specLensL', side === 1 ? 'Right lens' : 'Left lens', specMaterial, faces, null));
     }

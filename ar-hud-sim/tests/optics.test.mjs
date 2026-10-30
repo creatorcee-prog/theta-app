@@ -205,3 +205,49 @@ test('alignment helper aims the real exit ray at the pupil for any prism angle',
     assert.equal(r.chief.outcome, 'pupil:eyeR', `angle ${angle}: ${r.chief.outcome}`);
   }
 });
+
+test('vision: spectacle Rx converts to the cornea and drives the focus check', async () => {
+  const { cornealPower, assessFocus, meridianPowers } = await import('../js/optics/Vision.js');
+  near(cornealPower(-5, 12), -5 / (1 + 0.06), 1e-12);
+  near(cornealPower(+5, 12), 5 / (1 - 0.06), 1e-12);
+  const m = meridianPowers({ sphere: -1, cyl: -2, axis: 90 });
+  near(m.h, -3, 1e-12); near(m.v, -1, 1e-12); // axis 90: full cylinder power acts horizontally
+  const eye = { rx: { sphere: -2, cyl: 0, axis: 0 }, eyeRelief: 12, ampMode: 'manual', amplitude: 6, pupilDiameter: 4 };
+  const atInf = assessFocus({ Vx: 0, Vy: 0 }, eye);
+  assert.ok(atInf.residual > 1.8 && atInf.tooConverging, 'myope cannot focus a collimated HUD');
+  const matched = assessFocus({ Vx: atInf.targetVergence, Vy: atInf.targetVergence }, eye);
+  near(matched.residual, 0, 1e-9);
+});
+
+test('focus solver moves the OLED so the traced vergence matches a -2 D eye', async () => {
+  const { solveFocusDistance } = await import('../js/optics/focus.js');
+  const p = defaultParams();
+  p.prism.coating = 'mirror';
+  const r = solveFocusDistance(p, -2);
+  assert.ok(r.ok, r.reason);
+  near(r.vergence, -2, 0.05);
+  assert.ok(r.distance < 12, 'diverging output needs the OLED inside the focal length');
+});
+
+test('lens tilt and wrap: alignment still reaches the pupil and keeps the prism behind the tilted lens', async () => {
+  const { baseParams, alignChain } = await import('../js/config/defaults.js');
+  const { runDiagnostics } = await import('../js/optics/Diagnostics.js');
+  const p = baseParams();
+  p.frame.pantoTiltDeg = 10; p.frame.wrapDeg = 8; p.prism.coating = 'mirror';
+  const r = runSimulation(alignChain(p));
+  assert.equal(r.chief.outcome, 'pupil:eyeR');
+  const gap = runDiagnostics(r, analyzeCoverage(r)).checks.find((c) => c.id === 'prismLens').value;
+  near(parseFloat(gap), p.intent.prismClearance, 0.05, 'clearance to tilted lens plane');
+});
+
+test('placed parts block light; BOM totals split sourced and estimated', async () => {
+  const { bomTotals } = await import('../js/model/parts.js');
+  const p = defaultParams();
+  const prism = p.prism.pos;
+  p.parts.push({ id: 'blocker', name: 'blocker', size: { x: 30, y: 30, z: 1 }, pos: { ...prism, z: prism.z - 8 }, rot: { yaw: 0, pitch: 0, roll: 0 }, attach: null, color: '#000', blocksLight: true });
+  const r = runSimulation(p);
+  assert.ok((r.counts.absorbed['part:blocker'] ?? 0) > 0);
+  assert.equal(r.counts.pupil, 0);
+  const t = bomTotals([{ unit: 10, qty: 2, include: true, sourced: true }, { unit: 5, qty: 1, include: true, sourced: false }, { unit: 99, qty: 1, include: false, sourced: true }]);
+  assert.deepEqual([t.sourced, t.estimated, t.total, t.excluded], [20, 5, 25, 99]);
+});

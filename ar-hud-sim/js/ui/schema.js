@@ -3,6 +3,44 @@
 
 const SECTION_LIST = [
   {
+    id: 'measure', title: 'Your measurements',
+    controls: [
+      { key: 'frame.sizeCode', label: 'Frame size code (inside temple arm)', type: 'text', tag: 'measured', after: 'applySizeCode', help: 'Lens width □ bridge – temple length, e.g. 52□18-145.' },
+      { key: 'frame.lensHeight', label: 'Lens height', min: 20, max: 60, step: 0.5, unit: 'mm', tag: 'measured' },
+      { key: 'frame.lensShape', label: 'Lens outline', type: 'select', options: [['roundrect', 'Rounded rectangle'], ['superellipse', 'Oval / soft-square (superellipse)'], ['custom', 'Traced points (paste below)']], tag: 'measured' },
+      { key: 'frame.lensCorner', label: 'Corner radius', min: 1, max: 30, step: 0.5, unit: 'mm', tag: 'measured', showIf: (p) => p.frame.lensShape === 'roundrect' },
+      { key: 'frame.lensExponent', label: 'Squareness (2 = ellipse)', min: 1.5, max: 10, step: 0.1, unit: '', tag: 'measured', showIf: (p) => p.frame.lensShape === 'superellipse' },
+      { key: 'frame.customOutline', label: 'Outline points x,y (mm)', type: 'textarea', tag: 'measured', showIf: (p) => p.frame.lensShape === 'custom', help: 'Right lens from a front photo, origin at the lens centre, +x toward the nose, +y up: "x,y; x,y; …". Trace at least 12 points around the lens.' },
+      { key: 'frame.pantoTiltDeg', label: 'Lens tilt (bottom toward face)', min: -5, max: 20, step: 0.5, unit: '°', tag: 'measured', help: 'Pantoscopic tilt, typically 8–12°. Measure from a side photo.' },
+      { key: 'frame.wrapDeg', label: 'Frame wrap (outer edge toward face)', min: -5, max: 25, step: 0.5, unit: '°', tag: 'measured', help: 'Typically 0–5° for optical frames, 10°+ for sport frames. Measure from a top photo.' },
+      { key: 'eye.monoPDRight', label: 'Right monocular PD', min: 22, max: 42, step: 0.5, unit: 'mm', tag: 'measured', help: 'Bridge centre to right pupil centre.' },
+      { key: 'eye.monoPDLeft', label: 'Left monocular PD', min: 22, max: 42, step: 0.5, unit: 'mm', tag: 'measured' },
+      { key: 'eye.pupilHeight', label: 'Right pupil height', min: 5, max: 40, step: 0.5, unit: 'mm', tag: 'measured', help: 'Lowest edge of the lens to the pupil centre, wearing the glasses.' },
+      { key: 'eye.pupilHeightLeft', label: 'Left pupil height', min: 5, max: 40, step: 0.5, unit: 'mm', tag: 'measured' },
+      { key: 'eye.eyeRelief', label: 'Vertex distance (eye relief)', min: 6, max: 30, step: 0.5, unit: 'mm', tag: 'measured', help: 'Lens back surface to cornea, wearing the glasses.' },
+      { key: 'eye.pupilDiameter', label: 'Pupil diameter', min: 1.5, max: 8, step: 0.1, unit: 'mm', tag: 'measured', help: '~2–3 mm in daylight, 4–6 mm indoors.' },
+      { key: 'head.gapAtHinge', label: 'Temple-to-head gap at hinge', min: 0, max: 30, step: 0.5, unit: 'mm', tag: 'measured' },
+      { key: 'head.gapAt20', label: 'Temple-to-head gap 20 mm behind hinge', min: 0, max: 30, step: 0.5, unit: 'mm', tag: 'measured' },
+      { key: 'head.canthusToTemple', label: 'Outer eye corner to inside of temple', min: 0, max: 40, step: 0.5, unit: 'mm', tag: 'measured', help: '0 = not measured. Used to cross-check frame width and PD.' },
+      { key: 'head.canthusOffset', label: 'Pupil to outer eye corner', min: 8, max: 20, step: 0.5, unit: 'mm', tag: 'assumed' },
+      { key: 'eye.lashLength', label: 'Eyelash length', min: 2, max: 14, step: 0.5, unit: 'mm', tag: 'measured', help: 'Sets the clearance the prism needs from the cornea.' },
+    ],
+  },
+  {
+    id: 'vision', title: 'Vision',
+    controls: [
+      { key: 'eye.rx.sphere', label: 'Right sphere (SPH)', min: -12, max: 8, step: 0.25, unit: 'D', tag: 'measured', help: 'From your prescription. Minus = short-sighted.' },
+      { key: 'eye.rx.cyl', label: 'Right cylinder (CYL)', min: -6, max: 6, step: 0.25, unit: 'D', tag: 'measured' },
+      { key: 'eye.rx.axis', label: 'Right axis', min: 0, max: 180, step: 1, unit: '°', tag: 'measured' },
+      { key: 'eye.rx.add', label: 'Reading add (ADD)', min: 0, max: 3.5, step: 0.25, unit: 'D', tag: 'measured', after: 'focusForEye' },
+      { key: 'eye.age', label: 'Age', min: 8, max: 90, step: 1, unit: 'yr', tag: 'measured', showIf: (p) => p.eye.ampMode === 'age' },
+      { key: 'eye.ampMode', label: 'Focusing range', type: 'select', options: [['age', 'Estimate from age'], ['manual', 'Enter amplitude']], tag: 'assumed' },
+      { key: 'eye.amplitude', label: 'Accommodation amplitude', min: 0, max: 15, step: 0.25, unit: 'D', tag: 'measured', showIf: (p) => p.eye.ampMode === 'manual' },
+      { key: 'eye.dominant', label: 'Dominant eye', type: 'select', options: [['unknown', 'Unknown'], ['right', 'Right'], ['left', 'Left']], tag: 'measured' },
+      { key: 'eye.condition', label: 'Right-eye condition', type: 'select', options: [['none', 'None'], ['amblyopia', 'Lazy eye (amblyopia)'], ['strabismus', 'Turned eye (strabismus)'], ['other', 'Other']], tag: 'measured' },
+    ],
+  },
+  {
     id: 'optics', title: 'Optical parameters', open: true,
     controls: [
       { key: 'prism.angle', label: 'Prism angle', min: 20, max: 70, step: 0.1, unit: '°', tag: 'spec', help: 'Angle between entry face and hypotenuse (= hypotenuse incidence for a ray entering square to the entry face). 45° is the 45-45-90 prism; other values keep the right angle and change the fold.' },
@@ -42,6 +80,9 @@ const SECTION_LIST = [
       { key: 'driver.pos.x', label: 'Board X', min: -100, max: 20, step: 0.1, unit: 'mm', tag: 'design' },
       { key: 'driver.pos.y', label: 'Board Y', min: -40, max: 40, step: 0.1, unit: 'mm', tag: 'design' },
       { key: 'driver.pos.z', label: 'Board Z', min: -150, max: 20, step: 0.1, unit: 'mm', tag: 'design' },
+      { key: 'driver.rot.yaw', label: 'Board yaw', min: -180, max: 180, step: 0.5, unit: '°', tag: 'design' },
+      { key: 'driver.rot.pitch', label: 'Board pitch', min: -180, max: 180, step: 0.5, unit: '°', tag: 'design' },
+      { key: 'driver.rot.roll', label: 'Board roll', min: -180, max: 180, step: 0.5, unit: '°', tag: 'design' },
       { key: 'driver.length', label: 'Board length', min: 5, max: 60, step: 0.5, unit: 'mm', tag: 'assumed' },
       { key: 'driver.height', label: 'Board height', min: 3, max: 40, step: 0.5, unit: 'mm', tag: 'assumed' },
       { key: 'driver.thickness', label: 'PCB thickness', min: 0.4, max: 4, step: 0.1, unit: 'mm', tag: 'assumed' },
@@ -102,15 +143,10 @@ const SECTION_LIST = [
   {
     id: 'eye', title: 'Eye',
     controls: [
-      { key: 'eye.ipd', label: 'Interpupillary distance', min: 54, max: 74, step: 0.5, unit: 'mm', tag: 'assumed' },
-      { key: 'eye.dx', label: 'Right eye offset X (world)', min: -8, max: 8, step: 0.1, unit: 'mm', tag: 'assumed' },
-      { key: 'eye.dy', label: 'Right eye offset Y', min: -8, max: 8, step: 0.1, unit: 'mm', tag: 'assumed' },
-      { key: 'eye.eyeRelief', label: 'Eye relief', min: 8, max: 30, step: 0.5, unit: 'mm', tag: 'assumed' },
       { key: 'eye.constants.vertexToRotationCenter', label: 'Cornea → rotation centre', min: 10, max: 17, step: 0.1, unit: 'mm', tag: 'assumed' },
       { key: 'eye.constants.entrancePupilDepth', label: 'Entrance pupil depth', min: 2, max: 4.5, step: 0.05, unit: 'mm', tag: 'assumed', help: 'Behind the corneal vertex.' },
       { key: 'eye.constants.eyeballRadius', label: 'Eyeball radius', min: 10, max: 14, step: 0.1, unit: 'mm', tag: 'assumed' },
       { key: 'eye.constants.corneaRadius', label: 'Cornea radius', min: 6.5, max: 9, step: 0.05, unit: 'mm', tag: 'assumed' },
-      { key: 'eye.pupilDiameter', label: 'Pupil diameter', min: 2, max: 8, step: 0.1, unit: 'mm', tag: 'assumed', help: '~2–3 mm in daylight, 4 mm indoors, up to 8 mm dark.' },
       { key: 'eye.gazeYaw', label: 'Gaze yaw (temporal +)', min: -45, max: 50, step: 0.5, unit: '°', tag: 'design', after: 'lookAtHud' },
       { key: 'eye.gazePitch', label: 'Gaze pitch (up +)', min: -45, max: 45, step: 0.5, unit: '°', tag: 'design' },
     ],
@@ -136,6 +172,7 @@ const SECTION_LIST = [
       { key: 'frame.housingDepth', label: 'Housing depth (inward)', min: 5, max: 25, step: 0.5, unit: 'mm', tag: 'assumed' },
       { key: 'frame.housingHeight', label: 'Housing height', min: 6, max: 30, step: 0.5, unit: 'mm', tag: 'assumed' },
       { key: 'frame.housingOffsetY', label: 'Housing vertical offset', min: -15, max: 15, step: 0.5, unit: 'mm', tag: 'assumed' },
+      { key: 'frame.housingOffsetZ', label: 'Housing start behind hinge', min: 0, max: 60, step: 0.5, unit: 'mm', tag: 'design' },
       { key: 'frame.housingWall', label: 'Housing wall', min: 0.3, max: 3, step: 0.1, unit: 'mm', tag: 'assumed' },
       { key: 'frame.lensesPresent', label: 'Spectacle lenses fitted', type: 'toggle', tag: 'assumed' },
     ],
@@ -165,11 +202,11 @@ const SECTION_LIST = [
   },
 ];
 
-const ORDER = ['optics', 'hud', 'collimator', 'prism', 'oled', 'driver', 'eye', 'frame', 'targets', 'align', 'sim'];
+const ORDER = ['measure', 'vision', 'optics', 'hud', 'collimator', 'prism', 'oled', 'driver', 'eye', 'frame', 'targets', 'align', 'sim'];
 export const SECTIONS = ORDER.map((id) => SECTION_LIST.find((s) => s.id === id));
 
 export const VISIBILITY = [
-  ['frame', 'Front frame'], ['lensR', 'Right lens'], ['lensL', 'Left lens'], ['templeR', 'Right temple'], ['templeL', 'Left temple'],
+  ['head', 'Head surface'], ['frame', 'Front frame'], ['lensR', 'Right lens'], ['lensL', 'Left lens'], ['templeR', 'Right temple'], ['templeL', 'Left temple'],
   ['hingeR', 'Right hinge'], ['hingeL', 'Left hinge'], ['housing', 'Temple housing + cavity'], ['eyeR', 'Right eye'], ['eyeL', 'Left eye'],
   ['oled', 'Micro-OLED'], ['driver', 'HDMI driver'], ['ribbon', 'Ribbon cable'], ['collimator', 'Collimator'], ['prism', 'Prism'],
   ['rays', 'Light rays'], ['coverage', 'Coverage overlay'], ['labels', 'Labels'], ['grid', 'Grid'],

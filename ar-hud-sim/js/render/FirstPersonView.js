@@ -116,14 +116,10 @@ export class FirstPersonView {
     const nx = params.sim.pixelsX, ny = params.sim.pixelsY;
     const by = new Map(R.pixelResults.map((p) => [`${p.i},${p.j}`, p]));
     const maxPow = Math.max(1e-12, ...R.pixelResults.map((p) => p.pupilPower));
-    // blur from measured vergence (eye focused at infinity) + aberration
-    const verg = R.pixelResults.map((p) => p.vergence).filter(Boolean);
-    let blurDeg = 0;
-    if (verg.length) {
-      const V = verg.reduce((s, v) => s + Math.abs(v.mean), 0) / verg.length;
-      const ab = verg.reduce((s, v) => s + v.residualMrad, 0) / verg.length;
-      blurDeg = ((params.eye.pupilDiameter * V) / 1000 + ab / 1000) * (180 / Math.PI);
-    } else blurDeg = 3;
+    // blur: residual defocus for this wearer's eye (prescription + focusing
+    // range, from Diagnostics) plus the traced aberration spread
+    let blurDeg = this.lastDiag?.focus?.blurDeg;
+    if (blurDeg == null) blurDeg = R.pixelResults.some((p) => p.vergence) ? 0 : 3;
     const blurPx = Math.min(40, blurDeg * scale * 0.5);
     this.layer ??= document.createElement('canvas');
     const L = this.layer;

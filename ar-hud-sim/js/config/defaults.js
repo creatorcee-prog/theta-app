@@ -11,6 +11,7 @@ import { Vector3 } from 'three';
 import { computeGlasses } from '../model/glassesGeometry.js';
 import { computeEye, anglesToDirection } from '../model/eye.js';
 import { eulerDegFromBasis, computePrism } from '../optics/OpticalComponents.js';
+import { defaultParts, defaultBom } from '../model/parts.js';
 import { trace, dielectricSolid } from '../optics/RayTracer.js';
 import { makeGlass } from '../optics/materials.js';
 
@@ -26,11 +27,18 @@ export function baseParams() {
     frame: {
       lensWidth: 50, lensHeight: 38, lensCorner: 12, lensThickness: 2, bridge: 18, endpiece: 7,
       rimDepth: 4, rimWidth: 3, templeLength: 145, templeThickness: 4.5, templeHeight: 6, templeSplayDeg: 2,
-      housingLength: 40, housingDepth: 13, housingHeight: 16, housingWall: 1, hingeY: 6, housingOffsetY: -3,
+      housingLength: 40, housingDepth: 13, housingHeight: 16, housingWall: 1, hingeY: 6, housingOffsetY: -3, housingOffsetZ: 0,
       lensesPresent: true, specLensN: 1.498,
+      sizeCode: '50□18-145', lensShape: 'roundrect', lensExponent: 4, customOutline: '',
+      pantoTiltDeg: 0, wrapDeg: 0,
     },
     eye: {
-      ipd: 63, dx: 0, dy: 0, eyeRelief: 14, pupilDiameter: 4, gazeYaw: 0, gazePitch: 0,
+      // your measurements (defaults are typical adult values)
+      monoPDRight: 31.5, monoPDLeft: 31.5, pupilHeight: 19, pupilHeightLeft: 19,
+      eyeRelief: 14, pupilDiameter: 4, gazeYaw: 0, gazePitch: 0, lashLength: 6,
+      // vision (right-eye spectacle prescription unless noted)
+      rx: { sphere: 0, cyl: 0, axis: 0, add: 0 }, age: 35, ampMode: 'age', amplitude: 8,
+      dominant: 'unknown', condition: 'none',
       constants: { vertexToRotationCenter: 13.5, entrancePupilDepth: 3.05, eyeballRadius: 12, corneaRadius: 7.8 },
     },
     oled: {
@@ -43,7 +51,7 @@ export function baseParams() {
       distance: 12, offsetX: 0, offsetY: 0, tiltX: 0, tiltY: 0, flip: false,
     },
     prism: { size: 10, height: 10, angle: 45, n: 1.517, coating: 'none', pos: { x: 0, y: 0, z: 0 }, rot: { yaw: 0, pitch: 0, roll: 0 } },
-    driver: { length: 22, height: 10, thickness: 1.6, ribbonWidth: 3.2, pos: { x: 0, y: 0, z: 0 } },
+    driver: { length: 22, height: 10, thickness: 1.6, ribbonWidth: 3.2, pos: { x: 0, y: 0, z: 0 }, rot: { yaw: 0, pitch: 0, roll: 0 } },
     // What the OLED shows (visual only; the optics trace pixel positions)
     hud: {
       mode: 'text', line1: '12:45', line2: 'NEXT 200 m', line3: '64 BPM', textSize: 120,
@@ -52,6 +60,10 @@ export function baseParams() {
     },
     sim: { pixelsX: 9, pixelsY: 5, raysPerPixel: 40, wavelengths: 'mono', ghosts: false, ghostMin: 0.005, drawRays: 900, raySpeed: 22 },
     targets: { hfov: 35, vfov: 20, azimuth: 25, elevation: 10, coverageMin: 40, coverageMax: 50, centralClear: 10 },
+    // head clearance beside the right temple (your measurements)
+    head: { gapAtHinge: 10, gapAt20: 7, canthusToTemple: 0, canthusOffset: 14 },
+    parts: defaultParts(),
+    bom: defaultBom(),
     // design intent used only by the alignment helper
     intent: { azimuth: 25, elevation: 10, prismClearance: 1.0, oledInset: 0.5 },
   };
@@ -70,7 +82,7 @@ export function baseParams() {
 export function alignChain(params) {
   const p = structuredClone(params);
   const glasses = computeGlasses(p.frame);
-  const eye = computeEye({ ...p.eye, side: 1, gazeYaw: 0, gazePitch: 0 }, glasses);
+  const eye = computeEye({ ...p.eye, monoPD: p.eye.monoPDRight, side: 1, gazeYaw: 0, gazePitch: 0 }, glasses);
   const A = anglesToDirection(p.intent.azimuth, p.intent.elevation, 1); // apparent HUD direction
   const outWorld = A.clone().negate(); // light travels from the prism to the eye
 
@@ -102,10 +114,16 @@ export function alignChain(params) {
   const inWorld = f1.clone().multiplyScalar(cos).addScaledVector(f2, sin);
 
   // 3. Place it: exit point on the line pupil + A t, every vertex behind the lens.
-  const zLimit = glasses.lensBackZ - p.intent.prismClearance;
-  const maxCornerZ = Math.max(...Object.values(local.vertices).map((c) => toWorld(c).z));
+  // Largest t with every vertex at least `prismClearance` behind the right
+  // lens's back plane (which includes pantoscopic tilt and wrap):
+  //   -(C + R c_i - B) . n >= clearance,  C = P + A t - R e
+  const lf = glasses.lenses.R;
   const e = toWorld(exitPt);
-  const t = (zLimit - maxCornerZ - eye.pupilCenter.z + e.z) / A.z;
+  const nA = A.dot(lf.normal);
+  const t = Math.min(...Object.values(local.vertices).map((c) => {
+    const k = eye.pupilCenter.clone().sub(e).add(toWorld(c)).sub(lf.backCenter).dot(lf.normal);
+    return (-p.intent.prismClearance - k) / nA;
+  }));
   const prismCenter = eye.pupilCenter.clone().addScaledVector(A, t).sub(e);
   p.prism.pos = round3(prismCenter);
   p.prism.rot = eulerDegFromBasis(u, v, w);

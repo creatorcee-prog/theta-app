@@ -12,8 +12,9 @@ export const EYE_CONSTANTS = {
 };
 
 /**
- * eye params: { side: +1 right / -1 left, ipd, dx, dy, eyeRelief,
- *               pupilDiameter, gazeYaw, gazePitch }
+ * eye params: { side: +1 right / -1 left, monoPD (bridge centre to pupil),
+ *               pupilHeight (above the lens's lowest edge), eyeRelief,
+ *               pupilDiameter, gazeYaw, gazePitch, constants }
  * Eye relief is measured from the lens back surface to the corneal vertex
  * with the eye looking straight ahead (the spectacle vertex distance).
  */
@@ -21,7 +22,9 @@ export function computeEye(p, glasses) {
   const C = { ...EYE_CONSTANTS, ...(p.constants ?? {}) };
   const side = p.side ?? 1;
   const vertexZ = glasses.lensBackZ - p.eyeRelief;
-  const rotationCenter = new Vector3(-side * (p.ipd / 2) + (p.dx ?? 0), p.dy ?? 0, vertexZ - C.vertexToRotationCenter);
+  const monoPD = p.monoPD ?? (p.ipd ?? 63) / 2;
+  const y = p.pupilHeight != null ? glasses.outlineMinY + p.pupilHeight : 0;
+  const rotationCenter = new Vector3(-side * monoPD, y, vertexZ - C.vertexToRotationCenter);
   // Gaze: yaw positive = temporal (wearer's right for the right eye, -x),
   // pitch positive = up.
   const q = new Quaternion().setFromEuler(new Euler((-(p.gazePitch ?? 0) * Math.PI) / 180, (-side * (p.gazeYaw ?? 0) * Math.PI) / 180, 0, 'YXZ'));

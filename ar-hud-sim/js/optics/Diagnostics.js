@@ -5,6 +5,8 @@
 
 import { Vector3 } from 'three';
 import { pointInBox } from '../model/glassesGeometry.js';
+import { assessFocus, amplitudeFor } from './Vision.js';
+import { bomTotals } from '../model/parts.js';
 
 const f1 = (x) => (x == null || !Number.isFinite(x) ? '—' : x.toFixed(1));
 const f2 = (x) => (x == null || !Number.isFinite(x) ? '—' : x.toFixed(2));
@@ -48,6 +50,14 @@ function minDistanceToPrism(prism, p) {
     }
   }
   return best;
+}
+
+function boxCorners(center, q, size) {
+  const out = [];
+  for (const sx of [-0.5, 0.5]) for (const sy of [-0.5, 0.5]) for (const sz of [-0.5, 0.5]) {
+    out.push(new Vector3(sx * size.x, sy * size.y, sz * size.z).applyQuaternion(q).add(center));
+  }
+  return out;
 }
 
 function solve3(M, r) {
@@ -155,12 +165,14 @@ export function runDiagnostics(results, coverage) {
   const prismClear = minDistanceToPrism(prism, cornea) - 0; // to corneal apex
   add('Eye', 'relief', 'Eye relief (lens back → cornea)', `${f1(params.eye.eyeRelief)} mm`,
     grade(params.eye.eyeRelief, (v) => v >= 10 && v <= 20, (v) => v >= 8 && v <= 25), 'Typical spectacle vertex distance is 12–14 mm.');
-  add('Eye', 'prismClear', 'Prism clearance to cornea', `${f1(prismClear)} mm`,
-    grade(prismClear, (v) => v >= 6, (v) => v >= 2),
-    prismClear >= 6 ? '' : prismClear >= 2 ? 'Likely eyelash contact (lashes ~8–12 mm long, assumed threshold 6 mm).' : 'Prism touches or nearly touches the cornea.');
-  const pz = Math.max(...Object.values(prism.vertices).map((v) => v.z));
-  add('Eye', 'prismLens', 'Prism clearance to lens back surface', `${f1(glasses.lensBackZ - pz)} mm`,
-    grade(glasses.lensBackZ - pz, (v) => v >= 0.3, (v) => v >= 0), glasses.lensBackZ - pz < 0 ? 'Prism intersects the spectacle lens.' : '');
+  const lash = params.eye.lashLength ?? 6;
+  add('Eye', 'prismClear', 'Prism clearance to cornea', `${f1(prismClear)} mm (lashes ${f1(lash)} mm)`,
+    grade(prismClear, (v) => v >= lash, (v) => v >= 2),
+    prismClear >= lash ? '' : prismClear >= 2 ? `Closer than your ${f1(lash)} mm lash length: lashes will likely brush or smear the prism.` : 'Prism touches or nearly touches the cornea.');
+  const lfR = glasses.lenses.R;
+  const lensGap = Math.min(...Object.values(prism.vertices).map((v) => -v.clone().sub(lfR.backCenter).dot(lfR.normal)));
+  add('Eye', 'prismLens', 'Prism clearance to lens back surface', `${f1(lensGap)} mm`,
+    grade(lensGap, (v) => v >= 0.3, (v) => v >= 0), lensGap < 0 ? 'Prism intersects the (tilted/wrapped) spectacle lens plane.' : 'Measured to the lens back plane, including tilt and wrap.');
   const eb = coverage.eyebox;
   add('Eye', 'eyebox', 'Eye-box (full field visible)', `${f1(eb.full.width)} × ${f1(eb.full.height)} mm`,
     grade(eb.full.width, (v) => v >= 4 && eb.full.height >= 4, (v) => v > 0),
@@ -201,20 +213,33 @@ export function runDiagnostics(results, coverage) {
   }
   const verg = pixelResults.map((p) => p.vergence).filter(Boolean);
   const pixelArcmin = ((oled.pixelPitch / (collimator?.f ?? 12)) * 180 * 60) / Math.PI;
+  let focus = null;
   if (verg.length) {
     const meanV = verg.reduce((s, v) => s + v.mean, 0) / verg.length;
+    const Vx = verg.reduce((s, v) => s + v.Vx, 0) / verg.length, Vy = verg.reduce((s, v) => s + v.Vy, 0) / verg.length;
     const maxAst = Math.max(...verg.map((v) => v.astig));
     const blurMrad = verg.reduce((s, v) => s + v.residualMrad, 0) / verg.length;
     const blurArcmin = (blurMrad * 180 * 60) / Math.PI / 1000;
-    const defocusBlur = (params.eye.pupilDiameter * Math.abs(meanV)) / 1000; // rad, eye focused at the image
-    const supports = meanV <= 0.25 && meanV >= -3 && blurArcmin <= 2 * pixelArcmin;
-    const st = meanV <= 0.1 && meanV >= -0.5 && blurArcmin <= pixelArcmin ? 'pass' : supports ? 'warn' : 'fail';
-    const imgDist = meanV < -0.05 ? `virtual image ≈ ${f1(1000 / -meanV)} mm away` : meanV > 0.05 ? 'converging bundle: no virtual image the eye can focus' : 'image at optical infinity';
-    add('Collimation', 'vergence', 'Measured bundle vergence at pupil', `${f2(meanV)} D`, st,
-      `From traced rays: ${imgDist}. Astigmatism up to ${f2(maxAst)} D. Residual aberration spread ${f2(blurArcmin)}′ vs pixel size ${f2(pixelArcmin)}′. Eye focused at infinity would see ≈ ${f1((defocusBlur * 180 * 60) / Math.PI)}′ defocus blur.`);
+    const imgDist = meanV < -0.05 ? `virtual image ≈ ${f1(1000 / -meanV)} mm away` : meanV > 0.05 ? 'converging bundle (focus "beyond infinity")' : 'image at optical infinity';
+    add('Collimation', 'vergence', 'Measured bundle vergence at pupil', `${f2(meanV)} D`, 'info',
+      `From traced rays: ${imgDist}. Horizontal ${f2(Vx)} D, vertical ${f2(Vy)} D, astigmatism up to ${f2(maxAst)} D. Residual aberration spread ${f2(blurArcmin)}′ vs pixel size ${f2(pixelArcmin)}′.`);
+    // ---- focus for this wearer's eye (prescription + accommodation)
+    focus = assessFocus({ Vx, Vy }, params.eye);
+    focus.aberrationArcmin = blurArcmin;
+    const defocusArcmin = (focus.blurRad * 180 * 60) / Math.PI;
+    focus.blurDeg = (focus.blurRad + blurMrad / 1000) * (180 / Math.PI);
+    const rx = params.eye.rx;
+    const rxText = `Rx ${rx.sphere >= 0 ? '+' : ''}${f2(rx.sphere)} / ${f2(rx.cyl)} × ${Math.round(rx.axis)}° → at cornea ${f2(focus.Fh)} D (horizontal), ${f2(focus.Fv)} D (vertical); accommodation range ${f1(focus.amp)} D`;
+    const st = focus.residual <= 0.25 && blurArcmin <= 2 * pixelArcmin ? 'pass' : focus.residual <= 0.75 ? 'warn' : 'fail';
+    const why = focus.tooConverging ? 'The HUD focuses farther than your eye can relax to (typical when short-sighted, because the HUD light bypasses your spectacle lens).'
+      : focus.tooDiverging ? 'The HUD image is closer than your near point.'
+        : Math.abs(focus.needH - focus.needV) > 0.5 ? 'Your eye and the HUD disagree between meridians (astigmatism); refocusing cannot fix that, a cylindrical corrector in the HUD path can.' : '';
+    add('Vision', 'eyeFocus', 'HUD in focus for your eye', `${f2(focus.residual)} D off, ${f1(defocusArcmin)}′ blur`, st,
+      `${rxText}. Best accommodation ${f2(focus.accommodation)} D. ${why} ${st !== 'pass' && !why.includes('cylindrical') ? 'Use "Focus HUD for my eye" to move the OLED to the matching distance.' : ''}`.trim());
+    const supports = focus.residual <= 0.5 && blurArcmin <= 2 * pixelArcmin;
     add('Collimation', 'virtualImage', 'Focused virtual image', supports ? 'supported' : 'not supported', supports ? (st === 'pass' ? 'pass' : 'warn') : 'fail',
-      supports ? 'Ray bundles are near-collimated with sub-2-pixel aberration; a focusable virtual image is consistent with this configuration.'
-        : 'The traced bundles do not form a virtual image the eye can focus on (too divergent/convergent or too aberrated).');
+      supports ? 'The traced bundles form a virtual image within your eye\'s focusing range, with sub-2-pixel aberration.'
+        : 'The traced bundles do not form a virtual image your eye can bring into focus (vergence outside your range, astigmatic mismatch, or too much aberration).');
   } else {
     add('Collimation', 'vergence', 'Measured bundle vergence at pupil', 'insufficient rays', 'fail', 'Fewer than 4 rays per pixel reach the pupil region; vergence cannot be measured.');
   }
@@ -245,9 +270,7 @@ export function runDiagnostics(results, coverage) {
   add('Alignment', 'oledFit', 'OLED module inside temple cavity', housingOk ? 'yes' : 'no', housingOk ? 'pass' : 'fail',
     housingOk ? '' : 'The OLED housing extends outside the temple cavity; enlarge the housing or move the OLED.');
   const dEnv = system.driver;
-  const dMin = dEnv.center.clone().sub(new Vector3(dEnv.size.x / 2, dEnv.size.y / 2, dEnv.size.z / 2));
-  const dMax = dEnv.center.clone().add(new Vector3(dEnv.envelope.x - dEnv.size.x / 2, dEnv.size.y / 2, dEnv.size.z / 2));
-  const driverOk = pointInBox(dMin, glasses.cavity, 0.01) && pointInBox(dMax, glasses.cavity, 0.01);
+  const driverOk = boxCorners(dEnv.envCenter, dEnv.quaternion, dEnv.envelope).every((c) => pointInBox(c, glasses.cavity, 0.01));
   add('Alignment', 'driverFit', 'Driver board inside temple cavity', driverOk ? 'yes' : 'no', driverOk ? 'pass' : 'fail',
     driverOk ? `Board ${dEnv.size.z}×${dEnv.size.y} mm (assumed compact driver; common HDMI boards are larger).` : 'The driver board does not fit in the cavity.');
   const collInside = collimator ? pointInBox(collimator.center, glasses.cavity, 0.01) : null;
@@ -290,7 +313,56 @@ export function runDiagnostics(results, coverage) {
   add('Image', 'lum', 'Estimated HUD luminance', `${Math.round(L)} cd/m²`, 'info',
     `Peak OLED luminance ${params.oled.peakLuminance} cd/m² (assumed) × ${params.oled.brightness}% × chief-path transmission. Luminance is conserved through lossless imaging when the pupil is filled.`);
 
+  // ---------------- head and face fit (right side)
+  const fr = params.frame, hd = params.head;
+  const innerTempleX = -(glasses.hingeX - fr.templeThickness / 2);
+  const skinX = (z) => innerTempleX + Math.max(0, hd.gapAtHinge + (hd.gapAt20 - hd.gapAtHinge) * ((glasses.hingeZ - z) / 20));
+  const hs = glasses.housing;
+  const hClear = Math.min(skinX(hs.max.z) - hs.max.x, skinX(hs.min.z) - hs.max.x);
+  add('Fit', 'headHousing', 'Temple housing clears your head', `${f1(hClear)} mm`, grade(hClear, (v) => v >= 1, (v) => v >= 0),
+    hClear >= 1 ? `Temple-to-head gap ${f1(hd.gapAtHinge)} mm at the hinge, ${f1(hd.gapAt20)} mm 20 mm back (extrapolated linearly).`
+      : `The housing's inner face reaches ${f1(-hClear)} mm into your temple area. Reduce housing depth or length, or move it forward.`);
+  const canthusX = eye.pupilCenter.x - hd.canthusOffset;
+  const modelCanthus = canthusX - innerTempleX;
+  if (hd.canthusToTemple > 0) {
+    const diff = modelCanthus - hd.canthusToTemple;
+    add('Fit', 'canthus', 'Eye corner to temple: model vs your measurement', `${f1(modelCanthus)} vs ${f1(hd.canthusToTemple)} mm`,
+      Math.abs(diff) <= 3 ? 'pass' : 'warn',
+      Math.abs(diff) <= 3 ? 'The frame width and monocular PD agree with your measurement.' : `Off by ${f1(diff)} mm: recheck monocular PD, lens width, bridge, endpiece, or the assumed ${f1(hd.canthusOffset)} mm pupil-to-eye-corner offset.`);
+  } else {
+    add('Fit', 'canthus', 'Eye corner to temple (model)', `${f1(modelCanthus)} mm`, 'info', 'Enter your own measurement to cross-check the frame and PD.');
+  }
+  for (const pf of system.parts ?? []) {
+    const blocked = counts.absorbed[`part:${pf.part.id}`] ?? 0;
+    const corners = boxCorners(pf.position, pf.quaternion, pf.size);
+    // the temple-side skin surface applies outboard of the eye corner and
+    // behind the cornea; parts in front of the eye are checked elsewhere
+    const intoHead = Math.max(...corners.filter((c) => c.x < canthusX && c.z < eye.corneaVertex.z && c.z > glasses.hingeZ - 90).map((c) => c.x - skinX(c.z)), -Infinity);
+    const notes = [];
+    if (blocked) notes.push(`blocks ${blocked} rays`);
+    if (intoHead > 0) notes.push(`cuts ${f1(intoHead)} mm into your head`);
+    if (notes.length) add('Fit', `part-${pf.part.id}`, pf.part.name, notes.join(', '), intoHead > 0 ? 'fail' : 'warn',
+      blocked ? 'It sits in the light path. Move it (drag it, or edit it under Parts & cost).' : 'Move it outward or behind the ear.');
+  }
+  if (glasses.outlineNote) add('Fit', 'outline', 'Lens outline', 'adjusted', 'warn', glasses.outlineNote);
+
+  // ---------------- vision notes
+  const amp = amplitudeFor(params.eye);
+  add('Vision', 'amp', 'Accommodation range', `${f1(amp)} D`, 'info',
+    params.eye.ampMode === 'age' ? `Average for age ${params.eye.age} (Hofstetter: 18.5 − 0.3 × age). Individuals vary by ±2 D or more.` : 'Entered manually.');
+  if (params.eye.rx.add > 0) add('Vision', 'add', 'Reading add', `+${f2(params.eye.rx.add)} D`, 'info', 'Presbyopic: keep the HUD focused near your distance prescription; you have little range to accommodate.');
+  const dom = params.eye.dominant;
+  add('Vision', 'dominance', 'Dominant eye', dom, dom === 'left' ? 'warn' : 'info',
+    dom === 'left' ? 'The HUD is on your non-dominant eye: expect more binocular rivalry (the HUD fading in and out).' : dom === 'right' ? 'The HUD is on your dominant eye.' : 'Unknown. Test: frame a distant object between your hands with both eyes open, then close each eye.');
+  const cond = params.eye.condition;
+  if (cond !== 'none') add('Vision', 'condition', 'Right-eye condition', cond, 'warn',
+    { amblyopia: 'With a lazy right eye the HUD may look dim or blurred even when the optics are right; consider a left-eye build.', strabismus: 'A turned eye shifts where the HUD lands relative to your gaze; check the eye-box with your real fixation.', other: 'Check with your eye-care professional whether a right-eye HUD suits you.' }[cond]);
+
+  // ---------------- cost
+  const tot = bomTotals(params.bom ?? []);
+  add('Cost', 'bom', 'Parts total', `$${tot.total.toFixed(2)}`, 'info', `$${tot.sourced.toFixed(2)} from sourced prices + $${tot.estimated.toFixed(2)} estimated. Details under Parts & cost.`);
+
   const summary = { pass: 0, warn: 0, fail: 0, info: 0 };
   for (const c of checks) summary[c.status]++;
-  return { checks, summary };
+  return { checks, summary, focus };
 }
