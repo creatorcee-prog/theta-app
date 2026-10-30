@@ -92,8 +92,9 @@ function lensVolume(collimator, nGlass, f) {
   const sag = (r) => { const q = 1 - (1 + k) * c * c * r * r; return q > 0 ? (c * r * r) / (1 + Math.sqrt(q)) : NaN; };
   const sagA = sag(a), te = collimator.edgeThickness ?? 0.8;
   if (!Number.isFinite(sagA)) return 0;
+  const faces = collimator.biconvex ? 2 : 1; // equi-convex: both faces curved
   let v = 0; const n = 64;
-  for (let i = 0; i < n; i++) { const r = ((i + 0.5) / n) * a; v += 2 * Math.PI * r * (te + sagA - sag(r)) * (a / n); }
+  for (let i = 0; i < n; i++) { const r = ((i + 0.5) / n) * a; v += 2 * Math.PI * r * (te + faces * (sagA - sag(r))) * (a / n); }
   return v;
 }
 
@@ -106,13 +107,19 @@ export function computeWeights(params, system) {
   const { prism, collimator, glasses, driver, oled } = system;
   const calc = {};
   calc.prism = (prism.volumeMm3 / 1000) * DENSITY.bk7;
+  calc.fold = system.fold ? (system.fold.volumeMm3 / 1000) * DENSITY.bk7 : 0;
   if (collimator) {
-    calc.collimator = (lensVolume({ ...collimator, edgeThickness: params.collimator.edgeThickness, glassDiameter: params.collimator.glassDiameter }, params.prism.n, collimator.f) / 1000) * DENSITY.bk7;
+    calc.collimator = (lensVolume({ ...collimator, edgeThickness: params.collimator.edgeThickness, glassDiameter: params.collimator.glassDiameter }, params.collimator.n ?? params.prism.n, collimator.f) / 1000) * (params.collimator.density ?? DENSITY.bk7);
     const len = Math.max(0, collimator.center.clone().sub(oled.center).dot(oled.normal));
-    const r = collimator.apertureRadius + 0.25;
+    const r = Math.max(collimator.apertureRadius + 0.25, (params.collimator.glassDiameter ?? 0) / 2 + 0.1);
     calc.barrel = ((Math.PI * ((r + 0.8) ** 2 - r * r) * len) / 1000) * DENSITY.pla;
   } else { calc.collimator = 0; calc.barrel = 0; }
   calc.housing = ((boxVol(glasses.housing.size) - boxVol(glasses.cavity.size)) / 1000) * DENSITY.pla;
+  if (system.housingShell) {
+    // shell walls around each part (the hinge block is one of them)
+    const w = system.housingShell.wall;
+    calc.housing = (system.housingShell.parts.reduce((s, p) => s + boxVol(p.size) - Math.max(0, p.size.x - 2 * w) * Math.max(0, p.size.y - 2 * w) * Math.max(0, p.size.z - 2 * w), 0) / 1000) * DENSITY.pla;
+  } else if (system.hingeBlock) { const s = system.hingeBlock.size, w = 1.2; calc.housing += ((boxVol(s) - Math.max(0, s.x - 2 * w) * Math.max(0, s.y - 2 * w) * Math.max(0, s.z - 2 * w)) / 1000) * DENSITY.pla; }
   const arm = system.arm;
   calc.arm = arm ? ((Math.PI * ((arm.radius + arm.wall) ** 2 - arm.radius ** 2) * arm.length) / 1000) * DENSITY.pla : 0;
   calc.driver = (boxVol(driver.size) / 1000) * DENSITY.fr4 + 1.5;
@@ -127,6 +134,7 @@ export function computeWeights(params, system) {
       case 'ribbon': return oled.center.clone().lerp(driver.center, 0.5);
       case 'collimator': return collimator ? collimator.center : oled.center;
       case 'prism': return prism.center;
+      case 'fold': return system.fold ? system.fold.center : prism.center;
       case 'housing': return glasses.housing.center;
       case 'arm': return arm ? arm.start.clone().lerp(arm.end, 0.5) : prism.center;
       case 'frame': return null; // symmetric: split evenly between sides, placed below

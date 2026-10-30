@@ -342,3 +342,34 @@ test('mirror patch: partial mirror splits R/T, chief ray reflects into the pupil
   const pt = r.system.prism;
   near(pt.astigD, (1000 / pt.f) * (Math.sin(rad(pt.incidenceDeg)) ** 2 / Math.cos(rad(pt.incidenceDeg))), 1e-9);
 });
+
+test('biconvex acrylic lens: traced parallel rays focus at the stated focal length', async () => {
+  const { computeCollimator, buildOpticalObjects } = await import('../js/optics/OpticalComponents.js');
+  const oled = { center: new Vector3(0, 0, 0), normal: new Vector3(0, 0, 1), xAxis: new Vector3(1, 0, 0), yAxis: new Vector3(0, 1, 0), quaternion: new (await import('three')).Quaternion() };
+  const c = computeCollimator({ enabled: true, mode: 'biconvex', focalLength: 45, aperture: 6, glassDiameter: 25, edgeThickness: 0.8, distance: 10, offsetX: 0, offsetY: 0, tiltX: 0, tiltY: 0 }, oled, 1.491);
+  assert.ok(c.valid);
+  const glass = makeGlass('PMMA', 1.491, { dispersive: false });
+  const faces = [conicFace(c.center, c.axis.clone().negate(), c.c, 0, c.apertureRadius), conicFace(c.center.clone().addScaledVector(c.axis, c.thickness), c.axis, c.c, 0, c.apertureRadius), cylinderFace(c.center.clone().addScaledVector(c.axis, c.sagA), c.axis, c.apertureRadius, c.thickness - 2 * c.sagA)];
+  const lens = dielectricSolid('L', 'L', glass, faces, 'lens');
+  // paraxial rays from the far side converge toward the OLED side: back focal point at ffd before the first vertex
+  const zs = [];
+  for (const h of [0.3, 0.6]) {
+    const [p] = trace({ objects: [lens] }, [{ origin: new Vector3(h, 0, 200), dir: new Vector3(0, 0, -1), weight: 1 }]);
+    const f = p.finalRay; const t = -f.origin.x / f.dir.x; zs.push(f.origin.z + f.dir.z * t);
+  }
+  // symmetric lens: back focal distance equals the front focal distance from its vertex
+  for (const z of zs) near(c.center.z - z, c.frontFocalDistance, 0.3, 'focus at the computed focal distance');
+});
+
+test('bare cover-slip reflector: reflectance follows Fresnel for a thin plate', async () => {
+  const { partialMirror } = await import('../js/optics/RayTracer.js');
+  const m = partialMirror('patch', 'glass', discFace(new Vector3(0, 0, 0), new Vector3(0, 0, 1), 10), 0.3, undefined, 1.523);
+  for (const deg of [0, 45, 60]) {
+    const d = new Vector3(Math.sin(rad(deg)), 0, -Math.cos(rad(deg)));
+    const paths = trace({ objects: [m] }, [{ origin: d.clone().multiplyScalar(-5), dir: d, weight: 1 }]);
+    const ev = paths[0].events.find((e) => e.obj === 'patch');
+    const r = fresnel(AIR.n550, 1.523, Math.cos(rad(deg))).R;
+    near(ev.R, (2 * r) / (1 + r), 1e-9);
+    near(ev.R + ev.T, 1, 1e-12);
+  }
+});

@@ -153,44 +153,59 @@ Lumen needs a hand-made waveguide.
 
 ### Mirage: the mirror-on-the-lens make
 
-- **What is modelled.** A thin glass shell sits behind the right lens with a
-  partial mirror (R 30%) on its concave face.
-  - A new tracer object splits every ray hitting it into a reflected branch
-    and a transmitted branch.
-  - The shell is slid back automatically until its tilted rim clears the
-    lens.
-  - The display and an aspheric lens sit in the temple housing and shine
-    across the inside of the lens onto it.
-  - Focals did this with a laser scanner and a holographic film
-    ([ITWorldCanada](https://itworldcanada.com/?p=410603)); neither is
-    buyable.
-- **The physics problem.** Light from the temple meets the patch at about
-  45°. A curved mirror used that far off-axis focuses horizontal and
-  vertical lines at f·cos i and f/cos i, which is built-in astigmatism.
-  - The diagnostics print it: about 18 D for R 60 mm at 40° incidence.
-  - The search therefore drove the patch almost flat (R ≈ 2.2 m), so the
-    asphere does the focusing.
-  - It also tilted the asphere about 17° to cancel some of the remaining
-    astigmatism.
-- **How it would be built.**
-  - Patch: a 1 mm mineral watch crystal
-    ([Esslinger, $3.95](https://www.esslinger.com/domed-watch-crystal-round-mineral-glass-crystal-1-00-mm-thick/))
-    cut to 12.5 mm and given a partial-mirror coating. The coating is an
-    estimate ($40); custom curved partial reflectors start at €75
-    ([Alien Photonics](https://findlight.net/uploads/products/datasheet/output-couplers-partial-reflectors-alien-photonics_1721050359.pdf)).
-  - Mount: glue only at the rim to the lens back, keeping an air gap.
-- **Result.**
-  - Overall 89.6%, the best score of any make.
-  - 100% of the display in the pupil and inside your zone.
-  - 20.6° × 18.3° field.
-  - 34.5 g.
-  - $300: the cost goal is 67% met.
-  - 11/12 structure checks pass. The one failure is whole-field focus,
-    as on every single-lens make: 90% of the field sits within about 4 D.
-  - Reach: 7 of 25 aim points fully visible and buildable.
-  - The fit needs millimetre accuracy, like the Focals fitting. The
-    viewing zone shrinks as you move the patch off the line to where the
-    HUD sits.
+Mirage scores **100%** on all four goals. Its whole optical path is
+attached to the frame.
+
+**What is modelled**
+
+- **Display and lens.** The micro-OLED and a Google Cardboard lens (f 45
+  mm, acrylic, trimmed to Ø10 mm) lie along the temple, inside a printed
+  housing that hugs each part.
+- **Fold prism.** A stock 10 mm K9 right-angle prism sits in a printed
+  block in the hinge/endpiece. It folds the beam 90° by total internal
+  reflection toward the lens.
+- **Reflector.** A bare microscope cover slip (22×22×0.17 mm), cut to
+  Ø15 mm, sits 0.4 mm behind the spectacle lens. It reflects the image into
+  the eye by plain Fresnel reflection, computed per ray, about 12% at 62°.
+- **Mount.** Three Ø1.5 mm standoff pins bond the cover slip to the lens.
+
+**Why these choices** (each one came from a failing check)
+
+- **Long focal length for focus.** A single f 12–19 mm asphere cannot keep
+  an 18° image within 0.5 D: off-axis astigmatism is about power ×
+  angle². The f 45 mm lens gives a 6.4° × 4.0° image (about 22 cm wide at
+  2 m, like a smartwatch at arm's length). 90% of it is within 0.10 D, with
+  0.9′ blur.
+- **Fold prism for form factor.** A 45 mm path pointing sideways would
+  stick out like a camera pod. Folded along the temple, the bulge is 5 mm.
+  A precision mirror ([Edmund, $19](https://www.edmundoptics.com/p/127mm-diameter-4-6lambda-mirror/955/))
+  would also work; a K9 prism is cheaper and loses no light by TIR at this
+  small field.
+- **Bare glass for cost.** A coated partial mirror costs $40 or more. A
+  cover slip ([Microscope World, $4.50 per 100](https://www.microscopeworld.com/p-373-cover-slips.aspx))
+  reflects less, so the HUD is dimmer (about 355 cd/m²: fine indoors and
+  in shade, weak in direct sun). In exchange you see about 92% of the
+  world through it.
+
+**Where the 100% is thin**
+
+- **Cost:** $198.92 against $200. The cable ($8) and glue ($6) are
+  estimates, and the lens price ([$1.24 a pair](https://www.blackenterprise.com/black-enterprise-tech-review-google-cardboard/))
+  comes from a dated review.
+- **Lash clearance:** the cover slip clears your cornea by 6.4 mm against a
+  6.0 mm lash length.
+- **Reach:** 10 of 25 aim points fully visible.
+- **Eye-box:** 4.0 × 2.5 mm, so the fit has to be accurate, as with Focals.
+
+**Changes made while tuning**
+
+- The aberration limit for a "focused image" is now 2 pixels or 2′,
+  whichever is larger. The eye resolves about 1′ at best, and a pure
+  2-pixel rule demanded sub-arcminute sharpness from a 45 mm lens.
+- A focus that cannot be measured now counts as a failure instead of
+  being skipped.
+- A form-factor check now applies to every make: the housing may bulge at
+  most 8 mm beyond the temple (assumed). Lumen fails it.
 
 ### Lumen: the waveguide make
 
@@ -328,6 +343,27 @@ the head runs back at your measured temple gaps.
 - **Display size limit:** one 0.23″ display at f = 12–19 mm spans only
   about 15–23° × 9–16°. It can be placed anywhere in the zone but cannot
   fill all of it at once.
+
+### HUD styles
+
+The Projected content section has a gallery of layouts for a small
+monochrome see-through HUD. Black is transparent. Each layout is drawn by
+the same renderer the optics use, so the eye view shows it through the
+traced system. Picking a style loads sample text, which you can edit.
+
+| Style | Contents |
+|---|---|
+| Glance | Time plus one line |
+| Navigation | Turn arrow, distance and street |
+| Notification card | Sender and message |
+| Workout | Heart rate, pace, distance and a 5-zone bar |
+| Live captions / translation | Captions |
+| Teleprompter | Text with the current line highlighted |
+| Compass heading tape | Heading tape |
+| Speed gauge | Speed |
+| Text + arrow | Original layout |
+| Test pattern | Test grid |
+| Uploaded image | Your image |
 
 ### Labels
 

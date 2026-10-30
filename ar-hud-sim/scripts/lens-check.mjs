@@ -10,7 +10,7 @@ for (const [mode, k] of [['thin', 0], ['spherical', 0], ['aspheric', -0.43], ['a
   const p = defaultParams();
   p.prism.coating = 'mirror'; // isolate the lens from TIR leakage
   p.collimator.mode = mode; p.collimator.conicK = k;
-  const c = computeCollimator(p.collimator, computeOled(p.oled), p.prism.n);
+  const c = computeCollimator(p.collimator, computeOled(p.oled), p.collimator.n ?? p.prism.n);
   p.collimator.distance = c.frontFocalDistance;
   const r = runSimulation(p);
   const cov = analyzeCoverage(r);

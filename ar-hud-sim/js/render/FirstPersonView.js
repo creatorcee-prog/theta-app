@@ -70,6 +70,12 @@ export class FirstPersonView {
         if (k === 'prism') {
           ctx.fillStyle = 'rgba(160,215,255,0.18)'; ctx.fill();
           ctx.strokeStyle = 'rgba(190,230,255,0.85)'; ctx.lineWidth = 1.5 * (w / 600); ctx.stroke();
+        } else if (o.blurDeg) {
+          // defocused near-eye pin: a soft, partial shadow
+          ctx.save();
+          ctx.filter = `blur(${Math.max(1, (o.blurDeg * scale) / 4)}px)`;
+          ctx.fillStyle = `rgba(18,20,24,${o.alpha})`; ctx.fill();
+          ctx.restore();
         } else {
           ctx.fillStyle = 'rgba(18,20,24,0.92)'; ctx.fill();
         }

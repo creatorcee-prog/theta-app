@@ -33,7 +33,7 @@ export class GlassesModel {
     return m;
   }
 
-  build(glasses, frame, head) {
+  build(glasses, frame, head, shell = null) {
     this.root.clear();
     const g = (id, label) => {
       const grp = new THREE.Group();
@@ -119,12 +119,23 @@ export class GlassesModel {
     // ---- housing + internal cavity
     const hgp = g('housing', 'Right-temple display housing');
     const h = glasses.housing;
-    const shell = new THREE.Mesh(new THREE.BoxGeometry(h.size.x, h.size.y, h.size.z),
+    if (shell) {
+      // conformal printed shell: a wall around each part, joined into one housing
+      for (const part of shell.parts) {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(part.size.x, part.size.y, part.size.z), this.mat({ color: 0x3b4352, transparent: true, opacity: 0.55, roughness: 0.6, depthWrite: false }));
+        m.position.copy(part.center); m.quaternion.copy(part.quaternion); hgp.add(m);
+        const e = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(part.size.x, part.size.y, part.size.z)), new THREE.LineBasicMaterial({ color: 0x8090a8 }));
+        e.position.copy(part.center); e.quaternion.copy(part.quaternion); hgp.add(e);
+      }
+    }
+    const boxShell = new THREE.Mesh(new THREE.BoxGeometry(h.size.x, h.size.y, h.size.z),
       this.mat({ color: 0x3b4352, transparent: true, opacity: 0.22, roughness: 0.6, depthWrite: false }));
-    shell.position.copy(h.center);
-    hgp.add(shell);
+    boxShell.position.copy(h.center);
+    boxShell.visible = !shell;
+    hgp.add(boxShell);
     const shellEdges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(h.size.x, h.size.y, h.size.z)), new THREE.LineBasicMaterial({ color: 0x6d7a90 }));
     shellEdges.position.copy(h.center);
+    shellEdges.visible = !shell;
     hgp.add(shellEdges);
     const cav = glasses.cavity;
     const cavLines = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(cav.size.x, cav.size.y, cav.size.z)),

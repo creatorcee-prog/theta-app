@@ -176,8 +176,8 @@ export function orthonormalBasis(z) {
 // exitType: segment type after leaving the solid (undefined -> 'emerge',
 // null -> keep the type the ray had before it entered).
 /** Partially reflective curved film (e.g. a coated thin shell) in air. */
-export function partialMirror(id, label, face, R, T) {
-  return { kind: 'mirror', id, label, face, R, T };
+export function partialMirror(id, label, face, R, T, fresnelN) {
+  return { kind: 'mirror', id, label, face, R, T, fresnelN };
 }
 
 export function dielectricSolid(id, label, material, faces, exitType) {
@@ -362,7 +362,9 @@ export function trace(scene, sources, options = {}) {
         const N = hit.normal.clone();
         const cosI = Math.abs(dir.dot(N));
         const incidence = Math.acos(Math.min(1, cosI));
-        const R = obj.R, T = obj.T ?? 1 - obj.R;
+        // bare glass plate: unpolarised Fresnel at both faces, summed incoherently
+        let R = obj.R, T = obj.T ?? 1 - obj.R;
+        if (obj.fresnelN) { const f1 = fresnel(1.000293, obj.fresnelN, cosI).R; R = (2 * f1) / (1 + f1); T = 1 - R; }
         r.events.push({ obj: obj.id, face: 'mirror', entering: false, incidenceDeg: (incidence * 180) / Math.PI, point: hit.point.clone(), mirror: true, facet: true, R, T, tir: false });
         if (T > 0 && weight * T >= minWeight && depth < maxDepth) {
           stack.push({ origin: hit.point.clone(), dir: dir.clone(), weight: weight * T, lambda: r.lambda, color: r.color,

@@ -2,7 +2,7 @@
 // analysis. Operates only on traced results; nothing here creates rays that
 // the tracer did not produce.
 
-import { lensMountPoints } from './LensMount.js';
+import { lensMountPointsPerPin, PIN_RADIUS } from './LensMount.js';
 import { Vector3, Quaternion } from 'three';
 import { computeEye, directionToAngles, anglesToDirection } from '../model/eye.js';
 
@@ -136,12 +136,20 @@ function hardwarePoints(system) {
         pts.push(collimator.center.clone().addScaledVector(e1, r * Math.cos(a)).addScaledVector(e2, r * Math.sin(a)).addScaledVector(collimator.axis, h));
       }
     }
+    // the barrel (outer wall) from the OLED to the lens
+    const br = Math.max(collimator.apertureRadius + 0.25, (collimator.glassDiameter ?? 0) / 2 + 0.1) + 0.8;
+    const len = Math.max(0, collimator.center.clone().sub(oled.center).dot(oled.normal)) + (collimator.thickness || 0);
+    for (let i = 0; i <= 6; i++) for (let k = 0; k < 12; k++) {
+      const a2 = (k / 12) * Math.PI * 2;
+      pts.push(oled.center.clone().addScaledVector(oled.normal, (len * i) / 6).addScaledVector(e1, br * Math.cos(a2)).addScaledVector(e2, br * Math.sin(a2)));
+    }
     groups.collimator = pts;
   }
   const h = glasses.housing;
   groups.housing = boxCorners(h.center, new Quaternion(), h.size);
   if (system.arm && system.arm.length > 0.6) groups.arm = armSurfacePoints(system.arm);
-  if (system.lensMount) groups.mount = lensMountPoints(system.lensMount);
+  if (system.lensMount) lensMountPointsPerPin(system.lensMount).forEach((pts, k) => { groups[`mount${k}`] = pts; });
+  if (system.hingeBlock) groups.hingeBlock = boxCorners(system.hingeBlock.center, new Quaternion(), system.hingeBlock.size);
   return groups;
 }
 
@@ -342,6 +350,14 @@ export function analyzeCoverage(results) {
   for (const [k, pts] of Object.entries(hw)) {
     const hull = angularHull(pts, eye);
     occlusion[k] = { hull, minRadius: hull.length >= 3 ? minRadius(hull) : Infinity };
+    if (k.startsWith('mount') && pts.length) {
+      // a thin pin a few mm from the eye is far out of focus: its shadow spreads
+      // over pupil/distance radians and dims by about pin width / pupil diameter
+      const dist = pts.reduce((s, q) => s + q.distanceTo(eye.pupilCenter), 0) / pts.length;
+      const pupilD = 2 * eye.pupilRadius;
+      occlusion[k].blurDeg = ((pupilD / dist) * 180) / Math.PI;
+      occlusion[k].alpha = Math.min(0.9, (2 * PIN_RADIUS) / pupilD);
+    }
   }
   occlusion.minRadius = Math.min(...Object.values(occlusion).map((o) => o.minRadius ?? Infinity));
   // Prism solid-angle footprint as fraction of the lens's angular area

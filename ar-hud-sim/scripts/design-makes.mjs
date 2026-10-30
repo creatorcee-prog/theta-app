@@ -35,7 +35,7 @@ const round = (x, d = 1) => Math.round(x * 10 ** d) / 10 ** d;
 
 function randomVars(make) {
   const V = make.vars, out = {};
-  for (const [k, r] of Object.entries(V)) out[k] = typeof r[0] !== 'number' || (k === 'prism') ? pick(r) : round(lerp(r, rnd()));
+  for (const [k, r] of Object.entries(V)) out[k] = typeof r[0] !== 'number' || r.length !== 2 || k === 'prism' ? pick(r) : round(lerp(r, rnd()));
   return out;
 }
 function mutate(make, v, scale) {
@@ -44,7 +44,7 @@ function mutate(make, v, scale) {
   const n = 1 + Math.floor(rnd() * 3);
   for (let i = 0; i < n; i++) {
     const k = pick(keys), r = V[k];
-    if (typeof r[0] !== 'number' || k === 'prism') out[k] = pick(r);
+    if (typeof r[0] !== 'number' || r.length !== 2 || k === 'prism') out[k] = pick(r);
     else out[k] = round(Math.min(r[1], Math.max(r[0], out[k] + (rnd() * 2 - 1) * scale * (r[1] - r[0]))));
   }
   return out;

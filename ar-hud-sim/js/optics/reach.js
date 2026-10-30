@@ -25,7 +25,7 @@ export function evaluateAim(params, h, v) {
   let p = structuredClone(params);
   p.intent = { ...p.intent, azimuth: h, elevation: v };
   p = alignChain(p);
-  const c = computeCollimator(p.collimator, computeOled(p.oled), p.prism.n);
+  const c = computeCollimator(p.collimator, computeOled(p.oled), p.collimator.n ?? p.prism.n);
   if (c?.valid && p.collimator.mode !== 'thin') p.collimator.distance = c.frontFocalDistance;
   // waveguide copies and the off-axis mirror patch only form one sharp image
   // point near the traced focus, so refocus with the tracer (paraxial is not enough)

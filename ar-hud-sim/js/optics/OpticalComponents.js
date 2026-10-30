@@ -130,9 +130,28 @@ export function computeCollimator(p, oled, nGlass) {
     .addScaledVector(oled.xAxis, p.offsetX)
     .addScaledVector(oled.yAxis, p.offsetY);
   const a = p.aperture / 2;
-  const base = { mode: p.mode, f: p.focalLength, aperture: p.aperture, apertureRadius: a, axis, center, quaternion: q, flip: p.flip };
+  const base = { mode: p.mode, f: p.focalLength, aperture: p.aperture, apertureRadius: a, glassDiameter: Math.max(p.glassDiameter ?? p.aperture, p.aperture), axis, center, quaternion: q, flip: p.flip };
   if (p.mode === 'thin') {
     return { ...base, thickness: 0, frontFocalDistance: p.focalLength, firstVertex: center, valid: true };
+  }
+  if (p.mode === 'biconvex') {
+    // equi-convex spherical lens (e.g. an acrylic Cardboard lens). Thick-lens
+    // EFL: 1/f = (n-1)(2/R) - (n-1)^2 t / (n R^2); solve R for the stated f.
+    const n = nGlass, a = p.aperture / 2, ga = (p.glassDiameter ?? p.aperture) / 2;
+    let R = 2 * p.focalLength * (n - 1), t = 0, sagG = 0;
+    for (let i = 0; i < 20; i++) {
+      sagG = R - Math.sqrt(Math.max(0, R * R - ga * ga));
+      t = 2 * sagG + p.edgeThickness;
+      const g = (x) => (n - 1) * (2 / x) - ((n - 1) ** 2 * t) / (n * x * x) - 1 / p.focalLength;
+      const d = (g(R * 1.0001) - g(R)) / (R * 0.0001);
+      R -= g(R) / d;
+    }
+    const valid = ga < R;
+    const sagA = R - Math.sqrt(Math.max(0, R * R - a * a));
+    // front focal distance from the first vertex: f (1 - (n-1) t / (n R))
+    const ffd = p.focalLength * (1 - ((n - 1) * t) / (n * R));
+    return { ...base, R, c: 1 / R, k: 0, sagA, sagG, thickness: t, edgeThickness: p.edgeThickness, valid, frontFocalDistance: ffd, firstVertex: center, biconvex: true,
+      invalidReason: valid ? null : 'Glass diameter exceeds the surface radius.' };
   }
   // Plano-convex. Paraxial EFL f = R/(n-1) (exact for plano-convex).
   const R = p.focalLength * (nGlass - 1);
@@ -193,7 +212,9 @@ export function buildOpticalObjects({ oled, prism, collimator, driver, arm, glas
   // Collimator
   if (collimator && collimator.valid) {
     const ax = collimator.axis;
-    const barrelRadius = collimator.apertureRadius + 0.25;
+    // the barrel holds the whole glass; a stop ring at the lens sets the aperture
+    const glassR = (collimator.glassDiameter ?? collimator.aperture) / 2;
+    const barrelRadius = Math.max(collimator.apertureRadius + 0.25, glassR + 0.1);
     const barrelLength = Math.max(0.1, collimator.center.clone().sub(oled.center).dot(oled.normal) - 0.05);
     objects.push({
       kind: 'absorber', shape: 'cylinder', id: 'barrel', label: 'Lens barrel',
@@ -204,7 +225,12 @@ export function buildOpticalObjects({ oled, prism, collimator, driver, arm, glas
     } else {
       const { thickness: t, sagA, apertureRadius: a, c, k } = collimator;
       const faces = [];
-      if (!collimator.flip) {
+      if (collimator.biconvex) {
+        // two convex spherical faces, edge cylinder between them
+        faces.push(conicFace(collimator.center, ax.clone().negate(), c, 0, a, { role: 'convex1' }));
+        faces.push(conicFace(collimator.center.clone().addScaledVector(ax, t), ax, c, 0, a, { role: 'convex2' }));
+        faces.push(cylinderFace(collimator.center.clone().addScaledVector(ax, sagA), ax, a, t - 2 * sagA, { role: 'edge', absorb: true }));
+      } else if (!collimator.flip) {
         faces.push(discFace(collimator.center, ax.clone().negate(), a, { role: 'plano' }));
         faces.push(conicFace(collimator.center.clone().addScaledVector(ax, t), ax, c, k, a, { role: 'convex' }));
         faces.push(cylinderFace(collimator.center, ax, a, t - sagA, { role: 'edge', absorb: true }));
@@ -217,7 +243,7 @@ export function buildOpticalObjects({ oled, prism, collimator, driver, arm, glas
       // mount ring around the clear aperture
       objects.push({
         kind: 'absorber', shape: 'disc', id: 'collimator-mount', label: 'Lens mount',
-        face: discFace(collimator.center.clone().addScaledVector(ax, -0.01), ax, a + 1.5, { innerRadius: a }),
+        face: discFace(collimator.center.clone().addScaledVector(ax, -0.01), ax, Math.max(a + 1.5, glassR + 0.3), { innerRadius: a }),
       });
     }
   }

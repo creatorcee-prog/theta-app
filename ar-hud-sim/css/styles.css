@@ -240,3 +240,8 @@ table.kv tr + tr { border-top: 1px solid var(--line); }
 .goal.near .g-bar i { background: var(--warn); } .goal.met .g-bar i { background: var(--pass); }
 .g-pct { grid-area: p; font: 600 11.5px var(--font-mono); text-align: right; color: var(--muted); }
 .make-spec { margin: 4px 0 8px; font: 11.5px/1.5 var(--font-mono); color: var(--muted); }
+
+.hud-styles { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; margin-top: 4px; }
+.hud-style { display: flex; flex-direction: column; align-items: stretch; gap: 3px; padding: 4px; border: 1px solid var(--line, #d0d5dd); border-radius: 6px; background: transparent; cursor: pointer; font: 500 11px/1.2 inherit; color: inherit; text-align: center; }
+.hud-style canvas { width: 100%; height: auto; aspect-ratio: 16 / 10; border-radius: 3px; background: #000; }
+.hud-style[aria-pressed="true"] { border-color: #e8a33d; box-shadow: 0 0 0 2px rgba(232, 163, 61, 0.45); }

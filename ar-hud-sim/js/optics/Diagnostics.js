@@ -97,10 +97,23 @@ export function runDiagnostics(results, coverage) {
   if (patched) {
     const pt = prism, P = params.patch;
     const hit = chief.events.find((e) => e.obj === 'patch');
+    const bare = P.coating === 'bare';
     add('Prism', 'chiefInc', 'Chief-ray incidence on the mirror patch', hit ? `${f1(hit.incidenceDeg)}°` : 'not reached', hit ? 'pass' : 'fail',
-      hit ? `Partial mirror R ${Math.round(100 * P.reflectance)}%. Off-axis, a spherical mirror (R ${P.radius} mm, f ${f1(pt.f)} mm) focuses tangential and sagittal rays at f·cos i and f / cos i: ≈ ${f1(pt.astigD)} D of built-in astigmatism at ${f1(pt.incidenceDeg)}°, before any correction by the collimator tilt or a conic shape.`
+      hit ? `${bare ? `Bare glass (n ${P.glassN}): Fresnel reflection from both faces, R ${f1(100 * hit.R)}% at this angle (a thin plate keeps the two reflections within a fraction of a pixel).` : `Partial mirror R ${Math.round(100 * P.reflectance)}%.`} Off-axis, a spherical mirror (R ${P.radius} mm, f ${f1(pt.f)} mm) focuses tangential and sagittal rays at f·cos i and f / cos i: ≈ ${f1(pt.astigD)} D of built-in astigmatism at ${f1(pt.incidenceDeg)}°, before any correction by the collimator tilt or a conic shape.`
         : `The display-centre ray never reaches the patch (outcome: ${chief.outcome}). Check the alignment.`);
-    add('Prism', 'seeThrough', 'See-through transmission (world light)', `≈ ${Math.round(100 * (1 - P.reflectance))}%`, grade(100 * (1 - P.reflectance), (v) => v >= 70, (v) => v >= 50),
+    const Rw = bare ? (() => { const r0 = ((P.glassN - 1) / (P.glassN + 1)) ** 2; return (2 * r0) / (1 + r0); })() : P.reflectance;
+    if (system.fold) {
+      const fp = hyp.hits ? (100 * hyp.tir) / hyp.hits : null;
+      add('Prism', 'foldTIR', 'Fold prism: total internal reflection', fp == null ? 'no hits' : `${f1(fp)}% of ${hyp.hits} hits`, grade(fp, (v) => v >= 99, (v) => v >= 90),
+        fp == null ? 'No light reaches the fold prism hypotenuse.' : `Hypotenuse incidence ${f1(hyp.minInc)}°–${f1(hyp.maxInc)}° against θc ${f1(crit)}°. A long focal length keeps the field inside the glass small enough for a stock 45° prism.`);
+      const hb = system.hingeBlock;
+      const problems = [];
+      if (hb.gap > 1) problems.push(`is ${f1(hb.gap)} mm from the temple housing (not joined)`);
+      if (hb.max.z > hb.frontZ + 0.5) problems.push(`sticks ${f1(hb.max.z - hb.frontZ)} mm out in front of the frame`);
+      add('Fit', 'foldFit', 'Fold prism held in a hinge block', problems.length ? 'no' : 'yes', problems.length ? 'fail' : 'pass',
+        problems.length ? `The block around the fold prism ${problems.join(' and ')}.` : `A ${f1(hb.size.x)} × ${f1(hb.size.y)} × ${f1(hb.size.z)} mm printed block in the endpiece holds the fold prism and joins the temple housing (an L-shaped housing). The beam leaves through a window toward the patch.`);
+    }
+    add('Prism', 'seeThrough', 'See-through transmission (world light)', `≈ ${Math.round(100 * (1 - Rw))}%`, grade(100 * (1 - Rw), (v) => v >= 70, (v) => v >= 50),
       'World light passes the coated patch once and loses its reflectance there; elsewhere the lens is unchanged. A thin shell of even thickness adds almost no power to the see-through view.');
   } else if (guided) {
     const wg = prism;
@@ -148,7 +161,9 @@ export function runDiagnostics(results, coverage) {
   const fevs = chief.events.filter((e) => e.R != null);
   // (a waveguide facet's partial reflectance is its design split, reported with the facets)
   const chiefT = fevs.reduce((p, e) => p * (e.tir || e.facet ? 1 : e.mirror ? e.R : e.T), 1);
-  const fresnelText = fevs.map((e) => `${e.obj}/${e.face}: ${e.tir ? 'TIR 100%' : e.mirror ? 'mirror 90%' : `R ${(100 * e.R).toFixed(2)}% T ${(100 * e.T).toFixed(2)}%`}`).join('; ');
+  // light actually delivered: also the combiner's split (facet / patch reflectance)
+  const deliveredT = fevs.reduce((p, e) => p * (e.tir ? 1 : e.mirror ? e.R : e.T), 1);
+  const fresnelText = fevs.map((e) => `${e.obj}/${e.face}: ${e.tir ? 'TIR 100%' : e.mirror ? `mirror ${(100 * e.R).toFixed(1)}%` : `R ${(100 * e.R).toFixed(2)}% T ${(100 * e.T).toFixed(2)}%`}`).join('; ');
   add('Prism', 'fresnel', 'Fresnel throughput (chief path)', `${(100 * chiefT).toFixed(1)}%`,
     chiefT >= 0.85 ? 'pass' : chiefT >= 0.6 ? 'warn' : 'fail',
     `${fresnelText || 'no dielectric surfaces on chief path'}. Uncoated surfaces assumed (no AR coating).`);
@@ -284,16 +299,19 @@ export function runDiagnostics(results, coverage) {
     focus.blurDeg = (focus.blurRad + blurMrad / 1000) * (180 / Math.PI);
     const rx = params.eye.rx;
     const rxText = `Rx ${rx.sphere >= 0 ? '+' : ''}${f2(rx.sphere)} / ${f2(rx.cyl)} × ${Math.round(rx.axis)}° → at cornea ${f2(focus.Fh)} D (horizontal), ${f2(focus.Fv)} D (vertical); accommodation range ${f1(focus.amp)} D`;
-    const st = field.p90 <= 0.25 && blurArcmin <= 2 * pixelArcmin ? 'pass' : field.p90 <= 0.75 ? 'warn' : 'fail';
+    // blur limit: 2 pixels, but never finer than 2′ (≈ 20/40; the eye resolves ~1′
+    // at best, so sharper-than-2′ blur is invisible even on a very fine display)
+    const blurLimit = Math.max(2 * pixelArcmin, 2);
+    const st = field.p90 <= 0.25 && blurArcmin <= blurLimit ? 'pass' : field.p90 <= 0.75 ? 'warn' : 'fail';
     const why = maxAst > 1 ? `Field astigmatism up to ${f1(maxAst)} D (typical of a single lens at wide field angles) cannot be focused away; a smaller field (longer focal length) or a two-element eyepiece reduces it.`
       : focus.tooConverging ? 'The HUD focuses farther than your eye can relax to (typical when short-sighted, because the HUD light bypasses your spectacle lens).'
         : focus.tooDiverging ? 'The HUD image is closer than your near point.' : '';
     add('Vision', 'eyeFocus', 'HUD in focus for your eye', `90% of field within ${f2(field.p90)} D (worst ${f1(field.worst)} D)`, st,
       `${rxText}. One accommodation (${f2(field.accommodation)} D) has to serve the whole image. ${why} ${st !== 'pass' && !why.includes('astigmatism') ? 'Use "Focus HUD for my eye" to move the OLED to the best distance.' : ''}`.trim());
-    const supports = field.p90 <= 0.5 && blurArcmin <= 2 * pixelArcmin;
+    const supports = field.p90 <= 0.5 && blurArcmin <= blurLimit;
     add('Collimation', 'virtualImage', 'Focused virtual image', supports ? 'supported' : 'not supported', supports ? (st === 'pass' ? 'pass' : 'warn') : 'fail',
-      supports ? 'At least 90% of the field focuses within 0.5 D of one accommodation, with sub-2-pixel aberration.'
-        : `Not enough of the field focuses at once (90th percentile ${f2(field.p90)} D; needs ≤ 0.5 D) or the aberration spread (${f1(blurArcmin)}′) exceeds 2 pixels (${f1(2 * pixelArcmin)}′).`);
+      supports ? `At least 90% of the field focuses within 0.5 D of one accommodation, with aberration under ${f1(blurLimit)}′ (2 pixels, at least 2′).`
+        : `Not enough of the field focuses at once (90th percentile ${f2(field.p90)} D; needs ≤ 0.5 D) or the aberration spread (${f1(blurArcmin)}′) exceeds ${f1(blurLimit)}′ (2 pixels of ${f1(pixelArcmin)}′, at least 2′ since the eye resolves ~1′ at best).`);
   } else {
     add('Collimation', 'vergence', 'Measured bundle vergence at pupil', 'insufficient rays', 'fail', 'Fewer than 4 rays per pixel reach the pupil region; vergence cannot be measured.');
   }
@@ -367,21 +385,33 @@ export function runDiagnostics(results, coverage) {
   }
   const ppd = fld.availHfov ? params.oled.resX / fld.availHfov : null;
   add('Image', 'res', 'Angular resolution', `${f1(pixelArcmin)}′/px, ${f1(ppd)} px/°`, 'info', '20/20 acuity resolves ~1′ at the fovea; the HUD sits in the periphery where acuity is far lower.');
-  const L = params.oled.peakLuminance * (params.oled.brightness / 100) * chiefT;
-  add('Image', 'lum', 'Estimated HUD luminance', `${Math.round(L)} cd/m²`, 'info',
-    `Peak OLED luminance ${params.oled.peakLuminance} cd/m² (assumed) × ${params.oled.brightness}% × chief-path transmission. Luminance is conserved through lossless imaging when the pupil is filled.`);
+  const L = params.oled.peakLuminance * (params.oled.brightness / 100) * deliveredT;
+  add('Image', 'lum', 'Estimated HUD luminance', `${Math.round(L)} cd/m²`, grade(L, (v) => v >= 1000, (v) => v >= 150),
+    `Peak OLED luminance ${params.oled.peakLuminance} cd/m² × ${params.oled.brightness}% × chief-path transmission including the combiner's reflectance (${(100 * deliveredT).toFixed(1)}%). Luminance is conserved through lossless imaging when the pupil is filled. Thresholds are rules of thumb (assumed): ≥ 1000 cd/m² for outdoor daylight, ≥ 150 cd/m² for indoors.`);
 
   // ---------------- head and face fit (right side)
   const fr = params.frame, hd = params.head;
   const head = computeHead(params, glasses, eye);
   const innerTempleX = head.innerTempleX;
   const hs = glasses.housing;
-  const housingInto = Math.max(...boxCorners(hs.center, new Quaternion(), hs.size).map(head.intrusion));
+  const shell = system.housingShell;
+  const housingInto = shell ? Math.max(...shell.points.map(head.intrusion)) : Math.max(...boxCorners(hs.center, new Quaternion(), hs.size).map(head.intrusion),
+    ...(system.hingeBlock ? boxCorners(system.hingeBlock.center, new Quaternion(), system.hingeBlock.size).map(head.intrusion) : []));
   const hClear = Number.isFinite(housingInto) ? -housingInto : 99;
   add('Fit', 'headHousing', 'Temple housing clears your head', hClear >= 99 ? 'fully in front of the head' : `${f1(hClear)} mm`, grade(hClear, (v) => v >= 1, (v) => v >= 0),
     hClear >= 1 ? `Head model: lateral orbital rim ${f1(hd.hertelDepth)} mm behind the cornea, ${f1(hd.hertelBase)} mm rim-to-rim; temple gaps ${f1(hd.gap20)} / ${f1(hd.gap40)} mm at 20 / 40 mm behind the hinge.`
       : `The housing reaches ${f1(-hClear)} mm into your head. Reduce its depth or length, or bulge it outward.`);
   const canthusX = eye.pupilCenter.x - hd.canthusOffset;
+  // ---- form factor: how far the housing bulges out beyond the temple
+  // conformal shell: measured from the temple's outer face at each point along it
+  const tR = glasses.temples.find((t) => t.side === 1);
+  const bulge = shell && tR ? Math.max(0, ...shell.points.map((q) => {
+    const t2 = q.clone().sub(tR.start).dot(tR.dir);
+    const outer = tR.start.x + tR.dir.x * t2 - fr.templeThickness / 2;
+    return outer - q.x;
+  })) : fr.housingOutward ?? 0;
+  add('Fit', 'formFactor', 'Housing bulge beyond the temple', `${f1(bulge)} mm`, grade(bulge, (v) => v <= 8, (v) => v <= 14),
+    bulge <= 8 ? 'Keeps a normal-glasses look (a bulge of up to ~8 mm, like a thick temple; assumed limit).' : 'The display housing sticks out from the side of the frame like a camera pod; shorten the optical path or fold it along the temple.');
   // ---- standoff pins: is the combiner carried by the lens/frame?
   const lm = system.lensMount;
   if (lm) {

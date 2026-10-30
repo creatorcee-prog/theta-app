@@ -15,7 +15,8 @@ export function computeLensMount(combiner, glasses, eye, centralClearDeg = 10) {
     const c = combiner.center;
     let cand = Object.values(combiner.vertices).filter((q) => q.distanceTo(c) > 1.5).map((q) => q.clone().add(c.clone().sub(q).setLength(1)));
     // a mirror patch is lit from the display side: keep its pins on the far half of the rim
-    if (combiner.kind === 'patch') cand = cand.filter((q) => q.clone().sub(c).dot(combiner.toSource) < -1);
+    // (not the third of the rim that faces the display)
+    if (combiner.kind === 'patch') cand = cand.filter((q) => q.clone().sub(c).dot(combiner.toSource) < 0.3 * combiner.a);
     // and keep every pin out of the central zone of vision
     const offAxis = (q) => (q.clone().sub(eye.pupilCenter).angleTo(new Vector3(0, 0, 1)) * 180) / Math.PI;
     const clear = cand.filter((q) => offAxis(q) >= centralClearDeg + 2);
@@ -37,8 +38,17 @@ export function lensMountObjects(mount) {
   return (mount?.pins ?? []).map((p, k) => ({ kind: 'absorber', shape: 'cylinder', id: `mount-${k}`, label: 'Lens standoff pin', face: cylinderFace(p.base, p.axis, PIN_RADIUS, p.length, { absorb: true }) }));
 }
 
-export function lensMountPoints(mount) {
-  const pts = [];
-  for (const p of mount?.pins ?? []) for (const t of [0, 0.5, 1]) pts.push(p.base.clone().addScaledVector(p.axis, p.length * t));
-  return pts;
+/** Surface points of each pin separately (a hull around all pins would
+ *  wrongly cover the open space between them). */
+export function lensMountPointsPerPin(mount) {
+  return (mount?.pins ?? []).map((p) => {
+    const ref = Math.abs(p.axis.y) < 0.9 ? new Vector3(0, 1, 0) : new Vector3(1, 0, 0);
+    const e1 = new Vector3().crossVectors(p.axis, ref).normalize(), e2 = new Vector3().crossVectors(p.axis, e1);
+    const pts = [];
+    for (const t of [0, 0.5, 1]) for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2;
+      pts.push(p.base.clone().addScaledVector(p.axis, p.length * t).addScaledVector(e1, PIN_RADIUS * Math.cos(a)).addScaledVector(e2, PIN_RADIUS * Math.sin(a)));
+    }
+    return pts;
+  });
 }

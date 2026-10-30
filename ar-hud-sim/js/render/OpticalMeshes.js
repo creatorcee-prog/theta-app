@@ -147,10 +147,11 @@ export class OpticalMeshes {
       ring.position.copy(collimator.center);
       ring.quaternion.copy(collimator.quaternion);
       cg.add(ring);
-      // lens barrel from OLED to lens
-      const len = Math.max(0.1, collimator.center.clone().sub(oled.center).dot(oled.normal));
-      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(a + 0.25, a + 0.25, len, 32, 1, true),
-        new THREE.MeshStandardMaterial({ color: 0x5a6270, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false }));
+      // lens barrel (printed): holds the whole glass and joins the OLED housing
+      const len = Math.max(0.1, collimator.center.clone().sub(oled.center).dot(oled.normal)) + (collimator.thickness || 0);
+      const br = Math.max(a + 0.25, (collimator.glassDiameter ?? 2 * a) / 2 + 0.1) + 0.8;
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(br, br, len, 32, 1, true),
+        new THREE.MeshStandardMaterial({ color: 0x56606e, transparent: true, opacity: 0.82, side: THREE.DoubleSide, roughness: 0.6 }));
       barrel.geometry.rotateX(Math.PI / 2);
       barrel.position.copy(oled.center).addScaledVector(oled.normal, len / 2);
       barrel.quaternion.copy(oled.quaternion);
@@ -199,7 +200,7 @@ export class OpticalMeshes {
 
     // ---------------- waveguide plate (replaces the prism)
     if (prism.kind === 'waveguide') { this.drawWaveguide(prism, params, labels); return; }
-    if (prism.kind === 'patch') { this.drawPatch(prism, params, labels); return; }
+    if (prism.kind === 'patch') { this.drawPatch(prism, params, labels); if (system.fold) this.drawFold(system.fold, labels); return; }
 
     // ---------------- prism
     const pg = this.groups.prism;
@@ -274,6 +275,21 @@ export class OpticalMeshes {
     }
     this.handles.prism.position.copy(wg.center);
     this.handles.prism.quaternion.copy(wg.quaternion);
+  }
+
+  drawFold(fp, labels) {
+    const pg = this.groups.prism;
+    for (const [role, f] of Object.entries(fp.faces)) {
+      const pts = f.vertices, pos = [];
+      for (let i = 1; i < pts.length - 1; i++) for (const q of [pts[0], pts[i], pts[i + 1]]) pos.push(q.x, q.y, q.z);
+      const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.computeVertexNormals();
+      const hyp = role === 'hypotenuse';
+      const m = new THREE.Mesh(geo, new THREE.MeshPhysicalMaterial({ color: hyp ? 0xff7ad9 : 0x9fd8ff, transparent: true, opacity: hyp ? 0.35 : 0.18, roughness: 0.05, side: THREE.DoubleSide, depthWrite: false }));
+      m.renderOrder = 3; pg.add(m);
+    }
+    const V = fp.vertices, E = [['A+', 'B+'], ['B+', 'C+'], ['C+', 'A+'], ['A-', 'B-'], ['B-', 'C-'], ['C-', 'A-'], ['A+', 'A-'], ['B+', 'B-'], ['C+', 'C-']];
+    pg.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(E.flatMap(([a, b]) => [V[a], V[b]])), new THREE.LineBasicMaterial({ color: 0xcfeaff })));
+    if (labels) { const l = makeLabel(`Fold prism ${fp.L} mm (TIR) in the hinge block`); l.position.copy(fp.center).add(new THREE.Vector3(0, fp.L / 2 + 5, 0)); pg.add(l); }
   }
 
   drawPatch(pt, params, labels) {

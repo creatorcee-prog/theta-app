@@ -29,6 +29,9 @@ const src = {
   bs: { label: 'Edmund 25 mm 30R/70T plate beamsplitter, 1 mm ($61)', url: 'https://www.edmundoptics.com/p/25mm-diameter-30r70t-plate-beamsplitter/5238/' },
   noa: { label: 'Edmund NOA61 optical adhesive, 1 oz ($38)', url: 'https://www.edmundoptics.com/p/1-oz-application-bottle-of-noa-61/4209/' },
   noaT: { label: 'Thorlabs NOA61 ($40.70)', url: 'https://www.thorlabs.us/_QLPopup.cfm?PN=NOA61' },
+  cardboard: { label: 'Black Enterprise: Cardboard 45 mm lens pair, $1.24 (dated review)', url: 'https://www.blackenterprise.com/black-enterprise-tech-review-google-cardboard/' },
+  cardboardSpec: { label: 'Listing: 25 mm × 45 mm biconvex Cardboard lenses', url: 'https://www.daraz.pk/products/10pcslot-25mm-x-45mm-biconvex-lens-for-google-cardboard-diy-3d-virtual-reality-vr-glasses-ultra-clear-convex-len-high-quality-i429745812.html' },
+  coverslip: { label: 'Microscope World glass cover slips 22×22 mm, 0.13–0.17 mm, 100 pcs ($4.50)', url: 'https://www.microscopeworld.com/p-373-cover-slips.aspx' },
   crystal: { label: 'Esslinger domed mineral watch crystal, 1.0 mm ($3.95)', url: 'https://www.esslinger.com/domed-watch-crystal-round-mineral-glass-crystal-1-00-mm-thick/' },
   curvedPR: { label: 'Alien Photonics custom curved partial reflectors (from €75)', url: 'https://findlight.net/uploads/products/datasheet/output-couplers-partial-reflectors-alien-photonics_1721050359.pdf' },
   lumus: { label: 'Lumus: reflective (geometric) waveguides, licensed to OEMs', url: 'https://lumusvision.com' },
@@ -39,6 +42,7 @@ export const LENSES = [
   { id: 'acl1210', name: 'Thorlabs ACL1210 asphere, f 10.5 mm, Ø12', f: 10.5, dia: 12, unit: 16.2, sourced: false, sources: [src.acl], note: 'Price assumed equal to the ACL1512 (same series); not retrieved.' },
   { id: 'acl1512', name: 'Thorlabs ACL1512 asphere, f 12 mm, Ø15', f: 12, dia: 15, unit: 16.2, sourced: true, sources: [src.acl], note: '2015 catalog price reported by search; not verified, likely higher today.' },
   { id: 'eo125', name: 'Edmund molded asphere, f 12.5 mm, Ø12', f: 12.5, dia: 12, unit: 35, sourced: true, sources: [src.eo125], note: 'Converted from NT$1,120.' },
+  { id: 'cb45', name: 'Google Cardboard lens, f 45 mm, Ø25 (biconvex acrylic)', f: 45, dia: 25, unit: 0.62, sourced: true, sources: [src.cardboard, src.cardboardSpec], mode: 'biconvex', n: 1.491, density: 1.18, note: 'Half of a $1.24 pair (dated review price). Modelled as an equi-convex spherical PMMA lens (n 1.491); some are aspheric, which would only help.' },
   { id: 'eo19', name: 'Edmund asphere, f 19 mm, Ø12', f: 19, dia: 12, unit: 35, sourced: false, sources: [src.eo19], note: 'Price assumed equal to the 12.5 mm part; not retrieved.' },
 ];
 // Stock K9 45-45-90 prisms (leg = height).
@@ -97,9 +101,22 @@ function waveguideOptics(lens) {
 // combiner and the back of the lens: the frame carries the optic.
 const mountLine = (what) => line({ id: 'lensMount', name: `Standoff pins + UV glue bonding the ${what} to the lens`, component: 'prism', unit: 6, sourced: false, weight: 0.1, weightBasis: 'estimate', note: what === 'patch' ? 'Estimate. Pins on the half of the rim away from the display; glue only the pin ends so the air gap behind the coating stays clear.' : 'Estimate. Pins on the prism corners nearest the lens, clear of the beam.' });
 
-function patchOptics(lens) {
+// stock K9 right-angle prism folding the beam at the hinge (TIR, no coating)
+const foldLine = (size) => { const pr = PRISMS.find((x) => x.size === size) ?? PRISMS[3]; return line({ id: 'fold', name: `Fold prism at the hinge: K9 right-angle prism ${size} mm`, component: 'fold', unit: pr.unit, sourced: pr.sourced, sources: [src.k9, src.k9w], weight: 0, weightBasis: 'calc', autoWeight: true, note: 'Half of a 2-pack. Sits inside the temple housing.' }); };
+
+function patchOptics(lens, bare, trim) {
+  const lensLine = line({ id: 'collimator', name: trim && trim < lens.dia ? `${lens.name}, trimmed to Ø${trim} mm` : lens.name, component: 'collimator', unit: lens.unit, sourced: lens.sourced, sources: lens.sources, note: lens.note, weight: 0, weightBasis: 'calc', autoWeight: true, weightNote: `Full-diameter lens volume × ${lens.density ?? 2.51} g/cm³.` });
+  if (bare) {
+    return [
+      lensLine,
+      line({ id: 'prism', name: 'Glass reflector: microscope cover slip 22×22×0.17 mm (uncoated)', component: 'prism', unit: 4.5, sourced: true, sources: [src.coverslip], weight: 0, weightBasis: 'calc', autoWeight: true, weightNote: 'Area × 0.17 mm × 2.5 g/cm³.', note: 'Box of 100 (one used; spares for breakage). Reflects by Fresnel only (~8–20% depending on angle), so the HUD is dimmer but the world stays ~92% visible.' }),
+      mountLine('patch'),
+      printed('barrel', 'Lens barrel (printed)', 'collimator'),
+      printed('housing', 'Temple housing (printed)', 'housing'),
+    ];
+  }
   return [
-    line({ id: 'collimator', name: lens.name, component: 'collimator', unit: lens.unit, sourced: lens.sourced, sources: lens.sources, note: lens.note, weight: 0, weightBasis: 'calc', autoWeight: true, weightNote: 'Full-diameter lens volume × 2.51 g/cm³.' }),
+    lensLine,
     line({ id: 'prism', name: 'Mirror patch: 1 mm glass shell (domed or flat watch crystal, cut down)', component: 'prism', unit: 3.95, sourced: true, sources: [src.crystal], weight: 0, weightBasis: 'calc', autoWeight: true, weightNote: 'Shell area × thickness × 2.5 g/cm³.', note: 'Dome radii are not published: measure the sag (R = d²/8s + s/2) and pick the crystal closest to the design radius.' }),
     line({ id: 'patchCoat', name: 'Partial-mirror coating on its concave face (R ≈ 30%)', unit: 40, sourced: false, sources: [src.curvedPR], weight: 0, weightBasis: 'calc', note: 'Estimate: a small-batch vacuum coating or a DIY partial silvering. A ready-made curved partial reflector costs from €75 (custom).' }),
     mountLine('patch'),
@@ -164,7 +181,7 @@ export const MAKES = [
   {
     id: 'mirage', name: 'Mirage', tagline: 'Mirror on the lens (Focals-style)', kind: 'patch',
     idea: 'The display and lens sit in the temple and shine across the inside of the lens onto a small, partly mirrored glass patch behind it, which reflects the image into your eye. Nothing sticks out and the frame keeps its normal shape. Focals did this with a laser scanner and a holographic film; this version uses parts you can get: the micro-OLED, a stock asphere and a coated watch-crystal patch.',
-    vars: { lens: ['eo125', 'acl1512', 'acl1210', 'eo19'], flip: [false, true], stop: [4, 11], az: [6, 44], el: [-28, 32], fold: [70, 110], stilt: [-20, 20], radius: [80, 3000], throw: [18, 40], tx: [-20, 20], ty: [-20, 20], diam: [8, 16] },
+    vars: { lens: ['cb45', 'eo19', 'eo125', 'acl1512'], coat: ['bare', 'coated'], relay: [true, false], fsize: [8, 10, 12], fdist: [10, 40], trim: [10, 25], flip: [false, true], stop: [4, 22], az: [6, 44], el: [-28, 32], fold: [60, 110], stilt: [-25, 25], radius: [80, 3000], throw: [18, 62], tx: [-12, 12], ty: [-12, 12], diam: [8, 22] },
     electronics: () => ({ parts: [], bom: [line({ id: 'cable', name: 'Thin HDMI cable to your phone/PC', unit: 8, sourced: false, weight: 2.5, weightBasis: 'estimate', note: 'Estimate. Your phone/PC is the HDMI source (not counted).' })] }),
     display: 'yx',
   },
@@ -181,28 +198,37 @@ export const MAKES = [
 export function buildMake(make, v, opts = {}) {
   let p = baseParams();
   const lens = LENSES.find((l) => l.id === v.lens) ?? LENSES[1];
+  // an acrylic lens can be trimmed down (sanded round) to fit beside the head
+  const glassDia = lens.mode === 'biconvex' && v.trim ? Math.min(lens.dia, v.trim) : lens.dia;
   const prism = PRISMS.find((x) => x.size === v.prism) ?? PRISMS[3];
   p.prism = { ...p.prism, size: prism.size, height: prism.size, angle: 45, coating: 'none' };
   const guided = make.kind === 'waveguide', patched = make.kind === 'patch';
   if (patched) {
-    p.patch = { ...p.patch, enabled: true, radius: v.radius, diameter: v.diam, foldDeg: v.fold, sourceTiltDeg: v.stilt, throw: v.throw, reflectance: 0.3 };
+    const bare = v.coat === 'bare';
+    // bare: a flat cover slip (22 mm square: a ≤ 22 mm circle is used)
+    p.patch = { ...p.patch, enabled: true, gap: v.gap ?? p.patch.gap, coating: bare ? 'bare' : 'coated', radius: bare ? 1e6 : v.radius, diameter: bare ? Math.min(22, v.diam) : v.diam, thickness: bare ? 0.17 : 1, foldDeg: v.fold, sourceTiltDeg: v.stilt, throw: v.throw, reflectance: 0.3,
+      fold: { enabled: !!v.relay, size: v.fsize ?? 10, dist: v.fdist ?? 22 } };
+    // sample emission only toward the lens: rays outside this cone end on the
+    // absorbing barrel wall anyway (sampling efficiency, not a change in physics)
+    const halfDiag = (p.oled.diagonalIn * 25.4) / 2;
+    p.oled = { ...p.oled, emissionHalfAngle: Math.min(40, Math.max(8, (Math.atan((Math.min(v.stop, glassDia) / 2 + halfDiag + 1) / lens.f) * 180) / Math.PI + 2)) };
   }
   if (guided) {
     p.waveguide = { ...p.waveguide, enabled: true, coating: 'plain', facetR: 0.3, thickness: v.thick, guideAngle: v.guide, facets: Math.round(v.facets), facetSpacing: v.spacing, height: v.height, templeMargin: v.margin };
   }
-  p.collimator = { ...p.collimator, enabled: true, mode: 'aspheric', conicK: -0.8, focalLength: lens.f, aperture: Math.min(v.stop, lens.dia), glassDiameter: lens.dia, edgeThickness: 0.8, flip: !!v.flip, tiltX: patched ? v.tx : 0, tiltY: patched ? v.ty : 0 };
+  p.collimator = { ...p.collimator, enabled: true, mode: lens.mode ?? 'aspheric', conicK: lens.mode ? 0 : -0.8, n: lens.n, density: lens.density, focalLength: lens.f, aperture: Math.min(v.stop, glassDia), glassDiameter: glassDia, edgeThickness: 0.8, flip: !!v.flip, tiltX: patched ? v.tx : 0, tiltY: patched ? v.ty : 0 };
   if (make.display === 'ssd0.49') {
     p.oled = { ...p.oled, diagonalIn: 0.49, resX: 64, resY: 32, housingMarginX: 3.8, housingMarginY: 6.4, housingDepth: 3, peakLuminance: 150 };
     p.driver = { ...p.driver, length: 22.5, height: 18, thickness: 1.0 }; // ESP32-C3 SuperMini as the display driver
   } else {
     p.oled = { ...p.oled, peakLuminance: 3000 };
   }
-  p.frame = { ...p.frame, housingAuto: true };
+  p.frame = { ...p.frame, housingAuto: true, housingShape: patched && v.relay ? 'conformal' : 'box' };
   p.intent = { ...p.intent, azimuth: v.az, elevation: v.el, entryTiltDeg: v.tilt, oledInset: v.inset, prismClearance: 1 };
   p = alignChain(p);
   // focus: start at the paraxial front focal distance, then let the tracer
   // find the distance that gives the wearer's relaxed-eye vergence
-  const c = computeCollimator(p.collimator, computeOled(p.oled), p.prism.n);
+  const c = computeCollimator(p.collimator, computeOled(p.oled), p.collimator.n ?? p.prism.n);
   if (c?.valid) p.collimator.distance = c.frontFocalDistance;
   if (opts.bestFocus !== false) {
     const target = assessFocus({ Vx: 0, Vy: 0 }, p.eye).targetVergence;
@@ -223,7 +249,7 @@ export function buildMake(make, v, opts = {}) {
       line({ id: 'driver', name: 'ESP32-C3 Super Mini (drives the OLED)', component: 'driver', unit: 8, sourced: true, sources: [src.esp], weight: 2.2, weightBasis: 'spec', weightSources: [src.espW], note: 'Typical $3–8.' }),
     ]
     : yxKitLines();
-  p.bom = [frameLine(), ...displayLines, ...(patched ? patchOptics(lens) : guided ? waveguideOptics(lens) : commonOptics(lens, prism)), ...el.bom];
+  p.bom = [frameLine(), ...displayLines, ...(patched ? [...patchOptics(lens, v.coat === 'bare', lens.mode === 'biconvex' ? v.trim : null), ...(v.relay ? [foldLine(v.fsize ?? 10)] : [])] : guided ? waveguideOptics(lens) : commonOptics(lens, prism)), ...el.bom];
   p.make = { id: make.id, name: make.name, vars: v };
   return p;
 }

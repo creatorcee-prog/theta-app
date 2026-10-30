@@ -22,10 +22,14 @@ export const STRUCTURE_CHECKS = [
   ['armFit', 'Prism held by an arm to the housing'],
   ['driverFit', 'Driver board fits in the housing'],
   ['headHousing', 'Housing clears the head'],
+  ['formFactor', 'Normal-glasses form factor'],
   ['virtualImage', 'Focusable virtual image'],
   ['left', 'No light in the left pupil'],
   ['guideTIR', 'Light stays guided in the waveguide'],
-  ['seeThrough', 'World stays visible through the waveguide'],
+  ['seeThrough', 'World stays visible through the combiner'],
+  ['foldTIR', 'Fold prism reflects by TIR'],
+  ['foldFit', 'Fold prism inside the housing'],
+  ['collFit', 'Lens inside the housing'],
 ];
 
 export function scoreDesign(results, coverage, diag, params) {
@@ -42,7 +46,12 @@ export function scoreDesign(results, coverage, diag, params) {
   const structural = [];
   for (const [id, label] of STRUCTURE_CHECKS) {
     const c = checks[id];
+    // a focus that could not be measured is not a focus that passed
+    if (!c && id === 'virtualImage') { structural.push({ id, label, ok: false, value: 'not measurable', explain: 'Too little light reaches the pupil to measure the image focus.' }); continue; }
     if (!c) continue; // e.g. no driver board on the frame
+    // enclosing the lens in the housing is required where the beam crosses open
+    // air to the combiner (mirror patch); prism makes carry it on the optics arm
+    if (id === 'collFit' && !params.patch?.enabled) continue;
     // "left" passes with stray light on the eyelid as long as none enters the pupil
     const ok = c.status === 'pass' || (id === 'left' && results.counts.leftPupil === 0);
     structural.push({ id, label, ok, value: c.value, explain: c.explain });

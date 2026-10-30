@@ -4,6 +4,7 @@
 import { SECTIONS, VISIBILITY, COMPONENT_NAMES } from './schema.js';
 import { SEGMENT_STYLE } from '../render/RayRenderer.js';
 import { bomTotals } from '../model/parts.js';
+import { HUD_STYLES, TEXT_SAMPLE, renderHud } from '../render/hudContent.js';
 
 export const getPath = (obj, key) => key.split('.').reduce((o, k) => o?.[k], obj);
 export function setPath(obj, key, value) {
@@ -117,6 +118,37 @@ export class UIController {
         };
         reader.readAsDataURL(file);
       });
+    } else if (c.type === 'hudStyles') {
+      // gallery: one thumbnail per style, drawn by the same renderer the optics use
+      const modes = [['text', 'Text + arrow'], ...Object.entries(HUD_STYLES).map(([k, st]) => [k, st.label]), ['grid', 'Test pattern'], ['image', 'Uploaded image']];
+      wrap.innerHTML = `<label>${esc(c.label)} ${tag}</label><div class="hud-styles" role="group" aria-label="HUD style">${modes.map(([k, lab]) =>
+        `<button type="button" class="hud-style" data-style="${k}" aria-pressed="false" title="${esc(lab)}"><canvas width="160" height="100"></canvas><span>${esc(lab.replace(/ \(.*\)$/, ''))}</span></button>`).join('')}</div>`;
+      input = { value: v, set value(x) { this._v = x; wrap.querySelectorAll('.hud-style').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.style === x))); }, get value() { return this._v; } };
+      const drawThumbs = () => {
+        const p2 = this.cb.getParams();
+        wrap.querySelectorAll('.hud-style').forEach((b) => {
+          const cv = document.createElement('canvas');
+          const st = b.dataset.style;
+          // thumbnails show each style with its own sample content (yours, for the selected one)
+          const sample = st === p2.hud.mode ? {} : HUD_STYLES[st]?.sample ?? (st === 'text' ? TEXT_SAMPLE : {});
+          renderHud(cv, { ...p2.hud, ...sample, mode: st, driverFlip: false }, p2.oled);
+          const t = b.querySelector('canvas'), tc = t.getContext('2d');
+          tc.fillStyle = '#000'; tc.fillRect(0, 0, t.width, t.height);
+          const k = Math.min(t.width / cv.width, t.height / cv.height);
+          tc.drawImage(cv, (t.width - cv.width * k) / 2, (t.height - cv.height * k) / 2, cv.width * k, cv.height * k);
+        });
+      };
+      this._drawThumbs = drawThumbs;
+      wrap.addEventListener('click', (e) => {
+        const b = e.target.closest('.hud-style');
+        if (!b || b.dataset.style === this.cb.getParams().hud.mode) return;
+        // load the style's sample text (edit it below)
+        const sample = HUD_STYLES[b.dataset.style]?.sample ?? (b.dataset.style === 'text' ? TEXT_SAMPLE : null);
+        if (sample) for (const [k, val] of Object.entries(sample)) this.cb.onChange(`hud.${k}`, val);
+        this.cb.onChange(c.key, b.dataset.style);
+      });
+      requestAnimationFrame(drawThumbs);
+      input.value = v;
     } else if (c.type === 'select') {
       wrap.innerHTML = `<label for="${id}">${esc(c.label)} ${tag}</label><select id="${id}">${c.options.map(([val, lab]) => `<option value="${val}">${esc(lab)}</option>`).join('')}</select>`;
       input = wrap.querySelector('select');
@@ -173,6 +205,7 @@ export class UIController {
 
   refresh() {
     const p = this.cb.getParams();
+    this._drawThumbs?.();
     for (const { c, input, wrap } of this.inputs) {
       const v = getPath(p, c.key);
       if (c.type === 'file') {

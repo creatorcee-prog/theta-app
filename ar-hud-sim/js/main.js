@@ -141,7 +141,7 @@ function run() {
   // rebuild meshes from the same geometry the tracer used
   sm.clearClippable();
   for (const g of [glassesModel.root, glassesModel.overlay, eyeR.group, eyeL.group, partsModel.root, ...Object.values(optics.groups)]) disposeTree(g);
-  glassesModel.build(results.system.glasses, params.frame, computeHead(params, results.system.glasses, results.system.eye));
+  glassesModel.build(results.system.glasses, params.frame, computeHead(params, results.system.glasses, results.system.eye), results.system.housingShell);
   partsModel.update(results.system);
   partsModel.setCentreOfMass(results.weights?.com, results.weights?.grams ?? 0);
   housingHandle.position.copy(results.system.glasses.housing.center);
@@ -266,7 +266,7 @@ function eulerFromQuat(q) {
 function action(a) {
   if (a === 'refocus') {
     const oled = computeOled(params.oled);
-    const c = computeCollimator({ ...params.collimator, enabled: true }, oled, params.prism.n);
+    const c = computeCollimator({ ...params.collimator, enabled: true }, oled, params.collimator.n ?? params.prism.n);
     if (c?.valid) params.collimator.distance = Math.round(c.frontFocalDistance * 1000) / 1000;
   } else if (a === 'align') {
     params.intent.azimuth = params.targets.azimuth;
@@ -373,7 +373,7 @@ $('#fpv-canvas').addEventListener('click', (e) => {
   params.intent.azimuth = Math.round(a.h * 2) / 2;
   params.intent.elevation = Math.round(a.v * 2) / 2;
   params = alignChain(params);
-  const c = computeCollimator(params.collimator, computeOled(params.oled), params.prism.n);
+  const c = computeCollimator(params.collimator, computeOled(params.oled), params.collimator.n ?? params.prism.n);
   if (c?.valid && params.collimator.mode !== 'thin') params.collimator.distance = c.frontFocalDistance;
   levelImage(params);
   fpv.reach = null;
