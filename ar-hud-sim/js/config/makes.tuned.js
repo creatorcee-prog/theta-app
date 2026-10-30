@@ -25,7 +25,7 @@ export const TUNED = {
       },
       {
         "id": "weight",
-        "value": "36.5 g",
+        "value": "36.4 g",
         "score": 1,
         "met": true
       },
@@ -62,7 +62,7 @@ export const TUNED = {
       "hLen": 27.3,
       "hHeight": 16.7
     },
-    "overall": 0.8912598996121561,
+    "overall": 0.8914478215909595,
     "goals": [
       {
         "id": "pupil",
@@ -73,7 +73,7 @@ export const TUNED = {
       {
         "id": "weight",
         "value": "56.5 g",
-        "score": 0.8491066690252964,
+        "score": 0.8498583569405099,
         "met": false
       },
       {
@@ -119,7 +119,7 @@ export const TUNED = {
       },
       {
         "id": "weight",
-        "value": "40.9 g",
+        "value": "40.8 g",
         "score": 1,
         "met": true
       },

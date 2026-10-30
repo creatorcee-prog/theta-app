@@ -109,6 +109,9 @@ function redrawContent() {
 
 function disposeTree(obj) {
   obj.traverse((o) => {
+    // three.js only detaches a CSS2D label's element when the label itself is
+    // removed, not when an ancestor group is cleared: do it here
+    if (o.isCSS2DObject) o.element?.remove();
     o.geometry?.dispose?.();
     // material.dispose() leaves textures alone, so the shared HUD texture survives
     if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { if (m !== rays.material) m.dispose(); });

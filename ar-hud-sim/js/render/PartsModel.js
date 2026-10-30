@@ -14,8 +14,9 @@ export class PartsModel {
   }
 
   update(system, { labels = true } = {}) {
-    for (const g of Object.values(this.groups)) { g.parent?.remove(g); }
+    this.root.clear();
     this.groups = {};
+    this.comGroup = null;
     const seen = new Set();
     for (const pf of system.parts ?? []) {
       const id = `part:${pf.part.id}`;
@@ -50,7 +51,7 @@ export class PartsModel {
   }
 
   setCentreOfMass(com, gramsTotal) {
-    this.comGroup?.parent?.remove(this.comGroup);
+    if (this.comGroup) { this.comGroup.traverse((o) => o.isCSS2DObject && o.element?.remove()); this.comGroup.parent?.remove(this.comGroup); }
     if (!com) return;
     const g = new THREE.Group();
     g.userData.componentId = 'com';
