@@ -58,6 +58,14 @@
             <button type="button" data-fpv="overlay" aria-pressed="false">HUD only</button>
           </div>
           <label class="chk inline" for="fpv-flip"><input type="checkbox" id="fpv-flip"><span>Driver mirrors image</span></label>
+          <select id="fpv-spot" class="btn small ghost" aria-label="Place the HUD on the lens">
+            <option value="">Place HUD…</option>
+            <option value="middle">Middle of lens</option>
+            <option value="topTemporal">Top corner, temple side</option>
+            <option value="topNasal">Top corner, nose side</option>
+            <option value="bottomTemporal">Bottom corner, temple side</option>
+            <option value="bottomNasal">Bottom corner, nose side</option>
+          </select>
           <button type="button" id="fpv-reach" class="btn small ghost">Map reach</button>
           <button type="button" id="fpv-expand" class="btn small ghost">Expand</button>
           <button type="button" id="fpv-hide" class="btn small ghost" aria-label="Hide right-pupil view">Hide</button>

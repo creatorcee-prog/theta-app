@@ -20,7 +20,7 @@ import { PartsModel } from './render/PartsModel.js';
 import { computeHead } from './model/head.js';
 import { MAKES, TUNED, tunedParams, applyPrintedCosts } from './config/makes.js';
 import { scoreDesign } from './optics/Scorecard.js';
-import { mapReach } from './optics/reach.js';
+import { mapReach, spotPoints } from './optics/reach.js';
 import { partFrame, hostFrameInverse } from './model/parts.js';
 import { solveFocusDistance, solveFieldFocus } from './optics/focus.js';
 import { assessFocus } from './optics/Vision.js';
@@ -367,6 +367,22 @@ document.querySelectorAll('[data-fpv]').forEach((b) => b.addEventListener('click
   fpv.draw();
 }));
 // click in the eye view: aim the HUD there (re-aligns the same parts)
+function aimAt(h, v, where) {
+  params.intent.azimuth = Math.round(h * 2) / 2;
+  params.intent.elevation = Math.round(v * 2) / 2;
+  params = alignChain(params);
+  const c = computeCollimator(params.collimator, computeOled(params.oled), params.collimator.n ?? params.prism.n);
+  if (c?.valid && params.collimator.mode !== 'thin') params.collimator.distance = c.frontFocalDistance;
+  levelImage(params);
+  fpv.reach = null;
+  ui.flash(`HUD moved to ${where ?? `${params.intent.azimuth}° temporal, ${params.intent.elevation}° up`}. The parts were re-aligned for it; "Focus HUD for my eye" fine-tunes focus. Check the Results tab: not every make can reach every spot.`);
+  ui.refresh(); schedule();
+}
+$('#fpv-spot').addEventListener('change', (e) => {
+  const id = e.target.value; e.target.value = '';
+  const sp = spotPoints(params).find((q) => q.id === id);
+  if (sp) aimAt(sp.h, sp.v, sp.label.toLowerCase());
+});
 $('#fpv-canvas').addEventListener('click', (e) => {
   const a = fpv.toAngles(e.clientX, e.clientY);
   if (!a || fpv.mode === 'normal') return;

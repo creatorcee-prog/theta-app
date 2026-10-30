@@ -412,3 +412,17 @@ test('in-line route: the fold mirror on the temple sends the temple-axis beam to
   const t = r.system.glasses.temples.find((q) => q.side === 1);
   near(fm.dIn.dot(t.dir.clone().normalize()), -1, 1e-9, 'beam runs forward along the temple');
 });
+
+test('keystone pre-correction: a vertical line in the content lands at one viewing angle', async () => {
+  const { shearOf, fitOrientation } = await import('../js/optics/orientFit.js');
+  // synthetic affine optics h = a u + b v, v' = e v (slanted image)
+  const a = 9, b = 4, e = 6, px = [];
+  for (const u of [-1, 0, 1]) for (const v of [-1, 0, 1]) px.push({ u, v, availableAngles: { h: a * u + b * v, v: e * v } });
+  const sh = shearOf(px);
+  near(sh, b / a, 1e-9);
+  // the renderer's transform maps content x to display x - k (y - cy) with k = -shear * W/H;
+  // in display coordinates a content-vertical line has du/dv = k * H / W = -shear
+  const W = 640, H = 400, k = -sh * (W / H), dudv = (k * H) / W;
+  near(a * dudv + b, 0, 1e-9, 'h is constant along the corrected vertical');
+  assert.ok(fitOrientation(px));
+});

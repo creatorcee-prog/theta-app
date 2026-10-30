@@ -25,15 +25,44 @@ export function hudCanvasSize(oled) {
   return { w: Math.max(16, Math.round(oled.resX * s)), h: Math.max(10, Math.round(oled.resY * s)) };
 }
 
-export function renderHud(canvas, hud, oled, { mirrored = false } = {}) {
-  const { w, h } = hudCanvasSize(oled);
+// The part of the display that actually reaches the pupil (traced), as a
+// rectangle in display coordinates u, v in [-1, 1] (u right, v up), or null.
+export function visibleViewport(pixelResults) {
+  const vis = pixelResults.filter((p) => p.imaged ?? p.visible);
+  if (!vis.length || vis.length === pixelResults.length) return null;
+  const us = vis.map((p) => p.u), vs = vis.map((p) => p.v);
+  return { u0: Math.min(...us), u1: Math.max(...us), v0: Math.min(...vs), v1: Math.max(...vs) };
+}
+
+export function renderHud(canvas, hud, oled, { mirrored = false, viewport = null, shear = 0 } = {}) {
+  let { w, h } = hudCanvasSize(oled);
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
   const ctx = canvas.getContext('2d');
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = hud.background;
   ctx.fillRect(0, 0, w, h);
+  // keystone pre-correction in the driver: the optics shift the image
+  // horizontally in proportion to height (angle h = a u + b v); drawing the
+  // content slanted by -b/a cancels it. The slanted frame is narrowed so the
+  // corners stay on the panel (that width is the price in pixels).
+  if (shear && hud.keystone !== false) {
+    const k = -shear * (w / h); // canvas x shift per canvas y (y down = v down)
+    const span = Math.abs(k) * h, sx = w / (w + span);
+    ctx.translate(w / 2, h / 2); ctx.transform(1, 0, -k, 1, 0, 0); ctx.scale(sx, 1); ctx.translate(-w / 2, -h / 2);
+  }
   if (mirrored) { ctx.translate(w, 0); ctx.scale(-1, 1); }
+  // fit the layout to the visible part of the display, so content is as large
+  // as possible without being cut off (pixels outside stay black = off)
+  if (viewport && hud.fitVisible !== false) {
+    let x0 = ((viewport.u0 + 1) / 2) * w, x1 = ((viewport.u1 + 1) / 2) * w;
+    if (mirrored) [x0, x1] = [w - x1, w - x0];
+    const y0 = ((1 - viewport.v1) / 2) * h, y1 = ((1 - viewport.v0) / 2) * h;
+    if (x1 - x0 > 8 && y1 - y0 > 8) {
+      ctx.beginPath(); ctx.rect(x0, y0, x1 - x0, y1 - y0); ctx.clip();
+      ctx.translate(x0, y0); w = x1 - x0; h = y1 - y0;
+    }
+  }
   const s = Math.min(w / 640, h / 400);
   const color = hud.color;
   ctx.fillStyle = color;

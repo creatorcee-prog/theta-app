@@ -392,9 +392,11 @@ export function runDiagnostics(results, coverage) {
       const tilt = rot > 90 ? rot - 180 : rot < -90 ? rot + 180 : rot;
       const how = det < 0 ? (a < 0 ? 'mirrored left–right' : 'mirrored top–bottom') : Math.abs(rot) > 90 ? 'upside down' : 'upright';
       const shear = (Math.atan2(b, e) * 180) / Math.PI + rot;
-      add('Image', 'orientation', 'Image orientation', `${how}, tilted ${f1(tilt)}°`,
-        det < 0 || Math.abs(rot) > 3 ? 'fail' : Math.abs(shear) > 5 ? 'warn' : 'pass',
-        `${det < 0 ? 'The optics mirror the image: turn on "Driver mirrors image". ' : flipped ? 'The display driver flips the image left–right to undo the optics\' mirror. ' : ''}${Math.abs(rot) > 3 ? 'Text will not read level: use "Level the image" (Align section), which rolls the OLED about its axis. ' : ''}Vertical axis leans ${f1(shear)}° relative to the horizontal (keystone from the off-axis fold${Math.abs(shear) > 5 ? '; noticeable' : ''}).`);
+      // keystone: corrected digitally by the driver when enabled (costs horizontal pixels)
+      const kOn = params.hud.keystone !== false, slant = Math.abs(b / (a || 1e-9)), kCost = slant / (1 + slant);
+      add('Image', 'orientation', 'Image orientation', `${how}, tilted ${f1(tilt)}°${kOn && Math.abs(shear) > 1 ? `, ${f1(Math.abs(shear))}° slant corrected` : ''}`,
+        det < 0 || Math.abs(rot) > 3 ? 'fail' : Math.abs(shear) > 5 && !kOn ? 'warn' : 'pass',
+        `${det < 0 ? 'The optics mirror the image: turn on "Driver mirrors image". ' : flipped ? 'The display driver flips the image left–right to undo the optics\' mirror. ' : ''}${Math.abs(rot) > 3 ? 'Text will not read level: use "Level the image" (Align section), which rolls the OLED about its axis. ' : ''}Vertical axis leans ${f1(shear)}° relative to the horizontal (keystone from the off-axis fold)${kOn && Math.abs(shear) > 1 ? `; the driver pre-slants the frame to cancel it, using ${Math.round(100 * (1 - kCost))}% of the panel width` : Math.abs(shear) > 5 ? '; noticeable, turn on keystone correction' : ''}.`);
     }
   } else {
     add('Image', 'orientation', 'Image orientation', 'not determinable', 'fail', 'Fewer than 3 pixel samples reach the pupil plane.');

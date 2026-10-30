@@ -10,6 +10,9 @@ import { solveFocusDistance, solveFieldFocus } from '../optics/focus.js';
 import { assessFocus } from '../optics/Vision.js';
 import { TUNED } from './makes.tuned.js';
 import { levelImage } from '../optics/orient.js';
+import { lensSpots, lensZone } from '../model/lensSpots.js';
+import { computeGlasses } from '../model/glassesGeometry.js';
+import { computeEye } from '../model/eye.js';
 
 const src = {
   yx: { label: 'YX Microdisplay 0.23″ 640×400 kit with HDMI board ($175)', url: 'https://www.yxmicrodisplay.com/products/0-23-inch-640x400-micro-oled-display-3000nits-hdmi-kit' },
@@ -148,14 +151,14 @@ export const MAKES = [
   {
     id: 'atlas', name: 'Atlas', tagline: 'Tethered optics-first',
     idea: 'Puts the money into optics. A 10–12 mm prism and a wide lens give a large eye-box. No computer or battery is worn: the HUD plugs into your phone or PC over HDMI.',
-    vars: { prism: [8, 10, 12], lens: ['acl1512', 'eo125', 'acl1210', 'eo19'], flip: [false, true], stop: [4, 12], az: [6, 44], el: [-28, 32], tilt: [0, 10], inset: [-8, 14] },
+    vars: { prism: [8, 10, 12], lens: ['acl1512', 'eo125', 'acl1210', 'eo19'], flip: [false, true], stop: [4, 12], spot: ['middle', 'topTemporal', 'topNasal', 'bottomTemporal', 'bottomNasal'], dAz: [-5, 5], dEl: [-5, 5], tilt: [0, 10], inset: [-8, 14] },
     electronics: () => ({ parts: [], bom: [line({ id: 'cable', name: 'HDMI cable to your phone/PC', unit: 8, sourced: false, weight: 3, weightBasis: 'estimate', weightNote: 'On-frame share of the cable.', note: 'Estimate. Your phone/PC is the HDMI source (not counted).' })] }),
     display: 'yx',
   },
   {
     id: 'solo', name: 'Solo', tagline: 'Standalone, nothing to plug in',
     idea: 'Everything is on the frame: a Raspberry Pi Zero 2 W behind the left ear as the HDMI source, with the battery and charger on the left temple to balance the optics on the right.',
-    vars: { prism: [6, 8, 10], lens: ['acl1512', 'acl1210', 'eo125', 'eo19'], flip: [false, true], stop: [4, 12], az: [6, 44], el: [-28, 32], tilt: [0, 10], inset: [-8, 14] },
+    vars: { prism: [6, 8, 10], lens: ['acl1512', 'acl1210', 'eo125', 'eo19'], flip: [false, true], stop: [4, 12], spot: ['middle', 'topTemporal', 'topNasal', 'bottomTemporal', 'bottomNasal'], dAz: [-5, 5], dEl: [-5, 5], tilt: [0, 10], inset: [-8, 14] },
     electronics: () => ({
       parts: [
         { id: 'compute', name: 'Raspberry Pi Zero 2 W', size: { x: 5, y: 30, z: 65 }, pos: { x: 72, y: -4, z: -128 }, rot: { yaw: 0, pitch: 0, roll: 0 }, attach: null, color: '#1f6b3a', blocksLight: true, custom: false },
@@ -174,7 +177,7 @@ export const MAKES = [
   {
     id: 'kestrel', name: 'Kestrel', tagline: 'Value monochrome',
     idea: 'Swaps the $175 micro-OLED for a $2.65 0.49″ 64×32 I2C OLED driven by an ESP32-C3. You get a coarse, bright notification HUD instead of a 640×400 screen, and it is self-powered and very cheap.',
-    vars: { prism: [8, 10, 12], lens: ['eo19', 'acl1512', 'eo125'], flip: [false, true], stop: [4, 12], az: [6, 44], el: [-28, 32], tilt: [0, 10], inset: [-8, 14] },
+    vars: { prism: [8, 10, 12], lens: ['eo19', 'acl1512', 'eo125'], flip: [false, true], stop: [4, 12], spot: ['middle', 'topTemporal', 'topNasal', 'bottomTemporal', 'bottomNasal'], dAz: [-5, 5], dEl: [-5, 5], tilt: [0, 10], inset: [-8, 14] },
     electronics: () => ({
       parts: [
         { id: 'battery', name: 'LiPo 150 mAh (501230)', size: { x: 5, y: 12, z: 30 }, pos: { x: 71, y: 6, z: -60 }, rot: { yaw: 0, pitch: 0, roll: 0 }, attach: null, color: '#3c6fb0', blocksLight: true, custom: false },
@@ -191,35 +194,35 @@ export const MAKES = [
   {
     id: 'wisp', name: 'Wisp', tagline: 'Featherweight, out of sight',
     idea: 'The smallest stock prism (5–6 mm) and a compact housing keep mass down and the line of sight clear. It trades eye-box size for that, and it is tethered over HDMI like Atlas.',
-    vars: { prism: [5, 6, 8], lens: ['acl1210', 'eo125', 'acl1512', 'eo19'], flip: [false, true], stop: [3, 8], az: [6, 44], el: [-28, 32], tilt: [0, 10], inset: [-8, 14] },
+    vars: { prism: [5, 6, 8], lens: ['acl1210', 'eo125', 'acl1512', 'eo19'], flip: [false, true], stop: [3, 8], spot: ['middle', 'topTemporal', 'topNasal', 'bottomTemporal', 'bottomNasal'], dAz: [-5, 5], dEl: [-5, 5], tilt: [0, 10], inset: [-8, 14] },
     electronics: () => ({ parts: [], bom: [line({ id: 'cable', name: 'Thin HDMI cable to your phone/PC', unit: 8, sourced: false, weight: 2.5, weightBasis: 'estimate', note: 'Estimate. Your phone/PC is the HDMI source (not counted).' })] }),
     display: 'yx',
   },
   {
     id: 'mirage', name: 'Mirage', tagline: 'Mirror on the lens (Focals-style)', kind: 'patch',
     idea: 'The display and lens sit in the temple and shine across the inside of the lens onto a small, partly mirrored glass patch behind it, which reflects the image into your eye. Nothing sticks out and the frame keeps its normal shape. Focals did this with a laser scanner and a holographic film; this version uses parts you can get: the micro-OLED, a stock asphere and a coated watch-crystal patch.',
-    vars: { lens: ['cb45', 'eo19', 'eo125', 'acl1512'], coat: ['bare', 'coated'], route: ['prism', 'direct', 'inline'], fsize: [8, 10, 12], fdist: [10, 40], idist: [2, 30], inset: [-8, 4], idy: [-8, 8], trim: [10, 25], flip: [false, true], stop: [4, 22], az: [6, 44], el: [-28, 32], fold: [60, 110], stilt: [-25, 25], radius: [80, 3000], throw: [18, 62], tx: [-12, 12], ty: [-12, 12], diam: [8, 22] },
+    vars: { lens: ['cb45', 'eo19', 'eo125', 'acl1512'], coat: ['bare', 'coated'], route: ['prism', 'direct', 'inline'], fsize: [8, 10, 12], fdist: [10, 40], idist: [2, 30], inset: [-8, 4], idy: [-8, 8], trim: [10, 25], flip: [false, true], stop: [4, 22], spot: ['middle', 'topTemporal', 'topNasal', 'bottomTemporal', 'bottomNasal'], dAz: [-5, 5], dEl: [-5, 5], fold: [60, 110], stilt: [-25, 25], radius: [80, 3000], throw: [18, 62], tx: [-12, 12], ty: [-12, 12], diam: [8, 22] },
     electronics: () => ({ parts: [], bom: [line({ id: 'cable', name: 'Thin HDMI cable to your phone/PC', unit: 8, sourced: false, weight: 2.5, weightBasis: 'estimate', note: 'Estimate. Your phone/PC is the HDMI source (not counted).' })] }),
     display: 'yx',
   },
   {
     id: 'mirageCoat', name: 'Mirage Coat', tagline: 'The lens itself is the reflector', kind: 'patch', patchMode: 'lensback',
     idea: 'No extra part in front of the eye: the back surface of your right lens reflects the display into your eye, either bare glass (a few %) or with a partial mirror coating. The lens faces you almost straight on, so the display must sit where the lens mirrors your line of sight: behind the eye, beside the temple. That only works for a HUD far to the side, and the beam has to clear the outer corner of the eye socket.',
-    vars: { lens: ['cb45', 'eo19', 'eo125'], coat: ['bare', 'coated'], route: ['inline', 'direct'], inset: [-8, 4], trim: [8, 25], flip: [false, true], stop: [4, 14], az: [6, 50], el: [-28, 32], throw: [18, 62], tx: [-12, 12], ty: [-12, 12] },
+    vars: { lens: ['cb45', 'eo19', 'eo125'], coat: ['bare', 'coated'], route: ['inline', 'direct'], inset: [-8, 4], trim: [8, 25], flip: [false, true], stop: [4, 14], spot: ['middle', 'topTemporal', 'topNasal', 'bottomTemporal', 'bottomNasal'], dAz: [-5, 5], dEl: [-5, 5], throw: [18, 62], tx: [-12, 12], ty: [-12, 12] },
     electronics: () => ({ parts: [], bom: [line({ id: 'cable', name: 'Thin HDMI cable to your phone/PC', unit: 8, sourced: false, weight: 2.5, weightBasis: 'estimate', note: 'Estimate. Your phone/PC is the HDMI source (not counted).' })] }),
     display: 'yx',
   },
   {
     id: 'mirageCast', name: 'Mirage Cast', tagline: 'Partial mirror cast inside the lens', kind: 'patch', patchMode: 'embedded',
     idea: 'A thicker right lens with a tilted partial mirror cast inside it, so the reflector is part of the lens. Light from the temple enters through the back of the lens, reflects off the buried mirror and leaves toward your eye; the tracer refracts it at every surface. The lens has to be thick enough to hold the tilted mirror.',
-    vars: { lens: ['cb45', 'eo19', 'eo125'], route: ['inline', 'direct'], idist: [2, 30], inset: [-8, 4], idy: [-8, 8], trim: [8, 25], flip: [false, true], stop: [4, 22], az: [6, 44], el: [-28, 32], fold: [40, 110], stilt: [-25, 25], throw: [18, 62], tx: [-12, 12], ty: [-12, 12], diam: [4, 16], thick: [3, 12] },
+    vars: { lens: ['cb45', 'eo19', 'eo125'], route: ['inline', 'direct'], idist: [2, 30], inset: [-8, 4], idy: [-8, 8], trim: [8, 25], flip: [false, true], stop: [4, 22], spot: ['middle', 'topTemporal', 'topNasal', 'bottomTemporal', 'bottomNasal'], dAz: [-5, 5], dEl: [-5, 5], fold: [40, 110], stilt: [-25, 25], throw: [18, 62], tx: [-12, 12], ty: [-12, 12], diam: [4, 16], thick: [3, 12] },
     electronics: () => ({ parts: [], bom: [line({ id: 'cable', name: 'Thin HDMI cable to your phone/PC', unit: 8, sourced: false, weight: 2.5, weightBasis: 'estimate', note: 'Estimate. Your phone/PC is the HDMI source (not counted).' })] }),
     display: 'yx',
   },
   {
     id: 'lumen', name: 'Lumen', tagline: 'See-through waveguide (your reference)', kind: 'waveguide',
     idea: 'Modelled on your reference images: the projector sits in the temple, and a thin glass waveguide behind the lens carries the image inward by total internal reflection. Embedded partial mirrors then send it into your eye, so nothing hangs in front of the lens. Retail waveguides use a diffraction grating or factory-coated facets. Here the facets are cut from a stock beamsplitter, because a grating cannot be ray-traced or bought for a hobby build.',
-    vars: { lens: ['acl1512', 'eo125', 'acl1210', 'eo19'], flip: [false, true], stop: [3, 10], az: [6, 44], el: [-28, 32], thick: [2.5, 4.5], guide: [50, 64], facets: [2, 5], spacing: [2.5, 6], height: [9, 16], margin: [-8, 0] },
+    vars: { lens: ['acl1512', 'eo125', 'acl1210', 'eo19'], flip: [false, true], stop: [3, 10], spot: ['middle', 'topTemporal', 'topNasal', 'bottomTemporal', 'bottomNasal'], dAz: [-5, 5], dEl: [-5, 5], thick: [2.5, 4.5], guide: [50, 64], facets: [2, 5], spacing: [2.5, 6], height: [9, 16], margin: [-8, 0] },
     electronics: () => ({ parts: [], bom: [line({ id: 'cable', name: 'Thin HDMI cable to your phone/PC', unit: 8, sourced: false, weight: 2.5, weightBasis: 'estimate', note: 'Estimate. Your phone/PC is the HDMI source (not counted).' })] }),
     display: 'yx',
   },
@@ -263,6 +266,16 @@ export function buildMake(make, v, opts = {}) {
     p.oled = { ...p.oled, peakLuminance: 3000 };
   }
   p.frame = { ...p.frame, housingAuto: true, housingShape: patched ? 'conformal' : 'box' };
+  // HUD position: one of the preferred lens spots (middle / corners), nudged by
+  // a few degrees, and the zone where it may appear is the whole right lens
+  {
+    const g = computeGlasses(p.frame), e = computeEye({ ...p.eye, monoPD: p.eye.monoPDRight, side: 1 }, g);
+    p.targets = { ...p.targets, zone: lensZone(g, e) };
+    if (v.spot) {
+      const sp = lensSpots(g, e).find((q) => q.id === v.spot);
+      v = { ...v, az: Math.round((sp.h + (v.dAz ?? 0)) * 10) / 10, el: Math.round((sp.v + (v.dEl ?? 0)) * 10) / 10 };
+    }
+  }
   p.intent = { ...p.intent, azimuth: v.az, elevation: v.el, entryTiltDeg: v.tilt, oledInset: v.inset, prismClearance: 1 };
   p = alignChain(p);
   // focus: start at the paraxial front focal distance, then let the tracer
@@ -278,10 +291,11 @@ export function buildMake(make, v, opts = {}) {
       if (ff.ok) p.collimator.distance = Math.round(ff.distance * 1000) / 1000;
     }
   }
-  // roll the display so the image reads level and unmirrored for the eye
-  if (opts.level !== false) levelImage(p);
   const el = make.electronics();
   p.parts = [...el.parts];
+  // roll the display so the image reads level and unmirrored for the eye
+  // (after the make's own parts replace the default design's)
+  if (opts.level !== false) levelImage(p);
   const displayLines = make.display === 'ssd0.49'
     ? [
       line({ id: 'oled', name: '0.49″ 64×32 I2C OLED module', component: 'oled', unit: 2.65, sourced: true, sources: [src.ssd], weight: 1, weightBasis: 'estimate', note: '11.18 × 5.58 mm active area, 15 × 12 mm board (listings).' }),

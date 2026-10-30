@@ -59,7 +59,7 @@ export function baseParams() {
       mode: 'text', line1: '12:45', line2: 'NEXT 200 m', line3: '64 BPM', textSize: 120,
       color: '#39ff88', background: '#000000', border: true, arrow: true,
       image: null, imageName: '', imageFit: 'contain', driverFlip: false,
-      turn: 'right', zone: 3, heading: 72, speed: 24, speedMax: 50,
+      fitVisible: true, keystone: true, turn: 'right', zone: 3, heading: 72, speed: 24, speedMax: 50,
     },
     sim: { pixelsX: 9, pixelsY: 5, raysPerPixel: 40, wavelengths: 'mono', ghosts: false, ghostMin: 0.005, drawRays: 900, raySpeed: 22 },
     // zone: where the HUD may appear (degrees from the line of sight, temporal + / up +);

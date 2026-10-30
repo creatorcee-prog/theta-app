@@ -125,7 +125,7 @@ export class FirstPersonView {
 
   drawHud(ctx, X, Y, scale, R, C) {
     const params = R.system.params;
-    renderHud(this.hud, params.hud, params.oled, { mirrored: params.hud.driverFlip });
+    renderHud(this.hud, params.hud, params.oled, { mirrored: params.hud.driverFlip, viewport: R.system.hudViewport, shear: R.system.hudShear });
     const TW = this.hud.width, TH = this.hud.height;
     const nx = params.sim.pixelsX, ny = params.sim.pixelsY;
     const by = new Map(R.pixelResults.map((p) => [`${p.i},${p.j}`, p]));

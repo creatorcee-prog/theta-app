@@ -10,6 +10,8 @@ import { trace, coneDirections, eyeDetector } from './RayTracer.js';
 import { makeGlass, WAVELENGTHS, criticalAngle, AIR } from './materials.js';
 import { partFrame, computeWeights } from '../model/parts.js';
 import { computeHead } from '../model/head.js';
+import { visibleViewport } from '../render/hudContent.js';
+import { shearOf } from './orientFit.js';
 import { boxAbsorber } from './RayTracer.js';
 import { computeWaveguide, waveguideObjects } from './Waveguide.js';
 import { computePatch, patchObjects, computeFoldPrism, computeFoldMirror } from './Combiner.js';
@@ -336,6 +338,8 @@ export function runSimulation(params) {
       if (b && b.weightBasis === 'calc' && b.autoWeight !== false) b.weight = l.grams;
     }
   }
+  system.hudViewport = visibleViewport(pixelResults);
+  system.hudShear = shearOf(pixelResults);
   const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
   return {
     system, paths, chief, sources, pixels, bands, pixelResults, counts, power, hyp, lensCrossings, weights,

@@ -3,9 +3,11 @@ export const TUNED = {
   "atlas": {
     "reach": [
       {
-        "h": 4.8,
-        "v": -25.9,
-        "visible": 0.357,
+        "id": "middle",
+        "label": "Middle",
+        "h": 7.9,
+        "v": 0,
+        "visible": 1,
         "buildable": false,
         "failed": [
           "prismClear",
@@ -15,46 +17,20 @@ export const TUNED = {
         ]
       },
       {
-        "h": 14.4,
-        "v": -25.9,
-        "visible": 1,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 24,
-        "v": -25.9,
-        "visible": 1,
-        "buildable": false,
-        "failed": [
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": -25.9,
-        "visible": 1,
+        "id": "topTemporal",
+        "label": "Top, temple side",
+        "h": 44.1,
+        "v": 24.4,
+        "visible": 0.929,
         "buildable": true,
         "failed": []
       },
       {
-        "h": 43.2,
-        "v": -25.9,
-        "visible": 0.179,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 4.8,
-        "v": -11.7,
-        "visible": 0.429,
+        "id": "topNasal",
+        "label": "Top, nose side",
+        "h": -34.7,
+        "v": 27.4,
+        "visible": 0.75,
         "buildable": false,
         "failed": [
           "prismClear",
@@ -64,199 +40,41 @@ export const TUNED = {
         ]
       },
       {
-        "h": 14.4,
-        "v": -11.7,
-        "visible": 1,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 24,
-        "v": -11.7,
-        "visible": 1,
-        "buildable": false,
-        "failed": [
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": -11.7,
+        "id": "bottomTemporal",
+        "label": "Bottom, temple side",
+        "h": 44.1,
+        "v": -24.4,
         "visible": 1,
         "buildable": true,
         "failed": []
       },
       {
-        "h": 43.2,
-        "v": -11.7,
-        "visible": 0.25,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 4.8,
-        "v": 2.5,
-        "visible": 0.429,
+        "id": "bottomNasal",
+        "label": "Bottom, nose side",
+        "h": -34.7,
+        "v": -27.4,
+        "visible": 0.75,
         "buildable": false,
         "failed": [
           "prismClear",
           "hwCentral",
           "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 14.4,
-        "v": 2.5,
-        "visible": 1,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 24,
-        "v": 2.5,
-        "visible": 1,
-        "buildable": false,
-        "failed": [
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": 2.5,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": 2.5,
-        "visible": 0.286,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 4.8,
-        "v": 16.7,
-        "visible": 0.357,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 14.4,
-        "v": 16.7,
-        "visible": 1,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 24,
-        "v": 16.7,
-        "visible": 1,
-        "buildable": false,
-        "failed": [
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": 16.7,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": 16.7,
-        "visible": 0.25,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 4.8,
-        "v": 30.9,
-        "visible": 0.5,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 14.4,
-        "v": 30.9,
-        "visible": 0.857,
-        "buildable": false,
-        "failed": [
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 24,
-        "v": 30.9,
-        "visible": 0.786,
-        "buildable": false,
-        "failed": [
-          "oledFit"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": 30.9,
-        "visible": 0.786,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": 30.9,
-        "visible": 0.107,
-        "buildable": false,
-        "failed": [
           "armFit"
         ]
       }
     ],
     "vars": {
-      "prism": 8,
+      "prism": 10,
       "lens": "eo19",
       "flip": false,
-      "stop": 6,
-      "az": 29.9,
-      "el": -28,
-      "tilt": 10,
-      "inset": 3.9
+      "stop": 9.9,
+      "spot": "topTemporal",
+      "dAz": -4.8,
+      "dEl": 5,
+      "tilt": 5.9,
+      "inset": 1.4
     },
-    "overall": 0.9328458401763469,
+    "overall": 0.9328362868882145,
     "goals": [
       {
         "id": "pupil",
@@ -266,14 +84,14 @@ export const TUNED = {
       },
       {
         "id": "weight",
-        "value": "35.6 g",
+        "value": "36.6 g",
         "score": 1,
         "met": true
       },
       {
         "id": "cost",
-        "value": "$228.77",
-        "score": 0.8742405035625301,
+        "value": "$228.78",
+        "score": 0.8742022904100009,
         "met": false
       },
       {
@@ -284,289 +102,18 @@ export const TUNED = {
       }
     ],
     "fov": [
-      18.415413410908016,
-      9.910502430167274
+      18.804865663092542,
+      9.791589037938056
     ]
   },
   "solo": {
     "reach": [
       {
-        "h": 4.8,
-        "v": -25.9,
-        "visible": 0.357,
-        "buildable": false,
-        "failed": [
-          "hwCentral",
-          "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 14.4,
-        "v": -25.9,
-        "visible": 0.643,
-        "buildable": false,
-        "failed": [
-          "oledFit"
-        ]
-      },
-      {
-        "h": 24,
-        "v": -25.9,
-        "visible": 0.643,
-        "buildable": false,
-        "failed": [
-          "oledFit"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": -25.9,
-        "visible": 0.607,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": -25.9,
-        "visible": 0,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 4.8,
-        "v": -11.7,
-        "visible": 0.393,
-        "buildable": false,
-        "failed": [
-          "hwCentral",
-          "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 14.4,
-        "v": -11.7,
-        "visible": 0.821,
-        "buildable": false,
-        "failed": [
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 24,
-        "v": -11.7,
-        "visible": 0.786,
-        "buildable": false,
-        "failed": [
-          "oledFit"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": -11.7,
-        "visible": 0.821,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": -11.7,
-        "visible": 0,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 4.8,
-        "v": 2.5,
-        "visible": 0.321,
-        "buildable": false,
-        "failed": [
-          "hwCentral",
-          "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 14.4,
-        "v": 2.5,
-        "visible": 0.821,
-        "buildable": false,
-        "failed": [
-          "hwCentral",
-          "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 24,
-        "v": 2.5,
-        "visible": 0.821,
-        "buildable": false,
-        "failed": [
-          "oledFit"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": 2.5,
-        "visible": 0.821,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": 2.5,
-        "visible": 0,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 4.8,
-        "v": 16.7,
-        "visible": 0.286,
-        "buildable": false,
-        "failed": [
-          "hwCentral",
-          "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 14.4,
-        "v": 16.7,
-        "visible": 0.821,
-        "buildable": false,
-        "failed": [
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 24,
-        "v": 16.7,
-        "visible": 0.821,
-        "buildable": false,
-        "failed": [
-          "oledFit"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": 16.7,
-        "visible": 0.643,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": 16.7,
-        "visible": 0,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 4.8,
-        "v": 30.9,
-        "visible": 0.321,
-        "buildable": false,
-        "failed": [
-          "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 14.4,
-        "v": 30.9,
-        "visible": 0.714,
-        "buildable": false,
-        "failed": [
-          "oledFit"
-        ]
-      },
-      {
-        "h": 24,
-        "v": 30.9,
-        "visible": 0.714,
-        "buildable": false,
-        "failed": [
-          "oledFit"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": 30.9,
-        "visible": 0.714,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": 30.9,
-        "visible": 0,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      }
-    ],
-    "vars": {
-      "prism": 6,
-      "lens": "eo19",
-      "flip": false,
-      "stop": 5,
-      "az": 34,
-      "el": 21.4,
-      "tilt": 8.6,
-      "inset": 4.2
-    },
-    "overall": 0.8909298014288842,
-    "goals": [
-      {
-        "id": "pupil",
-        "value": "98% (44/45 px)",
-        "score": 0.9777777777777777,
-        "met": false
-      },
-      {
-        "id": "weight",
-        "value": "55.2 g",
-        "score": 0.8695652173913044,
-        "met": false
-      },
-      {
-        "id": "cost",
-        "value": "$253.87",
-        "score": 0.7878047819750266,
-        "met": false
-      },
-      {
-        "id": "structure",
-        "value": "13/14 checks",
-        "score": 0.9285714285714286,
-        "met": false
-      }
-    ],
-    "fov": [
-      16.938081291792617,
-      9.69491669716702
-    ]
-  },
-  "kestrel": {
-    "reach": [
-      {
-        "h": 4.8,
-        "v": -25.9,
-        "visible": 0.393,
+        "id": "middle",
+        "label": "Middle",
+        "h": 7.9,
+        "v": 0,
+        "visible": 1,
         "buildable": false,
         "failed": [
           "prismClear",
@@ -576,259 +123,52 @@ export const TUNED = {
         ]
       },
       {
-        "h": 14.4,
-        "v": -25.9,
-        "visible": 0.643,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 24,
-        "v": -25.9,
-        "visible": 0.679,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": -25.9,
-        "visible": 0.536,
-        "buildable": false,
-        "failed": [
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 43.2,
-        "v": -25.9,
-        "visible": 0,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 4.8,
-        "v": -11.7,
-        "visible": 0.393,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 14.4,
-        "v": -11.7,
-        "visible": 0.857,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 24,
-        "v": -11.7,
-        "visible": 0.857,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": -11.7,
-        "visible": 0.679,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 43.2,
-        "v": -11.7,
-        "visible": 0,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 4.8,
-        "v": 2.5,
-        "visible": 0.321,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 14.4,
-        "v": 2.5,
-        "visible": 0.857,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 24,
-        "v": 2.5,
-        "visible": 0.857,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": 2.5,
-        "visible": 0.286,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 43.2,
-        "v": 2.5,
-        "visible": 0.214,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 4.8,
-        "v": 16.7,
-        "visible": 0.357,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 14.4,
-        "v": 16.7,
-        "visible": 0.857,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 24,
-        "v": 16.7,
-        "visible": 0.857,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": 16.7,
-        "visible": 0.714,
-        "buildable": false,
-        "failed": [
-          "hwCentral",
-          "armFit"
-        ]
-      },
-      {
-        "h": 43.2,
-        "v": 16.7,
-        "visible": 0,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 4.8,
-        "v": 30.9,
-        "visible": 0.286,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 14.4,
-        "v": 30.9,
-        "visible": 0.643,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 24,
-        "v": 30.9,
-        "visible": 0.679,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": 30.9,
-        "visible": 0.5,
-        "buildable": false,
-        "failed": [
-          "oledFit"
-        ]
-      },
-      {
-        "h": 43.2,
-        "v": 30.9,
+        "id": "topTemporal",
+        "label": "Top, temple side",
+        "h": 44.1,
+        "v": 24.4,
         "visible": 0.071,
         "buildable": false,
         "failed": [
+          "armFit"
+        ]
+      },
+      {
+        "id": "topNasal",
+        "label": "Top, nose side",
+        "h": -34.7,
+        "v": 27.4,
+        "visible": 0.786,
+        "buildable": false,
+        "failed": [
+          "prismClear",
+          "hwCentral",
+          "oledFit",
+          "armFit"
+        ]
+      },
+      {
+        "id": "bottomTemporal",
+        "label": "Bottom, temple side",
+        "h": 44.1,
+        "v": -24.4,
+        "visible": 0.036,
+        "buildable": false,
+        "failed": [
+          "armFit"
+        ]
+      },
+      {
+        "id": "bottomNasal",
+        "label": "Bottom, nose side",
+        "h": -34.7,
+        "v": -27.4,
+        "visible": 0.714,
+        "buildable": false,
+        "failed": [
+          "prismClear",
+          "hwCentral",
+          "oledFit",
           "armFit"
         ]
       }
@@ -836,303 +176,15 @@ export const TUNED = {
     "vars": {
       "prism": 10,
       "lens": "eo19",
-      "flip": true,
-      "stop": 12,
-      "az": 29,
-      "el": 25.6,
-      "tilt": 8.3,
-      "inset": 2.5
-    },
-    "overall": 0.8952380952380953,
-    "goals": [
-      {
-        "id": "pupil",
-        "value": "87% (39/45 px)",
-        "score": 0.8666666666666667,
-        "met": false
-      },
-      {
-        "id": "weight",
-        "value": "40.2 g",
-        "score": 1,
-        "met": true
-      },
-      {
-        "id": "cost",
-        "value": "$71.55",
-        "score": 1,
-        "met": true
-      },
-      {
-        "id": "structure",
-        "value": "10/14 checks",
-        "score": 0.7142857142857143,
-        "met": false
-      }
-    ],
-    "fov": [
-      36.13577589655154,
-      17.483173351925593
-    ]
-  },
-  "wisp": {
-    "reach": [
-      {
-        "h": 4.8,
-        "v": -25.9,
-        "visible": 0.679,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 14.4,
-        "v": -25.9,
-        "visible": 1,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 24,
-        "v": -25.9,
-        "visible": 1,
-        "buildable": false,
-        "failed": [
-          "hwCentral"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": -25.9,
-        "visible": 0.607,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 43.2,
-        "v": -25.9,
-        "visible": 0,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 4.8,
-        "v": -11.7,
-        "visible": 0.536,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 14.4,
-        "v": -11.7,
-        "visible": 1,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 24,
-        "v": -11.7,
-        "visible": 1,
-        "buildable": false,
-        "failed": [
-          "hwCentral"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": -11.7,
-        "visible": 0.214,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 43.2,
-        "v": -11.7,
-        "visible": 0,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 4.8,
-        "v": 2.5,
-        "visible": 0.429,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit",
-          "armFit"
-        ]
-      },
-      {
-        "h": 14.4,
-        "v": 2.5,
-        "visible": 1,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 24,
-        "v": 2.5,
-        "visible": 1,
-        "buildable": false,
-        "failed": [
-          "hwCentral"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": 2.5,
-        "visible": 0,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 43.2,
-        "v": 2.5,
-        "visible": 0,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 4.8,
-        "v": 16.7,
-        "visible": 0.607,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 14.4,
-        "v": 16.7,
-        "visible": 1,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 24,
-        "v": 16.7,
-        "visible": 1,
-        "buildable": false,
-        "failed": [
-          "hwCentral"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": 16.7,
-        "visible": 0.357,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 43.2,
-        "v": 16.7,
-        "visible": 0,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 4.8,
-        "v": 30.9,
-        "visible": 0.679,
-        "buildable": false,
-        "failed": [
-          "prismClear",
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 14.4,
-        "v": 30.9,
-        "visible": 1,
-        "buildable": false,
-        "failed": [
-          "hwCentral",
-          "oledFit"
-        ]
-      },
-      {
-        "h": 24,
-        "v": 30.9,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 33.6,
-        "v": 30.9,
-        "visible": 0.607,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      },
-      {
-        "h": 43.2,
-        "v": 30.9,
-        "visible": 0,
-        "buildable": false,
-        "failed": [
-          "armFit"
-        ]
-      }
-    ],
-    "vars": {
-      "prism": 8,
-      "lens": "eo19",
       "flip": false,
-      "stop": 6.5,
-      "az": 34.4,
-      "el": -28,
-      "tilt": 7.6,
-      "inset": 6.1
+      "stop": 9.9,
+      "spot": "topTemporal",
+      "dAz": -4.3,
+      "dEl": 5,
+      "tilt": 6.1,
+      "inset": 4
     },
-    "overall": 0.914988697319204,
+    "overall": 0.8746461219437961,
     "goals": [
       {
         "id": "pupil",
@@ -1142,40 +194,246 @@ export const TUNED = {
       },
       {
         "id": "weight",
-        "value": "35.3 g",
+        "value": "56.2 g",
+        "score": 0.8536368486573004,
+        "met": false
+      },
+      {
+        "id": "cost",
+        "value": "$253.87",
+        "score": 0.7878047819750267,
+        "met": false
+      },
+      {
+        "id": "structure",
+        "value": "12/14 checks",
+        "score": 0.8571428571428571,
+        "met": false
+      }
+    ],
+    "fov": [
+      18.646588284402082,
+      9.789253664882704
+    ]
+  },
+  "kestrel": {
+    "reach": [
+      {
+        "id": "middle",
+        "label": "Middle",
+        "h": 7.9,
+        "v": 0,
+        "visible": 0.571,
+        "buildable": false,
+        "failed": [
+          "prismClear",
+          "hwCentral",
+          "oledFit"
+        ]
+      },
+      {
+        "id": "topTemporal",
+        "label": "Top, temple side",
+        "h": 44.1,
+        "v": 24.4,
+        "visible": 0.143,
+        "buildable": false,
+        "failed": [
+          "armFit"
+        ]
+      },
+      {
+        "id": "topNasal",
+        "label": "Top, nose side",
+        "h": -34.7,
+        "v": 27.4,
+        "visible": 0.143,
+        "buildable": false,
+        "failed": [
+          "prismClear",
+          "hwCentral",
+          "oledFit",
+          "armFit"
+        ]
+      },
+      {
+        "id": "bottomTemporal",
+        "label": "Bottom, temple side",
+        "h": 44.1,
+        "v": -24.4,
+        "visible": 0.143,
+        "buildable": false,
+        "failed": [
+          "armFit"
+        ]
+      },
+      {
+        "id": "bottomNasal",
+        "label": "Bottom, nose side",
+        "h": -34.7,
+        "v": -27.4,
+        "visible": 0,
+        "buildable": false,
+        "failed": [
+          "prismClear",
+          "hwCentral",
+          "oledFit",
+          "armFit"
+        ]
+      }
+    ],
+    "vars": {
+      "prism": 10,
+      "lens": "eo19",
+      "flip": true,
+      "stop": 7,
+      "spot": "bottomTemporal",
+      "dAz": -5,
+      "dEl": 3.1,
+      "tilt": 6,
+      "inset": 4.2
+    },
+    "overall": 0.8587301587301587,
+    "goals": [
+      {
+        "id": "pupil",
+        "value": "58% (26/45 px)",
+        "score": 0.5777777777777777,
+        "met": false
+      },
+      {
+        "id": "weight",
+        "value": "40.7 g",
         "score": 1,
         "met": true
       },
       {
         "id": "cost",
-        "value": "$228.77",
-        "score": 0.8742405035625301,
-        "met": false
+        "value": "$71.57",
+        "score": 1,
+        "met": true
       },
       {
         "id": "structure",
-        "value": "11/14 checks",
-        "score": 0.7857142857142857,
+        "value": "12/14 checks",
+        "score": 0.8571428571428571,
         "met": false
       }
     ],
     "fov": [
-      18.28275937992117,
-      9.793274442347244
+      23.103455947191517,
+      16.981671257373385
+    ]
+  },
+  "wisp": {
+    "reach": [
+      {
+        "id": "middle",
+        "label": "Middle",
+        "h": 7.9,
+        "v": 0,
+        "visible": 0.857,
+        "buildable": false,
+        "failed": [
+          "prismClear",
+          "hwCentral",
+          "oledFit",
+          "armFit"
+        ]
+      },
+      {
+        "id": "topTemporal",
+        "label": "Top, temple side",
+        "h": 44.1,
+        "v": 24.4,
+        "visible": 0.821,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "id": "topNasal",
+        "label": "Top, nose side",
+        "h": -34.7,
+        "v": 27.4,
+        "visible": 0.429,
+        "buildable": false,
+        "failed": [
+          "oledFit",
+          "armFit"
+        ]
+      },
+      {
+        "id": "bottomTemporal",
+        "label": "Bottom, temple side",
+        "h": 44.1,
+        "v": -24.4,
+        "visible": 0.929,
+        "buildable": true,
+        "failed": []
+      },
+      {
+        "id": "bottomNasal",
+        "label": "Bottom, nose side",
+        "h": -34.7,
+        "v": -27.4,
+        "visible": 0.357,
+        "buildable": false,
+        "failed": [
+          "oledFit",
+          "armFit"
+        ]
+      }
+    ],
+    "vars": {
+      "prism": 8,
+      "lens": "eo19",
+      "flip": false,
+      "stop": 7.7,
+      "spot": "topTemporal",
+      "dAz": -2.6,
+      "dEl": 5,
+      "tilt": 7.9,
+      "inset": 1.4
+    },
+    "overall": 0.927280731332659,
+    "goals": [
+      {
+        "id": "pupil",
+        "value": "98% (44/45 px)",
+        "score": 0.9777777777777777,
+        "met": false
+      },
+      {
+        "id": "weight",
+        "value": "35.4 g",
+        "score": 1,
+        "met": true
+      },
+      {
+        "id": "cost",
+        "value": "$228.78",
+        "score": 0.8742022904100009,
+        "met": false
+      },
+      {
+        "id": "structure",
+        "value": "12/14 checks",
+        "score": 0.8571428571428571,
+        "met": false
+      }
+    ],
+    "fov": [
+      18.432576911129885,
+      9.793016335538102
     ]
   },
   "mirage": {
     "reach": [
       {
-        "h": 4.8,
-        "v": -25.9,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 14.4,
-        "v": -25.9,
+        "id": "middle",
+        "label": "Middle",
+        "h": 7.9,
+        "v": 0,
         "visible": 1,
         "buildable": false,
         "failed": [
@@ -1183,198 +441,72 @@ export const TUNED = {
         ]
       },
       {
-        "h": 24,
-        "v": -25.9,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 33.6,
-        "v": -25.9,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": -25.9,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 4.8,
-        "v": -11.7,
-        "visible": 1,
-        "buildable": false,
-        "failed": [
-          "hwCentral"
-        ]
-      },
-      {
-        "h": 14.4,
-        "v": -11.7,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 24,
-        "v": -11.7,
-        "visible": 1,
-        "buildable": false,
-        "failed": [
-          "hwCentral"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": -11.7,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": -11.7,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 4.8,
-        "v": 2.5,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 14.4,
-        "v": 2.5,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 24,
-        "v": 2.5,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 33.6,
-        "v": 2.5,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": 2.5,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 4.8,
-        "v": 16.7,
-        "visible": 1,
-        "buildable": false,
-        "failed": [
-          "hwCentral"
-        ]
-      },
-      {
-        "h": 14.4,
-        "v": 16.7,
-        "visible": 1,
-        "buildable": false,
-        "failed": [
-          "hwCentral"
-        ]
-      },
-      {
-        "h": 24,
-        "v": 16.7,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 33.6,
-        "v": 16.7,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": 16.7,
+        "id": "topTemporal",
+        "label": "Top, temple side",
+        "h": 44.1,
+        "v": 24.4,
         "visible": 0.964,
         "buildable": true,
         "failed": []
       },
       {
-        "h": 4.8,
-        "v": 30.9,
+        "id": "topNasal",
+        "label": "Top, nose side",
+        "h": -34.7,
+        "v": 27.4,
         "visible": 1,
         "buildable": false,
         "failed": [
-          "hwCentral"
+          "hwCentral",
+          "oledFit"
         ]
       },
       {
-        "h": 14.4,
-        "v": 30.9,
+        "id": "bottomTemporal",
+        "label": "Bottom, temple side",
+        "h": 44.1,
+        "v": -24.4,
         "visible": 1,
         "buildable": true,
         "failed": []
       },
       {
-        "h": 24,
-        "v": 30.9,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 33.6,
-        "v": 30.9,
-        "visible": 0.964,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": 30.9,
-        "visible": 0.929,
-        "buildable": true,
-        "failed": []
+        "id": "bottomNasal",
+        "label": "Bottom, nose side",
+        "h": -34.7,
+        "v": -27.4,
+        "visible": 0.679,
+        "buildable": false,
+        "failed": [
+          "hwCentral",
+          "oledFit"
+        ]
       }
     ],
     "vars": {
       "lens": "cb45",
       "coat": "bare",
       "route": "direct",
-      "fsize": 10,
+      "fsize": 12,
       "fdist": 22,
       "idist": 6.5,
       "inset": -3.4,
-      "idy": 2.6,
+      "idy": 2.5,
       "trim": 10,
       "flip": false,
-      "stop": 8,
-      "az": 31.7,
-      "el": -1.9,
-      "fold": 81.3,
-      "stilt": 0,
+      "stop": 5.3,
+      "spot": "bottomTemporal",
+      "dAz": -3.7,
+      "dEl": 1.6,
+      "fold": 88.7,
+      "stilt": -12.2,
       "radius": 1000,
       "throw": 53.5,
-      "tx": 3.5,
-      "ty": 1.6,
-      "diam": 15,
+      "tx": 3.2,
+      "ty": 0.4,
+      "diam": 12.9,
+      "az": 31.7,
+      "el": -1.9,
       "relay": true,
       "gap": 0.4
     },
@@ -1406,210 +538,60 @@ export const TUNED = {
       }
     ],
     "fov": [
-      6.3973627850810075,
-      3.991232474449353
+      7.011986119627501,
+      4.034989789975754
     ]
   },
   "mirageCoat": {
     "reach": [
       {
-        "h": 4.8,
-        "v": -25.9,
+        "id": "middle",
+        "label": "Middle",
+        "h": 7.9,
+        "v": 0,
         "visible": 0,
         "buildable": true,
         "failed": []
       },
       {
-        "h": 14.4,
-        "v": -25.9,
-        "visible": 0,
-        "buildable": false,
-        "failed": [
-          "headHousing"
-        ]
-      },
-      {
-        "h": 24,
-        "v": -25.9,
-        "visible": 0,
-        "buildable": false,
-        "failed": [
-          "headHousing"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": -25.9,
+        "id": "topTemporal",
+        "label": "Top, temple side",
+        "h": 44.1,
+        "v": 24.4,
         "visible": 0.5,
-        "buildable": false,
-        "failed": [
-          "headHousing"
-        ]
-      },
-      {
-        "h": 43.2,
-        "v": -25.9,
-        "visible": 0.536,
         "buildable": true,
         "failed": []
       },
       {
-        "h": 4.8,
-        "v": -11.7,
-        "visible": 0,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 14.4,
-        "v": -11.7,
+        "id": "topNasal",
+        "label": "Top, nose side",
+        "h": -34.7,
+        "v": 27.4,
         "visible": 0,
         "buildable": false,
         "failed": [
-          "headHousing"
+          "oledFit"
         ]
       },
       {
-        "h": 24,
-        "v": -11.7,
-        "visible": 0,
-        "buildable": false,
-        "failed": [
-          "headHousing"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": -11.7,
-        "visible": 0.536,
-        "buildable": false,
-        "failed": [
-          "headHousing"
-        ]
-      },
-      {
-        "h": 43.2,
-        "v": -11.7,
-        "visible": 0.607,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 4.8,
-        "v": 2.5,
-        "visible": 0,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 14.4,
-        "v": 2.5,
-        "visible": 0,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 24,
-        "v": 2.5,
-        "visible": 0,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 33.6,
-        "v": 2.5,
-        "visible": 0.357,
-        "buildable": false,
-        "failed": [
-          "headHousing"
-        ]
-      },
-      {
-        "h": 43.2,
-        "v": 2.5,
-        "visible": 0.607,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 4.8,
-        "v": 16.7,
-        "visible": 0,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 14.4,
-        "v": 16.7,
-        "visible": 0,
-        "buildable": false,
-        "failed": [
-          "headHousing"
-        ]
-      },
-      {
-        "h": 24,
-        "v": 16.7,
-        "visible": 0,
-        "buildable": false,
-        "failed": [
-          "headHousing"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": 16.7,
-        "visible": 0.5,
-        "buildable": false,
-        "failed": [
-          "headHousing"
-        ]
-      },
-      {
-        "h": 43.2,
-        "v": 16.7,
+        "id": "bottomTemporal",
+        "label": "Bottom, temple side",
+        "h": 44.1,
+        "v": -24.4,
         "visible": 0.571,
         "buildable": true,
         "failed": []
       },
       {
-        "h": 4.8,
-        "v": 30.9,
-        "visible": 0,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 14.4,
-        "v": 30.9,
+        "id": "bottomNasal",
+        "label": "Bottom, nose side",
+        "h": -34.7,
+        "v": -27.4,
         "visible": 0,
         "buildable": false,
         "failed": [
-          "headHousing"
+          "oledFit"
         ]
-      },
-      {
-        "h": 24,
-        "v": 30.9,
-        "visible": 0,
-        "buildable": false,
-        "failed": [
-          "headHousing"
-        ]
-      },
-      {
-        "h": 33.6,
-        "v": 30.9,
-        "visible": 0.571,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": 30.9,
-        "visible": 0.571,
-        "buildable": true,
-        "failed": []
       }
     ],
     "vars": {
@@ -1654,184 +636,54 @@ export const TUNED = {
       }
     ],
     "fov": [
-      5.649737736019723,
-      3.984712772648839
+      5.640398292019839,
+      3.9842378802678757
     ]
   },
   "mirageCast": {
     "reach": [
       {
-        "h": 4.8,
-        "v": -25.9,
-        "visible": 0.393,
+        "id": "middle",
+        "label": "Middle",
+        "h": 7.7,
+        "v": 0,
+        "visible": 0.286,
         "buildable": true,
         "failed": []
       },
       {
-        "h": 14.4,
-        "v": -25.9,
-        "visible": 0.143,
+        "id": "topTemporal",
+        "label": "Top, temple side",
+        "h": 43.3,
+        "v": 24.1,
+        "visible": 0.5,
         "buildable": true,
         "failed": []
       },
       {
-        "h": 24,
-        "v": -25.9,
-        "visible": 0.321,
+        "id": "topNasal",
+        "label": "Top, nose side",
+        "h": -33.9,
+        "v": 27,
+        "visible": 0.214,
         "buildable": true,
         "failed": []
       },
       {
-        "h": 33.6,
-        "v": -25.9,
-        "visible": 0.536,
+        "id": "bottomTemporal",
+        "label": "Bottom, temple side",
+        "h": 43.3,
+        "v": -24.1,
+        "visible": 0.714,
         "buildable": true,
         "failed": []
       },
       {
-        "h": 43.2,
-        "v": -25.9,
-        "visible": 0.607,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 4.8,
-        "v": -11.7,
-        "visible": 0.679,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 14.4,
-        "v": -11.7,
-        "visible": 0.571,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 24,
-        "v": -11.7,
-        "visible": 0.571,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 33.6,
-        "v": -11.7,
-        "visible": 0.679,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": -11.7,
-        "visible": 0.857,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 4.8,
-        "v": 2.5,
-        "visible": 0.464,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 14.4,
-        "v": 2.5,
-        "visible": 0.464,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 24,
-        "v": 2.5,
-        "visible": 0.607,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 33.6,
-        "v": 2.5,
-        "visible": 0.679,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": 2.5,
-        "visible": 0.857,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 4.8,
-        "v": 16.7,
-        "visible": 0.893,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 14.4,
-        "v": 16.7,
-        "visible": 0.75,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 24,
-        "v": 16.7,
-        "visible": 0.643,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 33.6,
-        "v": 16.7,
-        "visible": 0.679,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": 16.7,
-        "visible": 0.786,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 4.8,
-        "v": 30.9,
-        "visible": 0.786,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 14.4,
-        "v": 30.9,
-        "visible": 0.571,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 24,
-        "v": 30.9,
-        "visible": 0.679,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 33.6,
-        "v": 30.9,
-        "visible": 0.679,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": 30.9,
-        "visible": 0.75,
+        "id": "bottomNasal",
+        "label": "Bottom, nose side",
+        "h": -33.9,
+        "v": -27,
+        "visible": 0.429,
         "buildable": true,
         "failed": []
       }
@@ -1839,33 +691,36 @@ export const TUNED = {
     "vars": {
       "lens": "cb45",
       "route": "inline",
-      "idist": 10,
-      "inset": -3.9,
-      "idy": 3.1,
-      "trim": 8.8,
-      "flip": false,
-      "stop": 16.1,
-      "az": 36.1,
-      "el": -25.3,
-      "fold": 48.8,
-      "stilt": -14.1,
-      "throw": 26.7,
-      "tx": -9.3,
-      "ty": -8.1,
-      "diam": 11.3,
-      "thick": 5.4
+      "idist": 8.2,
+      "inset": -2,
+      "idy": 0,
+      "trim": 8,
+      "flip": true,
+      "stop": 8,
+      "spot": "topTemporal",
+      "dAz": 1.4,
+      "dEl": 1.7,
+      "fold": 60,
+      "stilt": 6.7,
+      "throw": 50,
+      "tx": 0.7,
+      "ty": 5.4,
+      "diam": 8.1,
+      "thick": 3.1,
+      "az": 38.7,
+      "el": -12.7
     },
-    "overall": 0.8899362454549983,
+    "overall": 0.8915702323831028,
     "goals": [
       {
         "id": "pupil",
-        "value": "100% (45/45 px)",
-        "score": 1,
-        "met": true
+        "value": "89% (40/45 px)",
+        "score": 0.8888888888888888,
+        "met": false
       },
       {
         "id": "weight",
-        "value": "44.8 g",
+        "value": "39.7 g",
         "score": 1,
         "met": true
       },
@@ -1877,206 +732,79 @@ export const TUNED = {
       },
       {
         "id": "structure",
-        "value": "15/17 checks",
-        "score": 0.8823529411764706,
-        "met": false
+        "value": "17/17 checks",
+        "score": 1,
+        "met": true
       }
     ],
     "fov": [
-      9.076348704560651,
-      3.4776539936200663
+      7.78549744623772,
+      3.8315032630168453
     ]
   },
   "lumen": {
     "reach": [
       {
-        "h": 4.8,
-        "v": -25.9,
-        "visible": 0.714,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 14.4,
-        "v": -25.9,
-        "visible": 0.964,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 24,
-        "v": -25.9,
-        "visible": 0.964,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 33.6,
-        "v": -25.9,
-        "visible": 0.679,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": -25.9,
-        "visible": 0.5,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 4.8,
-        "v": -11.7,
-        "visible": 0.714,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 14.4,
-        "v": -11.7,
+        "id": "middle",
+        "label": "Middle",
+        "h": 7.9,
+        "v": 0,
         "visible": 1,
         "buildable": true,
         "failed": []
       },
       {
-        "h": 24,
-        "v": -11.7,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 33.6,
-        "v": -11.7,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": -11.7,
-        "visible": 0.536,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 4.8,
-        "v": 2.5,
-        "visible": 0.714,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 14.4,
-        "v": 2.5,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 24,
-        "v": 2.5,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 33.6,
-        "v": 2.5,
-        "visible": 1,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": 2.5,
-        "visible": 0.536,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 4.8,
-        "v": 16.7,
-        "visible": 0.714,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 14.4,
-        "v": 16.7,
-        "visible": 0.929,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 24,
-        "v": 16.7,
-        "visible": 0.929,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 33.6,
-        "v": 16.7,
-        "visible": 0.929,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 43.2,
-        "v": 16.7,
-        "visible": 0.429,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 4.8,
-        "v": 30.9,
-        "visible": 0.571,
-        "buildable": true,
-        "failed": []
-      },
-      {
-        "h": 14.4,
-        "v": 30.9,
+        "id": "topTemporal",
+        "label": "Top, temple side",
+        "h": 44.1,
+        "v": 24.4,
         "visible": 0.857,
         "buildable": true,
         "failed": []
       },
       {
-        "h": 24,
-        "v": 30.9,
-        "visible": 0.893,
+        "id": "topNasal",
+        "label": "Top, nose side",
+        "h": -34.7,
+        "v": 27.4,
+        "visible": 0.536,
         "buildable": true,
         "failed": []
       },
       {
-        "h": 33.6,
-        "v": 30.9,
-        "visible": 0.714,
+        "id": "bottomTemporal",
+        "label": "Bottom, temple side",
+        "h": 44.1,
+        "v": -24.4,
+        "visible": 0.857,
         "buildable": true,
         "failed": []
       },
       {
-        "h": 43.2,
-        "v": 30.9,
-        "visible": 0.5,
+        "id": "bottomNasal",
+        "label": "Bottom, nose side",
+        "h": -34.7,
+        "v": -27.4,
+        "visible": 0.607,
         "buildable": true,
         "failed": []
       }
     ],
     "vars": {
       "lens": "eo19",
-      "flip": false,
-      "stop": 6,
-      "az": 25.7,
-      "el": -17.7,
-      "thick": 3.5,
-      "guide": 54.3,
-      "facets": 3.2,
-      "spacing": 3.6,
-      "height": 13.1,
-      "margin": -2.1
+      "flip": true,
+      "stop": 8.8,
+      "spot": "middle",
+      "dAz": -2.9,
+      "dEl": -5,
+      "thick": 3.2,
+      "guide": 55.2,
+      "facets": 3.9,
+      "spacing": 3.9,
+      "height": 14.3,
+      "margin": -2.4,
+      "az": 20,
+      "el": 5
     },
     "overall": 0.8322705728897614,
     "goals": [
@@ -2088,7 +816,7 @@ export const TUNED = {
       },
       {
         "id": "weight",
-        "value": "40.3 g",
+        "value": "41.4 g",
         "score": 1,
         "met": true
       },
@@ -2106,8 +834,8 @@ export const TUNED = {
       }
     ],
     "fov": [
-      18.174936177484,
-      9.847524849377045
+      16.19952068974821,
+      9.625293118036216
     ]
   }
 };

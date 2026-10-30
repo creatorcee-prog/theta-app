@@ -78,6 +78,8 @@ const SECTION_LIST = [
       { key: 'hud.imageFit', label: 'Image fit', type: 'select', options: [['contain', 'Fit inside display'], ['cover', 'Fill display (crop)'], ['stretch', 'Stretch']], tag: 'design', showIf: (p) => p.hud.mode === 'image' },
       { key: 'hud.color', label: 'Colour', type: 'color', tag: 'design', showIf: (p) => p.hud.mode !== 'image' },
       { key: 'hud.background', label: 'Background (black = pixels off)', type: 'color', tag: 'design' },
+      { key: 'hud.fitVisible', label: 'Fit content to the visible part of the display', type: 'toggle', tag: 'design', help: 'Lays the content out inside the part of the display the trace shows reaching your pupil, as large as it fits.' },
+      { key: 'hud.keystone', label: 'Driver corrects keystone (slant)', type: 'toggle', tag: 'design', help: 'Pre-slants the frame buffer so the optics\' slant cancels out. Costs some horizontal pixels.' },
       { key: 'hud.driverFlip', label: 'Driver mirrors image', type: 'toggle', tag: 'design', help: 'Pre-flips the frame buffer to undo the prism’s mirror image.' },
     ],
   },

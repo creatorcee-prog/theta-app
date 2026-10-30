@@ -285,6 +285,38 @@ path had been producing false −16 D readings.
 | Prism makes | no | — | The prism hangs in front of the eye on its arm |
 | Lumen | no | — | Plate behind the lens plus a 5 mm housing bulge |
 
+### HUD placement and size
+
+**Placement.** Five preferred spots on the right lens: the middle and the
+four corners, 60% of the way from the centre to each corner of the lens
+outline. Each make's search picks one spot, plus a nudge of up to ±5°.
+
+- The zone the HUD may appear in is now the whole right lens. Before, it
+  was the temporal half from your sketch.
+- "Place HUD…" in the eye view moves the current design to any spot and
+  re-aligns it.
+- "Map reach" and each make's card show how much of the display each spot
+  delivers, tested at the exact spot.
+- **Mirage Coat** cannot use the spots. Its lens-back reflection only
+  reaches the eye about 44° to the temple side, so it keeps that aim, the
+  largest it allows while still folding.
+
+**Size.**
+
+- The search now values field of view right after the four goals, so each
+  make gets the largest image it can while meeting them.
+- On the display, "Fit content to the visible part" lays every style out
+  inside the part of the panel the trace shows reaching your pupil, so text
+  is as large as possible and is never cut off.
+
+**Keystone correction.** Folded and off-axis optics slant the image: its
+vertical lines lean (Mirage Cast: about 37° before correction).
+
+- The display driver pre-slants the frame by the traced amount (−b/a from
+  the fit h = a·u + b·v), so verticals come out vertical.
+- The cost is panel width, which the orientation check reports.
+- A test checks the correction algebraically.
+
 ### Lumen: the waveguide make
 
 - **What is modelled.** A geometric (reflective, Lumus-type) waveguide is

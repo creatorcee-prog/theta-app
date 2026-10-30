@@ -3,6 +3,9 @@
 // (same parts, new direction), refocused paraxially and traced.
 
 import { alignChain } from '../config/defaults.js';
+import { computeGlasses } from '../model/glassesGeometry.js';
+import { computeEye } from '../model/eye.js';
+import { lensSpots } from '../model/lensSpots.js';
 import { computeCollimator, computeOled } from './OpticalComponents.js';
 import { runSimulation } from './Simulation.js';
 import { analyzeCoverage } from './CoverageAnalyzer.js';
@@ -12,6 +15,12 @@ import { assessFocus } from './Vision.js';
 import { levelImage } from './orient.js';
 
 export const REACH_CHECKS = ['prismLens', 'prismClear', 'hwCentral', 'oledFit', 'lensPod', 'armFit', 'headHousing'];
+
+// the preferred lens spots (middle and corners) for these parameters
+export function spotPoints(params) {
+  const g = computeGlasses(params.frame), e = computeEye({ ...params.eye, monoPD: params.eye.monoPDRight, side: 1 }, g);
+  return lensSpots(g, e);
+}
 
 export function reachPoints(zone, nx = 5, ny = 5) {
   const pts = [];
@@ -44,12 +53,11 @@ export function evaluateAim(params, h, v) {
 }
 
 // Runs in slices so the page stays responsive; onProgress(done, total).
-export async function mapReach(params, { nx = 5, ny = 5, onProgress } = {}) {
-  const zone = params.targets.zone;
-  const pts = reachPoints(zone, nx, ny);
+export async function mapReach(params, { onProgress } = {}) {
+  const pts = spotPoints(params);
   const out = [];
   for (let k = 0; k < pts.length; k++) {
-    out.push(evaluateAim(params, pts[k].h, pts[k].v));
+    out.push({ ...evaluateAim(params, pts[k].h, pts[k].v), id: pts[k].id, label: pts[k].label });
     onProgress?.(k + 1, pts.length);
     if (typeof requestAnimationFrame !== 'undefined') await new Promise((res) => setTimeout(res, 0));
   }

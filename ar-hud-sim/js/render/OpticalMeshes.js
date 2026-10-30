@@ -64,7 +64,7 @@ export class OpticalMeshes {
     // The emitting surface shows the content as the OLED displays it (after
     // the optional driver flip), so the 3D panel matches the eye view.
     const prevSize = [this.hudCanvas.width, this.hudCanvas.height];
-    renderHud(this.hudCanvas, params.hud, params.oled, { mirrored: params.hud.driverFlip });
+    renderHud(this.hudCanvas, params.hud, params.oled, { mirrored: params.hud.driverFlip, viewport: system.hudViewport, shear: system.hudShear });
     if (!this.hudTexture || prevSize[0] !== this.hudCanvas.width || prevSize[1] !== this.hudCanvas.height) {
       this.hudTexture?.dispose();
       this.hudTexture = new THREE.CanvasTexture(this.hudCanvas);
