@@ -72,7 +72,10 @@ function bracket(p) {
   const pr = computePrism(p.prism);
   const eye = computeEye({ ...p.eye, monoPD: p.eye.monoPDRight, side: 1 }, computeGlasses(p.frame));
   const side = pr.w.dot(eye.pupilCenter.clone().sub(pr.center)) > 0 ? -1 : 1;
-  return { id: 'prismMount', name: 'Prism bracket', size: { x: p.prism.size * Math.tan((p.prism.angle * Math.PI) / 180) + 1, y: p.prism.size + 1, z: 1.2 }, pos: { x: 0, y: 0, z: side * (p.prism.height / 2 + 0.7) }, rot: { yaw: 0, pitch: 0, roll: 0 }, attach: 'prism', color: '#56606e', blocksLight: true, custom: false };
+  // plate stays inside the prism footprint on the entry and exit sides (the
+  // beam passes there) and may overhang only behind the hypotenuse
+  const lab = p.prism.size * Math.tan((p.prism.angle * Math.PI) / 180), L = p.prism.size;
+  return { id: 'prismMount', name: 'Prism bracket', size: { x: lab - 0.8, y: L - 0.8, z: 1.2 }, pos: { x: 0.4, y: 0.4, z: side * (p.prism.height / 2 + 0.7) }, rot: { yaw: 0, pitch: 0, roll: 0 }, attach: 'prism', color: '#56606e', blocksLight: true, custom: false };
 }
 
 // ---------------------------------------------------------------- makes

@@ -135,6 +135,63 @@ range. "Focus HUD for my eye" moves the OLED with the real tracer until the
 vergence matches your relaxed eye. Astigmatism can't be fixed by refocusing,
 and the page says so.
 
+## Makes
+
+The **Makes** tab holds four different ways to build the HUD. All four use
+only parts that can be bought: catalog aspheres, stock K9 45-45-90 prisms,
+and listed displays and boards.
+
+| Make | Idea |
+|---|---|
+| **Atlas** | Tethered, optics first: larger prism and lens for a big eye-box. Your phone or PC supplies HDMI. |
+| **Solo** | Standalone: Raspberry Pi Zero 2 W, battery and charger on the left temple to balance the optics on the right. |
+| **Kestrel** | Value monochrome: a $2.65 0.49″ 64×32 I2C OLED driven by an ESP32-C3 instead of the $175 micro-OLED kit. |
+| **Wisp** | Featherweight: the smallest stock prism and a compact housing; tethered over HDMI. |
+
+`scripts/design-makes.mjs` searches each make's own design choices, using
+the full tracer and scorecard for every candidate, and keeps the best:
+- prism size, lens part, lens orientation and aperture stop
+- HUD direction, prism entry tilt, OLED inset
+- housing depth inward and outward, length and height
+
+The results are stored in `js/config/makes.tuned.js`, and a test rebuilds
+each make from scratch and checks that it reproduces its score.
+
+**Scorecard** (`js/optics/Scorecard.js`): the overall score is the mean of
+four goal scores, and the bar is 80%.
+- **Pupil coverage:** share of display pixels reaching the pupil.
+- **Weight:** 48 g ÷ worn weight, capped at 100%.
+- **Cost:** $200 ÷ parts total, capped at 100%.
+- **Structure:** share of build checks passing:
+  - display centre in the pupil
+  - prism clear of the lens, cornea and lashes
+  - central vision clear
+  - OLED and driver inside the housing
+  - lens and barrel clear of the head
+  - housing clear of the head
+  - focusable image
+  - no light in the left pupil
+  - no part blocking the beam
+  - prism has a mount
+
+Two physics findings the search kept running into:
+- **A single off-the-shelf asphere cannot focus a wide field.** At a 24°
+  field the corners sit up to +13 D from the centre (field curvature and
+  astigmatism). The focus check therefore requires 90% of the field within
+  0.5 D of one accommodation, and the solver balances the whole field rather
+  than the centre. Longer focal lengths (the 19 mm part) help the most. No
+  single-lens design passes at 0.5 D; a two-element eyepiece is the real fix.
+- **A beam wider than the prism leaks.** When the lens beam overfills the
+  prism, edge rays reflect off the triangular end faces and arrive as a
+  blurred second image. The bracket on that face then blocks them.
+
+The head model uses the lateral orbital rim from Hertel exophthalmometry:
+adult mean about 15.5 mm behind the cornea, about 114 mm rim to rim
+([Rev Bras Oftalmol 2010](https://www.rbojournal.org/en/?p=6311),
+[Shenyang study](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4336939/)).
+Space beside the eye in front of the rim is open air; behind it, the side of
+the head runs back at your measured temple gaps.
+
 ## Parts, placement and cost
 
 Every hardware part can be selected in 3D, then dragged or rotated with the
