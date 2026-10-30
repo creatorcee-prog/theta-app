@@ -31,7 +31,8 @@ export function scoreDesign(results, coverage, diag, params) {
   const tot = bomTotals(params.bom ?? []);
 
   // pixels that reach the pupil AND appear inside the wearer's HUD zone
-  const vis = coverage.field.inZone ?? coverage.field.visiblePixels, all = coverage.field.totalPixels;
+  // (and arrive as one coherent image point, not light scrambled by extra reflections)
+  const vis = coverage.field.imagedInZone ?? coverage.field.inZone ?? coverage.field.visiblePixels, all = coverage.field.totalPixels;
   const pupil = all ? vis / all : 0;
   const weight = tot.grams > 0 ? Math.min(1, GOALS.weightG / tot.grams) : 1;
   const cost = tot.total > 0 ? Math.min(1, GOALS.costUSD / tot.total) : 1;

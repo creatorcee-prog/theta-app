@@ -181,7 +181,16 @@ export function runSimulation(params) {
     // pupil centre (falls back to the wider set if too few rays land there).
     const inPupil = near.filter((f) => f.point.distanceTo(eye.pupilCenter) <= 1.5 * eye.pupilRadius);
     const verg = bundleVergence(inPupil.length >= 8 ? inPupil : near, eye);
-    pixelResults.push({ ...pp.px, visible, pupilRays: pp.pupilRays, pupilPower: pp.pupilPower, apparent, angles: ang, availableAngles: availAng, vergence: verg, finals: pp.finals });
+    // angular spread of the light entering the pupil: a coherent image point
+    // arrives within a fraction of a degree; light scrambled by extra
+    // reflections (prism end faces, edges) arrives from many directions
+    let spreadDeg = null;
+    if (arrival && pp.arrivals.length >= 2) {
+      let s2 = 0, w = 0;
+      for (const a of pp.arrivals) { s2 += a.w * a.dir.angleTo(arrival) ** 2; w += a.w; }
+      spreadDeg = (Math.sqrt(s2 / w) * 180) / Math.PI;
+    }
+    pixelResults.push({ ...pp.px, visible, spreadDeg, imaged: visible && (spreadDeg == null || spreadDeg <= 1), pupilRays: pp.pupilRays, pupilPower: pp.pupilPower, apparent, angles: ang, availableAngles: availAng, vergence: verg, finals: pp.finals });
   }
 
   // Weights: calculated lines follow the current geometry (written back so

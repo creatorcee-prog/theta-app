@@ -29,7 +29,7 @@ export function evaluateAim(params, h, v) {
   const cov = analyzeCoverage(r);
   const d = runDiagnostics(r, cov);
   const failed = REACH_CHECKS.filter((id) => { const c2 = d.checks.find((x) => x.id === id); return c2 && c2.status !== 'pass'; });
-  const visible = cov.field.totalPixels ? cov.field.inZone / cov.field.totalPixels : 0;
+  const visible = cov.field.totalPixels ? (cov.field.imagedInZone ?? cov.field.inZone) / cov.field.totalPixels : 0;
   return { h, v, visible, buildable: failed.length === 0, failed, center: cov.field.hCenter != null ? [cov.field.hCenter, cov.field.vCenter] : null };
 }
 

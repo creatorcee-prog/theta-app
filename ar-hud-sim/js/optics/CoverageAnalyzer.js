@@ -238,11 +238,13 @@ export function analyzeCoverage(results) {
   if (z) {
     const inZ = (a) => a.h >= z.hMin && a.h <= z.hMax && a.v >= z.vMin && a.v <= z.vMax;
     field.inZone = visible.filter((p) => inZ(p.angles)).length;
+    field.imagedInZone = visible.filter((p) => p.imaged && inZ(p.angles)).length;
+    field.scrambled = visible.filter((p) => !p.imaged).length;
     const rect = [[z.hMin, z.vMin], [z.hMax, z.vMin], [z.hMax, z.vMax], [z.hMin, z.vMax]];
     const inter = field.hull?.length >= 3 ? clipPolygon(field.hull, rect) : [];
     field.zoneArea = (z.hMax - z.hMin) * (z.vMax - z.vMin);
     field.zoneCoveredPct = field.zoneArea > 0 && inter.length >= 3 ? (100 * polygonArea(inter)) / field.zoneArea : 0;
-  } else { field.inZone = visible.length; field.zoneCoveredPct = 0; }
+  } else { field.inZone = visible.length; field.imagedInZone = visible.filter((p) => p.imaged).length; field.scrambled = visible.length - field.imagedInZone; field.zoneCoveredPct = 0; }
   field.pupilRayPct = (100 * counts.pupil) / Math.max(1, counts.emitted);
   field.pupilPowerPct = (100 * power.pupil) / Math.max(1e-12, power.emitted);
 
