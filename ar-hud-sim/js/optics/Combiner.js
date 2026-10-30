@@ -213,9 +213,16 @@ function embeddedReflector(p, glasses, eye) {
   const nf = dInG ? dInG.clone().sub(toEyeG).normalize() : lf.normal.clone();
   const { u, v } = tangentBasis(nf);
   const a = P.diameter / 2;
+  // flat, or a spherical cap concave toward the light (power 2n/R inside the
+  // glass): focusing next to the eye gives a bigger image for the same mirror
+  const curved = P.radius && P.radius < 1e5;
+  const sag = (r) => (curved ? P.radius - Math.sqrt(Math.max(0, P.radius * P.radius - r * r)) : 0);
   const ring = [];
-  for (let k = 0; k < 24; k++) { const ang = (k / 24) * Math.PI * 2; ring.push(E.clone().addScaledVector(u, a * Math.cos(ang)).addScaledVector(v, a * Math.sin(ang))); }
-  const face = polygonFace(ring, { role: 'facet' });
+  for (let k = 0; k < 24; k++) { const ang = (k / 24) * Math.PI * 2; ring.push(E.clone().addScaledVector(u, a * Math.cos(ang)).addScaledVector(v, a * Math.sin(ang)).addScaledVector(nf, -sag(a))); }
+  // nf points along the incoming light, away from the reflecting side: a
+  // concave (focusing) mirror has its centre of curvature at E - nf R and its
+  // rim bent toward -nf. conicFace sags toward -axis, so axis = nf.
+  const face = curved ? conicFace(E.clone(), nf.clone(), 1 / P.radius, 0, a, { role: 'facet' }) : polygonFace(ring, { role: 'facet' });
   face.facetR = P.reflectance; face.facetT = 1 - P.reflectance;
   // the entry point on the back face, where the beam from the display arrives
   const sEntry = dInG ? -(lf.thickness / 2) / dInG.dot(lf.normal) : 0;
@@ -228,7 +235,8 @@ function embeddedReflector(p, glasses, eye) {
   return {
     kind: 'patch', mode: 'embedded', route: P.route, foldPoint, face: null, embeddedFace: valid ? face : null, valid, fitMargin: margin, vertex: entry, center: E.clone(), entryCenter: entry, exitCenter: B, toEye, toSource, normal: nf, axis: nf.clone().negate(),
     vertices, u, v, a, incidenceDeg, f: Infinity, astigD: 0, templeBack: glasses.temples.find((q) => q.side === 1)?.dir.clone().normalize(),
-    at: (r, ang) => E.clone().addScaledVector(u, r * Math.cos(ang)).addScaledVector(v, r * Math.sin(ang)),
+    at: (r, ang) => E.clone().addScaledVector(u, r * Math.cos(ang)).addScaledVector(v, r * Math.sin(ang)).addScaledVector(nf, -sag(r)),
+    mirrorPowerD: curved ? (2000 * nL) / P.radius : 0,
     quaternion: new Quaternion().setFromRotationMatrix(new Matrix4().makeBasis(u, v, nf)), w: v.clone(), Lac: 0, H: 0, faces: {}, volumeMm3: 0,
   };
 }

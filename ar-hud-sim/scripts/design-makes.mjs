@@ -26,7 +26,8 @@ export function evaluate(make, v) {
   // a housing that does not connect to the temple would float: never accept it
   const floating = d.checks.some((c) => (c.id === 'shellJoined' || c.id === 'foldable') && c.status !== 'pass');
   // as large an image as the make allows: field of view is the next priority after the goals
-  const obj = s.overall - (floating ? 1 : 0) + 0.05 * met + 0.004 * ((cov.field.hfov ?? 0) + (cov.field.vfov ?? 0)) - 0.0005 * s.totals.grams;
+  const fovW = Number(process.env.FOV_WEIGHT ?? 0.004);
+  const obj = s.overall - (floating ? 1 : 0) + 0.05 * met + fovW * ((cov.field.hfov ?? 0) + (cov.field.vfov ?? 0)) - 0.0005 * s.totals.grams;
   return { v, s, obj, fov: cov.field.hfov, vfov: cov.field.vfov };
 }
 

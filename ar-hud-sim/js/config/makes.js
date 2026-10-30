@@ -215,7 +215,7 @@ export const MAKES = [
   {
     id: 'mirageCast', name: 'Mirage Cast', tagline: 'Partial mirror cast inside the lens', kind: 'patch', patchMode: 'embedded',
     idea: 'A thicker right lens with a tilted partial mirror cast inside it, so the reflector is part of the lens. Light from the temple enters through the back of the lens, reflects off the buried mirror and leaves toward your eye; the tracer refracts it at every surface. The lens has to be thick enough to hold the tilted mirror.',
-    vars: { lens: ['cb45', 'eo19', 'eo125'], route: ['inline', 'direct'], idist: [2, 30], inset: [-8, 4], idy: [-8, 8], trim: [8, 25], flip: [false, true], stop: [4, 22], spot: ['middle', 'topTemporal', 'topNasal', 'bottomTemporal', 'bottomNasal'], dAz: [-5, 5], dEl: [-5, 5], fold: [40, 110], stilt: [-25, 25], throw: [18, 62], tx: [-12, 12], ty: [-12, 12], diam: [4, 16], thick: [3, 12] },
+    vars: { lens: ['cb45', 'eo19', 'eo125'], route: ['inline', 'direct'], mrad: [40, 3000], idist: [2, 30], inset: [-8, 4], idy: [-8, 8], trim: [8, 25], flip: [false, true], stop: [4, 22], spot: ['middle', 'topTemporal', 'topNasal', 'bottomTemporal', 'bottomNasal'], dAz: [-5, 5], dEl: [-5, 5], fold: [40, 110], stilt: [-25, 25], throw: [18, 62], tx: [-12, 12], ty: [-12, 12], diam: [4, 16], thick: [3, 12] },
     electronics: () => ({ parts: [], bom: [line({ id: 'cable', name: 'Thin HDMI cable to your phone/PC', unit: 8, sourced: false, weight: 2.5, weightBasis: 'estimate', note: 'Estimate. Your phone/PC is the HDMI source (not counted).' })] }),
     display: 'yx',
   },
@@ -245,7 +245,7 @@ export function buildMake(make, v, opts = {}) {
     route = v.route ?? (v.relay ? 'prism' : 'direct');
     // bare: a flat cover slip (22 mm square: a ≤ 22 mm circle is used)
     if (make.patchMode === 'embedded') p.frame = { ...p.frame, lensThicknessR: v.thick };
-    p.patch = { ...p.patch, enabled: true, mode: make.patchMode, gap: v.gap ?? p.patch.gap, coating: bare ? 'bare' : 'coated', radius: bare ? 1e6 : v.radius, diameter: bare ? Math.min(22, v.diam) : v.diam, thickness: bare ? 0.17 : 1, foldDeg: v.fold, sourceTiltDeg: v.stilt, throw: v.throw, reflectance: 0.3,
+    p.patch = { ...p.patch, enabled: true, mode: make.patchMode, gap: v.gap ?? p.patch.gap, coating: bare ? 'bare' : 'coated', radius: bare ? 1e6 : make.patchMode === 'embedded' ? v.mrad ?? 1e6 : v.radius, diameter: bare ? Math.min(22, v.diam) : v.diam, thickness: bare ? 0.17 : 1, foldDeg: v.fold, sourceTiltDeg: v.stilt, throw: v.throw, reflectance: 0.3,
       fold: { enabled: route === 'prism', size: v.fsize ?? 10, dist: v.fdist ?? 22 }, route,
       inline: { ...p.patch.inline, dist: v.idist ?? 10, inset: v.inset ?? -2, dy: v.idy ?? 0 } };
     // sample emission only toward the lens: rays outside this cone end on the
