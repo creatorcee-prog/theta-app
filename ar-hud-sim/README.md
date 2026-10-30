@@ -137,9 +137,10 @@ and the page says so.
 
 ## Makes
 
-The **Makes** tab holds four different ways to build the HUD. All four use
-only parts that can be bought: catalog aspheres, stock K9 45-45-90 prisms,
-and listed displays and boards.
+The **Makes** tab holds five different ways to build the HUD. Four of them
+use only parts that can be bought: catalog aspheres, stock K9 45-45-90
+prisms, and listed displays and boards. The fifth, Lumen, needs a hand-made
+waveguide.
 
 | Make | Idea |
 |---|---|
@@ -147,6 +148,47 @@ and listed displays and boards.
 | **Solo** | Standalone: Raspberry Pi Zero 2 W, battery and charger on the left temple to balance the optics on the right. |
 | **Kestrel** | Value monochrome: a $2.65 0.49″ 64×32 I2C OLED driven by an ESP32-C3 instead of the $175 micro-OLED kit. |
 | **Wisp** | Featherweight: the smallest stock prism and a compact housing; tethered over HDMI. |
+| **Lumen** | Waveguide, after the Focals and waveguide reference images: the projector sits in the temple and a 3.3 mm glass plate behind the lens carries the image by TIR. Partial mirrors embedded in the plate couple it out to the eye. Nothing hangs in front of the lens. |
+
+### Lumen: the waveguide make
+
+- **What is modelled.** A geometric (reflective, Lumus-type) waveguide is
+  traced surface by surface:
+  - the input face at the temple end, perpendicular to the guided beam;
+  - TIR bounces between the plate faces, which needs a 0.4 mm air gap to the
+    lens;
+  - 2–5 embedded partial mirrors. Each one splits every ray into a
+    reflected and a transmitted branch, and the tracer follows both. The
+    facet copies widen the eye-box.
+- **Where it differs from your diagram.** The second reference image shows
+  a *diffractive* waveguide: an in-coupling grating plus a waveguide.
+  Gratings are wave optics, and a geometric ray tracer cannot model them
+  honestly. They are also not sold for hobby builds. The reflective type
+  works by Snell, Fresnel and TIR, so it can be traced exactly. Commercial
+  reflective waveguides come from [Lumus](https://lumusvision.com) and its
+  licensees; no retail module exists.
+- **How it would be built.** Slices of a stock
+  [Edmund 30R/70T plate beamsplitter ($61)](https://www.edmundoptics.com/p/25mm-diameter-30r70t-plate-beamsplitter/5238/)
+  are bonded inside clear glass with
+  [NOA61 ($38)](https://www.edmundoptics.com/p/1-oz-application-bottle-of-noa-61/4209/),
+  then the stack is cut at the facet angle and polished.
+  - That coating reflects about 30% at every angle. The tracer models it
+    that way, so the other bounce phase also reflects and its ghosts are
+    traced and rejected by the image check. An angle-selective coating
+    (option "Angle-selective") suppresses them, but it is a custom coating
+    run.
+  - The plate glass and the cutting/polishing are **estimates** ($10, $60).
+- **Result.**
+  - Overall 86%.
+  - 100% of the display in the pupil and inside your zone.
+  - 40.0 g.
+  - $387: the cost goal is only 52% met.
+  - 13/14 structure checks pass. The one that fails is the same as on
+    every make: whole-field focus with a single asphere.
+  - See-through transmission is about 70%, because every facet also
+    reflects 30% of the world light.
+  - Reach: tuned for one aim point. At other aims its 2 facets and 14 mm
+    plate show 57–100% of the display.
 
 `scripts/design-makes.mjs` searches each make's own design choices, using
 the full tracer and scorecard for every candidate, and keeps the best:
@@ -172,7 +214,8 @@ four goal scores, and the bar is 80%.
   - focusable image
   - no light in the left pupil
   - no part blocking the beam
-  - prism has a mount
+  - prism has a mount (waveguide: rim clip)
+  - waveguide only: TIR across the beam, see-through ≥ 70%
 
 Two physics findings the search kept running into:
 - **A single off-the-shelf asphere cannot focus a wide field.** At a 24°
@@ -218,6 +261,14 @@ the head runs back at your measured temple gaps.
 - **Display size limit:** one 0.23″ display at f = 12–19 mm spans only
   about 15–23° × 9–16°. It can be placed anywhere in the zone but cannot
   fill all of it at once.
+
+### Labels
+
+The **Labels** buttons (top bar) choose between three modes:
+- **hover/tap** (default): only the part under the mouse or the one you
+  tapped is labelled, so labels never cover the model;
+- **All**: every label;
+- **Off**: no labels.
 
 ## Parts, placement and cost
 

@@ -176,6 +176,9 @@ export class OpticalMeshes {
       if (labels) { const l = makeLabel('Optics arm (holds the prism)'); l.position.copy(tube.position).add(new THREE.Vector3(0, r + 5, 0)); cg.add(l); }
     }
 
+    // ---------------- waveguide plate (replaces the prism)
+    if (prism.kind === 'waveguide') { this.drawWaveguide(prism, params, labels); return; }
+
     // ---------------- prism
     const pg = this.groups.prism;
     const V = prism.vertices;
@@ -213,5 +216,41 @@ export class OpticalMeshes {
     }
     this.handles.prism.position.copy(prism.center);
     this.handles.prism.quaternion.copy(prism.quaternion);
+  }
+
+  drawWaveguide(wg, params, labels) {
+    const pg = this.groups.prism;
+    const tri = (pts) => {
+      const pos = [];
+      for (let i = 1; i < pts.length - 1; i++) for (const p of [pts[0], pts[i], pts[i + 1]]) pos.push(p.x, p.y, p.z);
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      geo.computeVertexNormals();
+      return geo;
+    };
+    for (const [role, f] of Object.entries(wg.faces)) {
+      const edge = f.absorb;
+      const m = new THREE.MeshPhysicalMaterial({ color: edge ? 0x2a2f38 : role === 'entry' ? 0x9fd8ff : 0xb8e6ff, transparent: true, opacity: edge ? 0.7 : role === 'entry' ? 0.35 : 0.13, roughness: 0.05, side: THREE.DoubleSide, depthWrite: false });
+      const mesh = new THREE.Mesh(tri(f.vertices), m); mesh.renderOrder = 3; pg.add(mesh);
+    }
+    // embedded partial mirrors
+    for (const f of wg.facetFaces) {
+      const mesh = new THREE.Mesh(tri(f.vertices), new THREE.MeshPhysicalMaterial({ color: 0xffc46b, transparent: true, opacity: 0.42, metalness: 0.4, roughness: 0.1, side: THREE.DoubleSide, depthWrite: false }));
+      mesh.renderOrder = 4; pg.add(mesh);
+      const v = f.vertices, ln = [];
+      for (let i = 0; i < v.length; i++) ln.push(v[i], v[(i + 1) % v.length]);
+      pg.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(ln), new THREE.LineBasicMaterial({ color: 0xffc46b })));
+    }
+    const c = wg.corners;
+    const E = [['tb', 'nb'], ['tt', 'nt'], ['tbf', 'nbf'], ['ttf', 'ntf'], ['tb', 'tt'], ['tbf', 'ttf'], ['nb', 'nt'], ['nbf', 'ntf'], ['tb', 'tbf'], ['tt', 'ttf'], ['nb', 'nbf'], ['nt', 'ntf']];
+    pg.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(E.flatMap(([a, b]) => [c[a], c[b]])), new THREE.LineBasicMaterial({ color: 0xcfeaff, transparent: true, opacity: 0.8 })));
+    if (labels) {
+      const W = params.waveguide;
+      const l = makeLabel(`Waveguide ${W.thickness} mm, ${wg.facets.length} facets R ${Math.round(100 * W.facetR)}%, guided at ${W.guideAngle}°`);
+      l.position.copy(wg.center).addScaledVector(wg.v, wg.h / 2 + 4); pg.add(l);
+      const le = makeLabel('In-coupling face', 'accent'); le.position.copy(wg.entryCenter).addScaledVector(wg.v, -wg.h / 2 - 3); pg.add(le);
+    }
+    this.handles.prism.position.copy(wg.center);
+    this.handles.prism.quaternion.copy(wg.quaternion);
   }
 }

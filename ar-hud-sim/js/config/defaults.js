@@ -10,7 +10,8 @@
 import { Vector3 } from 'three';
 import { computeGlasses } from '../model/glassesGeometry.js';
 import { computeEye, anglesToDirection } from '../model/eye.js';
-import { eulerDegFromBasis, computePrism } from '../optics/OpticalComponents.js';
+import { eulerDegFromBasis, computePrism, computeCollimator, computeOled } from '../optics/OpticalComponents.js';
+import { computeWaveguide } from '../optics/Waveguide.js';
 import { defaultParts, defaultBom } from '../model/parts.js';
 import { trace, dielectricSolid } from '../optics/RayTracer.js';
 import { makeGlass } from '../optics/materials.js';
@@ -68,6 +69,8 @@ export function baseParams() {
     bom: defaultBom(),
     // design intent used only by the alignment helper
     intent: { azimuth: 25, elevation: 10, prismClearance: 1.0, oledInset: 0.5, entryTiltDeg: 0 },
+    // geometric (reflective) waveguide that replaces the prism when enabled
+    waveguide: { enabled: false, thickness: 2.5, height: 9, gapToLens: 0.4, guideAngle: 55, facets: 3, facetSpacing: 3.5, facetR: 0.25, coating: 'selective', templeMargin: 2, mount: 'rim' },
   };
 }
 
@@ -82,6 +85,7 @@ export function baseParams() {
  * what actually happens; nothing here guarantees the light reaches the eye.
  */
 export function alignChain(params) {
+  if (params.waveguide?.enabled) return alignGuideChain(params);
   const p = structuredClone(params);
   const glasses = computeGlasses(p.frame);
   const eye = computeEye({ ...p.eye, monoPD: p.eye.monoPDRight, side: 1, gazeYaw: 0, gazePitch: 0 }, glasses);
@@ -165,6 +169,35 @@ export function alignChain(params) {
     p.driver.pos = round3(new Vector3(cav.min.x + p.driver.thickness / 2 + 0.3, cav.center.y, cav.min.z + p.driver.length / 2 + 0.5));
   }
   p._alignInfo = { traced, deviationDeg: (Math.acos(Math.min(1, Math.max(-1, cos))) * 180) / Math.PI, distanceAlongHudDir: t, entryToOled: s };
+  return p;
+}
+
+/** Waveguide version: the plate's position follows the lens (it sits just
+ *  behind it) and the HUD direction (facets in line with it); the OLED and
+ *  collimator go on the plate's input axis behind its temple end. */
+export function alignGuideChain(params) {
+  const p = structuredClone(params);
+  const glasses = computeGlasses(p.frame);
+  const eye = computeEye({ ...p.eye, monoPD: p.eye.monoPDRight, side: 1, gazeYaw: 0, gazePitch: 0 }, glasses);
+  const wg = computeWaveguide(p, glasses, eye);
+  const lensToOled = p.collimator.mode === 'thin' || !p.collimator.enabled ? p.collimator.focalLength : null;
+  p.collimator.distance = lensToOled ?? p.collimator.distance;
+  const c = computeCollimator({ ...p.collimator, enabled: true }, computeOled(p.oled), p.prism.n);
+  const s = (c?.valid ? c.frontFocalDistance + (c.thickness || 0) : p.collimator.distance) + (p.intent.guideStandoff ?? 2);
+  const oledCenter = wg.entryPoint.clone().addScaledVector(wg.I, -s);
+  const z = wg.I.clone();
+  const y = wg.v.clone().addScaledVector(z, -wg.v.dot(z)).normalize();
+  const x = new Vector3().crossVectors(y, z);
+  // roll 180° when asked (image orientation is a display-driver setting too)
+  const flip = p.intent.guideRoll ? -1 : 1;
+  p.oled.pos = round3(oledCenter);
+  p.oled.rot = eulerDegFromBasis(x.multiplyScalar(flip), y.multiplyScalar(flip), z);
+  p.collimator.offsetX = 0; p.collimator.offsetY = 0; p.collimator.tiltX = 0; p.collimator.tiltY = 0;
+  // driver board flat against the temple's outer wall, behind the OLED module
+  const outerX = -(glasses.hingeX + p.frame.templeThickness / 2);
+  p.driver.pos = round3(new Vector3(outerX + p.driver.thickness / 2 + 0.3, oledCenter.y, Math.min(oledCenter.z - 6, glasses.hingeZ - 1) - p.driver.length / 2));
+  p.driver.rot = { yaw: 0, pitch: 0, roll: 0 };
+  p._alignInfo = { traced: true, guideAngle: p.waveguide.guideAngle, entryToOled: s };
   return p;
 }
 

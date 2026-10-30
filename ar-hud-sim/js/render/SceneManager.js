@@ -70,6 +70,14 @@ export class SceneManager {
     this.pointer = new THREE.Vector2();
     this._down = null;
     const el = this.renderer.domElement;
+    let hoverT = 0;
+    el.addEventListener('pointermove', (e) => {
+      if (e.pointerType !== 'mouse' || e.buttons || performance.now() - hoverT < 60) return;
+      hoverT = performance.now();
+      const id = this.idAt(e);
+      if (id !== this.hovered) { this.hovered = id; this.onHover?.(id); }
+    });
+    el.addEventListener('pointerleave', () => { if (this.hovered) { this.hovered = null; this.onHover?.(null); } });
     el.addEventListener('pointerdown', (e) => { this._down = { x: e.clientX, y: e.clientY, t: performance.now() }; });
     el.addEventListener('pointerup', (e) => {
       if (!this._down || this.gizmo.dragging) return;
@@ -106,6 +114,20 @@ export class SceneManager {
     this.sectionOn = on;
     if (plane) this.sectionPlane.copy(plane);
     for (const m of this.clippable) { m.clippingPlanes = on ? [this.sectionPlane] : null; m.needsUpdate = true; }
+  }
+
+  // component under the pointer (null if none), for hover labels
+  idAt(e) {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.pointer.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+    const hits = this.raycaster.intersectObjects(this.pickables.filter((o) => isVisible(o)), true);
+    for (const h of hits) {
+      let o = h.object;
+      while (o && !o.userData.componentId) o = o.parent;
+      if (o && o.userData.componentId !== 'rays' && o.userData.componentId !== 'coverage') return o.userData.componentId;
+    }
+    return null;
   }
 
   pick(e) {

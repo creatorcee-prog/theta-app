@@ -24,6 +24,8 @@ export const STRUCTURE_CHECKS = [
   ['headHousing', 'Housing clears the head'],
   ['virtualImage', 'Focusable virtual image'],
   ['left', 'No light in the left pupil'],
+  ['guideTIR', 'Light stays guided in the waveguide'],
+  ['seeThrough', 'World stays visible through the waveguide'],
 ];
 
 export function scoreDesign(results, coverage, diag, params) {
@@ -48,8 +50,13 @@ export function scoreDesign(results, coverage, diag, params) {
   // every placed part: must not block the beam or cut into the head
   for (const c of diag.checks.filter((x) => x.id.startsWith('part-'))) structural.push({ id: c.id, label: c.label, ok: false, value: c.value, explain: c.explain });
   // the prism needs something holding it
-  const mount = (params.parts ?? []).some((p) => p.attach === 'prism' && p.visible !== false);
-  structural.push({ id: 'prismMount', label: 'Prism has a mount', ok: mount, value: mount ? 'yes' : 'no', explain: mount ? '' : 'Add a bracket attached to the prism.' });
+  if (params.waveguide?.enabled) {
+    const clip = (params.bom ?? []).some((b) => b.id === 'guideClip' && b.include !== false);
+    structural.push({ id: 'prismMount', label: 'Waveguide held by the rim', ok: clip, value: clip ? 'rim clip' : 'no', explain: clip ? '' : 'Add a rim clip (parts list) that holds the plate behind the lens with an air gap.' });
+  } else {
+    const mount = (params.parts ?? []).some((p) => p.attach === 'prism' && p.visible !== false);
+    structural.push({ id: 'prismMount', label: 'Prism has a mount', ok: mount, value: mount ? 'yes' : 'no', explain: mount ? '' : 'Add a bracket attached to the prism.' });
+  }
   const structure = structural.filter((s) => s.ok).length / structural.length;
 
   const goals = [

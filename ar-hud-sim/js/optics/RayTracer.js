@@ -369,6 +369,30 @@ export function trace(scene, sources, options = {}) {
       path.lastOptic = obj.id;
       const R = reflect(dir, N);
 
+      if (face.facetR != null) {
+        // partially reflective facet embedded in the glass (same glass on both
+        // sides, so no refraction): the reflected share continues on this path,
+        // the transmitted share continues as its own path. facetT = 0 makes a
+        // full mirror (e.g. the in-coupling mirror).
+        // angle-selective coating (reflective waveguides): full reflectance
+        // below the cut-off incidence, ~1% above it
+        const facetR = face.facetCutoffDeg != null && incidence * 180 / Math.PI > face.facetCutoffDeg ? (face.facetRHigh ?? 0.01) : face.facetR;
+        const T = face.facetT ?? 1 - facetR;
+        ev.tir = false; ev.mirror = true; ev.facet = true; ev.R = facetR; ev.T = T;
+        if (T > 0 && weight * T >= minWeight && depth < maxDepth) {
+          stack.push({
+            origin: hit.point.clone(), dir: dir.clone(), weight: weight * T, lambda: r.lambda, color: r.color,
+            pixel: r.pixel, source: r.source, chief: false, inside, depth: depth + 1, primary: r.primary,
+            lastType, parent: pathIndex, events: [...r.events],
+          });
+        }
+        weight *= facetR;
+        dir = R;
+        origin = hit.point.clone();
+        lastType = r.primary ? 'reflect' : 'ghost';
+        if (++depth > maxDepth || weight < minWeight) { path.outcome = 'maxDepth'; break; }
+        continue;
+      }
       if (face.mirrorR != null) {
         // metal-coated face: specular reflection with fixed reflectance
         ev.tir = false; ev.mirror = true; ev.R = face.mirrorR; ev.T = 0;

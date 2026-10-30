@@ -12,6 +12,7 @@ import { TUNED as PREVIOUS } from '../js/config/makes.tuned.js';
 import { SEEDS } from '../js/config/makes.seeds.js';
 
 const EVALS = Number(process.argv[2] ?? 260);
+const ONLY = process.argv[3]; // optional: search only this make, keep the others' stored results
 
 export function evaluate(make, v) {
   const p = buildMake(make, v);
@@ -50,7 +51,9 @@ function mutate(make, v, scale) {
 }
 
 const tuned = {};
+if (process.env.NO_SEARCH) process.exit(0);
 for (const make of MAKES) {
+  if (ONLY && make.id !== ONLY && PREVIOUS[make.id]) { tuned[make.id] = PREVIOUS[make.id]; continue; }
   const t0 = Date.now();
   let best = null;
   // warm start: earlier good designs for this make are candidates too

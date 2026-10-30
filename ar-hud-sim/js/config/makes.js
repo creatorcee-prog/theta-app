@@ -27,6 +27,10 @@ const src = {
   bat: { label: 'eBay 501230 150 mAh LiPo ($6.15)', url: 'https://www.ebay.com/itm/174683669832' },
   chg: { label: 'Adafruit Micro-Lipo USB-C #4410 ($5.95)', url: 'https://www.adafruit.com/product/4410' },
   rb: { label: 'Ray-Ban Meta 48.6 g (SHI)', url: 'https://www.uk.shi.com/Product/47381750/Ray-Ban---Meta-Smart-glasses' },
+  bs: { label: 'Edmund 25 mm 30R/70T plate beamsplitter, 1 mm ($61)', url: 'https://www.edmundoptics.com/p/25mm-diameter-30r70t-plate-beamsplitter/5238/' },
+  noa: { label: 'Edmund NOA61 optical adhesive, 1 oz ($38)', url: 'https://www.edmundoptics.com/p/1-oz-application-bottle-of-noa-61/4209/' },
+  noaT: { label: 'Thorlabs NOA61 ($40.70)', url: 'https://www.thorlabs.us/_QLPopup.cfm?PN=NOA61' },
+  lumus: { label: 'Lumus: reflective (geometric) waveguides, licensed to OEMs', url: 'https://lumusvision.com' },
 };
 
 // Catalog collimators (focal length, glass diameter). Only listed parts.
@@ -77,6 +81,24 @@ function bracket(p) {
   // beam passes there) and may overhang only behind the hypotenuse
   const lab = p.prism.size * Math.tan((p.prism.angle * Math.PI) / 180), L = p.prism.size;
   return { id: 'prismMount', name: 'Prism bracket', size: { x: lab - 0.8, y: L - 0.8, z: 1.2 }, pos: { x: 0.4, y: 0.4, z: side * (p.prism.height / 2 + 0.7) }, rot: { yaw: 0, pitch: 0, roll: 0 }, attach: 'prism', color: '#56606e', blocksLight: true, custom: false };
+}
+
+// Waveguide (Lumen) optics: a hand-made geometric waveguide. Its partial
+// reflectors are slices of a stock 30R/70T beamsplitter plate bonded inside
+// clear glass; no retail part exists, so the cutting/polishing is an estimate.
+function waveguideOptics(lens) {
+  return [
+    line({ id: 'collimator', name: lens.name, component: 'collimator', unit: lens.unit, sourced: lens.sourced, sources: lens.sources, note: lens.note, weight: 0, weightBasis: 'calc', autoWeight: true, weightNote: 'Full-diameter lens volume × 2.51 g/cm³.' }),
+    line({ id: 'prism', name: 'Waveguide plate with embedded facets (hand-made)', component: 'prism', unit: 0, sourced: false, weight: 0, weightBasis: 'calc', autoWeight: true, weightNote: 'Plate volume × 2.51 g/cm³ (BK7-like glass).', note: 'Assembled from the lines below. No hobby-scale waveguide is sold: Lumus-type waveguides are made by OEMs under licence.', sources: [src.lumus] }),
+    line({ id: 'facetGlass', name: 'Partial reflector for the facets (30R/70T plate, sliced)', unit: 61, sourced: true, sources: [src.bs], weight: 0, weightBasis: 'calc', note: 'Its coating reflects ~30% at every angle (not angle-selective): the tracer models it that way, ghosts included.' }),
+    line({ id: 'guideGlass', name: 'Clear glass for the plate body (slides / B270 offcuts)', unit: 10, sourced: false, weight: 0, weightBasis: 'calc', note: 'Estimate, not retrieved.' }),
+    line({ id: 'adhesive', name: 'NOA61 UV optical adhesive (facet bonds only)', unit: 38, sourced: true, sources: [src.noa, src.noaT], weight: 0.1, weightBasis: 'estimate', note: 'Index 1.56 ≈ glass, so bonds inside the stack are invisible. Do NOT bond the plate faces to the lens: TIR needs the air gap.' }),
+    line({ id: 'guideFab', name: 'Cut the bonded stack at the facet angle + polish', unit: 60, sourced: false, weight: 0, weightBasis: 'calc', note: 'Estimate for a local glass/lapidary shop, or your own lapping kit. Facet angle tolerance matters (≈ arcminutes for a sharp image at 640 px).' }),
+    line({ id: 'guideClip', name: 'Rim clip holding the plate 0.4 mm behind the lens', component: 'prism', unit: 0.05, sourced: false, weight: 0.5, weightBasis: 'estimate', note: 'Printed; touches the plate only at its edges.' }),
+    printed('barrel', 'Lens barrel (printed)', 'collimator'),
+    printed('arm', 'Input tube to the waveguide (printed)', 'arm'),
+    printed('housing', 'Temple housing (printed)', 'housing'),
+  ];
 }
 
 // ---------------------------------------------------------------- makes
@@ -132,6 +154,13 @@ export const MAKES = [
     electronics: () => ({ parts: [], bom: [line({ id: 'cable', name: 'Thin HDMI cable to your phone/PC', unit: 8, sourced: false, weight: 2.5, weightBasis: 'estimate', note: 'Estimate. Your phone/PC is the HDMI source (not counted).' })] }),
     display: 'yx',
   },
+  {
+    id: 'lumen', name: 'Lumen', tagline: 'See-through waveguide (your reference)', kind: 'waveguide',
+    idea: 'Modelled on your reference images: the projector sits in the temple, and a thin glass waveguide behind the lens carries the image inward by total internal reflection. Embedded partial mirrors then send it into your eye, so nothing hangs in front of the lens. Retail waveguides use a diffraction grating or factory-coated facets. Here the facets are cut from a stock beamsplitter, because a grating cannot be ray-traced or bought for a hobby build.',
+    vars: { lens: ['acl1512', 'eo125', 'acl1210', 'eo19'], flip: [false, true], stop: [3, 10], az: [6, 44], el: [-28, 32], thick: [2.5, 4.5], guide: [50, 64], facets: [2, 5], spacing: [2.5, 6], height: [9, 16], margin: [-8, 0] },
+    electronics: () => ({ parts: [], bom: [line({ id: 'cable', name: 'Thin HDMI cable to your phone/PC', unit: 8, sourced: false, weight: 2.5, weightBasis: 'estimate', note: 'Estimate. Your phone/PC is the HDMI source (not counted).' })] }),
+    display: 'yx',
+  },
 ];
 
 // Build full parameters for a make and a vector of design choices.
@@ -140,6 +169,10 @@ export function buildMake(make, v, opts = {}) {
   const lens = LENSES.find((l) => l.id === v.lens) ?? LENSES[1];
   const prism = PRISMS.find((x) => x.size === v.prism) ?? PRISMS[3];
   p.prism = { ...p.prism, size: prism.size, height: prism.size, angle: 45, coating: 'none' };
+  const guided = make.kind === 'waveguide';
+  if (guided) {
+    p.waveguide = { ...p.waveguide, enabled: true, coating: 'plain', facetR: 0.3, thickness: v.thick, guideAngle: v.guide, facets: Math.round(v.facets), facetSpacing: v.spacing, height: v.height, templeMargin: v.margin };
+  }
   p.collimator = { ...p.collimator, enabled: true, mode: 'aspheric', conicK: -0.8, focalLength: lens.f, aperture: Math.min(v.stop, lens.dia), glassDiameter: lens.dia, edgeThickness: 0.8, flip: !!v.flip };
   if (make.display === 'ssd0.49') {
     p.oled = { ...p.oled, diagonalIn: 0.49, resX: 64, resY: 32, housingMarginX: 3.8, housingMarginY: 6.4, housingDepth: 3, peakLuminance: 150 };
@@ -164,14 +197,14 @@ export function buildMake(make, v, opts = {}) {
     }
   }
   const el = make.electronics();
-  p.parts = [bracket(p), ...el.parts];
+  p.parts = guided ? [...el.parts] : [bracket(p), ...el.parts];
   const displayLines = make.display === 'ssd0.49'
     ? [
       line({ id: 'oled', name: '0.49″ 64×32 I2C OLED module', component: 'oled', unit: 2.65, sourced: true, sources: [src.ssd], weight: 1, weightBasis: 'estimate', note: '11.18 × 5.58 mm active area, 15 × 12 mm board (listings).' }),
       line({ id: 'driver', name: 'ESP32-C3 Super Mini (drives the OLED)', component: 'driver', unit: 8, sourced: true, sources: [src.esp], weight: 2.2, weightBasis: 'spec', weightSources: [src.espW], note: 'Typical $3–8.' }),
     ]
     : yxKitLines();
-  p.bom = [frameLine(), ...displayLines, ...commonOptics(lens, prism), ...el.bom];
+  p.bom = [frameLine(), ...displayLines, ...(guided ? waveguideOptics(lens) : commonOptics(lens, prism)), ...el.bom];
   p.make = { id: make.id, name: make.name, vars: v };
   return p;
 }

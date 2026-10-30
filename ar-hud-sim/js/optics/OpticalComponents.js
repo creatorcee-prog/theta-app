@@ -172,7 +172,7 @@ export function computeArm(oled, collimator, prism, wall = 0.8) {
 
 // ------------------------------------------------------------ to tracer objects
 
-export function buildOpticalObjects({ oled, prism, collimator, driver, arm, glasses, frame, prismMaterial, lensMaterial, specMaterial, coating }) {
+export function buildOpticalObjects({ oled, prism, collimator, driver, arm, glasses, frame, prismMaterial, lensMaterial, specMaterial, coating, guideObjects }) {
   const objects = [];
   if (arm && arm.length > 0.6) objects.push({ kind: 'absorber', shape: 'cylinder', id: 'arm', label: 'Optics arm', face: cylinderFace(arm.start, arm.axis, arm.radius, arm.length - 0.4, { absorb: true }) });
   if (driver) objects.push(boxAbsorber('driver', 'HDMI driver board', driver.matrix, driver.envelope));
@@ -180,14 +180,15 @@ export function buildOpticalObjects({ oled, prism, collimator, driver, arm, glas
   // OLED housing (absorbing, sits behind the emitting surface)
   objects.push(boxAbsorber('oledHousing', 'OLED housing', oled.housing.matrix, oled.housing.size));
 
-  // Prism
+  // Prism (or the waveguide plate that replaces it)
+  if (guideObjects) objects.push(...guideObjects);
   const prismFaces = Object.values(prism.faces);
-  if (coating === 'mirror') {
+  if (guideObjects) { /* no prism */ } else if (coating === 'mirror') {
     // Aluminised hypotenuse: modelled as an absorbing-backed mirror; see
     // RayTracer coatedMirror handling via role.
     prism.faces.hypotenuse.mirrorR = 0.9;
   }
-  objects.push(dielectricSolid('prism', 'BK7 prism', prismMaterial, prismFaces));
+  if (!guideObjects) objects.push(dielectricSolid('prism', 'BK7 prism', prismMaterial, prismFaces));
 
   // Collimator
   if (collimator && collimator.valid) {

@@ -24,6 +24,7 @@ import { mapReach } from './optics/reach.js';
 import { partFrame, hostFrameInverse } from './model/parts.js';
 import { solveFocusDistance, solveFieldFocus } from './optics/focus.js';
 import { assessFocus } from './optics/Vision.js';
+import { applyLabelMode } from './render/labels.js';
 
 const $ = (s) => document.querySelector(s);
 
@@ -33,6 +34,8 @@ let dirty = true, lastRun = 0, dragging = false;
 let selected = null;
 let currentPreset = 'full';
 const visibility = {};
+// labels: 'focus' shows only the hovered / selected part's label so labels never cover the model
+let labelMode = 'focus', hovered = null;
 
 const sm = new SceneManager($('#viewport'));
 const glassesModel = new GlassesModel(sm);
@@ -168,18 +171,32 @@ function applyVisibility() {
   };
   for (const [id, obj] of Object.entries(map)) if (obj) obj.visible = visibility[id] !== false && !(id === 'eyeR' && currentPreset === 'eye');
   sm.labelRenderer.domElement.style.display = visibility.labels === false ? 'none' : '';
+  updateLabels();
 }
+
+function updateLabels() {
+  applyLabelMode(sm.scene, labelMode, [selected, hovered].filter(Boolean));
+}
+sm.onHover = (id) => { hovered = id; updateLabels(); sm.renderer.domElement.style.cursor = id ? 'pointer' : ''; };
+document.querySelectorAll('[data-labels]').forEach((b) => b.addEventListener('click', () => {
+  labelMode = b.dataset.labels;
+  document.querySelectorAll('[data-labels]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+  updateLabels();
+}));
 
 // ------------------------------------------------------------ selection + gizmo
 function handleFor(id) {
   if (id === 'eyeR') return eyeR.handle;
   if (id === 'housing') return housingHandle;
   if (id?.startsWith('part:')) return partsModel.handles[id] ?? null;
+  // the waveguide follows the spectacle lens (adjust it in the Waveguide section)
+  if (id === 'prism' && results?.system.prism.kind === 'waveguide') return null;
   return optics.handles[id] ?? null;
 }
 
 function select(id) {
   selected = id;
+  updateLabels();
   ui.showSelection(id);
   if (!id) sm.attachGizmo(null);
   else if (!handleFor(id)) sm.attachGizmo(null);

@@ -22,7 +22,7 @@
   <header class="topbar">
     <div class="brand">
       <h1>Temple HUD Optical Bench</h1>
-      <p>0.23″ 640×400 Micro-OLED · 10 mm BK7 right-angle prism · right eye · all units mm</p>
+      <p>0.23″ 640×400 Micro-OLED · prism or waveguide combiner · right eye · all units mm</p>
     </div>
     <nav class="toolbar" aria-label="Camera and simulation">
       <div class="seg" role="group" aria-label="Camera presets">
@@ -32,6 +32,11 @@
         <button type="button" data-preset="front" aria-pressed="false">Front</button>
         <button type="button" data-preset="section" aria-pressed="false">Optical section</button>
         <button type="button" data-preset="eye" aria-pressed="false">Eye view</button>
+      </div>
+      <div class="seg" role="group" aria-label="Labels" title="Labels: only the part under the pointer or tapped, all, or none">
+        <button type="button" data-labels="focus" aria-pressed="true">Labels: hover/tap</button>
+        <button type="button" data-labels="all" aria-pressed="false">All</button>
+        <button type="button" data-labels="off" aria-pressed="false">Off</button>
       </div>
       <button type="button" id="play" class="btn" aria-pressed="false">Pause light</button>
       <button type="button" id="reset" class="btn ghost">Reset to default</button>

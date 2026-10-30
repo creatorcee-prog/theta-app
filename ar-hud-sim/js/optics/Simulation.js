@@ -10,6 +10,7 @@ import { trace, coneDirections, eyeDetector } from './RayTracer.js';
 import { makeGlass, WAVELENGTHS, criticalAngle, AIR } from './materials.js';
 import { partFrame, computeWeights } from '../model/parts.js';
 import { boxAbsorber } from './RayTracer.js';
+import { computeWaveguide, waveguideObjects } from './Waveguide.js';
 
 function boxCornersOf(center, q, size) {
   const out = [];
@@ -27,7 +28,8 @@ export function buildSystem(params) {
   const eye = computeEye({ ...params.eye, monoPD: params.eye.monoPDRight, side: 1 }, glasses);
   const leftEye = computeEye({ monoPD: params.eye.monoPDLeft, pupilHeight: params.eye.pupilHeightLeft, eyeRelief: params.eye.eyeRelief, pupilDiameter: params.eye.pupilDiameter, constants: params.eye.constants, side: -1 }, glasses);
   const oled = computeOled(params.oled);
-  const prism = computePrism(params.prism);
+  const guided = !!params.waveguide?.enabled;
+  const prism = guided ? computeWaveguide(params, glasses, eye) : computePrism(params.prism);
   const dispersive = params.sim.wavelengths === 'rgb';
   const prismMaterial = makeGlass('BK7', params.prism.n, { dispersive });
   const lensMaterial = makeGlass('BK7', params.prism.n, { dispersive });
@@ -37,7 +39,7 @@ export function buildSystem(params) {
   const arm = params.frame.optArm === false ? null : computeArm(oled, collimator?.valid ? collimator : null, prism);
   const objects = buildOpticalObjects({
     oled, prism, collimator, driver, arm, glasses, frame: params.frame, prismMaterial, lensMaterial, specMaterial,
-    coating: params.prism.coating,
+    coating: params.prism.coating, guideObjects: guided ? waveguideObjects(prism, prismMaterial) : null,
   });
   // placeable hardware parts block light where they are put
   const parts = (params.parts ?? []).map((part) => ({ part, ...partFrame(part, { prism, oled }) }));
@@ -109,7 +111,18 @@ export function runSimulation(params) {
   const opts = { ghosts: params.sim.ghosts, ghostMin: params.sim.ghostMin };
   const paths = trace({ objects: system.objects, escapeLength: 45 }, sources, opts);
   const chiefPaths = trace({ objects: system.objects, escapeLength: 45 }, [chiefSource(system)], { ghosts: false });
-  const chief = chiefPaths[0];
+  // a waveguide splits the chief ray into one copy per facet: the copy that
+  // lands nearest the pupil centre is the one the eye uses
+  let chief = chiefPaths[0];
+  if (system.prism.kind === 'waveguide') {
+    const missOf = (pth) => {
+      const f = pth.finalRay; if (!f || !pth.outcome.endsWith(':eyeR')) return Infinity;
+      const w = system.eye.pupilCenter.clone().sub(f.origin); const t = Math.max(0, w.dot(f.dir));
+      return f.origin.clone().addScaledVector(f.dir, t).distanceTo(system.eye.pupilCenter);
+    };
+    const best = chiefPaths.reduce((b, pth) => (missOf(pth) < missOf(b) ? pth : b), chief);
+    chief = best;
+  }
 
   const eye = system.eye;
   const counts = { emitted: sources.length, pupil: 0, eyeMiss: 0, leftPupil: 0, leftEye: 0, escaped: 0, absorbed: {}, leaked: 0, trapped: 0 };
@@ -121,6 +134,7 @@ export function runSimulation(params) {
   const lensCrossings = [];
   for (const s of sources) power.emitted += s.weight;
 
+  const pupilSources = new Set();
   for (const path of paths) {
     const out = path.outcome;
     if (!path.primary) {
@@ -129,7 +143,9 @@ export function runSimulation(params) {
     }
     const pp = perPixel.get(keyOf(path.pixel));
     if (out === 'pupil:eyeR') {
-      counts.pupil++; power.pupil += path.finalWeight;
+      // count sources, not branches (facets split one source into several paths)
+      if (!pupilSources.has(path.source)) { pupilSources.add(path.source); counts.pupil++; }
+      power.pupil += path.finalWeight;
       pp.pupilPower += path.finalWeight; pp.pupilRays++;
       pp.dirSum.addScaledVector(path.finalRay.dir, path.finalWeight);
       pp.arrivals.push({ dir: path.finalRay.dir, w: path.finalWeight, lambda: path.lambda });
@@ -144,8 +160,11 @@ export function runSimulation(params) {
       power.absorbed += path.finalWeight;
     }
     if (path.segments.some((s) => s.type === 'leak')) { counts.leaked++; power.leaked += path.finalWeight; }
+    let afterFacet = false;
     for (const ev of path.events) {
-      if (ev.obj === 'prism' && ev.face === 'hypotenuse' && !ev.entering) {
+      if (ev.facet) afterFacet = true;
+      // TIR surface statistics: the prism hypotenuse, or the waveguide's guiding faces
+      if ((ev.obj === 'prism' && ev.face === 'hypotenuse' && !ev.entering) || (ev.obj === 'guide' && !afterFacet && (ev.face === 'guideBack' || ev.face === 'guideFront') && !ev.entering)) {
         hyp.hits++; if (ev.tir) hyp.tir++;
         hyp.minInc = Math.min(hyp.minInc, ev.incidenceDeg); hyp.maxInc = Math.max(hyp.maxInc, ev.incidenceDeg);
         if (hyp.incidences.length < 4000) hyp.incidences.push(ev.incidenceDeg);

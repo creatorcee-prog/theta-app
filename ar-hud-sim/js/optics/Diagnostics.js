@@ -69,6 +69,15 @@ function solve3(M, r) {
   return [0, 1, 2].map((k) => det(M.map((row, i) => row.map((v, j) => (j === k ? r[i] : v)))) / D);
 }
 
+function insidePolygon([x, y], poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i], [xj, yj] = poly[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
 export function runDiagnostics(results, coverage) {
   const { system, chief, counts, power, hyp, critical, pixelResults } = results;
   const { params, prism, oled, collimator, glasses, eye } = system;
@@ -80,8 +89,26 @@ export function runDiagnostics(results, coverage) {
   const crit = critical.bk7Deg;
   add('Prism', 'critical', 'BK7 critical angle (glass→air)', `${f2(crit)}°`, 'info',
     `θc = asin(1/n) with n = ${params.prism.n}.`);
-  const chiefHyp = chief.events.find((e) => e.obj === 'prism' && e.face === 'hypotenuse' && !e.entering);
-  if (!chiefHyp) {
+  const guided = prism.kind === 'waveguide';
+  const cname = guided ? 'Waveguide' : 'Prism';
+  const chiefHyp = guided
+    ? chief.events.find((e) => e.obj === 'guide' && (e.face === 'guideFront' || e.face === 'guideBack') && !e.entering && !e.facet)
+    : chief.events.find((e) => e.obj === 'prism' && e.face === 'hypotenuse' && !e.entering);
+  if (guided) {
+    const wg = prism;
+    const inc = chiefHyp?.incidenceDeg;
+    const margin = inc != null ? inc - crit : null;
+    add('Prism', 'chiefInc', 'Chief-ray guided angle (TIR in the plate)', inc == null ? 'not guided' : `${f2(inc)}°`,
+      inc == null ? 'fail' : margin > 3 ? 'pass' : margin > 0 ? 'warn' : 'fail',
+      inc == null ? `The display-centre ray does not bounce inside the waveguide (outcome: ${chief.outcome}). Check the input alignment.`
+        : `Bounces between the plate faces at ${f1(inc)}°, ${f1(margin)}° above the ${f1(crit)}° critical angle. Needs an air gap (or a low-index bond) on both faces: a normal optical adhesive (n ≈ 1.56) on the face would stop TIR.`);
+    const hits = chief.events.filter((e) => e.obj === 'guide' && e.facet);
+    add('Prism', 'facets', 'Out-coupling facets', `${wg.facets.length} × R ${Math.round(100 * params.waveguide.facetR)}%`, 'info',
+      `Facet normal tilted ${f1(wg.incWanted)}° to the wanted rays; the other bounce phase meets them at ${f1(wg.incOther)}°. ${params.waveguide.coating === 'plain' ? `Stock partial reflector: same reflectance at every angle, so the other bounce phase also reflects and can form ghosts (the tracer follows them; the image check rejects pixels that arrive doubled).` : `Angle-selective coating assumed (custom): reflects below ${f1(wg.cutoff)}°, ~1% above, which suppresses the ghost.`} Chief ray met ${hits.length} facet surfaces.`);
+    const T = 1 - params.waveguide.facetR;
+    add('Prism', 'seeThrough', 'See-through transmission (world light)', `≈ ${Math.round(100 * T)}%`, grade(100 * T, (v) => v >= 70, (v) => v >= 50),
+      'World light crosses one facet near normal incidence on its way to the eye and loses the facet reflectance; uncoated plate faces cost ~4% each more.');
+  } else if (!chiefHyp) {
     add('Prism', 'chiefInc', 'Chief-ray incidence on hypotenuse', 'not reached', 'fail',
       `The display-centre ray never reaches the hypotenuse from inside the prism (outcome: ${chief.outcome}). Check OLED/prism alignment.`);
   } else {
@@ -96,7 +123,7 @@ export function runDiagnostics(results, coverage) {
   }
   const tirPct = hyp.hits ? (100 * hyp.tir) / hyp.hits : null;
   const coated = params.prism.coating === 'mirror';
-  add('Prism', 'tir', coated ? 'Hypotenuse reflection (mirror coating)' : 'Total internal reflection across beam',
+  if (!guided) add('Prism', 'tir', coated ? 'Hypotenuse reflection (mirror coating)' : 'Total internal reflection across beam',
     coated ? `${hyp.hits} hits, R = 90%` : tirPct == null ? 'no hits' : `${f1(tirPct)}% of ${hyp.hits} hits`,
     coated ? 'pass' : grade(tirPct, (v) => v >= 99, (v) => v >= 90),
     coated ? 'Aluminium coating assumed (R = 0.90); TIR not required. Adds absorption loss.'
@@ -104,9 +131,15 @@ export function runDiagnostics(results, coverage) {
         : tirPct >= 99 ? `Incidence range ${f1(hyp.minInc)}°–${f1(hyp.maxInc)}°, all above ${f1(crit)}°.`
           : `Incidence spans ${f1(hyp.minInc)}°–${f1(hyp.maxInc)}°. Rays below ${f1(crit)}° leak through the hypotenuse (${counts.leaked} rays). The field angle inside the glass (±${f1((hyp.maxInc - hyp.minInc) / 2)}°) exceeds the TIR margin of a 45° prism (${f1(45 - crit)}°). Options: mirror-coat the hypotenuse, longer focal length, or a steeper prism angle.`);
 
+  if (guided) {
+    add('Prism', 'guideTIR', 'Total internal reflection across beam', tirPct == null ? 'no hits' : `${f1(tirPct)}% of ${hyp.hits} bounces`,
+      grade(tirPct, (v) => v >= 99, (v) => v >= 90),
+      tirPct == null ? 'No rays bounce inside the waveguide.' : `Bounce incidence ${f1(hyp.minInc)}°–${f1(hyp.maxInc)}° against θc ${f1(crit)}°. The display field adds ± half its in-glass angle to the guide angle.`);
+  }
   // Fresnel on the chief path
   const fevs = chief.events.filter((e) => e.R != null);
-  const chiefT = fevs.reduce((p, e) => p * (e.tir ? 1 : e.mirror ? e.R : e.T), 1);
+  // (a waveguide facet's partial reflectance is its design split, reported with the facets)
+  const chiefT = fevs.reduce((p, e) => p * (e.tir || e.facet ? 1 : e.mirror ? e.R : e.T), 1);
   const fresnelText = fevs.map((e) => `${e.obj}/${e.face}: ${e.tir ? 'TIR 100%' : e.mirror ? 'mirror 90%' : `R ${(100 * e.R).toFixed(2)}% T ${(100 * e.T).toFixed(2)}%`}`).join('; ');
   add('Prism', 'fresnel', 'Fresnel throughput (chief path)', `${(100 * chiefT).toFixed(1)}%`,
     chiefT >= 0.85 ? 'pass' : chiefT >= 0.6 ? 'warn' : 'fail',
@@ -168,7 +201,7 @@ export function runDiagnostics(results, coverage) {
   const occ = coverage.occlusion;
   add('Field', 'hwCentral', 'Central zone clear of hardware', `${f1(occ.minRadius)}° from axis`,
     grade(occ.minRadius, (v) => v >= t.centralClear, (v) => v >= t.centralClear * 0.6),
-    occ.minRadius >= t.centralClear ? `Prism blocks ${f1(occ.prismLensPct)}% of the lens's angular area.`
+    guided ? 'The waveguide plate is see-through (its transmission is a separate check); the input optics stay at the temple.' : occ.minRadius >= t.centralClear ? `Prism blocks ${f1(occ.prismLensPct)}% of the lens's angular area.`
       : `The prism silhouette reaches ${f1(occ.prism.minRadius)}° from the line of sight (inside the ${t.centralClear}° zone) and blocks ${f1(occ.prismLensPct)}% of the lens's angular area. A 10 mm prism this close to the eye subtends a large angle; move it outward/up or increase eye relief.`);
 
   // ---------------- eye geometry
@@ -177,13 +210,13 @@ export function runDiagnostics(results, coverage) {
   add('Eye', 'relief', 'Eye relief (lens back → cornea)', `${f1(params.eye.eyeRelief)} mm`,
     grade(params.eye.eyeRelief, (v) => v >= 10 && v <= 20, (v) => v >= 8 && v <= 25), 'Typical spectacle vertex distance is 12–14 mm.');
   const lash = params.eye.lashLength ?? 6;
-  add('Eye', 'prismClear', 'Prism clearance to cornea', `${f1(prismClear)} mm (lashes ${f1(lash)} mm)`,
+  add('Eye', 'prismClear', `${cname} clearance to cornea`, `${f1(prismClear)} mm (lashes ${f1(lash)} mm)`,
     grade(prismClear, (v) => v >= lash, (v) => v >= 2),
     prismClear >= lash ? '' : prismClear >= 2 ? `Closer than your ${f1(lash)} mm lash length: lashes will likely brush or smear the prism.` : 'Prism touches or nearly touches the cornea.');
   const lfR = glasses.lenses.R;
   const lensGap = Math.min(...Object.values(prism.vertices).map((v) => -v.clone().sub(lfR.backCenter).dot(lfR.normal)));
-  add('Eye', 'prismLens', 'Prism clearance to lens back surface', `${f1(lensGap)} mm`,
-    grade(lensGap, (v) => v >= 0.3, (v) => v >= 0), lensGap < 0 ? 'Prism intersects the (tilted/wrapped) spectacle lens plane.' : 'Measured to the lens back plane, including tilt and wrap.');
+  add('Eye', 'prismLens', `${cname} clearance to lens back surface`, `${f1(lensGap)} mm`,
+    grade(lensGap, (v) => v >= 0.3, (v) => v >= 0), lensGap < 0 ? `${cname} intersects the (tilted/wrapped) spectacle lens plane.` : 'Measured to the lens back plane, including tilt and wrap.');
   const eb = coverage.eyebox;
   add('Eye', 'eyebox', 'Eye-box (full field visible)', `${f1(eb.full.width)} × ${f1(eb.full.height)} mm`,
     grade(eb.full.width, (v) => v >= 4 && eb.full.height >= 4, (v) => v > 0),
@@ -267,9 +300,9 @@ export function runDiagnostics(results, coverage) {
   } else {
     add('Alignment', 'chiefMiss', 'Chief ray miss distance at pupil', 'absorbed', 'fail', `Chief ray outcome: ${chief.outcome}.`);
   }
-  const entryHit = chief.events.find((e) => e.obj === 'prism' && e.entering);
+  const entryHit = chief.events.find((e) => e.obj === (guided ? 'guide' : 'prism') && e.entering);
   if (entryHit) {
-    add('Alignment', 'entryDecenter', 'Chief ray decentre on prism entry', `${f2(entryHit.point.distanceTo(prism.entryCenter))} mm`,
+    add('Alignment', 'entryDecenter', `Chief ray decentre on ${cname.toLowerCase()} entry`, `${f2(entryHit.point.distanceTo(prism.entryCenter))} mm`,
       grade(entryHit.point.distanceTo(prism.entryCenter), (v) => v <= 0.5, (v) => v <= 2), `Entered through face: ${entryHit.face}.`);
   }
   if (collimator) {
@@ -343,15 +376,17 @@ export function runDiagnostics(results, coverage) {
     const pts = armSurfacePoints(arm);
     const into = Math.max(...pts.map(head.intrusion));
     const lf = glasses.lenses.R;
-    const lensGapArm = Math.min(...pts.map((p) => -p.clone().sub(lf.backCenter).dot(lf.normal)));
+    // only points over the lens itself can hit it (outline in lens coordinates)
+    const overLens = pts.filter((p) => { const l = lf.toLocal(p); return insidePolygon([l.x, l.y], glasses.outline); });
+    const lensGapArm = overLens.length ? Math.min(...overLens.map((p) => -p.clone().sub(lf.backCenter).dot(lf.normal))) : Infinity;
     const corneaGap = Math.min(...pts.map((p) => p.distanceTo(eye.corneaVertex)));
     const problems = [];
-    if (!arm.reachesPrism) problems.push('does not meet the prism entry face');
+    if (!arm.reachesPrism) problems.push(`does not meet the ${cname.toLowerCase()} entry face`);
     if (into > 0) problems.push(`cuts ${f1(into)} mm into your head`);
     if (lensGapArm < 0.3) problems.push(`hits the spectacle lens (${f1(lensGapArm)} mm)`);
     if (corneaGap < lash) problems.push(`passes ${f1(corneaGap)} mm from the cornea`);
-    add('Fit', 'armFit', 'Prism held by an arm to the housing', problems.length ? 'no' : `yes, ${f1(arm.length)} mm arm`, problems.length ? 'fail' : 'pass',
-      problems.length ? `The optics arm ${problems.join('; ')}.` : `Ø${f1(2 * (arm.radius + arm.wall))} mm printed tube from the lens to the prism carries it and shields the beam.`);
+    add('Fit', 'armFit', guided ? 'Input optics tube to the waveguide' : 'Prism held by an arm to the housing', problems.length ? 'no' : `yes, ${f1(arm.length)} mm arm`, problems.length ? 'fail' : 'pass',
+      problems.length ? `The optics arm ${problems.join('; ')}.` : `Ø${f1(2 * (arm.radius + arm.wall))} mm printed tube from the lens to the ${cname.toLowerCase()} ${guided ? 'aligns the input and shields the beam' : 'carries it and shields the beam'}.`);
   }
   // Lens + barrel ("optics pod"): the full glass diameter and the barrel must
   // stay clear of the head beside the temple and must start at the housing.

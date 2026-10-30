@@ -127,6 +127,21 @@ const SECTION_LIST = [
     ],
   },
   {
+    id: 'waveguide', title: 'Waveguide (replaces the prism)',
+    controls: [
+      { key: 'waveguide.enabled', label: 'Use a waveguide instead of the prism', type: 'toggle', tag: 'design', help: 'A thin glass plate behind the right lens: light enters its temple end, is guided by total internal reflection and leaves through partial mirrors in front of the eye. Use "Re-align" (Align section) after changing it.' },
+      { key: 'waveguide.thickness', label: 'Plate thickness', min: 1, max: 6, step: 0.1, unit: 'mm', tag: 'design' },
+      { key: 'waveguide.height', label: 'Plate height', min: 4, max: 25, step: 0.5, unit: 'mm', tag: 'design' },
+      { key: 'waveguide.gapToLens', label: 'Air gap to the lens', min: 0.05, max: 3, step: 0.05, unit: 'mm', tag: 'design', help: 'TIR needs air (or a low-index layer) on both faces.' },
+      { key: 'waveguide.guideAngle', label: 'Guided angle', min: 42, max: 75, step: 0.5, unit: '°', tag: 'design', help: 'Bounce angle inside the plate; must stay above the critical angle (≈41°) over the whole field.' },
+      { key: 'waveguide.facets', label: 'Out-coupling facets', min: 1, max: 8, step: 1, unit: '', tag: 'design' },
+      { key: 'waveguide.facetSpacing', label: 'Facet spacing', min: 1, max: 10, step: 0.1, unit: 'mm', tag: 'design' },
+      { key: 'waveguide.facetR', label: 'Facet reflectance', min: 0.02, max: 0.9, step: 0.01, unit: '', tag: 'assumed' },
+      { key: 'waveguide.coating', label: 'Facet coating', type: 'select', options: [['plain', 'Stock partial mirror (same R at all angles)'], ['selective', 'Angle-selective (custom, suppresses ghosts)']], tag: 'assumed' },
+      { key: 'waveguide.templeMargin', label: 'Temple end inset from lens edge', min: -15, max: 15, step: 0.5, unit: 'mm', tag: 'design', help: 'Negative = the plate runs past the lens edge into the frame.' },
+    ],
+  },
+  {
     id: 'oled', title: 'Micro-OLED placement',
     controls: [
       { key: 'oled.pos.x', label: 'Position X', min: -100, max: 20, step: 0.1, unit: 'mm', tag: 'design' },
@@ -211,7 +226,7 @@ const SECTION_LIST = [
   },
 ];
 
-const ORDER = ['measure', 'vision', 'optics', 'hud', 'collimator', 'prism', 'oled', 'driver', 'eye', 'frame', 'targets', 'align', 'sim'];
+const ORDER = ['measure', 'vision', 'optics', 'hud', 'collimator', 'prism', 'waveguide', 'oled', 'driver', 'eye', 'frame', 'targets', 'align', 'sim'];
 export const SECTIONS = ORDER.map((id) => SECTION_LIST.find((s) => s.id === id));
 
 export const VISIBILITY = [

@@ -284,3 +284,32 @@ test('every tuned make re-scores at >= 80% from scratch, matching the stored res
     near(s.overall, t.overall, 0.005, `${make.id} reproducible`);
   }
 });
+
+test('waveguide: light is guided by TIR and leaves through a facet into the pupil', async () => {
+  const { baseParams, alignChain } = await import('../js/config/defaults.js');
+  const { runDiagnostics } = await import('../js/optics/Diagnostics.js');
+  let p = baseParams();
+  p.waveguide = { ...p.waveguide, enabled: true, coating: 'plain', facetR: 0.3, thickness: 3.5, height: 14, templeMargin: -4 };
+  p.frame.housingAuto = true;
+  p.parts = [];
+  p.collimator = { ...p.collimator, enabled: true, mode: 'aspheric', conicK: -0.8, focalLength: 16, aperture: 6, glassDiameter: 12, edgeThickness: 0.8 };
+  p.intent = { ...p.intent, azimuth: 20, elevation: 5 };
+  p = alignChain(p);
+  const r = runSimulation(p);
+  assert.equal(r.system.prism.kind, 'waveguide');
+  assert.ok(!r.system.objects.some((o) => o.id === 'prism'), 'no prism in the scene');
+  assert.equal(r.chief.outcome, 'pupil:eyeR');
+  const tir = r.chief.events.filter((e) => e.obj === 'guide' && e.tir);
+  assert.ok(tir.length >= 2, `bounces: ${tir.length}`);
+  for (const e of tir) assert.ok(e.incidenceDeg > r.critical.bk7Deg);
+  const facet = r.chief.events.filter((e) => e.facet);
+  assert.ok(facet.length >= 1);
+  for (const e of facet) near(e.R + e.T, 1, 1e-9, 'facet split conserves energy');
+  const cov = analyzeCoverage(r);
+  const d = runDiagnostics(r, cov);
+  assert.equal(d.checks.find((c) => c.id === 'chiefInc').status, 'pass');
+  assert.equal(cov.occlusion.prism.hull.length, 0, 'see-through plate is not counted as a blocker');
+  // more than one facet copy reaches the eye: an expanded eye-box
+  const copies = r.paths.filter((x) => x.outcome === 'pupil:eyeR' && x.primary).length;
+  assert.ok(copies > r.counts.pupil, `copies ${copies} vs sources ${r.counts.pupil}`);
+});
