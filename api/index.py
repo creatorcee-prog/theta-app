@@ -1464,6 +1464,102 @@ def notes():
     return _meta_json("notes", [])
 
 
+# ---- Obsidian vault: a private GitHub repo the Obsidian Git plugin syncs, so
+# the hub can read and write it with the PC off. OBSIDIAN_REPO is owner/name,
+# OBSIDIAN_TOKEN a fine-grained token for that repo only (Contents: read and
+# write). Layout: Theta/Memory.md (what every agent should know, written by
+# you), Theta/Agents/<Name>.md (each agent's own notes; self_note appends
+# there), Theta/Inbox/<date>.md (what agents were asked to remember, for you
+# to keep, move or delete). Reads are cached VAULT_CACHE_SECONDS, so a chat
+# message doesn't call GitHub and the prompt stays cacheable.
+OBSIDIAN_REPO = os.environ.get("OBSIDIAN_REPO", "").strip().strip("/")
+VAULT_DIR = os.environ.get("OBSIDIAN_DIR", "Theta").strip("/")
+VAULT_CACHE_SECONDS = int(os.environ.get("VAULT_CACHE_SECONDS", "300") or 300)
+VAULT_MEMORY_MAX, VAULT_AGENT_MAX = 4000, 2000  # characters read into a prompt
+VAULT_API = "https://api.github.com"
+
+
+def vault_on():
+    return bool(OBSIDIAN_REPO and os.environ.get("OBSIDIAN_TOKEN"))
+
+
+def _vault_api(method, path, body=None):
+    """GitHub contents API on the vault repo; {} for a missing file."""
+    url = f"{VAULT_API}/repos/{OBSIDIAN_REPO}/contents/{quote(path)}"
+    req = urllib.request.Request(url, method=method, data=json.dumps(body).encode() if body is not None else None, headers={
+        "Authorization": f"Bearer {os.environ.get('OBSIDIAN_TOKEN', '')}", "Accept": "application/vnd.github+json",
+        "User-Agent": "Theta-hub", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            return json.loads(resp.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        if e.code == 404 and method == "GET":
+            return {}
+        err = LLMError({401: "GitHub refused OBSIDIAN_TOKEN (expired or wrong)",
+                        403: "OBSIDIAN_TOKEN can't do that: give it Contents read and write on the vault repo",
+                        404: f"GitHub can't find {OBSIDIAN_REPO}: check OBSIDIAN_REPO and the token's repo access",
+                        409: "the vault changed at the same moment", 422: "GitHub refused the change"}.get(
+            e.code, f"GitHub returned {e.code}"))
+        err.status = e.code
+        raise err
+    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+        raise LLMError(f"GitHub unreachable: {type(e).__name__}")
+
+
+def vault_read(name, fresh=False):
+    """(text, sha) of Theta/<name>, cached; ("", None) if it doesn't exist.
+    On a GitHub error the last copy is used, else ("", None)."""
+    key, path = f"vault:{name}", f"{VAULT_DIR}/{name}"
+    hit = _meta_json(key, None)
+    if hit and not fresh and time.time() - hit["at"] < VAULT_CACHE_SECONDS:
+        return hit["text"], hit["sha"]
+    try:
+        got = _vault_api("GET", path)
+    except LLMError:
+        if fresh:
+            raise
+        return (hit["text"], hit["sha"]) if hit else ("", None)
+    text = base64.b64decode(got["content"]).decode("utf-8", "replace") if got.get("content") else ""
+    store().set_meta(key, json.dumps({"at": time.time(), "text": text, "sha": got.get("sha")}))
+    return text, got.get("sha")
+
+
+def vault_append(name, line, message):
+    """Add a line to Theta/<name> (made if missing), re-reading and trying
+    once more if Obsidian synced in between."""
+    for attempt in (0, 1):
+        text, sha = vault_read(name, fresh=True)
+        new = (text.rstrip("\n") + "\n" if text.strip() else "") + line + "\n"
+        body = {"message": message, "content": base64.b64encode(new.encode()).decode(), **({"sha": sha} if sha else {})}
+        try:
+            out = _vault_api("PUT", f"{VAULT_DIR}/{name}", body)
+        except LLMError as e:
+            if getattr(e, "status", None) in (409, 422) and attempt == 0:
+                continue
+            raise
+        store().set_meta(f"vault:{name}", json.dumps({"at": time.time(), "text": new,
+                                                      "sha": (out.get("content") or {}).get("sha")}))
+        return new
+    raise LLMError("the vault kept changing; try again")
+
+
+def _vault_cut(text, limit, name):
+    text = text.strip()
+    return text if len(text) <= limit else text[:limit].rsplit("\n", 1)[0] + f"\n(… cut: keep {name} under {limit} characters)"
+
+
+def vault_prompt(agent):
+    """Memory.md and this agent's own note, for its prompt ("" when unlinked)."""
+    if not vault_on():
+        return ""
+    memory = _vault_cut(vault_read("Memory.md")[0], VAULT_MEMORY_MAX, "Memory.md")
+    mine = _vault_cut(vault_read(f"Agents/{AGENTS[agent]['name']}.md")[0], VAULT_AGENT_MAX, f"Agents/{AGENTS[agent]['name']}.md")
+    return ((f"\n\nFrom the user's notes (their Obsidian vault, Memory.md; true unless they say otherwise):\n{memory}"
+             if memory else "")
+            + (f"\n\nYour own notes (Agents/{AGENTS[agent]['name']}.md in their vault; follow them unless the user "
+               f"says otherwise):\n{mine}" if mine else ""))
+
+
 def seat_notes(agent):
     """An agent's own working notes (lessons, how you like things done),
     kept across chats and model changes and read back into its prompt.
@@ -1496,6 +1592,14 @@ def _tool_remember(arg, agent):
         mem = [m for m in memory() if m["text"].lower() != text.lower()]
         mem.append({"id": f"m{int(time.time() * 1000) % 10**10}", "text": text, "by": agent, "at": time.time()})
         store().set_meta("memory", json.dumps(mem[-MEMORY_MAX:]))
+    if vault_on():  # a copy in your vault's Inbox, to keep in Memory.md or delete
+        now = datetime.now(hub_tz())
+        try:
+            vault_append(f"Inbox/{now:%Y-%m-%d}.md", f"- {text} ({AGENTS.get(agent, {}).get('name', agent)}, {_clock(now)})",
+                         "Inbox: remembered")
+            return f"Remembered for the whole crew: {text} (a saved note, not monitoring; copied to your vault's Inbox)"
+        except LLMError as e:
+            print(f"vault inbox copy failed: {e}")
     return f"Remembered for the whole crew: {text} (a saved note, not monitoring)"
 
 
@@ -1503,6 +1607,14 @@ def _tool_self_note(arg, agent):
     text = " ".join(arg.split())[:200]
     if not text:
         raise ValueError("nothing to note")
+    if vault_on():  # your vault is the record; Redis only if GitHub fails
+        name = AGENTS[agent]["name"]
+        try:
+            if text.lower() not in vault_read(f"Agents/{name}.md", fresh=True)[0].lower():
+                vault_append(f"Agents/{name}.md", f"- {text}", f"{name}: note to self")
+            return f"Noted for myself: {text} (in your vault: {VAULT_DIR}/Agents/{name}.md)"
+        except LLMError as e:
+            print(f"vault self_note failed, kept in the hub instead: {e}")
     with _TOOL_LOCK:
         mine = [n for n in seat_notes(agent) if n["text"].lower() != text.lower()]
         mine.append({"id": f"s{int(time.time() * 1000) % 10**10}", "text": text, "by": agent, "at": time.time()})
@@ -1836,7 +1948,9 @@ HUB_GUIDE = (
     "- Calendar (/calendar): the family calendar (read-only, from REMI_CALENDAR_URLS) and Reminders.\n"
     "- Money (/money): Budgets, Recent spending, Charter's charts, Import from Rocket Money, Stocks.\n"
     "- Settings (/settings): Color scheme (light/dark, Glass shine, Home layout), Phone notifications (Turn on, "
-    "Send a test), Sign in with Face ID, Devices, Gmail, Memory and notes (with each agent's own notes), Voice commands "
+    "Send a test), Sign in with Face ID, Devices, Gmail, Memory and notes (with each agent's own notes; when the "
+    "user's Obsidian vault is linked, its Theta/Memory.md and Theta/Agents notes are read in, self_note writes to "
+    "Theta/Agents, and remember also copies to Theta/Inbox), Voice commands "
     "(Siri), Speed, Rounds, Standing orders.\n"
     "- Diagnostics (/diagnostics): Checkup (one button that checks storage, the tick, rounds, every model, search "
     "and the tool bridge; /checkup posts it in #dev-and-security), the crew, scheduled work, failures, Models & "
@@ -2028,7 +2142,7 @@ def system_prompt(agent_id, tools=False, now=True):
             "Never describe a control the chat cannot show: it cannot show line charts or architecture diagrams, "
             "and buttons in chat exist only on cards and server-issued messages (QWERTY proposals, James commands) "
             "— agents never emit buttons. Images only with ![alt](https link) for a link you were given)."
-            f"{extra}{now_line() if now else ''}{memory_prompt()}{seat_prompt(agent_id)}"
+            f"{extra}{now_line() if now else ''}{memory_prompt()}{vault_prompt(agent_id)}{seat_prompt(agent_id)}"
             f"{chr(10) * 2 + HUB_GUIDE + hub_rules(agent_id) + tools_prompt(agent_id) if tools and not a.get('home') else ''}")
 
 
@@ -8718,6 +8832,21 @@ def wiring(fresh=False):
     else:
         rows.append({"agent": "lenz-tmdb", "name": "Lenz's TMDB", "tier": "", "model": "TMDB trending",
                      "testable": False, "state": "off", "note": "Not linked: set TMDB_API_KEY"})
+    if vault_on():
+        try:
+            text, sha = vault_read("Memory.md", fresh=fresh)
+            with ThreadPoolExecutor(max_workers=len(AGENTS)) as ex:  # cached; a cold read is one call each, at once
+                agents_n = sum(1 for t, _ in ex.map(lambda a: vault_read(f"Agents/{AGENTS[a]['name']}.md"), AGENTS) if t.strip())
+            vault_row = {"state": "ok", "note": (f"Memory.md: {len(text)} characters" if sha else
+                                                 f"Readable, but there's no {VAULT_DIR}/Memory.md yet")
+                         + f"; {agents_n} agent note(s)" + ("; checked just now" if fresh else "")}
+        except LLMError as e:
+            vault_row = {"state": "bad", "note": str(e)}
+        rows.append({"agent": "vault", "name": "Obsidian vault", "tier": "", "model": OBSIDIAN_REPO, "testable": False,
+                     **vault_row})
+    else:
+        rows.append({"agent": "vault", "name": "Obsidian vault", "tier": "", "model": "GitHub repo", "testable": False,
+                     "state": "off", "note": "Not linked: set OBSIDIAN_REPO and OBSIDIAN_TOKEN"})
     if LOCAL_LLM_URL or os.environ.get("LOCAL_LLM_KEY"):
         up, why = local_status(fresh=fresh)
         users = [r for r in ROUTE_CONFIG_VARS if os.environ.get(ROUTE_CONFIG_VARS[r][0], "").strip() == "local"]
@@ -13776,7 +13905,10 @@ def memory_card():
             '<p class="muted small">Tell any agent “remember …” or “save a note …”. Every agent sees the memory; '
             f'a ✓ in chat means it really saved.</p><h3>Remembered</h3><ul class="dlist mem">{mem or "<li class=empty>Nothing yet.</li>"}</ul>'
             f'<h3>Notes</h3><ul class="dlist mem">{ns or "<li class=empty>No notes yet.</li>"}</ul>'
-            '<h3>Agents\u2019 own notes</h3><p class="muted small">What each agent noted for itself; only that agent sees '
+            + (f'<p class="muted small">Your Obsidian vault ({html.escape(OBSIDIAN_REPO)}) is linked: every agent reads '
+               f'{VAULT_DIR}/Memory.md and its own {VAULT_DIR}/Agents note, new agent notes go there, and what they '
+               f'remember is copied to {VAULT_DIR}/Inbox. Edit those in Obsidian.</p>' if vault_on() else '')
+            + '<h3>Agents\u2019 own notes</h3><p class="muted small">What each agent noted for itself; only that agent sees '
             f'its own.</p><ul class="dlist mem">{seats or "<li class=empty>None yet.</li>"}</ul><p class="note"></p>'
             f'<script>{_MEMORY_JS}</script></section>')
 
