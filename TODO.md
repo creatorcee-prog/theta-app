@@ -607,13 +607,6 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
 
 ## Planned
 
-- [ ] Wiring's **Recheck** button that actually checks. Today it only
-      reloads the saved status, so rows that can't be tested stay grey
-      even when the job behind them is set up. Rounds reads "No round has
-      run yet" until its first scheduled run (00, 12 or 18 UTC: 6 pm, 6 am
-      or noon MDT), even though the job is scheduled. Recheck should test
-      what it can live and say "scheduled, first run at …" instead of
-      "not set up".
 - [ ] Get Remi's calendar and Gmail working (setup steps 7 and 4).
 - [ ] Get the job boards working: Adzuna and USAJOBS (setup step 8).
 - [ ] Token use you can see (asked 2026-10-23; checked: doable).
@@ -648,6 +641,32 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
       sign-in flow, not just the client ID).
 
 ## Ideas (not built yet)
+
+- [ ] **From Hermes Agent** (Nous Research's open-source agent, looked at
+      2026-10-29: https://hermes-agent.nousresearch.com/docs). Their
+      execution side (terminals, code sandboxes, subagents) doesn't fit a
+      serverless hub; these do, smallest first:
+      - **Safe, bounded memory.** Scan every remember / self_note / note for
+        prompt-injection phrases and invisible Unicode before saving (a web
+        page an agent read could try to plant a "memory"). Limit memory by
+        size, not count, and when it's full have the agent merge entries
+        instead of the oldest dropping off without a word.
+      - **`/find <words>`.** Search the chat history directly, no model call.
+      - **Playbooks** (their "skills"): saved how-tos with When to use,
+        Steps, Pitfalls and How to check. Agents get one pass and never see a
+        tool's result, so the hub matches playbooks to the message and adds
+        the right one before the model answers (not loaded on request).
+      - **Round review.** Once a round, a cheap model reads the recent chat
+        and proposes memory or agent notes ("you corrected Glass twice about
+        rounding"); each waits for your Approve, like QWERTY's proposals.
+        Runs after the typing guard.
+      - **Frozen memory snapshot.** Fold new memory into the prompt once a
+        day instead of on every save, so prompt caching keeps working.
+      - **Telegram.** Telegram bots run on webhooks, which suits Vercel
+        (unlike Discord's always-on bot).
+      - Caveat: their "40% faster with 20+ skills" claim comes from a
+        secondary write-up that says the gain is in time and tokens, not
+        quality, and doesn't carry across domains.
 
 - [ ] **One-tap merge** (a consideration, not needed yet; worth it once
       more updates are automated and checking them by hand takes too long).

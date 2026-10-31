@@ -105,8 +105,8 @@ check("diagnostics panel copy no longer points at Settings",
       "Live check." in diag and "Open in Settings" not in diag)
 check("diagnostics fires exactly one wiring fetch on load (no duplicate path)",
       diag.count('fetch("/api/wiring"') == 1)
-check("diagnostics recheck control is wired to the same load",
-      'document.getElementById("diag-wiring-recheck").onclick = load;' in diag)
+check("diagnostics recheck control is wired to the same load (live: fresh=1)",
+      'document.getElementById("diag-wiring-recheck").onclick = () => load(true);' in diag)
 check("diagnostics keeps the per-agent Test capability Settings had",
       'Wiring test: reply with just OK.' in diag and 'b.textContent = "Test"' in diag
       and "Test sends a tiny message and uses a few tokens." in diag)
