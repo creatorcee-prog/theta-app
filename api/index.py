@@ -42,6 +42,7 @@ import json
 import os
 import re
 import socket
+import traceback
 import threading
 import time
 import urllib.error
@@ -16147,7 +16148,9 @@ def app(environ, start_response):
                 except Exception as exc:
                     print(f"couldn't record a wrong key: {exc!r}")
     except Exception as exc:  # e.g. storage down: answer, don't crash
-        _diag("request.failed", path=path, error_class=type(exc).__name__, error=str(exc))
+        frames = traceback.extract_tb(exc.__traceback__)
+        _diag("request.failed", path=path, error_class=type(exc).__name__, error=str(exc),
+              where=" < ".join(f"{fr.name}:{fr.lineno}" for fr in reversed(frames[-4:])))  # code locations only
         (status, ctype, out), extra = _json(500, {"ok": False, "error": "internal error"}), []
     start_response(f"{status} {_REASONS.get(status, '')}",
                    [("Content-Type", ctype), ("Content-Length", str(len(out)))]
