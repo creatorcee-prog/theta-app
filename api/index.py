@@ -111,10 +111,17 @@ TIERS = ["miner", "manager", "low_brain", "master"]
 TIER_LABELS = {"miner": "Miner", "manager": "Manager",
                "low_brain": "Low Brain", "master": "High Brain"}
 # Chat APIs (all OpenAI-compatible): provider -> (endpoint, key env var)
+# Your own PC (LM Studio or Ollama behind a tunnel): an OpenAI-style server.
+# LOCAL_LLM_URL is its .../v1 address, LOCAL_LLM_KEY its API token (Sensitive),
+# LOCAL_LLM_MODEL the model it serves (for the check and the benchmark; what
+# answers a role is still set with ROUTE_<ROLE>_PROVIDER=local + _MODEL).
+LOCAL_LLM_URL = os.environ.get("LOCAL_LLM_URL", "").strip().rstrip("/")
+LOCAL_LLM_MODEL = os.environ.get("LOCAL_LLM_MODEL", "").strip()
 PROVIDERS = {
     "groq": ("https://api.groq.com/openai/v1/chat/completions", "GROQ_API_KEY"),
     "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
                "GEMINI_API_KEY"),
+    "local": (LOCAL_LLM_URL + "/chat/completions", "LOCAL_LLM_KEY"),
 }
 # Thinking models count their reasoning against max_tokens, so ask for
 # little of it. Gemini 3 can't turn thinking off ("none" was 2.5 only);
@@ -1243,7 +1250,11 @@ def agent_model(agent_id):
     """What answers for an agent: its tier's model, or the app it lives in."""
     a = AGENTS[agent_id]
     if (agent_id == DESK or (a["tier"] == "manager" and not a.get("home"))) and desk_on():
-        return f"{DESK_MODEL} (Anthropic); {MODELS[a['tier']]} as backup"
+        try:
+            desk = _route_primary("desk")[1] if agent_id == DESK else DESK_MODEL  # Mistral follows route()
+        except RouteConfigError:
+            desk = DESK_MODEL
+        return f"{desk} (Anthropic); {MODELS[a['tier']]} as backup"
     return f"{a['home']}'s coach model" if a.get("home") else MODELS[a["tier"]]
 
 
@@ -1453,6 +1464,102 @@ def notes():
     return _meta_json("notes", [])
 
 
+# ---- Obsidian vault: a private GitHub repo the Obsidian Git plugin syncs, so
+# the hub can read and write it with the PC off. OBSIDIAN_REPO is owner/name,
+# OBSIDIAN_TOKEN a fine-grained token for that repo only (Contents: read and
+# write). Layout: Theta/Memory.md (what every agent should know, written by
+# you), Theta/Agents/<Name>.md (each agent's own notes; self_note appends
+# there), Theta/Inbox/<date>.md (what agents were asked to remember, for you
+# to keep, move or delete). Reads are cached VAULT_CACHE_SECONDS, so a chat
+# message doesn't call GitHub and the prompt stays cacheable.
+OBSIDIAN_REPO = os.environ.get("OBSIDIAN_REPO", "").strip().strip("/")
+VAULT_DIR = os.environ.get("OBSIDIAN_DIR", "Theta").strip("/")
+VAULT_CACHE_SECONDS = int(os.environ.get("VAULT_CACHE_SECONDS", "300") or 300)
+VAULT_MEMORY_MAX, VAULT_AGENT_MAX = 4000, 2000  # characters read into a prompt
+VAULT_API = "https://api.github.com"
+
+
+def vault_on():
+    return bool(OBSIDIAN_REPO and os.environ.get("OBSIDIAN_TOKEN"))
+
+
+def _vault_api(method, path, body=None):
+    """GitHub contents API on the vault repo; {} for a missing file."""
+    url = f"{VAULT_API}/repos/{OBSIDIAN_REPO}/contents/{quote(path)}"
+    req = urllib.request.Request(url, method=method, data=json.dumps(body).encode() if body is not None else None, headers={
+        "Authorization": f"Bearer {os.environ.get('OBSIDIAN_TOKEN', '')}", "Accept": "application/vnd.github+json",
+        "User-Agent": "Theta-hub", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            return json.loads(resp.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        if e.code == 404 and method == "GET":
+            return {}
+        err = LLMError({401: "GitHub refused OBSIDIAN_TOKEN (expired or wrong)",
+                        403: "OBSIDIAN_TOKEN can't do that: give it Contents read and write on the vault repo",
+                        404: f"GitHub can't find {OBSIDIAN_REPO}: check OBSIDIAN_REPO and the token's repo access",
+                        409: "the vault changed at the same moment", 422: "GitHub refused the change"}.get(
+            e.code, f"GitHub returned {e.code}"))
+        err.status = e.code
+        raise err
+    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+        raise LLMError(f"GitHub unreachable: {type(e).__name__}")
+
+
+def vault_read(name, fresh=False):
+    """(text, sha) of Theta/<name>, cached; ("", None) if it doesn't exist.
+    On a GitHub error the last copy is used, else ("", None)."""
+    key, path = f"vault:{name}", f"{VAULT_DIR}/{name}"
+    hit = _meta_json(key, None)
+    if hit and not fresh and time.time() - hit["at"] < VAULT_CACHE_SECONDS:
+        return hit["text"], hit["sha"]
+    try:
+        got = _vault_api("GET", path)
+    except LLMError:
+        if fresh:
+            raise
+        return (hit["text"], hit["sha"]) if hit else ("", None)
+    text = base64.b64decode(got["content"]).decode("utf-8", "replace") if got.get("content") else ""
+    store().set_meta(key, json.dumps({"at": time.time(), "text": text, "sha": got.get("sha")}))
+    return text, got.get("sha")
+
+
+def vault_append(name, line, message):
+    """Add a line to Theta/<name> (made if missing), re-reading and trying
+    once more if Obsidian synced in between."""
+    for attempt in (0, 1):
+        text, sha = vault_read(name, fresh=True)
+        new = (text.rstrip("\n") + "\n" if text.strip() else "") + line + "\n"
+        body = {"message": message, "content": base64.b64encode(new.encode()).decode(), **({"sha": sha} if sha else {})}
+        try:
+            out = _vault_api("PUT", f"{VAULT_DIR}/{name}", body)
+        except LLMError as e:
+            if getattr(e, "status", None) in (409, 422) and attempt == 0:
+                continue
+            raise
+        store().set_meta(f"vault:{name}", json.dumps({"at": time.time(), "text": new,
+                                                      "sha": (out.get("content") or {}).get("sha")}))
+        return new
+    raise LLMError("the vault kept changing; try again")
+
+
+def _vault_cut(text, limit, name):
+    text = text.strip()
+    return text if len(text) <= limit else text[:limit].rsplit("\n", 1)[0] + f"\n(… cut: keep {name} under {limit} characters)"
+
+
+def vault_prompt(agent):
+    """Memory.md and this agent's own note, for its prompt ("" when unlinked)."""
+    if not vault_on():
+        return ""
+    memory = _vault_cut(vault_read("Memory.md")[0], VAULT_MEMORY_MAX, "Memory.md")
+    mine = _vault_cut(vault_read(f"Agents/{AGENTS[agent]['name']}.md")[0], VAULT_AGENT_MAX, f"Agents/{AGENTS[agent]['name']}.md")
+    return ((f"\n\nFrom the user's notes (their Obsidian vault, Memory.md; true unless they say otherwise):\n{memory}"
+             if memory else "")
+            + (f"\n\nYour own notes (Agents/{AGENTS[agent]['name']}.md in their vault; follow them unless the user "
+               f"says otherwise):\n{mine}" if mine else ""))
+
+
 def seat_notes(agent):
     """An agent's own working notes (lessons, how you like things done),
     kept across chats and model changes and read back into its prompt.
@@ -1485,6 +1592,14 @@ def _tool_remember(arg, agent):
         mem = [m for m in memory() if m["text"].lower() != text.lower()]
         mem.append({"id": f"m{int(time.time() * 1000) % 10**10}", "text": text, "by": agent, "at": time.time()})
         store().set_meta("memory", json.dumps(mem[-MEMORY_MAX:]))
+    if vault_on():  # a copy in your vault's Inbox, to keep in Memory.md or delete
+        now = datetime.now(hub_tz())
+        try:
+            vault_append(f"Inbox/{now:%Y-%m-%d}.md", f"- {text} ({AGENTS.get(agent, {}).get('name', agent)}, {_clock(now)})",
+                         "Inbox: remembered")
+            return f"Remembered for the whole crew: {text} (a saved note, not monitoring; copied to your vault's Inbox)"
+        except LLMError as e:
+            print(f"vault inbox copy failed: {e}")
     return f"Remembered for the whole crew: {text} (a saved note, not monitoring)"
 
 
@@ -1492,6 +1607,14 @@ def _tool_self_note(arg, agent):
     text = " ".join(arg.split())[:200]
     if not text:
         raise ValueError("nothing to note")
+    if vault_on():  # your vault is the record; Redis only if GitHub fails
+        name = AGENTS[agent]["name"]
+        try:
+            if text.lower() not in vault_read(f"Agents/{name}.md", fresh=True)[0].lower():
+                vault_append(f"Agents/{name}.md", f"- {text}", f"{name}: note to self")
+            return f"Noted for myself: {text} (in your vault: {VAULT_DIR}/Agents/{name}.md)"
+        except LLMError as e:
+            print(f"vault self_note failed, kept in the hub instead: {e}")
     with _TOOL_LOCK:
         mine = [n for n in seat_notes(agent) if n["text"].lower() != text.lower()]
         mine.append({"id": f"s{int(time.time() * 1000) % 10**10}", "text": text, "by": agent, "at": time.time()})
@@ -1592,11 +1715,39 @@ def _tool_project(arg, agent):
 SETTABLE = {"LENZ_YOUTUBE", "LENZ_SUBREDDITS", "LENZ_TWITCH", "LENZ_FEEDS_MINUTES", "GLASS_HOLDINGS", "GLASS_WATCHLIST",
             "GLASS_BUDGETS", "GLASS_MOVE_ALERT", "GLASS_BENCHMARK", "BIRTHDAYS", "DIGEST_TIME", "DAILY_NUDGE_TIME",
             "HUB_TIMEZONE", "HOME_LOCATION", "GMAIL_IMPORTANT", "GMAIL_ARCHIVE", "MASTER_MONTHLY_CAP_USD",
-            "VISION_MODEL", "LOW_BRAIN_MODEL", "DESK_MODEL", "ROUND_POSTS", "WIDGET_CACHE_SECONDS", "NEWS_FEEDS", "ENTERTAINMENT_FEEDS", "CHAT_MODE"}
+            "VISION_MODEL", "ROUTE_LOW_BRAIN_MODEL", "ROUTE_DESK_MODEL", "DESK_MODEL", "ROUND_POSTS", "WIDGET_CACHE_SECONDS", "NEWS_FEEDS", "ENTERTAINMENT_FEEDS", "CHAT_MODE"}
 VERCEL_TOKEN = os.environ.get("VERCEL_TOKEN", "")
 VERCEL_PROJECT = os.environ.get("VERCEL_PROJECT", "")
 VERCEL_TEAM_ID = os.environ.get("VERCEL_TEAM_ID", "")
 VERCEL_DEPLOY_HOOK = os.environ.get("VERCEL_DEPLOY_HOOK", "")
+
+
+# Model settings QWERTY can propose: route()'s (migration #6 moved Mistral
+# onto it), set as a complete provider + model pair in one Vercel call so a
+# half pair (which route() refuses) can't happen. The legacy var is set to
+# match when it has the same provider, so unmigrated paths agree.
+# DESK_MODEL stays settable only as the desk's on/off switch.
+ROUTE_SETTABLE = {"ROUTE_DESK_MODEL": ("desk", "DESK_MODEL"), "ROUTE_LOW_BRAIN_MODEL": ("low_brain", "LOW_BRAIN_MODEL")}
+_LEGACY_PROVIDER = {"desk": "anthropic", "low_brain": "gemini"}
+
+
+def _model_proposal(key, val):
+    """{key: value} to set for a model proposal, or ValueError saying why not."""
+    role, legacy = ROUTE_SETTABLE[key]
+    if role == "desk":
+        if val not in CLAUDE_PRICES:
+            raise ValueError(f"Mistral's desk model must be a Claude model the hub can price: {', '.join(CLAUDE_PRICES)}")
+        provider = "anthropic"
+    else:
+        provider = "gemini" if val.startswith("gemini") else "groq"
+        found = list_models(provider)
+        if "models" in found and val not in found["models"]:
+            raise ValueError(f"{val} isn't a model your {provider} key can use (see /api/models)")
+    pvar, mvar = ROUTE_CONFIG_VARS[role]
+    out = {pvar: provider, mvar: val}
+    if provider == _LEGACY_PROVIDER[role]:
+        out[legacy] = val
+    return out
 
 
 def proposals():
@@ -1609,7 +1760,11 @@ def _tool_propose(arg, agent):
     if m:
         key, op, val = m.group(1), m.group(2), " ".join(m.group(3).split()).strip(" '\"`")
         if key not in SETTABLE:
-            raise ValueError(f"{key} isn't one I can change; keys, tokens and private links stay with you in Vercel")
+            raise ValueError(f"{key} isn't one I can change; keys, tokens and private links stay with you in Vercel"
+                             + ("; to change a model, propose ROUTE_DESK_MODEL or ROUTE_LOW_BRAIN_MODEL"
+                                if key in ("LOW_BRAIN_MODEL", "MANAGER_MODEL", "MINER_MODEL") else ""))
+        if op == "+=" and (key in ROUTE_SETTABLE or key == "DESK_MODEL"):
+            raise ValueError(f"{key} takes one value, not +=")
         if op == "+=":
             val = ",".join(x for x in (os.environ.get(key, "").strip(), val) if x)
         if not val or len(val) > 2000:
@@ -1617,6 +1772,14 @@ def _tool_propose(arg, agent):
         if redact_secrets(val)[1]:
             raise ValueError("that looks like a secret; add secrets in Vercel yourself")
         prop = {"kind": "setting", "key": key, "value": val, "summary": f"Set {key} to: {val}"}
+        if key == "DESK_MODEL":
+            desk = _route_primary("desk")[1]
+            if val not in ("off", desk):
+                raise ValueError(f"DESK_MODEL only turns the desk off (off) or back on ({desk}); "
+                                 "to change Mistral's model, propose ROUTE_DESK_MODEL")
+        if key in ROUTE_SETTABLE:
+            sets = _model_proposal(key, val)
+            prop.update(sets=sets, summary="Set " + ", ".join(f"{k}={v}" for k, v in sets.items()))
     else:
         im = re.match(r"^issue\s+(.+)$", arg, re.I | re.S)
         if not im:
@@ -1633,14 +1796,17 @@ def _tool_propose(arg, agent):
             [{"id": f"qp:{pid}:yes", "label": "Approve", "style": "primary"}, {"id": f"qp:{pid}:no", "label": "Decline"}])
 
 
-def vercel_set_env(key, value):
+def vercel_set_env(key, value, more=None):
+    """Set key (and every pair in `more`) in one Vercel call, so related
+    settings land together or not at all."""
     if not (VERCEL_TOKEN and VERCEL_PROJECT):
         raise LLMError("I can't change settings yet: add VERCEL_TOKEN and VERCEL_PROJECT in Vercel (see TODO)")
     from urllib.parse import quote
     url = (f"https://api.vercel.com/v10/projects/{quote(VERCEL_PROJECT, safe='')}/env?upsert=true"
            + (f"&teamId={quote(VERCEL_TEAM_ID)}" if VERCEL_TEAM_ID else ""))
-    req = urllib.request.Request(url, method="POST", data=json.dumps(
-        {"key": key, "value": value, "type": "encrypted", "target": ["production"]}).encode(),
+    pairs = {key: value, **(more or {})}
+    body = [{"key": k, "value": v, "type": "encrypted", "target": ["production"]} for k, v in pairs.items()]
+    req = urllib.request.Request(url, method="POST", data=json.dumps(body[0] if len(body) == 1 else body).encode(),
         headers={"Authorization": f"Bearer {VERCEL_TOKEN}", "Content-Type": "application/json", "User-Agent": "Theta-hub"})
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
@@ -1677,9 +1843,10 @@ def apply_proposal(pid, yes):
         return f"Declined, nothing changed: {p['summary']}"
     try:
         if p["kind"] == "setting":
-            vercel_set_env(p["key"], p["value"])
-            post_event("qwerty", f"QWERTY set {p['key']} (you approved)")
-            return (f"✓ Set {p['key']}. " + ("Redeploying now; it takes effect in about a minute." if vercel_redeploy()
+            vercel_set_env(p["key"], p["value"], {k: v for k, v in p.get("sets", {}).items() if k != p["key"]})
+            names = ", ".join(p.get("sets") or [p["key"]])
+            post_event("qwerty", f"QWERTY set {names} (you approved)")
+            return (f"✓ Set {names}. " + ("Redeploying now; it takes effect in about a minute." if vercel_redeploy()
                                             else "Redeploy in Vercel for it to take effect (or add VERCEL_DEPLOY_HOOK so I can)."))
         url, _ = file_issue(p["title"], p.get("details", ""))
         return f"✓ Filed the issue: {url}" if url else "✗ I wrote the issue but couldn't file it: GITHUB_TOKEN isn't set."
@@ -1781,7 +1948,9 @@ HUB_GUIDE = (
     "- Calendar (/calendar): the family calendar (read-only, from REMI_CALENDAR_URLS) and Reminders.\n"
     "- Money (/money): Budgets, Recent spending, Charter's charts, Import from Rocket Money, Stocks.\n"
     "- Settings (/settings): Color scheme (light/dark, Glass shine, Home layout), Phone notifications (Turn on, "
-    "Send a test), Sign in with Face ID, Devices, Gmail, Memory and notes (with each agent's own notes), Voice commands "
+    "Send a test), Sign in with Face ID, Devices, Gmail, Memory and notes (with each agent's own notes; when the "
+    "user's Obsidian vault is linked, its Theta/Memory.md and Theta/Agents notes are read in, self_note writes to "
+    "Theta/Agents, and remember also copies to Theta/Inbox), Voice commands "
     "(Siri), Speed, Rounds, Standing orders.\n"
     "- Diagnostics (/diagnostics): Checkup (one button that checks storage, the tick, rounds, every model, search "
     "and the tool bridge; /checkup posts it in #dev-and-security), the crew, scheduled work, failures, Models & "
@@ -1973,7 +2142,7 @@ def system_prompt(agent_id, tools=False, now=True):
             "Never describe a control the chat cannot show: it cannot show line charts or architecture diagrams, "
             "and buttons in chat exist only on cards and server-issued messages (QWERTY proposals, James commands) "
             "— agents never emit buttons. Images only with ![alt](https link) for a link you were given)."
-            f"{extra}{now_line() if now else ''}{memory_prompt()}{seat_prompt(agent_id)}"
+            f"{extra}{now_line() if now else ''}{memory_prompt()}{vault_prompt(agent_id)}{seat_prompt(agent_id)}"
             f"{chr(10) * 2 + HUB_GUIDE + hub_rules(agent_id) + tools_prompt(agent_id) if tools and not a.get('home') else ''}")
 
 
@@ -2246,7 +2415,7 @@ class RouteConfigError(ValueError):
     or empty model. Raised, never silently defaulted."""
 
 
-ROUTE_PROVIDERS = {"groq", "gemini", "anthropic"}  # DeepSeek absent (D2).
+ROUTE_PROVIDERS = {"groq", "gemini", "anthropic", "local"}  # DeepSeek absent (D2). local: your PC (LOCAL_LLM_URL).
 
 # Literal current-behavior defaults (see contract above: NOT read from
 # SETTABLE-managed vars, so Approve taps cannot move route()).
@@ -2315,7 +2484,7 @@ def _route_primary(role):
         if provider not in ROUTE_PROVIDERS:
             raise RouteConfigError(
                 f"route {role}: unknown provider {provider!r} "
-                f"(groq, gemini, anthropic; DeepSeek is probe-only per D2)")
+                f"(groq, gemini, anthropic, local; DeepSeek is probe-only per D2)")
         return (provider, model)
     return ROUTE_DEFAULTS[role]
 
@@ -2970,7 +3139,42 @@ def _one_system(messages):
     return [{"role": "system", "content": "".join(sys_parts)}] + [m for m in messages if m["role"] != "system"]
 
 
+_LOCAL_STATE = {"at": 0.0, "ok": False, "why": "not checked yet"}
+LOCAL_CHECK_SECONDS = 60  # how long one answer about your PC is trusted
+
+
+def local_status(fresh=False):
+    """(up, why) for your PC's model server: a 3-second GET /models, trusted
+    for LOCAL_CHECK_SECONDS so a PC that's off costs one short wait a minute,
+    not one per call. A failed call marks it down at once (see _llm_call)."""
+    if not LOCAL_LLM_URL:
+        return False, "LOCAL_LLM_URL isn't set"
+    if not os.environ.get("LOCAL_LLM_KEY"):
+        return False, "LOCAL_LLM_KEY isn't set"
+    if not fresh and time.time() - _LOCAL_STATE["at"] < LOCAL_CHECK_SECONDS:
+        return _LOCAL_STATE["ok"], _LOCAL_STATE["why"]
+    req = urllib.request.Request(LOCAL_LLM_URL + "/models", headers={
+        "Authorization": f"Bearer {os.environ.get('LOCAL_LLM_KEY', '')}", "User-Agent": "bot-hub/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            ids = [m.get("id", "") for m in json.loads(resp.read()).get("data", []) if isinstance(m, dict)]
+        ok, why = ((True, f"answering, {LOCAL_LLM_MODEL} loaded") if not LOCAL_LLM_MODEL or LOCAL_LLM_MODEL in ids else
+                   (False, f"answering, but {LOCAL_LLM_MODEL} isn't loaded (it has: {', '.join(ids[:4]) or 'nothing'})"))
+    except urllib.error.HTTPError as e:
+        ok, why = False, ("the key was refused: LOCAL_LLM_KEY must match the token in LM Studio" if e.code in (401, 403)
+                          else "not answering: the tunnel is up but LM Studio isn't (closed, or its server is off)"
+                          if e.code in (502, 503, 504) else f"it returned {e.code}")
+    except (urllib.error.URLError, TimeoutError, ValueError, AttributeError) as e:
+        ok, why = False, f"not answering (PC off or asleep, LM Studio closed, or the tunnel is down: {type(e).__name__})"
+    _LOCAL_STATE.update(at=time.time(), ok=ok, why=why)
+    return ok, why
+
+
 def _llm_call(provider, model, messages, max_tokens):
+    if provider == "local":  # skip a PC that's off, straight to the fallback
+        up, why = local_status()
+        if not up:
+            raise LLMError(f"your PC's model isn't available: {why}", retryable=True, timed_out=True)
     messages = _one_system(messages)
     c = cooling(provider, model)
     if c:
@@ -3015,6 +3219,8 @@ def _llm_call(provider, model, messages, max_tokens):
               error_class="LLMError", http_status=e.code)
         raise err
     except (urllib.error.URLError, TimeoutError) as e:
+        if provider == "local":  # gone mid-call: don't try it again for a minute
+            _LOCAL_STATE.update(at=time.time(), ok=False, why=f"stopped answering ({type(e).__name__})")
         timed_out = isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError)
         _diag("model.call", provider=provider, model=model,
               elapsed_ms=int((time.perf_counter() - t0) * 1000), outcome="error", error_class="LLMError")
@@ -3597,7 +3803,10 @@ def _bench_kind(reply):
 
 def run_bench():
     """Each question both ways on DESK_MODEL. The first call runs alone to
-    write the cache; the rest run at once, reading it. Saved for Settings."""
+    write the cache; the rest run at once, reading it. Saved for Settings.
+    With your PC linked (LOCAL_LLM_URL + LOCAL_LLM_MODEL), the same questions
+    also go to its model, one at a time (a home GPU answers one well, not six
+    at once), in a "Your PC" column; without Claude, that column runs alone."""
     model = DESK_MODEL if DESK_MODEL.lower() != "off" else "claude-haiku-5-5"
     search = (" If answering well needs current facts from the web that you don't have, reply with exactly one "
               "line, SEARCH: <query>, and nothing else; you'll get the results.")
@@ -3616,10 +3825,36 @@ def run_bench():
             return job, None, time.time() - t0, str(e)
         return job, resp, time.time() - t0, None
 
-    jobs = [(qa, m) for m in BENCH_MODES for qa in BENCH_QUESTIONS]
-    done = [one(jobs[0])]
-    with ThreadPoolExecutor(max_workers=len(jobs)) as ex:
-        done += list(ex.map(one, jobs[1:]))
+    def local_all():
+        out, t_end = [], time.time() + 45  # leave room in Vercel's 60 s
+        for q, want, about in BENCH_QUESTIONS:
+            row = {"q": q, "want": want, "about": about, "mode": "local", "secs": 0.0, "usd": 0}
+            if time.time() > t_end:
+                out.append(dict(row, error="skipped: out of time for this run", ok=False))
+                continue
+            msgs = [{"role": "system", "content": system}, {"role": "system", "content": clock},
+                    {"role": "user", "content": f"The chat so far:\nYou: {q}\n\nAnswer the latest message as Mistral. "
+                                                "Write only your message, without your name in front."}]
+            t0 = time.time()
+            try:
+                text = _llm_call("local", LOCAL_LLM_MODEL, msgs, 800)
+            except LLMError as e:
+                out.append(dict(row, secs=round(time.time() - t0, 1), error=str(e)[:160], ok=False))
+                continue
+            kind = _bench_kind(text)
+            out.append(dict(row, secs=round(time.time() - t0, 1), reply=text[:1200], did=kind, ok=kind == want))
+        return out
+
+    local_on = bool(LOCAL_LLM_URL and LOCAL_LLM_MODEL)
+    claude_on = master_ready()
+    jobs = [(qa, m) for m in BENCH_MODES for qa in BENCH_QUESTIONS] if claude_on else []
+    with ThreadPoolExecutor(max_workers=1) as side:
+        local_rows = side.submit(local_all) if local_on else None
+        done = [one(jobs[0])] if jobs else []
+        if len(jobs) > 1:
+            with ThreadPoolExecutor(max_workers=len(jobs)) as ex:
+                done += list(ex.map(one, jobs[1:]))
+        local_rows = local_rows.result() if local_rows else []
     rows, total = [], 0.0
     for ((q, want, about), (mode, _)), resp, secs, err in done:
         row = {"q": q, "want": want, "about": about, "mode": mode, "secs": round(secs, 1)}
@@ -3639,7 +3874,10 @@ def run_bench():
                        cache_read=getattr(u, "cache_read_input_tokens", 0) or 0,
                        cache_write=getattr(u, "cache_creation_input_tokens", 0) or 0)
         rows.append(row)
-    result = {"at": time.time(), "model": model, "effort": DESK_EFFORT, "usd": round(total, 4), "rows": rows}
+    rows += local_rows
+    modes = ([list(m) for m in BENCH_MODES] if claude_on else []) + ([["local", f"Your PC ({LOCAL_LLM_MODEL})"]] if local_on else [])
+    result = {"at": time.time(), "model": model if claude_on else LOCAL_LLM_MODEL, "effort": DESK_EFFORT if claude_on else "-",
+              "usd": round(total, 4), "rows": rows, "modes": modes}
     store().set_meta("bench:last", json.dumps(result))
     return result
 
@@ -8507,9 +8745,26 @@ def recent_fallback(tier, within=86400):
     return dict(fb, ago=f"{mins // 60} h" if mins >= 60 else f"{mins} min")
 
 
-def wiring():
+ROUND_HOURS_UTC = (0, 12, 18)  # supabase/cron.sql.example's bot-hub-rounds schedule
+
+
+def next_round_at(now=None):
+    """The next scheduled round (from ROUND_HOURS_UTC), as a local datetime."""
+    now = datetime.fromtimestamp(now or time.time(), timezone.utc)
+    for days in (0, 1):
+        for hr in ROUND_HOURS_UTC:
+            at = (now + timedelta(days=days)).replace(hour=hr, minute=0, second=0, microsecond=0)
+            if at > now:
+                return at.astimezone(hub_tz())
+
+
+def wiring(fresh=False):
     """Per agent: what answers for it and whether it's wired in. Checks the
-    key and that the key can use the model; costs no tokens."""
+    key and that the key can use the model; costs no tokens. fresh (the
+    Recheck button) skips the cached model lists and saved statuses and
+    checks calendars, Gmail and stock prices live (still no model tokens)."""
+    if fresh:
+        _MODELS_CACHE.clear()
     models = {p: list_models(p) for p in {p for p, _ in TIER_LLM.values()}}
     rows = []
     for aid, a in AGENTS.items():
@@ -8577,6 +8832,32 @@ def wiring():
     else:
         rows.append({"agent": "lenz-tmdb", "name": "Lenz's TMDB", "tier": "", "model": "TMDB trending",
                      "testable": False, "state": "off", "note": "Not linked: set TMDB_API_KEY"})
+    if vault_on():
+        try:
+            text, sha = vault_read("Memory.md", fresh=fresh)
+            with ThreadPoolExecutor(max_workers=len(AGENTS)) as ex:  # cached; a cold read is one call each, at once
+                agents_n = sum(1 for t, _ in ex.map(lambda a: vault_read(f"Agents/{AGENTS[a]['name']}.md"), AGENTS) if t.strip())
+            vault_row = {"state": "ok", "note": (f"Memory.md: {len(text)} characters" if sha else
+                                                 f"Readable, but there's no {VAULT_DIR}/Memory.md yet")
+                         + f"; {agents_n} agent note(s)" + ("; checked just now" if fresh else "")}
+        except LLMError as e:
+            vault_row = {"state": "bad", "note": str(e)}
+        rows.append({"agent": "vault", "name": "Obsidian vault", "tier": "", "model": OBSIDIAN_REPO, "testable": False,
+                     **vault_row})
+    else:
+        rows.append({"agent": "vault", "name": "Obsidian vault", "tier": "", "model": "GitHub repo", "testable": False,
+                     "state": "off", "note": "Not linked: set OBSIDIAN_REPO and OBSIDIAN_TOKEN"})
+    if LOCAL_LLM_URL or os.environ.get("LOCAL_LLM_KEY"):
+        up, why = local_status(fresh=fresh)
+        users = [r for r in ROUTE_CONFIG_VARS if os.environ.get(ROUTE_CONFIG_VARS[r][0], "").strip() == "local"]
+        rows.append({"agent": "local", "name": "Your PC", "tier": "", "model": LOCAL_LLM_MODEL or "(LOCAL_LLM_MODEL not set)",
+                     "testable": False, "state": "ok" if up else "bad",
+                     "note": why + (f"; answers for: {', '.join(users)}" if users else
+                                    "; not answering for anyone yet (set ROUTE_<ROLE>_PROVIDER=local)")
+                     + ("" if up or not users else "; Groq and Gemini stand in meanwhile")})
+    else:
+        rows.append({"agent": "local", "name": "Your PC", "tier": "", "model": "LM Studio / Ollama", "testable": False,
+                     "state": "off", "note": "Not linked: set LOCAL_LLM_URL, LOCAL_LLM_KEY and LOCAL_LLM_MODEL"})
     subs = len(push_subs())
     problem = push_problem()
     if problem:
@@ -8590,13 +8871,14 @@ def wiring():
     rows.append({"agent": "push", "name": "Phone notifications", "tier": "", "model": "Web Push (Mistral)",
                  "testable": False, **push_row})
     if calendar_linked():
-        bad = calendar_problems()
+        bad = ([i + 1 for i, u in enumerate(REMI_CALENDAR_URLS) if _calendar_text(u) is None]  # live, one fetch each
+               if fresh else calendar_problems())
         rows.append({"agent": "remi-calendar", "name": "Remi's calendar", "tier": "",
                      "model": f"{len(REMI_CALENDAR_URLS)} calendar link(s), {len(BIRTHDAYS)} birthdays",
                      "testable": False,
                      **({"state": "bad", "note": f"Couldn't read link(s) {', '.join(map(str, bad))}: "
                                                   "check REMI_CALENDAR_URLS"} if bad else
-                        {"state": "ok", "note": "Calendar readable"})})
+                        {"state": "ok", "note": "Calendar readable" + (" (checked just now)" if fresh else "")})})
     else:
         rows.append({"agent": "remi-calendar", "name": "Remi's calendar", "tier": "",
                      "model": "Google Calendar (iCal)", "testable": False, "state": "off",
@@ -8604,12 +8886,17 @@ def wiring():
     now = time.time()
     ago = lambda t: "just now" if _ago(t) == "now" else f"{_ago(t)} ago"
     last_round = max(json.loads(store().get_meta("round:last") or "{}").values(), default=0)
+    last_tick = float(store().get_meta("tick:last") or 0)
+    cron_alive = last_tick and now - last_tick < 20 * 60
+    nxt = next_round_at(now)
     rows.append({"agent": "rounds", "name": "Rounds", "tier": "", "model": "Supabase Cron → /api/round", "testable": False,
-                 **({"state": "off", "note": "No round has run yet: run the bot-hub-rounds job in supabase/cron.sql.example"}
+                 **({"state": "ok", "note": f"Scheduled: Supabase Cron is running (the tick checked in {ago(last_tick)}), "
+                     f"so the first round should come at {_clock(nxt)} {nxt.tzname()}"}
+                    if not last_round and cron_alive else
+                    {"state": "off", "note": "No round has run yet: run the bot-hub-rounds job in supabase/cron.sql.example"}
                     if not last_round else
                     {"state": "ok", "note": f"Last round {ago(last_round)}"} if now - last_round < 13 * 3600 else
                     {"state": "bad", "note": f"Last round {ago(last_round)}: check the bot-hub-rounds job in Supabase"})})
-    last_tick = float(store().get_meta("tick:last") or 0)
     rows.append({"agent": "tick", "name": "Reminders and digest", "tier": "", "model": "Supabase Cron → /api/tick",
                  "testable": False,
                  **({"state": "off", "note": "Not running yet: run the bot-hub-tick job in supabase/cron.sql.example"}
@@ -8626,26 +8913,43 @@ def wiring():
             if LENZ_TWITCH else ""]
     last = float(store().get_meta("lenz:feeds:at") or 0)
     rows.append({"agent": "lenz-feeds", "name": "Lenz's channels", "tier": "", "model": "YouTube, Reddit, Twitch", "testable": False,
-                 **({"state": "ok" if last else "off", "note": ", ".join(x for x in srcs if x)
-                     + (f"; checked {_ago(last)} ago" if last else "; checked from the 5-minute tick")} if lenz_feeds_on() or any(srcs) else
+                 **({"state": "ok", "note": ", ".join(x for x in srcs if x)
+                     + (f"; checked {_ago(last)} ago" if last else "; set up, first check comes with the 5-minute tick")}
+                    if lenz_feeds_on() or any(srcs) else
                     {"state": "off", "note": "Not set: LENZ_YOUTUBE, LENZ_SUBREDDITS, LENZ_TWITCH (+ TWITCH_CLIENT_ID/SECRET)"})})
     boards = [n for n, on in (("Adzuna", ADZUNA_APP_ID and ADZUNA_APP_KEY), ("USAJOBS", USAJOBS_API_KEY and USAJOBS_EMAIL)) if on]
     rows.append({"agent": "jobs", "name": "Job boards (projects)", "tier": "", "model": "Adzuna, USAJOBS", "testable": False,
                  **({"state": "ok", "note": f"{' and '.join(boards)} linked; job projects use them before web search"} if boards else
                     {"state": "off", "note": "Not linked: ADZUNA_APP_ID + ADZUNA_APP_KEY, and/or USAJOBS_API_KEY + USAJOBS_EMAIL"})})
+    gmail_live = None
+    if fresh and gmail_connected():
+        try:
+            gmail_live = {"state": "ok", "note": f"Connected as {gmail_api('GET', '/profile').get('emailAddress') or 'you'} "
+                                                 "(checked just now)"}
+        except LLMError as e:
+            gmail_live = {"state": "bad", "note": f"Connected, but Gmail didn't answer: {str(e)[:120]}"}
     rows.append({"agent": "gmail", "name": "Remi's Gmail", "tier": "", "model": "Gmail (OAuth)", "testable": False,
-                 **({"state": "ok", "note": f"Connected as {store().get_meta('gmail:me') or 'you'}"} if gmail_connected() else
+                 **(gmail_live or {"state": "ok", "note": f"Connected as {store().get_meta('gmail:me') or 'you'}"} if gmail_connected() else
                     {"state": "off", "note": "Ready: Settings → Gmail → Connect"} if gmail_configured() else
                     {"state": "off", "note": "Not linked: set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET"})})
     if not FINNHUB_API_KEY or not stocks_on():
         rows.append({"agent": "stocks", "name": "Glass's stocks", "tier": "", "model": "Finnhub", "testable": False,
                      "state": "off", "note": "Not linked: set FINNHUB_API_KEY" if not FINNHUB_API_KEY else
                      "Set GLASS_HOLDINGS and/or GLASS_WATCHLIST"})
+    elif fresh:
+        sym = stock_symbols()[0]
+        try:
+            q = finnhub("/quote", symbol=sym)
+            live = ({"state": "ok", "note": f"Finnhub answered: {sym} at ${q['c']:,.2f} (checked just now)"} if q.get("c") else
+                    {"state": "bad", "note": f"Finnhub answered but had no price for {sym}: check the symbol"})
+        except LLMError as e:
+            live = {"state": "bad", "note": f"Finnhub didn't answer: {str(e)[:120]}"}
+        rows.append({"agent": "stocks", "name": "Glass's stocks", "tier": "", "model": "Finnhub", "testable": False, **live})
     else:
         have = stock_quotes()
         rows.append({"agent": "stocks", "name": "Glass's stocks", "tier": "", "model": "Finnhub", "testable": False,
                      **({"state": "ok", "note": f"{len(have)} prices"} if have else
-                        {"state": "off", "note": "Prices arrive with Glass's next round"})})
+                        {"state": "ok", "note": "Set up; prices arrive with Glass's next round (Recheck tests Finnhub now)"})})
     return rows
 
 
@@ -12370,7 +12674,7 @@ _BENCH_JS = r"""
   const median = xs => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor((s.length - 1) / 2)] : 0; };
   function render(d) {
     if (!d || !d.rows) { out.replaceChildren(el("p", "No run yet.", "color:var(--muted)")); return; }
-    const modes = [["on", "Thinking on"], ["off", "Thinking off"]];
+    const modes = d.modes || [["on", "Thinking on"], ["off", "Thinking off"]];
     const sum = el("table"); sum.className = "tbl";
     const sh = el("tr"); ["", "Typical time", "Did the right thing", "Words written (tokens)", "Read from cache", "Cost"].forEach(t => sh.append(el("th", t)));
     sum.append(sh);
@@ -12385,7 +12689,7 @@ _BENCH_JS = r"""
       sum.append(tr);
     }
     const det = el("table"); det.className = "tbl";
-    const dh = el("tr"); ["Message", "Should", "Thinking on", "Thinking off"].forEach(t => dh.append(el("th", t)));
+    const dh = el("tr"); ["Message", "Should", ...modes.map(m => m[1])].forEach(t => dh.append(el("th", t)));
     det.append(dh);
     const qs = [...new Set(d.rows.map(r => r.q))];
     for (const q of qs) {
@@ -12408,7 +12712,7 @@ _BENCH_JS = r"""
     try { const d = await (await fetch("/api/bench", {headers: H})).json(); if (d.ok) render(d.rows ? d : null); } catch (e) {}
   }
   btn.onclick = async () => {
-    btn.disabled = true; note.textContent = "Running... about 20 seconds.";
+    btn.disabled = true; note.textContent = "Running... about 20 seconds (up to a minute with your PC).";
     try {
       const d = await (await fetch("/api/bench", {method: "POST", headers: H, body: "{}"})).json();
       if (!d.ok) throw new Error(d.error);
@@ -13601,7 +13905,10 @@ def memory_card():
             '<p class="muted small">Tell any agent “remember …” or “save a note …”. Every agent sees the memory; '
             f'a ✓ in chat means it really saved.</p><h3>Remembered</h3><ul class="dlist mem">{mem or "<li class=empty>Nothing yet.</li>"}</ul>'
             f'<h3>Notes</h3><ul class="dlist mem">{ns or "<li class=empty>No notes yet.</li>"}</ul>'
-            '<h3>Agents\u2019 own notes</h3><p class="muted small">What each agent noted for itself; only that agent sees '
+            + (f'<p class="muted small">Your Obsidian vault ({html.escape(OBSIDIAN_REPO)}) is linked: every agent reads '
+               f'{VAULT_DIR}/Memory.md and its own {VAULT_DIR}/Agents note, new agent notes go there, and what they '
+               f'remember is copied to {VAULT_DIR}/Inbox. Edit those in Obsidian.</p>' if vault_on() else '')
+            + '<h3>Agents\u2019 own notes</h3><p class="muted small">What each agent noted for itself; only that agent sees '
             f'its own.</p><ul class="dlist mem">{seats or "<li class=empty>None yet.</li>"}</ul><p class="note"></p>'
             f'<script>{_MEMORY_JS}</script></section>')
 
@@ -13780,11 +14087,11 @@ _DIAG_JS = r"""
   const H = window.THETA_H, rows = document.getElementById("diag-wiring-rows");
   const MARK = {ok: ["Wired", "var(--good)"], bad: ["Not wired", "var(--bad)"], off: ["Not set up", "var(--warn)"]};
   const cell = (text, style) => { const td = document.createElement("td"); td.textContent = text; if (style) td.style.cssText = style; return td; };
-  async function load() {
+  async function load(fresh) {
     const note = document.getElementById("diag-wiring-note");
-    note.textContent = "Checking...";
+    note.textContent = fresh ? "Checking everything live..." : "Checking...";
     try {
-      const d = await (await fetch("/api/wiring", {headers: H})).json();
+      const d = await (await fetch("/api/wiring" + (fresh === true ? "?fresh=1" : ""), {headers: H})).json();
       if (!d.ok) throw new Error(d.error);
       rows.replaceChildren(...d.agents.map(a => {
         const tr = document.createElement("tr");
@@ -13800,7 +14107,8 @@ _DIAG_JS = r"""
                   cell(label, "font-weight:700;color:" + color), result, test);
         return tr;
       }));
-      note.textContent = "Checked " + new Date().toLocaleTimeString() + ". Test sends a tiny message and uses a few tokens.";
+      note.textContent = (fresh === true ? "Checked live " : "Checked ") + new Date().toLocaleTimeString()
+        + ". Recheck asks each service now (no model tokens); Test sends a tiny message and uses a few tokens.";
     } catch (err) { note.textContent = "Couldn't check wiring: " + err.message; }
   }
   async function testAgent(agent, out, b) {
@@ -13815,7 +14123,7 @@ _DIAG_JS = r"""
     } catch (err) { out.textContent = "Failed: " + err.message; out.style.color = "var(--bad)"; }
     b.disabled = false;
   }
-  document.getElementById("diag-wiring-recheck").onclick = load;
+  document.getElementById("diag-wiring-recheck").onclick = () => load(true);
   load();
 })();
 """
@@ -15482,9 +15790,10 @@ def handle(method, path, query, headers, body):
         if path == "/api/bench":  # Settings → Mistral benchmark: ~12 Haiku calls, a few cents
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
-            if not master_ready():
+            if not master_ready() and not (LOCAL_LLM_URL and LOCAL_LLM_MODEL):
                 return _json(400, {"ok": False, "error": "Claude isn't available (ANTHROPIC_API_KEY unset, or this "
-                                                         "month's cap is reached), so there's nothing to benchmark"})
+                                                         "month's cap is reached) and your PC isn't linked, so there's "
+                                                         "nothing to benchmark"})
             last = _meta_json("bench:last", {})
             if time.time() - last.get("at", 0) < 60:
                 return _json(429, {"ok": False, "error": "It just ran. Give it a minute before running it again."})
@@ -15711,7 +16020,7 @@ def handle(method, path, query, headers, body):
     if path == "/api/wiring":
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
-        return _json(200, {"ok": True, "agents": wiring()})
+        return _json(200, {"ok": True, "agents": wiring(fresh=query.get("fresh", [""])[0] == "1")})
 
     if path == "/api/models":
         if not _auth_dashboard(query, headers):

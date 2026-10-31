@@ -143,7 +143,10 @@ STATE["fail"] = False; h._CAL_CACHE.clear()
 
 # calendar page + cookie login
 s, b, hd = call("GET", "/calendar", "key=dk"); page = b.decode()
-check("calendar page: nav, month grid, today's dentist, list, birthday tag", s == 200 and 'href="/calendar" class="on"' in page and '<table class="cal">' in page and "Dentist moved?" in page and "birthday</span>" in page)
+# Sam's birthday is tomorrow, which is next month on the last day of one: look at tomorrow's month
+bday_page = page if (TODAY + timedelta(days=1)).month == TODAY.month else call(
+    "GET", "/calendar", f"key=dk&month={(TODAY + timedelta(days=1)):%Y-%m}")[1].decode()
+check("calendar page: nav, month grid, today's dentist, list, birthday tag", s == 200 and 'href="/calendar" class="on"' in page and '<table class="cal">' in page and "Dentist moved?" in page and "birthday</span>" in bday_page)
 check("opening with ?key= sets a session cookie (not the key)", "hub_sess=" in hd.get("set-cookie", "") and "hub_key=dk" not in hd.get("set-cookie", "") and "HttpOnly" in hd["set-cookie"])
 check("cookie alone opens pages and APIs", call("GET", "/calendar", headers={"cookie": "hub_key=dk"})[0] == 200 and call("GET", "/api/allchat", headers={"cookie": "hub_key=dk"})[0] == 200)
 check("wrong cookie refused", call("GET", "/calendar", headers={"cookie": "hub_key=nope"})[0] == 401)
