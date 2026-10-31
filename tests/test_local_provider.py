@@ -109,6 +109,21 @@ check("...and the next call doesn't wait on the PC again", SEEN["models"] == pro
 for k in ("ROUTE_MINER_PROVIDER", "ROUTE_MINER_MODEL"):
     os.environ.pop(k)
 
+# ---- one setting moves the whole tier: unmigrated miner calls (Red, Blue, Gray) follow it too
+os.environ.update(ROUTE_MINER_PROVIDER="local", ROUTE_MINER_MODEL="qwen3.6-35b-a3b")
+STATE["up"] = True; fresh()
+out = h.llm_chat("miner", [{"role": "user", "content": "story brief"}])  # no route() values passed: legacy caller
+check("an explicit ROUTE_MINER pair reaches every miner call", out == "pc says hi" and SEEN["chat"] == [("pc", "qwen3.6-35b-a3b")])
+STATE["up"] = False; fresh()
+out = h.llm_chat("miner", [{"role": "user", "content": "story brief"}])
+check("...with the legacy fallback when the PC is off", out == "groq says hi" and SEEN["chat"] == [("groq", "openai/gpt-oss-120b")])
+check("...and the old MINER_MODEL isn't flagged as drift (it's unused now)", not [d for d in h.route_drift() if d[0] == "MINER_MODEL"])
+for k in ("ROUTE_MINER_PROVIDER", "ROUTE_MINER_MODEL"):
+    os.environ.pop(k)
+fresh()
+h.llm_chat("manager", [{"role": "user", "content": "hi"}])
+check("unset: the legacy lookup is unchanged", SEEN["chat"] == [("groq", "openai/gpt-oss-120b")])
+
 # ---- Diagnostics row
 STATE["up"] = True; fresh()
 row = next(r for r in h.wiring() if r["agent"] == "local")
