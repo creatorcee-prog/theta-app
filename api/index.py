@@ -2648,7 +2648,11 @@ def llm_chat(tier, messages, max_tokens=800, primary=None, fallback=None):
     replaces FALLBACK_LLM[t] for the tier-fallback step, or "off" to
     suppress it. None means the legacy lookup. Desk-first, master,
     borrow, retry, room, key and error handling are unchanged; only
-    the two values come from route()."""
+    the two values come from route().
+    An explicitly set ROUTE_<TIER>_PROVIDER + _MODEL (or
+    ROUTE_<TIER>_FALLBACK_MODEL) also fills in for every unmigrated
+    caller of that tier, so one setting moves the whole tier (e.g. the
+    miners onto your PC). Unset, the legacy lookup is unchanged."""
     if tier == "master" and master_ready():
         try:
             text = claude_chat(messages, max_tokens)
@@ -2670,6 +2674,10 @@ def llm_chat(tier, messages, max_tokens=800, primary=None, fallback=None):
         except LLMError:
             pass  # Groq, then Gemini, as before
     need = est_tokens(messages) + max_tokens
+    if primary is None and os.environ.get(ROUTE_CONFIG_VARS[t][0], "").strip():
+        primary = _route_primary(t)  # an explicit ROUTE_<TIER>_* pair reaches every call of this tier
+    if fallback is None and os.environ.get(ROUTE_FALLBACK_VARS[t], "").strip():
+        fallback = _route_fallback(t) or "off"
     provider, model = primary if primary is not None else TIER_LLM[t]
     tried = {(provider, model)} | ({("anthropic", DESK_MODEL)} if t == "manager" and desk_on() else set())
     fits, why = room_for(provider, model, need)
@@ -14203,11 +14211,15 @@ def route_drift():
         except RouteConfigError as e:
             out.append((var, legacy, "error", str(e)))
             continue
+        if role != "desk" and os.environ.get(ROUTE_CONFIG_VARS[role][0], "").strip():
+            continue  # an explicit pair reaches every call of this tier (llm_chat), so the legacy value is unused
         if legacy.lower() != "off" and legacy != routed:
             pvar, mvar = ROUTE_CONFIG_VARS[role]
             out.append((var, legacy, routed, f"set {pvar}={provider} and {mvar}={legacy} to use it everywhere"))
     for role in ("miner", "manager", "low_brain"):
         legacy = FALLBACK_LLM.get(role, (None, "off"))[1]
+        if os.environ.get(ROUTE_FALLBACK_VARS[role], "").strip():
+            continue  # likewise
         routed = _route_fallback(role)
         if legacy != "off" and routed is not None and legacy != routed[1]:
             var = ROUTE_FALLBACK_VARS[role]
