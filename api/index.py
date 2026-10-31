@@ -111,10 +111,17 @@ TIERS = ["miner", "manager", "low_brain", "master"]
 TIER_LABELS = {"miner": "Miner", "manager": "Manager",
                "low_brain": "Low Brain", "master": "High Brain"}
 # Chat APIs (all OpenAI-compatible): provider -> (endpoint, key env var)
+# Your own PC (LM Studio or Ollama behind a tunnel): an OpenAI-style server.
+# LOCAL_LLM_URL is its .../v1 address, LOCAL_LLM_KEY its API token (Sensitive),
+# LOCAL_LLM_MODEL the model it serves (for the check and the benchmark; what
+# answers a role is still set with ROUTE_<ROLE>_PROVIDER=local + _MODEL).
+LOCAL_LLM_URL = os.environ.get("LOCAL_LLM_URL", "").strip().rstrip("/")
+LOCAL_LLM_MODEL = os.environ.get("LOCAL_LLM_MODEL", "").strip()
 PROVIDERS = {
     "groq": ("https://api.groq.com/openai/v1/chat/completions", "GROQ_API_KEY"),
     "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
                "GEMINI_API_KEY"),
+    "local": (LOCAL_LLM_URL + "/chat/completions", "LOCAL_LLM_KEY"),
 }
 # Thinking models count their reasoning against max_tokens, so ask for
 # little of it. Gemini 3 can't turn thinking off ("none" was 2.5 only);
@@ -2294,7 +2301,7 @@ class RouteConfigError(ValueError):
     or empty model. Raised, never silently defaulted."""
 
 
-ROUTE_PROVIDERS = {"groq", "gemini", "anthropic"}  # DeepSeek absent (D2).
+ROUTE_PROVIDERS = {"groq", "gemini", "anthropic", "local"}  # DeepSeek absent (D2). local: your PC (LOCAL_LLM_URL).
 
 # Literal current-behavior defaults (see contract above: NOT read from
 # SETTABLE-managed vars, so Approve taps cannot move route()).
@@ -2363,7 +2370,7 @@ def _route_primary(role):
         if provider not in ROUTE_PROVIDERS:
             raise RouteConfigError(
                 f"route {role}: unknown provider {provider!r} "
-                f"(groq, gemini, anthropic; DeepSeek is probe-only per D2)")
+                f"(groq, gemini, anthropic, local; DeepSeek is probe-only per D2)")
         return (provider, model)
     return ROUTE_DEFAULTS[role]
 
@@ -3018,7 +3025,42 @@ def _one_system(messages):
     return [{"role": "system", "content": "".join(sys_parts)}] + [m for m in messages if m["role"] != "system"]
 
 
+_LOCAL_STATE = {"at": 0.0, "ok": False, "why": "not checked yet"}
+LOCAL_CHECK_SECONDS = 60  # how long one answer about your PC is trusted
+
+
+def local_status(fresh=False):
+    """(up, why) for your PC's model server: a 3-second GET /models, trusted
+    for LOCAL_CHECK_SECONDS so a PC that's off costs one short wait a minute,
+    not one per call. A failed call marks it down at once (see _llm_call)."""
+    if not LOCAL_LLM_URL:
+        return False, "LOCAL_LLM_URL isn't set"
+    if not os.environ.get("LOCAL_LLM_KEY"):
+        return False, "LOCAL_LLM_KEY isn't set"
+    if not fresh and time.time() - _LOCAL_STATE["at"] < LOCAL_CHECK_SECONDS:
+        return _LOCAL_STATE["ok"], _LOCAL_STATE["why"]
+    req = urllib.request.Request(LOCAL_LLM_URL + "/models", headers={
+        "Authorization": f"Bearer {os.environ.get('LOCAL_LLM_KEY', '')}", "User-Agent": "bot-hub/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            ids = [m.get("id", "") for m in json.loads(resp.read()).get("data", []) if isinstance(m, dict)]
+        ok, why = ((True, f"answering, {LOCAL_LLM_MODEL} loaded") if not LOCAL_LLM_MODEL or LOCAL_LLM_MODEL in ids else
+                   (False, f"answering, but {LOCAL_LLM_MODEL} isn't loaded (it has: {', '.join(ids[:4]) or 'nothing'})"))
+    except urllib.error.HTTPError as e:
+        ok, why = False, ("the key was refused: LOCAL_LLM_KEY must match the token in LM Studio" if e.code in (401, 403)
+                          else "not answering: the tunnel is up but LM Studio isn't (closed, or its server is off)"
+                          if e.code in (502, 503, 504) else f"it returned {e.code}")
+    except (urllib.error.URLError, TimeoutError, ValueError, AttributeError) as e:
+        ok, why = False, f"not answering (PC off or asleep, LM Studio closed, or the tunnel is down: {type(e).__name__})"
+    _LOCAL_STATE.update(at=time.time(), ok=ok, why=why)
+    return ok, why
+
+
 def _llm_call(provider, model, messages, max_tokens):
+    if provider == "local":  # skip a PC that's off, straight to the fallback
+        up, why = local_status()
+        if not up:
+            raise LLMError(f"your PC's model isn't available: {why}", retryable=True, timed_out=True)
     messages = _one_system(messages)
     c = cooling(provider, model)
     if c:
@@ -3063,6 +3105,8 @@ def _llm_call(provider, model, messages, max_tokens):
               error_class="LLMError", http_status=e.code)
         raise err
     except (urllib.error.URLError, TimeoutError) as e:
+        if provider == "local":  # gone mid-call: don't try it again for a minute
+            _LOCAL_STATE.update(at=time.time(), ok=False, why=f"stopped answering ({type(e).__name__})")
         timed_out = isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError)
         _diag("model.call", provider=provider, model=model,
               elapsed_ms=int((time.perf_counter() - t0) * 1000), outcome="error", error_class="LLMError")
@@ -3645,7 +3689,10 @@ def _bench_kind(reply):
 
 def run_bench():
     """Each question both ways on DESK_MODEL. The first call runs alone to
-    write the cache; the rest run at once, reading it. Saved for Settings."""
+    write the cache; the rest run at once, reading it. Saved for Settings.
+    With your PC linked (LOCAL_LLM_URL + LOCAL_LLM_MODEL), the same questions
+    also go to its model, one at a time (a home GPU answers one well, not six
+    at once), in a "Your PC" column; without Claude, that column runs alone."""
     model = DESK_MODEL if DESK_MODEL.lower() != "off" else "claude-haiku-5-5"
     search = (" If answering well needs current facts from the web that you don't have, reply with exactly one "
               "line, SEARCH: <query>, and nothing else; you'll get the results.")
@@ -3664,10 +3711,36 @@ def run_bench():
             return job, None, time.time() - t0, str(e)
         return job, resp, time.time() - t0, None
 
-    jobs = [(qa, m) for m in BENCH_MODES for qa in BENCH_QUESTIONS]
-    done = [one(jobs[0])]
-    with ThreadPoolExecutor(max_workers=len(jobs)) as ex:
-        done += list(ex.map(one, jobs[1:]))
+    def local_all():
+        out, t_end = [], time.time() + 45  # leave room in Vercel's 60 s
+        for q, want, about in BENCH_QUESTIONS:
+            row = {"q": q, "want": want, "about": about, "mode": "local", "secs": 0.0, "usd": 0}
+            if time.time() > t_end:
+                out.append(dict(row, error="skipped: out of time for this run", ok=False))
+                continue
+            msgs = [{"role": "system", "content": system}, {"role": "system", "content": clock},
+                    {"role": "user", "content": f"The chat so far:\nYou: {q}\n\nAnswer the latest message as Mistral. "
+                                                "Write only your message, without your name in front."}]
+            t0 = time.time()
+            try:
+                text = _llm_call("local", LOCAL_LLM_MODEL, msgs, 800)
+            except LLMError as e:
+                out.append(dict(row, secs=round(time.time() - t0, 1), error=str(e)[:160], ok=False))
+                continue
+            kind = _bench_kind(text)
+            out.append(dict(row, secs=round(time.time() - t0, 1), reply=text[:1200], did=kind, ok=kind == want))
+        return out
+
+    local_on = bool(LOCAL_LLM_URL and LOCAL_LLM_MODEL)
+    claude_on = master_ready()
+    jobs = [(qa, m) for m in BENCH_MODES for qa in BENCH_QUESTIONS] if claude_on else []
+    with ThreadPoolExecutor(max_workers=1) as side:
+        local_rows = side.submit(local_all) if local_on else None
+        done = [one(jobs[0])] if jobs else []
+        if len(jobs) > 1:
+            with ThreadPoolExecutor(max_workers=len(jobs)) as ex:
+                done += list(ex.map(one, jobs[1:]))
+        local_rows = local_rows.result() if local_rows else []
     rows, total = [], 0.0
     for ((q, want, about), (mode, _)), resp, secs, err in done:
         row = {"q": q, "want": want, "about": about, "mode": mode, "secs": round(secs, 1)}
@@ -3687,7 +3760,10 @@ def run_bench():
                        cache_read=getattr(u, "cache_read_input_tokens", 0) or 0,
                        cache_write=getattr(u, "cache_creation_input_tokens", 0) or 0)
         rows.append(row)
-    result = {"at": time.time(), "model": model, "effort": DESK_EFFORT, "usd": round(total, 4), "rows": rows}
+    rows += local_rows
+    modes = ([list(m) for m in BENCH_MODES] if claude_on else []) + ([["local", f"Your PC ({LOCAL_LLM_MODEL})"]] if local_on else [])
+    result = {"at": time.time(), "model": model if claude_on else LOCAL_LLM_MODEL, "effort": DESK_EFFORT if claude_on else "-",
+              "usd": round(total, 4), "rows": rows, "modes": modes}
     store().set_meta("bench:last", json.dumps(result))
     return result
 
@@ -8642,6 +8718,17 @@ def wiring(fresh=False):
     else:
         rows.append({"agent": "lenz-tmdb", "name": "Lenz's TMDB", "tier": "", "model": "TMDB trending",
                      "testable": False, "state": "off", "note": "Not linked: set TMDB_API_KEY"})
+    if LOCAL_LLM_URL or os.environ.get("LOCAL_LLM_KEY"):
+        up, why = local_status(fresh=fresh)
+        users = [r for r in ROUTE_CONFIG_VARS if os.environ.get(ROUTE_CONFIG_VARS[r][0], "").strip() == "local"]
+        rows.append({"agent": "local", "name": "Your PC", "tier": "", "model": LOCAL_LLM_MODEL or "(LOCAL_LLM_MODEL not set)",
+                     "testable": False, "state": "ok" if up else "bad",
+                     "note": why + (f"; answers for: {', '.join(users)}" if users else
+                                    "; not answering for anyone yet (set ROUTE_<ROLE>_PROVIDER=local)")
+                     + ("" if up or not users else "; Groq and Gemini stand in meanwhile")})
+    else:
+        rows.append({"agent": "local", "name": "Your PC", "tier": "", "model": "LM Studio / Ollama", "testable": False,
+                     "state": "off", "note": "Not linked: set LOCAL_LLM_URL, LOCAL_LLM_KEY and LOCAL_LLM_MODEL"})
     subs = len(push_subs())
     problem = push_problem()
     if problem:
@@ -12458,7 +12545,7 @@ _BENCH_JS = r"""
   const median = xs => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor((s.length - 1) / 2)] : 0; };
   function render(d) {
     if (!d || !d.rows) { out.replaceChildren(el("p", "No run yet.", "color:var(--muted)")); return; }
-    const modes = [["on", "Thinking on"], ["off", "Thinking off"]];
+    const modes = d.modes || [["on", "Thinking on"], ["off", "Thinking off"]];
     const sum = el("table"); sum.className = "tbl";
     const sh = el("tr"); ["", "Typical time", "Did the right thing", "Words written (tokens)", "Read from cache", "Cost"].forEach(t => sh.append(el("th", t)));
     sum.append(sh);
@@ -12473,7 +12560,7 @@ _BENCH_JS = r"""
       sum.append(tr);
     }
     const det = el("table"); det.className = "tbl";
-    const dh = el("tr"); ["Message", "Should", "Thinking on", "Thinking off"].forEach(t => dh.append(el("th", t)));
+    const dh = el("tr"); ["Message", "Should", ...modes.map(m => m[1])].forEach(t => dh.append(el("th", t)));
     det.append(dh);
     const qs = [...new Set(d.rows.map(r => r.q))];
     for (const q of qs) {
@@ -12496,7 +12583,7 @@ _BENCH_JS = r"""
     try { const d = await (await fetch("/api/bench", {headers: H})).json(); if (d.ok) render(d.rows ? d : null); } catch (e) {}
   }
   btn.onclick = async () => {
-    btn.disabled = true; note.textContent = "Running... about 20 seconds.";
+    btn.disabled = true; note.textContent = "Running... about 20 seconds (up to a minute with your PC).";
     try {
       const d = await (await fetch("/api/bench", {method: "POST", headers: H, body: "{}"})).json();
       if (!d.ok) throw new Error(d.error);
@@ -15571,9 +15658,10 @@ def handle(method, path, query, headers, body):
         if path == "/api/bench":  # Settings → Mistral benchmark: ~12 Haiku calls, a few cents
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
-            if not master_ready():
+            if not master_ready() and not (LOCAL_LLM_URL and LOCAL_LLM_MODEL):
                 return _json(400, {"ok": False, "error": "Claude isn't available (ANTHROPIC_API_KEY unset, or this "
-                                                         "month's cap is reached), so there's nothing to benchmark"})
+                                                         "month's cap is reached) and your PC isn't linked, so there's "
+                                                         "nothing to benchmark"})
             last = _meta_json("bench:last", {})
             if time.time() - last.get("at", 0) < 60:
                 return _json(429, {"ok": False, "error": "It just ran. Give it a minute before running it again."})
