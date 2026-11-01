@@ -1884,10 +1884,14 @@ def _llm_error_text(provider, code, raw):
     try:
         body = json.loads(raw)
         body = body[0] if isinstance(body, list) and body else body
-        msg = (body.get("error") or {}).get("message") if isinstance(body, dict) else None
+        err = body.get("error") if isinstance(body, dict) else None
+        # Groq/Gemini: {"error": {"message": ...}}; LM Studio and others: {"error": "..."}
+        msg = err.get("message") if isinstance(err, dict) else err if isinstance(err, str) else None
     except ValueError:
         msg = None
-    return f"{provider} returned {code}: {(msg or raw)[:200]}"
+    hint = (" (in LM Studio, load the model with a longer context length: 16384 or more)"
+            if provider == "local" and re.search(r"context|n_ctx|tokens to keep", msg or raw, re.I) else "")
+    return f"{provider} returned {code}: {(msg or raw)[:200]}{hint}"
 
 
 # ---- P0 telemetry: which model actually answered, and why a fallback ran.
@@ -3462,10 +3466,11 @@ def _bench_error(e):
 
 
 def _bench_kind(reply):
-    """What a desk reply did: escalate, search, remind (or another tool), or plain."""
+    """What a desk reply did: escalate, search, remind (or another tool), or plain.
+    The web_search tool counts as searching, like a SEARCH: line."""
     if re.match(r"^\s*ESCALATE:", reply, re.I):
         return "escalate"
-    if re.match(r"^\s*SEARCH:", reply, re.I):
+    if re.match(r"^\s*SEARCH:", reply, re.I) or re.search(r"^\s*ACTION:\s*web_search\b", reply, re.I | re.M):
         return "search"
     m = re.search(r"^\s*ACTION:\s*(\w+)", reply, re.I | re.M)
     return m.group(1).lower() if m else "plain"
