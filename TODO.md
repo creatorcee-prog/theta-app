@@ -605,6 +605,46 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
 - [ ] Settings → Wiring → Theta should read "connected".
 
 
+## Stage 7: Re-platform in place (decided 2026-11-01)
+
+Not a restart: the ~16k lines and ~145 test files that work stay, and
+each step is its own PR with the suite green. What holds the hub back is
+the one-file layout, Vercel's limits (60 s per request, no always-on
+process, 100 deploys a day) and two settings systems, none of which a new
+codebase would fix by itself. Rule for every step: Vercel stays the
+reliable front door (chat, reminders, Face ID); the PC is extra capacity
+the hub must work without.
+
+- [ ] **7.1 Local models in use.** Benchmark runs clean (#93), then
+      `ROUTE_MINER_PROVIDER=local` + `ROUTE_MINER_MODEL=qwen/qwen3.6-35b-a3b`
+      moves the miners (Red, Blue, Gray, Lenz, Charter) to the PC, with
+      Groq covering when it's off (#92). Managers next only if the
+      benchmark says so.
+- [ ] **7.2 Split `api/index.py` into modules**, one area per PR, no
+      behavior change, tests unchanged: store, routing (route, llm_chat,
+      providers), agents and prompts, memory and vault, rounds, tools,
+      each page, then the router. Vercel keeps one function entry point.
+- [ ] **7.3 Obsidian as the main memory.** Move crew memory, agent notes
+      and notes from Redis into the vault (Memory.md, Agents/, Notes/),
+      keeping Redis only as the fallback copy; then playbooks (Hermes
+      idea) in Theta/Playbooks, matched to the message before the model
+      answers. Inbox stays the review step.
+- [ ] **7.4 Finish route().** Move the remaining tier callers
+      (pick_responders, summarize, master_work, story_brief, …) and the
+      managers' desk-first step, then retire TIER_LLM / FALLBACK_LLM /
+      DESK_MODEL's model id. One way to pick a model.
+- [ ] **7.5 The PC as an always-on worker** next to Vercel: a small
+      service on the desktop, reached through the same tunnel and key,
+      for what Vercel can't do: long jobs past 60 s, the Discord bot,
+      long searches (the searcher miner), local voice (wake word +
+      Whisper + Piper/Kokoro). Vercel hands it work and keeps going if it
+      doesn't answer.
+- [ ] **7.6 DeepSeek V4.1 Flash** as a fourth cloud provider (DeepSeek's
+      `deepseek-flash`, OpenAI-compatible), benchmarked against Haiku
+      before it gets any role; the roadmap's "Opus + DeepSeek" mode.
+- Local Claude Code on the desktop (Claude desktop app, local session)
+  for anything that has to run on the PC itself.
+
 ## Planned
 
 - [ ] Get Remi's calendar and Gmail working (setup steps 7 and 4).
