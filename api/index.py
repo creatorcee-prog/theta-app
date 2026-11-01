@@ -3800,6 +3800,15 @@ BENCH_QUESTIONS = [
 BENCH_MODES = (("on", "Thinking on"), ("off", "Thinking off"))
 
 
+def _bench_error(e):
+    """A benchmark row's error: the message, plus where in the code for an
+    unexpected one (function:line only, no values)."""
+    if isinstance(e, LLMError):
+        return str(e)[:160]
+    where = " < ".join(f"{fr.name}:{fr.lineno}" for fr in reversed(traceback.extract_tb(e.__traceback__)[-3:]))
+    return f"{type(e).__name__}: {str(e)[:100]} (at {where})"
+
+
 def _bench_kind(reply):
     """What a desk reply did: escalate, search, remind (or another tool), or plain."""
     if re.match(r"^\s*ESCALATE:", reply, re.I):
@@ -3847,8 +3856,8 @@ def run_bench():
             t0 = time.time()
             try:
                 text = _llm_call("local", LOCAL_LLM_MODEL, msgs, 800)
-            except LLMError as e:
-                out.append(dict(row, secs=round(time.time() - t0, 1), error=str(e)[:160], ok=False))
+            except Exception as e:  # any failure is this row's, never the whole run's
+                out.append(dict(row, secs=round(time.time() - t0, 1), error=_bench_error(e), ok=False))
                 continue
             kind = _bench_kind(text)
             out.append(dict(row, secs=round(time.time() - t0, 1), reply=text[:1200], did=kind, ok=kind == want))
@@ -3863,13 +3872,19 @@ def run_bench():
         if len(jobs) > 1:
             with ThreadPoolExecutor(max_workers=len(jobs)) as ex:
                 done += list(ex.map(one, jobs[1:]))
-        local_rows = local_rows.result() if local_rows else []
+        try:
+            local_rows = local_rows.result() if local_rows else []
+        except Exception as e:
+            local_rows = [{"q": q, "want": want, "about": about, "mode": "local", "secs": 0.0, "usd": 0,
+                           "error": _bench_error(e), "ok": False} for q, want, about in BENCH_QUESTIONS]
     rows, total = [], 0.0
     for ((q, want, about), (mode, _)), resp, secs, err in done:
         row = {"q": q, "want": want, "about": about, "mode": mode, "secs": round(secs, 1)}
         if resp is None:
             row.update(error=err[:160], ok=False)
-        else:
+            rows.append(row)
+            continue
+        try:
             usd = claude_record(resp, model)
             total += usd
             u = resp.usage
@@ -3882,6 +3897,8 @@ def run_bench():
                        out=u.output_tokens or 0, fresh=u.input_tokens or 0,
                        cache_read=getattr(u, "cache_read_input_tokens", 0) or 0,
                        cache_write=getattr(u, "cache_creation_input_tokens", 0) or 0)
+        except Exception as e:  # shown in the table, so a surprise in one reply can't sink the run
+            row.update(error=_bench_error(e), ok=False)
         rows.append(row)
     rows += local_rows
     modes = ([list(m) for m in BENCH_MODES] if claude_on else []) + ([["local", f"Your PC ({LOCAL_LLM_MODEL})"]] if local_on else [])

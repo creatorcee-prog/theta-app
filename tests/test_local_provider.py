@@ -149,6 +149,23 @@ check("the benchmark runs on your PC without Claude", s == 200 and len(local) ==
 check("...one question at a time, scored the same way",
       all(w == "pc" for w, _ in SEEN["chat"]) and sum(r["ok"] for r in local) >= 4
       and next(r for r in local if r["want"] == "search")["did"] == "search")
+# a surprise in one reply shows in its row, with where, instead of sinking the whole run (it did, as "internal error")
+import types
+h.master_ready = lambda: True
+h.store().set_meta("bench:last", "{}")
+h.claude_request = lambda msgs, mt, model, effort, thinking=None: types.SimpleNamespace(
+    usage=types.SimpleNamespace(input_tokens=1, output_tokens=1), model=model, stop_reason="end_turn",
+    content=[types.SimpleNamespace(type="text", text="hi")])
+def broken_record(resp, model=None): return {}.get("x").get("y")  # an AttributeError deep inside
+h.claude_record = broken_record
+def broken_local(*a, **k): raise KeyError("choices")
+real_call = h._llm_call; h._llm_call = broken_local
+s, d = call("POST", "/api/bench", body={})
+claude_rows = [r for r in d.get("rows", []) if r["mode"] in ("on", "off")]
+check("an unexpected error in a Claude reply: the run still finishes, the row says what and where",
+      s == 200 and len(claude_rows) == 12 and all("AttributeError" in r["error"] and "(at broken_record:" in r["error"] for r in claude_rows))
+check("...and the same for your PC's column", all("KeyError" in r["error"] for r in d["rows"] if r["mode"] == "local"))
+h._llm_call = real_call
 page = call("GET", "/settings", "key=dk")[1].decode()
 check("the results table takes its columns from the run", "d.modes ||" in page and "modes.map(m => m[1])" in page)
 print("ALL PASS")
