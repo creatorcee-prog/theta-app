@@ -59,6 +59,7 @@ tmp = tempfile.mkdtemp(prefix="theta-nopath-")
 try:
     for f in ("index.py", "tool_bridge.py", "tools.py"):
         shutil.copy(os.path.join(API, f), os.path.join(tmp, f))
+    shutil.copytree(os.path.join(API, "_parts"), os.path.join(tmp, "_parts"))  # index.py's parts (Stage 7.2)
     r = subprocess.run([sys.executable, "-c", CHILD, tmp],
                        capture_output=True, text=True, timeout=180, cwd="/tmp")
     check("tools register AND execute with api/ off sys.path",
