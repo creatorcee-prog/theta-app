@@ -94,6 +94,8 @@ ctl = tempfile.mkdtemp(prefix="theta-hubref-old-")
 try:
     for f in ("index.py", "tool_bridge.py", "tools.py"):
         shutil.copy(os.path.join(API, f), os.path.join(tmp, f))
+    shutil.copytree(os.path.join(API, "_parts"), os.path.join(tmp, "_parts"))  # index.py's parts (Stage 7.2)
+    shutil.copytree(os.path.join(API, "_parts"), os.path.join(ctl, "_parts"))  # index.py's parts (Stage 7.2)
     for f in ("index.py", "tools.py"):
         shutil.copy(os.path.join(API, f), os.path.join(ctl, f))
     # Old bridge: the new _store chain replaced by the plain import.
