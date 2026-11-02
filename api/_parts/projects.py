@@ -496,6 +496,7 @@ COMMANDS = [  # shown in the "/" menu in this order
     {"name": "issue", "args": "<title> - <details>", "about": "QWERTY writes up a GitHub issue with a fix", "run": _cmd_issue},
     {"name": "security", "args": "", "about": "QWERTY posts what he sees right now", "run": _cmd_security},
     {"name": "devices", "args": "", "about": "QWERTY lists every device connected, with details", "run": _cmd_devices},
+    {"name": "find", "args": "<words>", "about": "Search the chat and your memory for those words", "run": _cmd_find},
     {"name": "help", "args": "", "about": "List these commands", "run": _cmd_help},
 ]
 

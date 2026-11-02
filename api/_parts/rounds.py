@@ -99,6 +99,7 @@ def _round_theta(ctx):
         did.append("posted the weekly review")
     if projects():
         did += rerun_projects(time.time() + 45)
+    did += memory_upkeep()  # the review each round; the fade and merge offers weekly
     return ", ".join(did) or "nothing new to summarize"
 
 

@@ -1263,6 +1263,8 @@ def apply_proposal(pid, yes):
     if not yes:
         return f"Declined, nothing changed: {p['summary']}"
     try:
+        if p["kind"] in ("memory_add", "memory_merge", "playbook_add"):  # Theta's own memory offers
+            return apply_memory_proposal(p)
         if p["kind"] == "setting":
             vercel_set_env(p["key"], p["value"], {k: v for k, v in p.get("sets", {}).items() if k != p["key"]})
             names = ", ".join(p.get("sets") or [p["key"]])
@@ -1271,7 +1273,7 @@ def apply_proposal(pid, yes):
                                             else "Redeploy in Vercel for it to take effect (or add VERCEL_DEPLOY_HOOK so I can)."))
         url, _ = file_issue(p["title"], p.get("details", ""))
         return f"✓ Filed the issue: {url}" if url else "✗ I wrote the issue but couldn't file it: GITHUB_TOKEN isn't set."
-    except LLMError as e:
+    except (LLMError, ValueError) as e:
         with _TOOL_LOCK:
             ps = proposals()
             if pid in ps:

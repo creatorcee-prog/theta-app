@@ -657,7 +657,7 @@ Free first: the user is on no budget for voice.
 
 ## Memory that fades ("use it or lose it", idea 2026-11-02)
 
-- [ ] Memories that get used stay; ones that don't fade or merge, like a
+- [x] Memories that get used stay; ones that don't fade or merge, like a
       brain. Each Memory.md line keeps a use count and last-used date
       (a small hidden note in the vault, or a side file, so Memory.md stays
       readable). A line counts as used when it's in a prompt AND the reply
@@ -667,7 +667,10 @@ Free first: the user is on no budget for voice.
       one by the model, shown to you as a proposal you Approve before
       Memory.md changes. Pinned lines (a "!" in front) never fade.
       Pairs with the size budget from 7.3: fading frees room instead of
-      Theta asking you to tidy.
+      Theta asking you to tidy. Built 2026-11-02 (api/_parts/memory.py):
+      use counts in Redis ("mem:use"; a reply counts a line when it shares
+      its key words), a weekly fade to Archive.md after MEMORY_FADE_DAYS
+      (30), "- ! ..." pins, merge offers as Approve buttons.
 
 ## Stage 7: Re-platform in place (decided 2026-11-01)
 
@@ -763,12 +766,12 @@ the hub must work without.
         page an agent read could try to plant a "memory"). Limit memory by
         size, not count, and when it's full have the agent merge entries
         instead of the oldest dropping off without a word.
-      - **`/find <words>`.** Search the chat history directly, no model call.
+      - (Done 2026-11-02.) **`/find <words>`.** Search the chat history directly, no model call.
       - (Done in 7.3.) **Playbooks** (their "skills"): saved how-tos with When to use,
         Steps, Pitfalls and How to check. Agents get one pass and never see a
         tool's result, so the hub matches playbooks to the message and adds
         the right one before the model answers (not loaded on request).
-      - **Round review.** Once a round, a cheap model reads the recent chat
+      - (Done 2026-11-02.) **Round review.** Once a round, a cheap model reads the recent chat
         and proposes memory or agent notes ("you corrected Glass twice about
         rounding"); each waits for your Approve, like QWERTY's proposals.
         Runs after the typing guard.

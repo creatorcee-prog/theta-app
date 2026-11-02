@@ -159,6 +159,10 @@ def head_reply(thread, spoken=False):
         text += "\n" + "\n".join(f"ACTION: {n} | {a}" for n, a in final)
     if not text:  # it kept looking things up and never answered
         text = "I went looking but couldn't pull an answer together. Ask me again, maybe a bit more specific?"
+    try:
+        memory_mark_used(_ACTION_RE.sub("", text))  # use it or lose it: which memories this answer drew on
+    except Exception as e:
+        print(f"memory use count failed: {e!r}")
     return run_actions("theta", text, allowed=allowed)
 
 
