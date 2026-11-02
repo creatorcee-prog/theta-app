@@ -1,6 +1,7 @@
 """QWERTY's model settings follow route(): he proposes ROUTE_DESK_MODEL /
-ROUTE_LOW_BRAIN_MODEL, and Approve sets the provider + model pair (and the
-matching legacy var) in one Vercel call. DESK_MODEL is only the desk's
+ROUTE_LOW_BRAIN_MODEL, and Approve sets the provider + model pair in one
+Vercel call (since Stage 7.4 the old DESK_MODEL / LOW_BRAIN_MODEL aren't read,
+so they're no longer set to match). DESK_MODEL is only the desk's
 on/off switch. No live network: Vercel's API and model lists are stubbed."""
 import sys, json, os, io
 sys.dont_write_bytecode = True
@@ -52,13 +53,13 @@ check("his prompt lists them", "ROUTE_DESK_MODEL" in h.qwerty_context())
 
 text, pid = propose("ROUTE_DESK_MODEL = claude-sonnet-5-5")
 p = h.proposals()[pid]
-check("a desk model proposal sets the whole pair, plus DESK_MODEL to match",
-      p["sets"] == {"ROUTE_DESK_PROVIDER": "anthropic", "ROUTE_DESK_MODEL": "claude-sonnet-5-5", "DESK_MODEL": "claude-sonnet-5-5"})
+check("a desk model proposal sets the whole pair",
+      p["sets"] == {"ROUTE_DESK_PROVIDER": "anthropic", "ROUTE_DESK_MODEL": "claude-sonnet-5-5"})
 check("...and says so before you approve", "ROUTE_DESK_PROVIDER=anthropic" in text and "Nothing changes until you tap Approve" in text)
 line = h.apply_proposal(pid, True)
 check("Approve sets all three in ONE Vercel call (no half pair)", len(SENT) == 1 and isinstance(SENT[0][1], list)
       and {e["key"]: e["value"] for e in SENT[0][1]} == p["sets"] and "upsert=true" in SENT[0][0])
-check("...and reports every name it set", line.startswith("✓ Set ROUTE_DESK_PROVIDER, ROUTE_DESK_MODEL, DESK_MODEL."))
+check("...and reports every name it set", line.startswith("✓ Set ROUTE_DESK_PROVIDER, ROUTE_DESK_MODEL."))
 
 text, _ = propose("ROUTE_DESK_MODEL = claude-made-up-9")
 check("an unknown Claude model is refused (the cap couldn't price it)", "✗ propose" in text and "Claude model" in text)
@@ -67,11 +68,10 @@ check("the desk model must be Claude (desk_chat calls Claude)", "✗ propose" in
 
 SENT.clear()
 text, pid = propose("ROUTE_LOW_BRAIN_MODEL = gemini-3.9-pro")
-check("a Gemini low brain sets the pair and LOW_BRAIN_MODEL to match",
-      h.proposals()[pid]["sets"] == {"ROUTE_LOW_BRAIN_PROVIDER": "gemini", "ROUTE_LOW_BRAIN_MODEL": "gemini-3.9-pro",
-                                     "LOW_BRAIN_MODEL": "gemini-3.9-pro"})
+check("a Gemini low brain sets the pair",
+      h.proposals()[pid]["sets"] == {"ROUTE_LOW_BRAIN_PROVIDER": "gemini", "ROUTE_LOW_BRAIN_MODEL": "gemini-3.9-pro"})
 text, pid = propose("ROUTE_LOW_BRAIN_MODEL = openai/gpt-oss-120b")
-check("a Groq low brain sets only the pair (the legacy low brain is Gemini-only)",
+check("a Groq low brain sets the pair too",
       h.proposals()[pid]["sets"] == {"ROUTE_LOW_BRAIN_PROVIDER": "groq", "ROUTE_LOW_BRAIN_MODEL": "openai/gpt-oss-120b"})
 text, _ = propose("ROUTE_LOW_BRAIN_MODEL = gemini-9-imaginary")
 check("a model the key can't use is refused", "✗ propose" in text and "isn't a model your gemini key can use" in text)

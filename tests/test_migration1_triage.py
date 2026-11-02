@@ -338,9 +338,9 @@ equivalence("fallback success",
             lambda: {FLASH: [err("down"), err("down")], FB120: ["fb-ok"]})
 equivalence("all fail",
             lambda: {FLASH: [err("down"), err("down")], FB120: [err("fb down")]})
-equivalence("fallback off via legacy translation",
+equivalence("fallback off via legacy translation",  # since Stage 7.4 an unrouted call reads route()'s fallback
             lambda: {FLASH: [err("down"), err("down")]},
-            legacy_fb=("groq", "off"))
+            env={"ROUTE_LOW_BRAIN_FALLBACK_MODEL": "off"}, legacy_fb=("groq", "off"))
 
 
 # --- C2. Authority: migrated follows route() config, not legacy vars ---
@@ -370,14 +370,14 @@ def authority_route_override():
             {"ROUTE_LOW_BRAIN_PROVIDER": "gemini", "ROUTE_LOW_BRAIN_MODEL": "gemini-custom",
              "ROUTE_LOW_BRAIN_FALLBACK_MODEL": "groq-custom"})
         _, lattempts = run_legacy_only(
-            {("gemini", "legacy-custom"): [err("down"), err("down")],
-             ("groq", "legacy-fb"): [err("x")]})
+            {FLASH: [err("down"), err("down")], FB120: [err("x")]})
     finally:
         h.TIER_LLM["low_brain"], h.FALLBACK_LLM["low_brain"] = saved_prim, saved_fb
     check("authority ROUTE_* overrides: migrated uses route() models",
           mattempts == [("gemini", "gemini-custom")] * 2 + [("groq", "groq-custom")])
-    check("authority ROUTE_* overrides: legacy uses legacy models",
-          lattempts == [("gemini", "legacy-custom")] * 2 + [("groq", "legacy-fb")])
+    # Stage 7.4 retired the old tables as a source: an unrouted call follows route() too
+    check("authority since 7.4: an unrouted call ignores the old tables and uses route()'s defaults",
+          lattempts == [FLASH, FLASH, FB120])
 
 
 def authority_legacy_custom_alone():
@@ -388,14 +388,13 @@ def authority_legacy_custom_alone():
         _, mattempts = run_migrated_only(
             {FLASH: [err("down"), err("down")], FB120: [err("x")]}, {})
         _, lattempts = run_legacy_only(
-            {("gemini", "legacy-custom"): [err("down"), err("down")],
-             ("groq", "legacy-fb"): [err("x")]})
+            {FLASH: [err("down"), err("down")], FB120: [err("x")]})
     finally:
         h.TIER_LLM["low_brain"], h.FALLBACK_LLM["low_brain"] = saved_prim, saved_fb
     check("authority legacy custom alone: migrated still uses route() defaults",
           mattempts == [FLASH, FLASH, FB120])
-    check("authority legacy custom alone: legacy uses its custom models",
-          lattempts == [("gemini", "legacy-custom")] * 2 + [("groq", "legacy-fb")])
+    check("authority since 7.4: an unrouted call ignores old custom models too",
+          lattempts == [FLASH, FLASH, FB120])
 
 
 def authority_route_fb_model():

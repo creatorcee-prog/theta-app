@@ -82,7 +82,8 @@ def spy_ready():
     return _real_ready()
 h.master_ready = spy_ready
 
-ROUTE_VARS = [v for pair in h.ROUTE_CONFIG_VARS.values() for v in pair] + list(h.ROUTE_FALLBACK_VARS.values())
+ROUTE_VARS = ([v for pair in h.ROUTE_CONFIG_VARS.values() for v in pair] + list(h.ROUTE_FALLBACK_VARS.values())
+              + list(h.LEGACY_MODEL_VARS) + ["DESK_MODEL"])  # cleaned and restored around each case
 
 
 @contextlib.contextmanager
@@ -216,18 +217,21 @@ with setup(desk_model="off", fallback_llm={"manager": ("gemini", "off")}, ROUTE_
 # ---- drift: the checkup says when the two settings systems disagree
 with setup():
     check("no drift with the defaults", h.route_drift() == [])
-with setup(desk_model="claude-sonnet-5-5"):
+# Stage 7.4 retired the old model settings: the check now flags any still set in Vercel
+with setup(DESK_MODEL="claude-sonnet-5-5"):
     d = h.route_drift()
-    check("a legacy DESK_MODEL that differs is flagged, with the exact fix",
-          d == [("DESK_MODEL", "claude-sonnet-5-5", "claude-haiku-5-5",
-                 "set ROUTE_DESK_PROVIDER=anthropic and ROUTE_DESK_MODEL=claude-sonnet-5-5 to use it everywhere")])
+    check("an old DESK_MODEL model id is flagged as unused, with the exact fix",
+          d == [("DESK_MODEL", "claude-sonnet-5-5", "unused", "DESK_MODEL only turns the desk off now: for that model set "
+                 "ROUTE_DESK_PROVIDER=anthropic and ROUTE_DESK_MODEL=claude-sonnet-5-5, then delete DESK_MODEL")])
     h.wiring = lambda: []
     c = [x for x in h.doctor_checks() if x["name"] == "Model setting DESK_MODEL"]
     check("...and shows in the checkup as a warning", c and c[0]["state"] == "warn" and "ROUTE_DESK_MODEL" in c[0]["detail"])
-with setup(desk_model="claude-sonnet-5-5", ROUTE_DESK_PROVIDER="anthropic", ROUTE_DESK_MODEL="claude-sonnet-5-5"):
-    check("following the fix clears it", h.route_drift() == [])
-with setup(desk_model="off"):
-    check("DESK_MODEL=off isn't drift (route() honors it)", h.route_drift() == [])
-with setup(fallback_llm={"manager": ("gemini", "gemini-legacy")}):
-    check("a differing legacy fallback is flagged", h.route_drift()[0][0] == "MANAGER_FALLBACK_MODEL")
+with setup(DESK_MODEL="off"):
+    check("DESK_MODEL=off isn't flagged (it's the desk's off switch)", h.route_drift() == [])
+with setup(MANAGER_FALLBACK_MODEL="gemini-legacy", LOW_BRAIN_MODEL="gemini-old"):
+    names = [x[0] for x in h.route_drift()]
+    check("old *_MODEL / *_FALLBACK_MODEL settings still set are flagged as unused",
+          names == ["LOW_BRAIN_MODEL", "MANAGER_FALLBACK_MODEL"] and "isn't read any more" in h.route_drift()[0][3])
+with setup(ROUTE_DESK_PROVIDER="anthropic"):
+    check("a broken ROUTE_* pair is flagged as an error", [x[2] for x in h.route_drift()] == ["error"])
 print("ALL PASS")

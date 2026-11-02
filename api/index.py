@@ -153,10 +153,13 @@ PROVIDERS = {
 GEMINI_REASONING_EFFORT = os.environ.get("GEMINI_REASONING_EFFORT", "low")
 GROQ_REASONING_EFFORT = os.environ.get("GROQ_REASONING_EFFORT", "low")
 # tier -> (provider, model id); *_MODEL env vars override the model id
+# Since Stage 7.4 these hold route()'s settings (ROUTE_* or its defaults),
+# synced right after the routing part loads; MINER_MODEL, MANAGER_MODEL and
+# LOW_BRAIN_MODEL are no longer read.
 TIER_LLM = {
-    "miner": ("groq", os.environ.get("MINER_MODEL", "openai/gpt-oss-20b")),
-    "manager": ("groq", os.environ.get("MANAGER_MODEL", "openai/gpt-oss-120b")),
-    "low_brain": ("gemini", os.environ.get("LOW_BRAIN_MODEL", "gemini-3.8-flash")),
+    "miner": ("groq", "openai/gpt-oss-20b"),
+    "manager": ("groq", "openai/gpt-oss-120b"),
+    "low_brain": ("gemini", "gemini-3.8-flash"),
 }
 # The high brain (Theta) is Claude when ANTHROPIC_API_KEY is set, held to
 # MASTER_MONTHLY_CAP_USD a month by the hub's own count; the low brain
@@ -213,12 +216,13 @@ def _diag(stage, **fields):
             parts.append(f"{k}={v[:160]}")
     print("diag " + " ".join(parts))
 # When a tier's provider is busy or down (429/5xx, timeouts), retry once,
-# then let a model on the other provider answer. *_FALLBACK_MODEL env vars
-# override; set one to "off" to fail instead.
+# then let a model on the other provider answer. Since Stage 7.4 this holds
+# route()'s fallbacks: ROUTE_<TIER>_FALLBACK_MODEL overrides, "off" fails
+# instead (the old *_FALLBACK_MODEL vars are no longer read).
 FALLBACK_LLM = {
-    "miner": ("groq", os.environ.get("MINER_FALLBACK_MODEL", "openai/gpt-oss-120b")),
-    "manager": ("gemini", os.environ.get("MANAGER_FALLBACK_MODEL", "gemini-3.8-flash")),
-    "low_brain": ("groq", os.environ.get("LOW_BRAIN_FALLBACK_MODEL", "openai/gpt-oss-120b")),
+    "miner": ("groq", "openai/gpt-oss-120b"),
+    "manager": ("gemini", "gemini-3.8-flash"),
+    "low_brain": ("groq", "openai/gpt-oss-120b"),
 }
 LLM_RETRY_DELAY = 1.5  # seconds before the one retry on the same model
 _RETRYABLE = {408, 429, 500, 502, 503, 504}
@@ -1145,16 +1149,15 @@ VERCEL_DEPLOY_HOOK = os.environ.get("VERCEL_DEPLOY_HOOK", "")
 
 # Model settings QWERTY can propose: route()'s (migration #6 moved Mistral
 # onto it), set as a complete provider + model pair in one Vercel call so a
-# half pair (which route() refuses) can't happen. The legacy var is set to
-# match when it has the same provider, so unmigrated paths agree.
-# DESK_MODEL stays settable only as the desk's on/off switch.
+# half pair (which route() refuses) can't happen. DESK_MODEL stays settable
+# only as the desk's on/off switch. (Before Stage 7.4 a model proposal also
+# set the old DESK_MODEL / LOW_BRAIN_MODEL to match; those aren't read any more.)
 ROUTE_SETTABLE = {"ROUTE_DESK_MODEL": ("desk", "DESK_MODEL"), "ROUTE_LOW_BRAIN_MODEL": ("low_brain", "LOW_BRAIN_MODEL")}
-_LEGACY_PROVIDER = {"desk": "anthropic", "low_brain": "gemini"}
 
 
 def _model_proposal(key, val):
     """{key: value} to set for a model proposal, or ValueError saying why not."""
-    role, legacy = ROUTE_SETTABLE[key]
+    role, _old = ROUTE_SETTABLE[key]
     if role == "desk":
         if val not in CLAUDE_PRICES:
             raise ValueError(f"Mistral's desk model must be a Claude model the hub can price: {', '.join(CLAUDE_PRICES)}")
@@ -1165,10 +1168,7 @@ def _model_proposal(key, val):
         if "models" in found and val not in found["models"]:
             raise ValueError(f"{val} isn't a model your {provider} key can use (see /api/models)")
     pvar, mvar = ROUTE_CONFIG_VARS[role]
-    out = {pvar: provider, mvar: val}
-    if provider == _LEGACY_PROVIDER[role]:
-        out[legacy] = val
-    return out
+    return {pvar: provider, mvar: val}
 
 
 def proposals():
@@ -1732,6 +1732,31 @@ def _tool_error_category(name, err):
 
 
 _load_part("routing")  # route(): central model selection (Stage 4) and its contract: api/_parts/routing.py
+
+
+def _sync_legacy_models():
+    """Stage 7.4: route() is the one way a model is chosen. The old tables
+    keep their names (pages show them, and a few "off" checks read them) but
+    hold route()'s settings now. DESK_MODEL keeps only its "off" switch."""
+    global DESK_MODEL
+    for t in ("miner", "manager", "low_brain"):
+        try:
+            TIER_LLM[t] = _route_primary(t)
+        except RouteConfigError as e:
+            print(f"route config: {e}")  # the Checkup shows it; keep the default meanwhile
+        fb = _route_fallback(t)
+        FALLBACK_LLM[t] = fb if fb else (ROUTE_FALLBACK_DEFAULTS[t][0], "off")
+    if DESK_MODEL.lower() != "off":
+        try:
+            DESK_MODEL = _route_primary("desk")[1]
+        except RouteConfigError:
+            pass
+    MODELS.update({t: f"{m} ({p.title()})" for t, (p, m) in TIER_LLM.items()})
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        MODELS["master"] = f"{MASTER_MODEL} (not connected; {TIER_LLM['low_brain'][1]} standing in)"
+
+
+_sync_legacy_models()
 
 
 # ---- Capacity: know before a call whether a model can take it. Groq's free

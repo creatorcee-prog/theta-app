@@ -915,11 +915,9 @@ def doctor_checks():
             "/diagnostics")
     drift = route_drift()
     for var, legacy, routed, fix in drift:
-        add(f"Model setting {var}", "bad" if routed == "error" else "warn",
-            fix if routed == "error" else f"{var} is {legacy}, but Mistral's chat and the other moved paths use "
-            f"{routed}; {fix}.", "/diagnostics#wiring")
+        add(f"Model setting {var}", "bad" if routed == "error" else "warn", fix, "/diagnostics#wiring")
     if not drift:
-        add("Model settings", "ok", "The old model settings and route() agree.")
+        add("Model settings", "ok", "Every model comes from route()'s settings; no old ones are set.")
     h = held()
     if h["posts"] or h["pushes"]:
         add("Typing guard", "warn", f"Holding {len(h['posts'])} round report(s) and {len(h['pushes'])} push(es) "
@@ -928,33 +926,34 @@ def doctor_checks():
     return sorted(out, key=lambda c: order[c["state"]])
 
 
+# The model settings Stage 7.4 retired, and what replaces each.
+LEGACY_MODEL_VARS = {
+    "MINER_MODEL": "ROUTE_MINER_PROVIDER + ROUTE_MINER_MODEL",
+    "MANAGER_MODEL": "ROUTE_MANAGER_PROVIDER + ROUTE_MANAGER_MODEL",
+    "LOW_BRAIN_MODEL": "ROUTE_LOW_BRAIN_PROVIDER + ROUTE_LOW_BRAIN_MODEL",
+    "MINER_FALLBACK_MODEL": "ROUTE_MINER_FALLBACK_MODEL",
+    "MANAGER_FALLBACK_MODEL": "ROUTE_MANAGER_FALLBACK_MODEL",
+    "LOW_BRAIN_FALLBACK_MODEL": "ROUTE_LOW_BRAIN_FALLBACK_MODEL",
+}
+
+
 def route_drift():
-    """Legacy model settings that differ from route()'s: [(var, legacy, routed,
-    fix)]. Migrated paths (Mistral's chat, search, round summary, borrow,
-    #1-#5) follow route(); the rest still follow the legacy value, so a
-    difference means two models for one job."""
+    """Old model settings still set in Vercel that nothing reads since Stage
+    7.4, and a broken ROUTE_* pair: [(var, value, "unused" | "error", fix)]."""
     out = []
-    pairs = [("DESK_MODEL", DESK_MODEL, "desk"), ("LOW_BRAIN_MODEL", TIER_LLM["low_brain"][1], "low_brain"),
-             ("MANAGER_MODEL", TIER_LLM["manager"][1], "manager"), ("MINER_MODEL", TIER_LLM["miner"][1], "miner")]
-    for var, legacy, role in pairs:
+    for var, use in LEGACY_MODEL_VARS.items():
+        val = os.environ.get(var, "").strip()
+        if val:
+            out.append((var, val, "unused", f"{var} ({val}) isn't read any more: set {use} instead, then delete it"))
+    desk = os.environ.get("DESK_MODEL", "").strip()
+    if desk and desk.lower() != "off":
+        out.append(("DESK_MODEL", desk, "unused", f"DESK_MODEL only turns the desk off now: for that model set "
+                    f"ROUTE_DESK_PROVIDER=anthropic and ROUTE_DESK_MODEL={desk}, then delete DESK_MODEL"))
+    for role in ROUTE_CONFIG_VARS:
         try:
-            provider, routed = _route_primary(role)
+            _route_primary(role)
         except RouteConfigError as e:
-            out.append((var, legacy, "error", str(e)))
-            continue
-        if role != "desk" and os.environ.get(ROUTE_CONFIG_VARS[role][0], "").strip():
-            continue  # an explicit pair reaches every call of this tier (llm_chat), so the legacy value is unused
-        if legacy.lower() != "off" and legacy != routed:
-            pvar, mvar = ROUTE_CONFIG_VARS[role]
-            out.append((var, legacy, routed, f"set {pvar}={provider} and {mvar}={legacy} to use it everywhere"))
-    for role in ("miner", "manager", "low_brain"):
-        legacy = FALLBACK_LLM.get(role, (None, "off"))[1]
-        if os.environ.get(ROUTE_FALLBACK_VARS[role], "").strip():
-            continue  # likewise
-        routed = _route_fallback(role)
-        if legacy != "off" and routed is not None and legacy != routed[1]:
-            var = ROUTE_FALLBACK_VARS[role]
-            out.append((f"{role.upper()}_FALLBACK_MODEL", legacy, routed[1], f"set {var}={legacy} to use it everywhere"))
+            out.append((ROUTE_CONFIG_VARS[role][1], "", "error", str(e)))
     return out
 
 

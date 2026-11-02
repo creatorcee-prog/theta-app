@@ -347,6 +347,14 @@ def route(role, agent=None, entry_point=None, *, desk_up, master_up, fallback_of
     return decision
 
 
+def _desk_id():
+    """The desk's Claude model id, from route() (ROUTE_DESK_* or its default)."""
+    try:
+        return _route_primary("desk")[1]
+    except RouteConfigError:
+        return DESK_MODEL
+
+
 def llm_chat(tier, messages, max_tokens=800, primary=None, fallback=None):
     """One chat-completion call for `tier`; returns the reply text.
     Master is Claude while it's connected and under its monthly cap;
@@ -378,18 +386,21 @@ def llm_chat(tier, messages, max_tokens=800, primary=None, fallback=None):
     t = "low_brain" if tier == "master" else tier
     if t == "manager" and desk_on():  # Groq's free tier can't take the managers' prompts (8k tokens a minute)
         try:
-            text = claude_chat(messages, max_tokens, model=DESK_MODEL, effort=DESK_EFFORT)
-            _note_model_selection("manager", "anthropic", DESK_MODEL, "desk")
+            text = claude_chat(messages, max_tokens, model=_desk_id(), effort=DESK_EFFORT)
+            _note_model_selection("manager", "anthropic", _desk_id(), "desk")
             return text
         except LLMError:
             pass  # Groq, then Gemini, as before
     need = est_tokens(messages) + max_tokens
-    if primary is None and os.environ.get(ROUTE_CONFIG_VARS[t][0], "").strip():
-        primary = _route_primary(t)  # an explicit ROUTE_<TIER>_* pair reaches every call of this tier
-    if fallback is None and os.environ.get(ROUTE_FALLBACK_VARS[t], "").strip():
+    if primary is None:  # Stage 7.4: route()'s settings for every call of this tier
+        try:
+            primary = _route_primary(t)
+        except RouteConfigError:
+            primary = TIER_LLM[t]
+    if fallback is None:
         fallback = _route_fallback(t) or "off"
     provider, model = primary if primary is not None else TIER_LLM[t]
-    tried = {(provider, model)} | ({("anthropic", DESK_MODEL)} if t == "manager" and desk_on() else set())
+    tried = {(provider, model)} | ({("anthropic", _desk_id())} if t == "manager" and desk_on() else set())
     fits, why = room_for(provider, model, need)
     if not fits:  # don't send what it would refuse: straight to the next model
         first = LLMError(f"{provider} {model}: {why}", retryable=True, timed_out=True)
