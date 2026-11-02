@@ -8,7 +8,7 @@ sys.dont_write_bytecode = True
 mode = sys.argv[1] if len(sys.argv) > 1 else "memory"
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-INDEX = open(os.path.join(ROOT, "api", "index.py")).read()
+INDEX = __import__("_src").full_source()  # index.py with its parts, in load order (Stage 7.2)
 BRIDGE = open(os.path.join(ROOT, "api", "tool_bridge.py")).read()
 
 

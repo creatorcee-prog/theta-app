@@ -130,7 +130,7 @@ check("no dead Settings wiring link remains on settings",
 
 # --- Source-level pointer repairs (notification, reply text, hub map, dead script) ---
 import os as _os
-src = open(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "api", "index.py")).read()
+src = __import__("_src").full_source()  # index.py and its parts (Stage 7.2)
 check("no /settings#wiring reference remains anywhere",
       "/settings#wiring" not in src)
 check("cap notification now points at the canonical panel",
