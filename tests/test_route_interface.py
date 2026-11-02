@@ -229,9 +229,11 @@ with clean_env(ROUTE_MINER_MODEL="gemini-x"):
     check("half pair (model only) raises", raises(lambda: h.route("miner", desk_up=False, master_up=False), h.RouteConfigError))
 with clean_env(ROUTE_MINER_PROVIDER="gemini", ROUTE_MINER_MODEL="   "):
     check("half pair (blank model) raises", raises(lambda: h.route("miner", desk_up=False, master_up=False), h.RouteConfigError))
-with clean_env(ROUTE_MINER_PROVIDER="deepseek", ROUTE_MINER_MODEL="deepseek-chat"):
-    check("DeepSeek absent: unknown provider raises", raises(lambda: h.route("miner", desk_up=False, master_up=False), h.RouteConfigError))
-check("DeepSeek not in provider registry", "deepseek" not in h.ROUTE_PROVIDERS)
+with clean_env(ROUTE_MINER_PROVIDER="deepseek", ROUTE_MINER_MODEL="deepseek-flash"):
+    # D2 lifted in Stage 8.1: DeepSeek's endpoint, model name and key were verified (api-docs.deepseek.com)
+    check("DeepSeek accepted since Stage 8.1", h.route("miner", desk_up=False, master_up=False)["primary"]
+          == {"provider": "deepseek", "model": "deepseek-flash"})
+check("DeepSeek in provider registry", "deepseek" in h.ROUTE_PROVIDERS)
 with clean_env(ROUTE_MINER_PROVIDER="bogus", ROUTE_MINER_MODEL="x"):
     check("unknown provider raises", raises(lambda: h.route("miner", desk_up=False, master_up=False), h.RouteConfigError))
 with clean_env(ROUTE_LOW_BRAIN_PROVIDER="gemini", ROUTE_LOW_BRAIN_MODEL="gemini-y", LOW_BRAIN_MODEL="junk-model"):

@@ -605,6 +605,32 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
 - [ ] Settings → Wiring → Theta should read "connected".
 
 
+## Stage 8: Single head (decided 2026-11-02)
+
+One assistant, Theta, runs everything; the crew is paused behind a switch,
+not deleted. Builds on Stage 7's base (store, vault, tools, Checkup).
+Free first: the user is on no budget for voice.
+
+- [x] **8.0 SOUL.md.** Theta's personality, first in every prompt:
+      Theta/SOUL.md in the vault wins over the shipped api/_parts/SOUL.md.
+      The crew takes its tone while paused agents still exist.
+- [ ] **8.1 DeepSeek provider** (`deepseek-flash`, served by V4.1 Flash
+      1017; DEEPSEEK_API_KEY is in Vercel) plus a tool-calling benchmark
+      against Haiku. The go/no-go for the head's model.
+- [ ] **8.2 HEAD_MODE=single.** Theta answers everything; the agents'
+      jobs become Theta's tools (spend, remind, calendar, library, chart,
+      search, propose with Approve). Native tool calling with a bounded
+      loop (a few steps, inside Vercel's 60 s). HEAD_MODE=crew brings the
+      crew back.
+- [ ] **8.3 The Head page:** the chosen avatar (previews: Lens, Rings,
+      Faceplate; "base idea" for now), push-to-talk, live transcript;
+      the old chat stays.
+- [ ] **8.4 Voice, free:** the browser's built-in speech for Theta's voice
+      and Safari's dictation for listening, both free. Later, with the
+      desktop: Kokoro or Chatterbox locally.
+- [ ] **8.5 Rounds become Theta's scheduled jobs** (morning brief, budget
+      alerts, releases), one voice.
+
 ## Stage 7: Re-platform in place (decided 2026-11-01)
 
 Not a restart: the ~16k lines and ~145 test files that work stay, and

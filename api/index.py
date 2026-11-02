@@ -130,6 +130,9 @@ TIER_LABELS = {"miner": "Miner", "manager": "Manager",
 # LOCAL_LLM_URL is its .../v1 address, LOCAL_LLM_KEY its API token (Sensitive),
 # LOCAL_LLM_MODEL the model it serves (for the check and the benchmark; what
 # answers a role is still set with ROUTE_<ROLE>_PROVIDER=local + _MODEL).
+# DeepSeek (Stage 8.1): OpenAI-format API; `deepseek-flash` is served by
+# DeepSeek-V4.1-Flash-1017. DEEPSEEK_MODEL overrides the name.
+DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-flash").strip()
 LOCAL_LLM_URL = os.environ.get("LOCAL_LLM_URL", "").strip().rstrip("/")
 LOCAL_LLM_MODEL = os.environ.get("LOCAL_LLM_MODEL", "").strip()
 PROVIDERS = {
@@ -137,6 +140,7 @@ PROVIDERS = {
     "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
                "GEMINI_API_KEY"),
     "local": (LOCAL_LLM_URL + "/chat/completions", "LOCAL_LLM_KEY"),
+    "deepseek": ("https://api.deepseek.com/chat/completions", "DEEPSEEK_API_KEY"),
 }
 # Thinking models count their reasoning against max_tokens, so ask for
 # little of it. Gemini 3 can't turn thinking off ("none" was 2.5 only);
@@ -310,8 +314,7 @@ AGENTS = {
 # agent's prompt (see system_prompt); "concise" asks for brevity. James's
 # persona lives in Garage Gym's own prompt, so he has none here.
 PERSONAS = {
-    "theta": ["decisive", "strategic", "big-picture", "authoritative", "concise",
-              "blunt", "stoic", "visionary"],
+    "theta": ["warm", "loyal", "dry humor", "straight-talking", "calm", "strategic", "concise"],  # see SOUL.md
     "mistral": ["analytical", "prioritizing", "organized", "concise", "detail-oriented",
                 "humble", "efficient", "nerdy"],
     "glass": ["meticulous", "numbers-first", "organized", "accountable", "budget-minded",
@@ -1201,6 +1204,40 @@ def _vault_cut(text, limit, name):
     return text if len(text) <= limit else text[:limit].rsplit("\n", 1)[0] + f"\n(… cut: keep {name} under {limit} characters)"
 
 
+SOUL_MAX = 4000  # characters of SOUL.md read into a prompt
+_SOUL_DEFAULT = None
+
+
+def soul_text():
+    """Theta's personality: Theta/SOUL.md in your vault when it has one, else
+    the copy that ships with the hub (api/_parts/SOUL.md). Edit the vault one
+    to change who Theta is without a deploy."""
+    global _SOUL_DEFAULT
+    text = vault_read("SOUL.md")[0] if vault_on() else ""
+    if not text.strip():
+        if _SOUL_DEFAULT is None:
+            try:
+                with open(os.path.join(_PARTS_DIR, "SOUL.md"), encoding="utf-8") as fh:
+                    _SOUL_DEFAULT = fh.read()
+            except OSError:
+                _SOUL_DEFAULT = ""
+        text = _SOUL_DEFAULT
+    return _vault_cut(text, SOUL_MAX, "SOUL.md")
+
+
+def soul_prompt(agent):
+    """The soul, right after the opening "You are ..." and before anything that
+    changes often, so the prompt still caches. Theta is the soul; the rest of
+    the crew takes its tone and values but keeps its own name and job."""
+    soul = soul_text()
+    if not soul:
+        return ""
+    if agent == "theta":
+        return "\n\nYour soul (who you are; it outranks the personality words above):\n\n" + soul
+    return ("\n\nThe crew's shared soul, written for Theta. Keep your own name and job above, and take its tone, "
+            "warmth and values when you talk to the user:\n\n" + soul)
+
+
 def vault_prompt(agent):
     """Memory.md and this agent's own note, for its prompt ("" when unlinked)."""
     if not vault_on():
@@ -1795,7 +1832,7 @@ def system_prompt(agent_id, tools=False, now=True):
             "Never describe a control the chat cannot show: it cannot show line charts or architecture diagrams, "
             "and buttons in chat exist only on cards and server-issued messages (QWERTY proposals, James commands) "
             "— agents never emit buttons. Images only with ![alt](https link) for a link you were given)."
-            f"{extra}{now_line() if now else ''}{memory_prompt()}{vault_prompt(agent_id)}{seat_prompt(agent_id)}"
+            f"{soul_prompt(agent_id)}{extra}{now_line() if now else ''}{memory_prompt()}{vault_prompt(agent_id)}{seat_prompt(agent_id)}"
             f"{chr(10) * 2 + HUB_GUIDE + hub_rules(agent_id) + tools_prompt(agent_id) if tools and not a.get('home') else ''}")
 
 
@@ -2072,7 +2109,7 @@ class RouteConfigError(ValueError):
     or empty model. Raised, never silently defaulted."""
 
 
-ROUTE_PROVIDERS = {"groq", "gemini", "anthropic", "local"}  # DeepSeek absent (D2). local: your PC (LOCAL_LLM_URL).
+ROUTE_PROVIDERS = {"groq", "gemini", "anthropic", "local", "deepseek"}  # local: your PC (LOCAL_LLM_URL); deepseek: Stage 8.1
 
 # Literal current-behavior defaults (see contract above: NOT read from
 # SETTABLE-managed vars, so Approve taps cannot move route()).
@@ -2141,7 +2178,7 @@ def _route_primary(role):
         if provider not in ROUTE_PROVIDERS:
             raise RouteConfigError(
                 f"route {role}: unknown provider {provider!r} "
-                f"(groq, gemini, anthropic, local; DeepSeek is probe-only per D2)")
+                f"(groq, gemini, anthropic, local, deepseek)")
         return (provider, model)
     return ROUTE_DEFAULTS[role]
 
@@ -3500,31 +3537,43 @@ def run_bench():
             return job, None, time.time() - t0, str(e)
         return job, resp, time.time() - t0, None
 
-    def local_all():
-        out, t_end = [], time.time() + 45  # leave room in Vercel's 60 s
-        for q, want, about in BENCH_QUESTIONS:
-            row = {"q": q, "want": want, "about": about, "mode": "local", "secs": 0.0, "usd": 0}
-            if time.time() > t_end:
-                out.append(dict(row, error="skipped: out of time for this run", ok=False))
-                continue
-            msgs = [{"role": "system", "content": system}, {"role": "system", "content": clock},
-                    {"role": "user", "content": f"The chat so far:\nYou: {q}\n\nAnswer the latest message as Mistral. "
-                                                "Write only your message, without your name in front."}]
-            t0 = time.time()
-            try:
-                text = _llm_call("local", LOCAL_LLM_MODEL, msgs, 800)
-            except Exception as e:  # any failure is this row's, never the whole run's
-                out.append(dict(row, secs=round(time.time() - t0, 1), error=_bench_error(e), ok=False))
-                continue
-            kind = _bench_kind(text)
-            out.append(dict(row, secs=round(time.time() - t0, 1), reply=text[:1200], did=kind, ok=kind == want))
-        return out
+    t_end = time.time() + 45  # leave room in Vercel's 60 s
+
+    def ask_other(mode, provider, name, qa):
+        """One question to a non-Claude model, as a finished row."""
+        q, want, about = qa
+        row = {"q": q, "want": want, "about": about, "mode": mode, "secs": 0.0, "usd": 0}
+        if time.time() > t_end:
+            return dict(row, error="skipped: out of time for this run", ok=False)
+        msgs = [{"role": "system", "content": system}, {"role": "system", "content": clock},
+                {"role": "user", "content": f"The chat so far:\nYou: {q}\n\nAnswer the latest message as Mistral. "
+                                            "Write only your message, without your name in front."}]
+        t0 = time.time()
+        try:
+            text = _llm_call(provider, name, msgs, 800)
+        except Exception as e:  # any failure is this row's, never the whole run's
+            return dict(row, secs=round(time.time() - t0, 1), error=_bench_error(e), ok=False)
+        kind = _bench_kind(text)
+        return dict(row, secs=round(time.time() - t0, 1), reply=text[:1200], did=kind, ok=kind == want)
+
+    def local_all():  # a home GPU answers one at a time well, not six at once
+        return [ask_other("local", "local", LOCAL_LLM_MODEL, qa) for qa in BENCH_QUESTIONS]
+
+    def deepseek_all():  # a cloud API: all six at once
+        with ThreadPoolExecutor(max_workers=len(BENCH_QUESTIONS)) as ex:
+            return list(ex.map(lambda qa: ask_other("deepseek", "deepseek", DEEPSEEK_MODEL, qa), BENCH_QUESTIONS))
+
+    def failed_rows(mode, e):
+        return [{"q": q, "want": want, "about": about, "mode": mode, "secs": 0.0, "usd": 0,
+                 "error": _bench_error(e), "ok": False} for q, want, about in BENCH_QUESTIONS]
 
     local_on = bool(LOCAL_LLM_URL and LOCAL_LLM_MODEL)
+    deepseek_on = bool(os.environ.get("DEEPSEEK_API_KEY"))
     claude_on = master_ready()
     jobs = [(qa, m) for m in BENCH_MODES for qa in BENCH_QUESTIONS] if claude_on else []
-    with ThreadPoolExecutor(max_workers=1) as side:
+    with ThreadPoolExecutor(max_workers=2) as side:
         local_rows = side.submit(local_all) if local_on else None
+        ds_rows = side.submit(deepseek_all) if deepseek_on else None
         done = [one(jobs[0])] if jobs else []
         if len(jobs) > 1:
             with ThreadPoolExecutor(max_workers=len(jobs)) as ex:
@@ -3532,8 +3581,11 @@ def run_bench():
         try:
             local_rows = local_rows.result() if local_rows else []
         except Exception as e:
-            local_rows = [{"q": q, "want": want, "about": about, "mode": "local", "secs": 0.0, "usd": 0,
-                           "error": _bench_error(e), "ok": False} for q, want, about in BENCH_QUESTIONS]
+            local_rows = failed_rows("local", e)
+        try:
+            ds_rows = ds_rows.result() if ds_rows else []
+        except Exception as e:
+            ds_rows = failed_rows("deepseek", e)
     rows, total = [], 0.0
     for ((q, want, about), (mode, _)), resp, secs, err in done:
         row = {"q": q, "want": want, "about": about, "mode": mode, "secs": round(secs, 1)}
@@ -3557,9 +3609,12 @@ def run_bench():
         except Exception as e:  # shown in the table, so a surprise in one reply can't sink the run
             row.update(error=_bench_error(e), ok=False)
         rows.append(row)
-    rows += local_rows
-    modes = ([list(m) for m in BENCH_MODES] if claude_on else []) + ([["local", f"Your PC ({LOCAL_LLM_MODEL})"]] if local_on else [])
-    result = {"at": time.time(), "model": model if claude_on else LOCAL_LLM_MODEL, "effort": DESK_EFFORT if claude_on else "-",
+    rows += ds_rows + local_rows
+    modes = (([list(m) for m in BENCH_MODES] if claude_on else [])
+             + ([["deepseek", f"DeepSeek ({DEEPSEEK_MODEL})"]] if deepseek_on else [])
+             + ([["local", f"Your PC ({LOCAL_LLM_MODEL})"]] if local_on else []))
+    result = {"at": time.time(), "model": model if claude_on else DEEPSEEK_MODEL if deepseek_on else LOCAL_LLM_MODEL,
+              "effort": DESK_EFFORT if claude_on else "-",
               "usd": round(total, 4), "rows": rows, "modes": modes}
     store().set_meta("bench:last", json.dumps(result))
     return result
@@ -8515,6 +8570,23 @@ def wiring(fresh=False):
     else:
         rows.append({"agent": "lenz-tmdb", "name": "Lenz's TMDB", "tier": "", "model": "TMDB trending",
                      "testable": False, "state": "off", "note": "Not linked: set TMDB_API_KEY"})
+    if os.environ.get("DEEPSEEK_API_KEY"):  # Stage 8.1: the head's model, checked without spending tokens
+        found = list_models("deepseek")
+        users = [r for r in ROUTE_CONFIG_VARS if os.environ.get(ROUTE_CONFIG_VARS[r][0], "").strip() == "deepseek"]
+        if "error" in found:
+            ds_row = {"state": "bad", "note": found["error"] + (": check DEEPSEEK_API_KEY" if " 401" in found["error"]
+                                                                 or "returned 401" in found["error"] else "")}
+        elif DEEPSEEK_MODEL in found["models"]:
+            ds_row = {"state": "ok", "note": f"Key works, {DEEPSEEK_MODEL} available"
+                      + (f"; answers for: {', '.join(users)}" if users else "; not answering for anyone yet")}
+        else:
+            ds_row = {"state": "bad", "note": f"Key works, but {DEEPSEEK_MODEL} isn't offered "
+                      f"(it has: {', '.join(found['models'][:5]) or 'nothing'}); set DEEPSEEK_MODEL"}
+        rows.append({"agent": "deepseek", "name": "DeepSeek", "tier": "", "model": DEEPSEEK_MODEL, "testable": False,
+                     **ds_row})
+    else:
+        rows.append({"agent": "deepseek", "name": "DeepSeek", "tier": "", "model": DEEPSEEK_MODEL, "testable": False,
+                     "state": "off", "note": "Not linked: set DEEPSEEK_API_KEY"})
     if vault_on():
         try:
             text, sha = vault_read("Memory.md", fresh=fresh)
@@ -15477,7 +15549,7 @@ def handle(method, path, query, headers, body):
         if path == "/api/bench":  # Settings → Mistral benchmark: ~12 Haiku calls, a few cents
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
-            if not master_ready() and not (LOCAL_LLM_URL and LOCAL_LLM_MODEL):
+            if not master_ready() and not (LOCAL_LLM_URL and LOCAL_LLM_MODEL) and not os.environ.get("DEEPSEEK_API_KEY"):
                 return _json(400, {"ok": False, "error": "Claude isn't available (ANTHROPIC_API_KEY unset, or this "
                                                          "month's cap is reached) and your PC isn't linked, so there's "
                                                          "nothing to benchmark"})
