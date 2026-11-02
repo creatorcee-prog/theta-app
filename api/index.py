@@ -1402,7 +1402,7 @@ def _tool_project(arg, agent):
 # Settings are Vercel environment variables from SETTABLE only (never keys,
 # tokens or private links); applying one needs VERCEL_TOKEN + VERCEL_PROJECT,
 # and VERCEL_DEPLOY_HOOK to redeploy. Code changes become GitHub issues.
-SETTABLE = {"LENZ_YOUTUBE", "LENZ_SUBREDDITS", "LENZ_TWITCH", "LENZ_FEEDS_MINUTES", "GLASS_HOLDINGS", "GLASS_WATCHLIST",
+SETTABLE = {"HEAD_MODE", "LENZ_YOUTUBE", "LENZ_SUBREDDITS", "LENZ_TWITCH", "LENZ_FEEDS_MINUTES", "GLASS_HOLDINGS", "GLASS_WATCHLIST",
             "GLASS_BUDGETS", "GLASS_MOVE_ALERT", "GLASS_BENCHMARK", "BIRTHDAYS", "DIGEST_TIME", "DAILY_NUDGE_TIME",
             "HUB_TIMEZONE", "HOME_LOCATION", "GMAIL_IMPORTANT", "GMAIL_ARCHIVE", "MASTER_MONTHLY_CAP_USD",
             "VISION_MODEL", "ROUTE_LOW_BRAIN_MODEL", "ROUTE_DESK_MODEL", "DESK_MODEL", "ROUND_POSTS", "WIDGET_CACHE_SECONDS", "NEWS_FEEDS", "ENTERTAINMENT_FEEDS", "CHAT_MODE"}
@@ -1624,6 +1624,7 @@ TOOLS = {
                 _tool_workout, {"theta", "mistral"}),
 }
 TOOLS.update(BRIDGE_TOOLS)  # Phase 4 read-only tools + task ledger
+_load_part("head")  # single head (Stage 8.2), HEAD_MODE: api/_parts/head.py
 
 
 
@@ -1706,9 +1707,11 @@ def tools_diag():
     }
 
 
-def run_actions(agent, reply):
+def run_actions(agent, reply, allowed=None):
     """Run the reply's ACTION lines (at most 3); return the reply with
-    receipts in their place, plus a note when it claims an action it didn't take."""
+    receipts in their place, plus a note when it claims an action it didn't take.
+    allowed: the tool names this agent may use, when not each tool's own list
+    (the single head uses the crew's tools)."""
     found = _ACTION_RE.findall(reply)
     text = _ACTION_RE.sub("", reply).strip()
     receipts, buttons = [], []
@@ -1724,7 +1727,8 @@ def run_actions(agent, reply):
             skipped = True
             break
         tool = TOOLS.get(name.lower())
-        if not tool or (tool[2] is not None and agent not in tool[2]):
+        if not tool or (name.lower() not in allowed if allowed is not None else
+                        tool[2] is not None and agent not in tool[2]):
             receipts.append(f"✗ {name}: not a tool I have")
             continue
         who = AGENTS.get(agent, {}).get("name", agent)
@@ -1785,7 +1789,7 @@ def system_prompt(agent_id, tools=False, now=True):
     a = AGENTS[agent_id]
     team = ", ".join(f"{x['name']} ({TIER_LABELS[x['tier']]})" for x in AGENTS.values())
     stand_in = (f" The paid {MASTER_MODEL} model isn't answering right now, so you "
-                "run on the low brain's model for now." if a["tier"] == "master" and not master_ready() else "")
+                "run on the low brain's model for now." if a["tier"] == "master" and not head_on() and not master_ready() else "")
     persona = PERSONAS.get(agent_id, [])
     traits = [k for k in persona if k != "concise"]
     personality = f" Your personality: {', '.join(traits)}." if traits else ""
@@ -6395,21 +6399,26 @@ def round_summary(posts):
     who = sorted(reports, key=rank)
     listing = "\n\n".join(f"## {AGENTS[a]['name']}\n" + "\n\n".join(reports[a]) for a in who)
     _REQ.trail, _REQ.tok = [], [0, 0]
+    poster = "theta" if head_on() else DESK  # the single head posts the round itself, in its own voice
     try:
-        working(DESK)
-        text = desk_chat([
-            {"role": "system", "content": system_prompt(DESK) + " You're posting the crew's round update for the user. "
-             "Use only the reports below; never add facts, numbers or events. Lead with anything that needs the user, "
-             "then one short line (or a few bullets) per agent with what they found. Name who each part is from."},
-            {"role": "user", "content": "The crew's reports from this round (exact):\n\n" + listing}], 900,
-            **desk_route("round")).strip()  # migration #6
+        working(poster)
+        msgs = [{"role": "system", "content": system_prompt(poster) + (
+                    " You're posting your round update for the user: what your scheduled checks found. Use only the "
+                    "notes below; never add facts, numbers or events. Lead with anything that needs the user, then a "
+                    "few short lines. Say it as yourself; don't name the crew." if head_on() else
+                    " You're posting the crew's round update for the user. Use only the reports below; never add facts, "
+                    "numbers or events. Lead with anything that needs the user, then one short line (or a few bullets) "
+                    "per agent with what they found. Name who each part is from.")},
+                {"role": "user", "content": "The crew's reports from this round (exact):\n\n" + listing}]
+        text = (head_chat(msgs, 900) if head_on() else
+                desk_chat(msgs, 900, **desk_route("round"))).strip()  # migration #6
     except LLMError:
         text = "Round update from the crew:\n\n" + "\n\n".join(f"**{AGENTS[a]['name']}:** " + " ".join(reports[a])[:600] for a in who)
-    _REQ.trail = who + [DESK]
-    store().add_chat(DESK, text[:4000], extra=reply_extra())
+    _REQ.trail = who + [poster]
+    store().add_chat(poster, text[:4000], extra=reply_extra())
     for p in posts:
         if p.get("image"):
-            store().add_chat(DESK, f"From {AGENTS[p['from']]['name']}: {_first_line(p['text'])}", image=p["image"])
+            store().add_chat(poster, f"From {AGENTS[p['from']]['name']}: {_first_line(p['text'])}", image=p["image"])
 
 
 # summary: the crew report to Mistral, who posts one update (and keeps their
@@ -15028,10 +15037,13 @@ def handle(method, path, query, headers, body):
             errors, routed = {}, []
             _REQ.ch = ch if ch != "all" else None  # activity lines land in this conversation
             _diag("allchat.start", channel=ch, thread=len(thread))
-            if CHAT_MODE != "crew":  # the front desk answers (Theta for hard ones); plain commands run at once
+            if CHAT_MODE != "crew" or head_on():  # the front desk (or the single head) answers (Theta for hard ones); plain commands run at once
                 try:
                     quick = desk_shortcut(thread)
-                    replies, errors = ([(quick[0], quick[1], reply_extra())], {}) if quick else desk_replies(thread)
+                    if quick and head_on():  # the instant command still runs; Theta is who says so
+                        quick = ("theta", quick[1])
+                    replies, errors = (([(quick[0], quick[1], reply_extra())], {}) if quick else
+                                       head_replies(thread) if head_on() else desk_replies(thread))
                 except Exception as e:
                     _diag("desk.compute_failed", error_class=type(e).__name__, error=str(e))
                     replies, errors = [], {AGENTS[DESK]["name"]: str(e)[:200]}
