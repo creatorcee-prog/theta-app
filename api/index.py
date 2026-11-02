@@ -133,6 +133,11 @@ TIER_LABELS = {"miner": "Miner", "manager": "Manager",
 # DeepSeek (Stage 8.1): OpenAI-format API; `deepseek-flash` is served by
 # DeepSeek-V4.1-Flash-1017. DEEPSEEK_MODEL overrides the name.
 DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-flash").strip()
+# DeepSeek thinks before answering by default (effort high), which made
+# Theta take 5-7 s and spend its token budget on reasoning, leaving a few
+# words or nothing. off (the default) answers straight away; low, high or
+# max turns thinking back on at that effort.
+DEEPSEEK_THINKING = os.environ.get("DEEPSEEK_THINKING", "off").strip().lower()
 LOCAL_LLM_URL = os.environ.get("LOCAL_LLM_URL", "").strip().rstrip("/")
 LOCAL_LLM_MODEL = os.environ.get("LOCAL_LLM_MODEL", "").strip()
 PROVIDERS = {
@@ -1402,7 +1407,7 @@ def _tool_project(arg, agent):
 # Settings are Vercel environment variables from SETTABLE only (never keys,
 # tokens or private links); applying one needs VERCEL_TOKEN + VERCEL_PROJECT,
 # and VERCEL_DEPLOY_HOOK to redeploy. Code changes become GitHub issues.
-SETTABLE = {"HEAD_MODE", "LENZ_YOUTUBE", "LENZ_SUBREDDITS", "LENZ_TWITCH", "LENZ_FEEDS_MINUTES", "GLASS_HOLDINGS", "GLASS_WATCHLIST",
+SETTABLE = {"HEAD_MODE", "DEEPSEEK_THINKING", "LENZ_YOUTUBE", "LENZ_SUBREDDITS", "LENZ_TWITCH", "LENZ_FEEDS_MINUTES", "GLASS_HOLDINGS", "GLASS_WATCHLIST",
             "GLASS_BUDGETS", "GLASS_MOVE_ALERT", "GLASS_BENCHMARK", "BIRTHDAYS", "DIGEST_TIME", "DAILY_NUDGE_TIME",
             "HUB_TIMEZONE", "HOME_LOCATION", "GMAIL_IMPORTANT", "GMAIL_ARCHIVE", "MASTER_MONTHLY_CAP_USD",
             "VISION_MODEL", "ROUTE_LOW_BRAIN_MODEL", "ROUTE_DESK_MODEL", "DESK_MODEL", "ROUND_POSTS", "WIDGET_CACHE_SECONDS", "NEWS_FEEDS", "ENTERTAINMENT_FEEDS", "CHAT_MODE"}
@@ -1841,7 +1846,12 @@ def system_prompt(agent_id, tools=False, now=True):
 
 
 def provider_extra(provider, model):
-    """Extra request fields for this provider and model (see *_REASONING_EFFORT)."""
+    """Extra request fields for this provider and model (see *_REASONING_EFFORT,
+    DEEPSEEK_THINKING)."""
+    if provider == "deepseek":
+        if DEEPSEEK_THINKING in ("low", "high", "max"):
+            return {"thinking": {"type": "enabled"}, "reasoning_effort": DEEPSEEK_THINKING}
+        return {"thinking": {"type": "disabled"}}
     if provider == "gemini" and GEMINI_REASONING_EFFORT:
         return {"reasoning_effort": GEMINI_REASONING_EFFORT}
     if provider == "groq" and GROQ_REASONING_EFFORT and model.startswith("openai/gpt-oss"):
