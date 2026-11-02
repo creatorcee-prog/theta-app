@@ -280,9 +280,9 @@ _HEAD_JS = r"""
   const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
   const ORPHEUS = __ORPHEUS__, GEMINI = __GEMINI__, CLIP_MAX = {orpheus: 200, gemini: 600};
   // Voices that run on the phone itself: open source, free, no limit. Downloaded once, then kept.
-  const PIPER = [["en_GB-alan-medium", "Alan (British)"], ["en_GB-northern_english_male-medium", "Northern English man"],
-    ["en_GB-cori-high", "Cori (British)"], ["en_GB-jenny_dioco-medium", "Jenny (British)"], ["en_US-ryan-high", "Ryan (US)"],
-    ["en_US-lessac-high", "Lessac (US)"], ["en_US-joe-medium", "Joe (US)"]];
+  // Theta's voice: Piper's Northern English man, picked by ear on 2026-11-02 (runs on the phone, free, no limit).
+  const DEFAULT_VOICE = "piper:en_GB-northern_english_male-medium";
+  const PIPER = [["en_GB-northern_english_male-medium", "Northern English man (Theta's voice)"]];
   const KOKORO = [["bm_george", "George (British)"], ["bm_fable", "Fable (British)"], ["am_michael", "Michael (US)"],
     ["am_fenrir", "Fenrir (US)"], ["af_heart", "Heart (US)"], ["bf_emma", "Emma (British)"]];
   const PIPER_JS = "https://cdn.jsdelivr.net/npm/@diffusionstudio/vits-web@1.0.3/+esm";
@@ -296,9 +296,8 @@ _HEAD_JS = r"""
   function fillVoices() {
     const cap = n => n[0].toUpperCase() + n.slice(1);
     const groups = [
-      group("Orpheus (free, Groq)", ORPHEUS.map(n => opt("orpheus:" + n, cap(n)))),
-      group("Gemini (free tier, Google)", GEMINI.map(n => opt("gemini:" + n, n))),
       group("Piper (on your phone, open source)", PIPER.map(([id, l]) => opt("piper:" + id, l))),
+      group("Gemini (free tier, Google)", GEMINI.map(n => opt("gemini:" + n, n))),
       group("Kokoro (on your phone, best quality, big download, may not work on iPhone)", KOKORO.map(([id, l]) => opt("kokoro:" + id, l))),
     ], vs = voices();
     if (vs.length) {
@@ -307,7 +306,7 @@ _HEAD_JS = r"""
     }
     const saved = store("theta:voice");
     voiceSel.replaceChildren(...groups);
-    voiceSel.value = saved && [...voiceSel.options].some(o => o.value === saved) ? saved : "orpheus:troy";
+    voiceSel.value = saved && [...voiceSel.options].some(o => o.value === saved) ? saved : DEFAULT_VOICE;
   }
   fillVoices(); if (synth) synth.onvoiceschanged = fillVoices;
   voiceSel.addEventListener("change", () => { store("theta:voice", voiceSel.value); voiceOut = 0; note.textContent = ""; });
@@ -393,7 +392,7 @@ _HEAD_JS = r"""
     const said = forSpeech(text);
     if (!voiceOn.checked || !said) { setState("idle"); return; }
     hush();
-    const choice = voiceSel.value || "orpheus:troy";
+    const choice = voiceSel.value || DEFAULT_VOICE;
     if (!choice.startsWith("sys:") && Date.now() - voiceOut > 3600e3) {
       speakClips(said, choice).then(() => setState("idle")).catch(e => {
         voiceOut = Date.now(); note.textContent = (e.message || String(e)) + ". Using your phone's voice for now.";

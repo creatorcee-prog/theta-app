@@ -651,6 +651,9 @@ Free first: the user is on no budget for voice.
       Groq says no. Next free options if it's not it: MeloTTS (Cloudflare
       Workers AI free tier), Piper in the browser; Kokoro once the desktop
       is back.
+      Picked by ear 2026-11-02: Piper's Northern English man (on the
+      phone, open source, no limit) is Theta's voice. Gemini and Kokoro
+      stay in the picker; Orpheus is out of the picker (its route stays).
 
 ## Memory that fades ("use it or lose it", idea 2026-11-02)
 
