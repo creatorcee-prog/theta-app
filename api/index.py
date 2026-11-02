@@ -15054,7 +15054,8 @@ def handle(method, path, query, headers, body):
                     if quick and head_on():  # the instant command still runs; Theta is who says so
                         quick = ("theta", quick[1])
                     replies, errors = (([(quick[0], quick[1], reply_extra())], {}) if quick else
-                                       head_replies(thread) if head_on() else desk_replies(thread))
+                                       head_replies(thread, spoken=data.get("spoken") is True) if head_on()
+                                       else desk_replies(thread))
                 except Exception as e:
                     _diag("desk.compute_failed", error_class=type(e).__name__, error=str(e))
                     replies, errors = [], {AGENTS[DESK]["name"]: str(e)[:200]}

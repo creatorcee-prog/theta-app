@@ -6,7 +6,8 @@ import sys, json, os, io, threading
 sys.dont_write_bytecode = True
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 mode = sys.argv[1] if len(sys.argv) > 1 else "memory"
-CALLS, SCRIPT, STATE = [], [], {"deepseek_down": False}
+BODIES = []
+CALLS, SCRIPT, STATE = [], [], {"deepseek_down": False, "groq_down": False}
 
 
 class Fake(BaseHTTPRequestHandler):
@@ -18,7 +19,8 @@ class Fake(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0); body = json.loads(self.rfile.read(n))
         who = self.path.split("/")[1]
         CALLS.append((who, body["model"], body["messages"]))
-        if who == "deepseek" and STATE["deepseek_down"]:
+        BODIES.append(body)
+        if (who == "deepseek" and STATE["deepseek_down"]) or (who == "groq" and STATE["groq_down"]):
             return self._send(503, {"error": {"message": "busy"}})
         text = SCRIPT.pop(0) if SCRIPT else "Hey, I'm here."
         self._send(200, {"choices": [{"message": {"content": text}}], "usage": {"prompt_tokens": 50, "completion_tokens": 5}})
@@ -48,8 +50,8 @@ def check(name, cond):
         sys.exit(1)
 
 
-def post(text):
-    raw = json.dumps({"text": text}).encode()
+def post(text, **extra):
+    raw = json.dumps({"text": text, **extra}).encode()
     env = {"REQUEST_METHOD": "POST", "PATH_INFO": "/api/allchat", "QUERY_STRING": "", "CONTENT_LENGTH": str(len(raw)),
            "wsgi.input": io.BytesIO(raw), "HTTP_X_DASHBOARD_KEY": "dk"}
     setup_testing_defaults(env); got = {}
@@ -122,9 +124,26 @@ check("Theta can propose a setting, with Approve / Decline", r["from"] == "theta
 # ---- DeepSeek down: Gemini answers, no error
 STATE["deepseek_down"] = True; CALLS.clear(); SCRIPT[:] = ["Still here (on the backup)."]
 post("you there?")
-check("DeepSeek down: the low brain (Gemini) answers instead", last_reply()["text"] == "Still here (on the backup)."
-      and [c[0] for c in CALLS][-1] == "gemini")
-STATE["deepseek_down"] = False
+check("DeepSeek down: Groq (fast, free) answers instead", last_reply()["text"] == "Still here (on the backup)."
+      and [c[0] for c in CALLS] == ["deepseek", "deepseek", "groq"])
+STATE["groq_down"] = True; CALLS.clear(); SCRIPT[:] = ["Still here (last resort)."]
+post("you there?")
+check("...and Gemini only when Groq is down too", last_reply()["text"] == "Still here (last resort)."
+      and [c[0] for c in CALLS][-1] == "gemini" and "groq" in [c[0] for c in CALLS])
+STATE["deepseek_down"] = STATE["groq_down"] = False
+
+# ---- spoken answers are short
+CALLS.clear(); BODIES.clear(); SCRIPT[:] = ["You're on track. Want the details?"]
+post("how's my budget looking?", spoken=True)
+ask = CALLS[0][2][-1]["content"]
+check("the Head page's spoken flag asks for 1-2 sentences, no lists, an offer of details",
+      "read aloud" in ask and "1 or 2 short sentences" in ask and "Want the details?" in ask and BODIES[0]["max_tokens"] == 350)
+CALLS.clear(); BODIES.clear()
+post("how's my budget looking?")
+check("typed chat: short too, but not the spoken rule", "read aloud" not in CALLS[0][2][-1]["content"]
+      and "2 to 4 sentences" in CALLS[0][2][-1]["content"] and BODIES[0]["max_tokens"] == 900)
+post("hey", spoken="yes")
+check("only a real true turns on spoken mode", "read aloud" not in CALLS[-1][2][-1]["content"])
 
 # ---- rounds post as Theta
 CALLS.clear(); SCRIPT[:] = ["Heads up: dining's at 92%."]
@@ -146,6 +165,7 @@ check("the Head page: the Rings avatar, a Talk button, a type-to-Theta box, the 
       s == 200 and 'id="head-av"' in page and 'id="head-talk"' in page and 'id="head-text"' in page
       and 'id="head-voice"' in page and "webkitSpeechRecognition" in page and "speechSynthesis" in page)
 check("...it talks through /api/allchat, so it's in the chat history too", 'fetch("/api/allchat"' in page)
+check("...and says the reply will be spoken when the voice is on", "spoken: !!(synth && voiceOn.checked)" in page)
 check("...and Theta is a tab in the main navigation", 'href="/head"' in get("/", "key=dk")[1] and '<span>Theta</span>' in page)
 
 # ---- the switch back
