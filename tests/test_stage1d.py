@@ -129,7 +129,7 @@ check("home and lenz render the identical strip (same component, same cache)",
 
 # --- Same component / data path, no second implementation ---
 import os as _os
-src = open(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "api", "index.py")).read()
+src = __import__("_src").full_source()
 home_src = src[src.index("def home_page("):src.index("def chat_page(")]
 _ls = src.index("def lenz_page(")
 _nx = src.index("\ndef ", _ls + 1)

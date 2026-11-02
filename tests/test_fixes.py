@@ -232,7 +232,7 @@ def call_h(path, headers):
     return int(got["s"][:3]), [v for k, v in got["h"] if k.lower() == "set-cookie"]
 s, ck = call_h("/api/agents", {"host": "theta.example", "cookie": "hub_key=old-key-before-change"})
 check("stale saved key: 401 and the cookie is cleared", s == 401 and any(c.startswith("hub_key=;") and "Max-Age=0" in c for c in ck))
-check("lockout message mentions a changed key", "just changed DASHBOARD_KEY" in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "api", "index.py")).read())
+check("lockout message mentions a changed key", "just changed DASHBOARD_KEY" in __import__("_src").full_source())
 
 # tables keep words whole and scroll sideways instead of squeezing
 css = call("GET", "/ui.css")[1].decode()

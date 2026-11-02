@@ -190,7 +190,7 @@ s, d = call("GET", "/api/wiring")
 check("wiring endpoint still needs the key", s == 401)
 
 # --- Server-rendered nature: no security/speed JS exists to duplicate ---
-src = open(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "api", "index.py")).read()
+src = __import__("_src").full_source()  # index.py and its parts (Stage 7.2)
 check("no security/speed JS constants or handlers exist anywhere",
       "_SECURITY_JS" not in src and "_SPEED_JS" not in src
       and 'getElementById("security"' not in src and 'getElementById("speed"' not in src)

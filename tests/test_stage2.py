@@ -157,9 +157,9 @@ check("settings sections intact (benchmark stays; out of scope)",
       "Mistral benchmark" in settings and "Sign in with Face ID" in settings and "Rounds" in settings)
 check("panels reuse card/stack classes, no fixed widths",
       'class="card stack" id="agent-lenz"' in home and 'width:' not in home[home.index('id="agent-lenz"'):home.index('id="agent-qwerty"')])
-check("summary affordance rule shipped", "details.card summary{cursor:pointer}" in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "api", "index.py")).read())
+check("summary affordance rule shipped", "details.card summary{cursor:pointer}" in __import__("_src").full_source())
 # --- All-clear wording is scoped to what the watchdog checks ---
-_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "api", "index.py")).read()
+_src = __import__("_src").full_source()
 check("no absolute all-clear claims remain in source",
       "everything's wired" not in _src and "nothing's failing" not in _src)
 _real_wf = h.watchdog_findings

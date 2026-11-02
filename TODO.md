@@ -639,6 +639,32 @@ Free first: the user is on no budget for voice.
       button: Theta hears when you start talking) and being able to
       interrupt Theta mid-sentence. Needs continuous listening, which
       iPhone Safari limits; likely a local or native voice path first.
+      Watch: **Dessa** (Block), a full-duplex speech-to-speech model that
+      laughs, interrupts and keeps a back-and-forth; research preview
+      only (waitlist, safety researchers), no API, runs on an M4 Max Mac.
+      It would replace Theta's brain, not just its voice (no text step, so
+      no DeepSeek, tools, vault or SOUL.md) unless bridged to Theta's tools.
+- [x] **8.4b Theta's voice: Orpheus on Groq** (Apache-2.0 model, free tier
+      on the hub's Groq key, ~200 characters a request). Head page voice
+      picker (troy, daniel, austin, autumn, diana, hannah, plus the phone's
+      voices) with a Test button; falls back to the phone's voice when
+      Groq says no. Next free options if it's not it: MeloTTS (Cloudflare
+      Workers AI free tier), Piper in the browser; Kokoro once the desktop
+      is back.
+
+## Memory that fades ("use it or lose it", idea 2026-11-02)
+
+- [ ] Memories that get used stay; ones that don't fade or merge, like a
+      brain. Each Memory.md line keeps a use count and last-used date
+      (a small hidden note in the vault, or a side file, so Memory.md stays
+      readable). A line counts as used when it's in a prompt AND the reply
+      draws on it (cheap check: the reply shares its key words).
+      Once a week, a consolidation pass: lines unused for N weeks move to
+      Theta/Archive.md (never deleted), and similar lines are merged into
+      one by the model, shown to you as a proposal you Approve before
+      Memory.md changes. Pinned lines (a "!" in front) never fade.
+      Pairs with the size budget from 7.3: fading frees room instead of
+      Theta asking you to tidy.
 
 ## Stage 7: Re-platform in place (decided 2026-11-01)
 
@@ -655,10 +681,12 @@ the hub must work without.
       moves the miners (Red, Blue, Gray, Lenz, Charter) to the PC, with
       Groq covering when it's off (#92). Managers next only if the
       benchmark says so.
-- [ ] **7.2 Split `api/index.py` into modules**, one area per PR, no
+- [x] **7.2 Split `api/index.py` into modules**, one area per PR, no
       behavior change, tests unchanged: store, routing (route, llm_chat,
       providers), agents and prompts, memory and vault, rounds, tools,
       each page, then the router. Vercel keeps one function entry point.
+      Done 2026-11-02: 28 parts in api/_parts/, index.py 15,954 -> 3,442
+      lines; tests read the stitched source via tests/_src.py.
 - [x] **7.3 Obsidian as the main memory.** Move crew memory, agent notes
       and notes from Redis into the vault (Memory.md, Agents/, Notes/),
       keeping Redis only as the fallback copy; then playbooks (Hermes
@@ -668,10 +696,12 @@ the hub must work without.
       and a planted-instruction / hidden-character check (Hermes); Redis
       memory moved over once; playbooks via the playbook tool, matched by
       their name and When to use. Notes (the note tool) still live in Redis.
-- [ ] **7.4 Finish route().** Move the remaining tier callers
+- [x] **7.4 Finish route().** Move the remaining tier callers
       (pick_responders, summarize, master_work, story_brief, …) and the
       managers' desk-first step, then retire TIER_LLM / FALLBACK_LLM /
-      DESK_MODEL's model id. One way to pick a model.
+      DESK_MODEL's model id. One way to pick a model. Done 2026-11-02:
+      every tier call reads route()'s settings; the old vars are unread and
+      the Checkup flags any still set in Vercel.
 - [ ] **7.5 The PC as an always-on worker** next to Vercel: a small
       service on the desktop, reached through the same tunnel and key,
       for what Vercel can't do: long jobs past 60 s, the Discord bot,
