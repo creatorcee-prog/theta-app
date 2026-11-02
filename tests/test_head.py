@@ -168,6 +168,25 @@ check("...it talks through /api/allchat, so it's in the chat history too", 'fetc
 check("...and says the reply will be spoken when the voice is on", "spoken: !!(synth && voiceOn.checked)" in page)
 check("...and Theta is a tab in the main navigation", 'href="/head"' in get("/", "key=dk")[1] and '<span>Theta</span>' in page)
 
+# ---- Theta's check-ins (8.5)
+check("every push is Theta's, without the crew's lead-in", h.head_push("Mistral", "Glass: Heads up: dining's at 92%.")
+      == ("Theta", "Heads up: dining's at 92%."))
+check("...a body that isn't an agent's lead-in is left alone", h.head_push("Lenz", "Out today: Dune 3") == ("Theta", "Out today: Dune 3"))
+PUSHES = []
+h.notify = lambda title, body, url="/": PUSHES.append((title, body, url)) or 1
+h.store().set_meta("round:mistral:digest_day", "")
+CALLS.clear(); SCRIPT[:] = ["Morning! Light day: just the dentist at 3, and your budget's fine."]
+h.send_digest()
+r = last_reply()
+check("the morning digest is Theta's short brief, from the digest's facts", r["from"] == "theta"
+      and r["text"] == "Morning! Light day: just the dentist at 3, and your budget's fine."
+      and "Here's today" in CALLS[0][2][-1]["content"] and "2 or 3 short sentences" in CALLS[0][2][-1]["content"])
+check("...pushed, opening the Head page to hear it", PUSHES and PUSHES[-1][0] == "Theta" and PUSHES[-1][2] == "/head?play=latest")
+check("...and once a day", h.send_digest() is False)
+s_, page = get("/head", "key=dk&play=latest")
+check("the Head page has a Hear it button for a new message or a tapped push", 'id="head-hear"' in page
+      and 'get("play") === "latest"' in page and 'store("theta:heard"' in page)
+
 # ---- the switch back
 h.HEAD_MODE = "crew"
 h.desk_replies = lambda thread: ([("mistral", "Mistral here.", {})], {})

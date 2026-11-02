@@ -173,6 +173,44 @@ def head_replies(thread, spoken=False):
     return [("theta", reply, reply_extra())], {}
 
 
+# ---- Theta's own check-ins (Stage 8.5). The morning digest becomes a short
+# brief Theta says itself, and every push opens the Head page with a
+# "Hear it" button (iPhone plays sound only after a tap, so it can't talk on
+# its own when the push is tapped).
+HEAD_PLAY_URL = "/head?play=latest"
+
+
+def head_push(title, body):
+    """(title, body) for a push: in the single head, every push is Theta's,
+    without the crew's "Glass: " lead-ins."""
+    if not head_on():
+        return title, body
+    lead = re.match(r"^(\w+): ", body)
+    if lead and lead.group(1).lower() in AGENTS:
+        body = body[len(lead.group(0)):]
+    return "Theta", body
+
+
+def send_head_brief(facts, brief):
+    """Post and push the morning brief as Theta, from the digest's facts.
+    The full list stays on Home's window; ask Theta for the details."""
+    try:
+        text = head_chat([
+            {"role": "system", "content": system_prompt("theta", now=False)},
+            {"role": "system", "content": now_line()},
+            {"role": "user", "content": "Give the user their morning brief from these facts, as yourself, to be heard "
+             "out loud: 2 or 3 short sentences, under about 45 words, the most important thing first, no lists, no "
+             "headlines read out in full. Use only these facts; never add any:\n\n" + facts}], 300).strip()
+    except LLMError:
+        text = ""
+    st = store()
+    item = st.add_chat("theta", (text or facts)[:4000], extra=reply_extra())
+    save_card("theta", "Morning brief", facts)
+    st.set_meta("round:mistral:digest_id", str(item["id"]))
+    notify("Theta", (text or brief)[:240], HEAD_PLAY_URL)
+    return True
+
+
 # ---- The Head page (Stage 8.3): Theta as the Rings avatar, push to talk.
 # Listening is Safari's own dictation (SpeechRecognition) and the voice is
 # the phone's built-in speech (speechSynthesis): both free, nothing to host.
@@ -187,6 +225,8 @@ _HEAD_CSS = """
  color:#04121a;background:#4fd3ff;min-width:180px}
 .headpage .talk[aria-pressed=true]{background:#ff5d6c;color:#fff}
 .headpage .talk:disabled{opacity:.55;cursor:default}
+.headpage .hear{font:inherit;font-weight:750;font-size:15px;padding:10px 22px;border-radius:999px;cursor:pointer;
+ color:inherit;background:transparent;border:1.5px solid #4fd3ff}
 .headpage .talk:focus-visible,.headpage canvas:focus-visible{outline:2px solid #4fd3ff;outline-offset:3px}
 .headpage form{display:flex;gap:8px;width:100%}
 .headpage form input{flex:1;min-width:0;font:inherit;padding:11px 14px;border-radius:12px;border:1px solid var(--line,rgba(127,127,127,.3));background:transparent;color:inherit}
@@ -285,7 +325,7 @@ _HEAD_JS = r"""
       const mine = (d.messages || []).filter(m => m.from !== "you" && m.kind !== "event");
       const m = mine[mine.length - 1];
       if (!m) throw new Error(Object.values(d.errors || {})[0] || "no answer");
-      show(m);
+      show(m); latest = m; store("theta:heard", String(m.id)); hear.hidden = true;
       note.textContent = m.buttons && m.buttons.length ? "This one needs your Approve: open Chat to tap it." : "";
       speak(m.text);
     } catch (e) { replyEl.textContent = ""; note.textContent = "Couldn't reach Theta: " + e.message; setState("idle"); }
@@ -311,10 +351,20 @@ _HEAD_JS = r"""
   talk.addEventListener("click", () => rec ? stop() : start());
   cv.addEventListener("click", () => { if (SR && !busy) (rec ? stop() : start()); });
 
-  // ---- open on Theta's latest message, without speaking it
+  // ---- open on Theta's latest message. A new one (since you last heard it,
+  // or the push you tapped) gets a "Hear it" button: speech needs a tap.
+  const hear = document.getElementById("head-hear");
+  let latest = null;
+  hear.addEventListener("click", () => {
+    if (!latest) return;
+    unlock(); hear.hidden = true; store("theta:heard", String(latest.id)); speak(latest.text);
+  });
   fetch("/api/allchat?channel=all", {headers: H}).then(r => r.json()).then(d => {
     const mine = (d.messages || []).filter(m => m.from !== "you" && m.kind !== "event");
-    if (mine.length && !replyEl.textContent) show(mine[mine.length - 1]);
+    if (!mine.length || replyEl.textContent) return;
+    latest = mine[mine.length - 1]; show(latest);
+    const fromPush = new URLSearchParams(location.search).get("play") === "latest";
+    if (synth && (fromPush || String(latest.id) !== store("theta:heard"))) hear.hidden = false;
   }).catch(() => {});
   setState("idle");
 })();
@@ -327,6 +377,7 @@ def head_page(headers):
             '<p class="hstate" id="head-state" aria-live="polite"></p>'
             '<p class="said" id="head-said"></p>'
             '<p class="reply" id="head-reply" aria-live="polite"></p>'
+            '<button type="button" class="hear" id="head-hear" hidden>▶ Hear it</button>'
             '<button type="button" class="talk" id="head-talk" aria-pressed="false">Talk</button>'
             '<form id="head-type" autocomplete="off"><input id="head-text" type="text" placeholder="Or type to Theta" '
             'aria-label="Message Theta"><button type="submit">Send</button></form>'
