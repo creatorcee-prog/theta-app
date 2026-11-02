@@ -131,7 +131,7 @@ def head_reply(thread, spoken=False):
     ask = (f"The chat so far:\n{transcript}\n\nAnswer the latest message as Theta. Write only your message, "
            f"without your name in front. {rule}")
     if last["from"] == "you":
-        ask += seen_notes(last)
+        ask += seen_notes(last) + playbook_prompt(last.get("text", ""))
     msgs = [{"role": "system", "content": head_system()}, {"role": "system", "content": now_line()},
             {"role": "user", "content": ask}]
     allowed = head_tools()

@@ -1247,6 +1247,7 @@ def vault_prompt(agent):
     """Memory.md and this agent's own note, for its prompt ("" when unlinked)."""
     if not vault_on():
         return ""
+    migrate_memory_once()
     memory = _vault_cut(vault_read("Memory.md")[0], VAULT_MEMORY_MAX, "Memory.md")
     mine = _vault_cut(vault_read(f"Agents/{AGENTS[agent]['name']}.md")[0], VAULT_AGENT_MAX, f"Agents/{AGENTS[agent]['name']}.md")
     return ((f"\n\nFrom the user's notes (their Obsidian vault, Memory.md; true unless they say otherwise):\n{memory}"
@@ -1283,18 +1284,18 @@ def _tool_remember(arg, agent):
     text = " ".join(arg.split())[:200]
     if not text:
         raise ValueError("nothing to remember")
+    memory_check(text)
+    if vault_on():  # Stage 7.3: Memory.md is the record; Redis only if GitHub can't be reached
+        migrate_memory_once()
+        try:
+            full = vault_remember(text)
+            return f"Remembered: {text} (in your vault's {VAULT_DIR}/Memory.md){full}"
+        except LLMError as e:
+            print(f"vault remember failed, kept in the hub instead: {e}")
     with _TOOL_LOCK:
         mem = [m for m in memory() if m["text"].lower() != text.lower()]
         mem.append({"id": f"m{int(time.time() * 1000) % 10**10}", "text": text, "by": agent, "at": time.time()})
         store().set_meta("memory", json.dumps(mem[-MEMORY_MAX:]))
-    if vault_on():  # a copy in your vault's Inbox, to keep in Memory.md or delete
-        now = datetime.now(hub_tz())
-        try:
-            vault_append(f"Inbox/{now:%Y-%m-%d}.md", f"- {text} ({AGENTS.get(agent, {}).get('name', agent)}, {_clock(now)})",
-                         "Inbox: remembered")
-            return f"Remembered for the whole crew: {text} (a saved note, not monitoring; copied to your vault's Inbox)"
-        except LLMError as e:
-            print(f"vault inbox copy failed: {e}")
     return f"Remembered for the whole crew: {text} (a saved note, not monitoring)"
 
 
@@ -1302,6 +1303,7 @@ def _tool_self_note(arg, agent):
     text = " ".join(arg.split())[:200]
     if not text:
         raise ValueError("nothing to note")
+    memory_check(text)
     if vault_on():  # your vault is the record; Redis only if GitHub fails
         name = AGENTS[agent]["name"]
         try:
@@ -1333,6 +1335,11 @@ def _tool_forget(arg, agent):
         if len(keep_s) != len(mine):
             store().set_meta(f"seat:{agent}", json.dumps(keep_s))
     facts, gone_n, gone_s = len(mem) - len(keep), len(ns) - len(keep_n), len(mine) - len(keep_s)
+    if vault_on():  # and the lines in Memory.md, the record since Stage 7.3
+        try:
+            facts = max(facts, vault_forget(words))
+        except LLMError as e:
+            print(f"vault forget failed: {e}")
     if not facts and not gone_n and not gone_s:
         raise ValueError(f"nothing remembered and no note matches “{arg}”")
     bits = ([f"{facts} remembered fact{'s' if facts != 1 else ''}"] if facts else []) + \
@@ -1630,6 +1637,7 @@ TOOLS = {
 }
 TOOLS.update(BRIDGE_TOOLS)  # Phase 4 read-only tools + task ledger
 _load_part("head")  # single head (Stage 8.2), HEAD_MODE: api/_parts/head.py
+_load_part("memory")  # Obsidian as the main memory, playbooks (Stage 7.3): api/_parts/memory.py
 
 
 
@@ -1783,6 +1791,8 @@ def now_line():
 
 
 def memory_prompt():
+    if vault_on() and vault_migrated():  # Memory.md is the record now; vault_prompt reads it
+        return ""
     mem = memory()
     return ("\n\nWhat the user asked the crew to remember (true unless they say otherwise):\n"
             + "\n".join(f"- {m['text']}" for m in mem[-25:])) if mem else ""
