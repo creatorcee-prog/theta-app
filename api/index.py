@@ -310,8 +310,7 @@ AGENTS = {
 # agent's prompt (see system_prompt); "concise" asks for brevity. James's
 # persona lives in Garage Gym's own prompt, so he has none here.
 PERSONAS = {
-    "theta": ["decisive", "strategic", "big-picture", "authoritative", "concise",
-              "blunt", "stoic", "visionary"],
+    "theta": ["warm", "loyal", "dry humor", "straight-talking", "calm", "strategic", "concise"],  # see SOUL.md
     "mistral": ["analytical", "prioritizing", "organized", "concise", "detail-oriented",
                 "humble", "efficient", "nerdy"],
     "glass": ["meticulous", "numbers-first", "organized", "accountable", "budget-minded",
@@ -1201,6 +1200,40 @@ def _vault_cut(text, limit, name):
     return text if len(text) <= limit else text[:limit].rsplit("\n", 1)[0] + f"\n(… cut: keep {name} under {limit} characters)"
 
 
+SOUL_MAX = 4000  # characters of SOUL.md read into a prompt
+_SOUL_DEFAULT = None
+
+
+def soul_text():
+    """Theta's personality: Theta/SOUL.md in your vault when it has one, else
+    the copy that ships with the hub (api/_parts/SOUL.md). Edit the vault one
+    to change who Theta is without a deploy."""
+    global _SOUL_DEFAULT
+    text = vault_read("SOUL.md")[0] if vault_on() else ""
+    if not text.strip():
+        if _SOUL_DEFAULT is None:
+            try:
+                with open(os.path.join(_PARTS_DIR, "SOUL.md"), encoding="utf-8") as fh:
+                    _SOUL_DEFAULT = fh.read()
+            except OSError:
+                _SOUL_DEFAULT = ""
+        text = _SOUL_DEFAULT
+    return _vault_cut(text, SOUL_MAX, "SOUL.md")
+
+
+def soul_prompt(agent):
+    """The soul, right after the opening "You are ..." and before anything that
+    changes often, so the prompt still caches. Theta is the soul; the rest of
+    the crew takes its tone and values but keeps its own name and job."""
+    soul = soul_text()
+    if not soul:
+        return ""
+    if agent == "theta":
+        return "\n\nYour soul (who you are; it outranks the personality words above):\n\n" + soul
+    return ("\n\nThe crew's shared soul, written for Theta. Keep your own name and job above, and take its tone, "
+            "warmth and values when you talk to the user:\n\n" + soul)
+
+
 def vault_prompt(agent):
     """Memory.md and this agent's own note, for its prompt ("" when unlinked)."""
     if not vault_on():
@@ -1795,7 +1828,7 @@ def system_prompt(agent_id, tools=False, now=True):
             "Never describe a control the chat cannot show: it cannot show line charts or architecture diagrams, "
             "and buttons in chat exist only on cards and server-issued messages (QWERTY proposals, James commands) "
             "— agents never emit buttons. Images only with ![alt](https link) for a link you were given)."
-            f"{extra}{now_line() if now else ''}{memory_prompt()}{vault_prompt(agent_id)}{seat_prompt(agent_id)}"
+            f"{soul_prompt(agent_id)}{extra}{now_line() if now else ''}{memory_prompt()}{vault_prompt(agent_id)}{seat_prompt(agent_id)}"
             f"{chr(10) * 2 + HUB_GUIDE + hub_rules(agent_id) + tools_prompt(agent_id) if tools and not a.get('home') else ''}")
 
 

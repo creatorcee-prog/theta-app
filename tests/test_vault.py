@@ -124,6 +124,21 @@ env = {"REQUEST_METHOD": "GET", "PATH_INFO": "/settings", "QUERY_STRING": "key=d
 setup_testing_defaults(env)
 page = b"".join(h.app(env, lambda s, hd: None)).decode()
 check("Settings says the vault is linked and what goes where", "Your Obsidian vault (me/theta-vault) is linked" in page)
+# ---- SOUL.md: who Theta is, first in every prompt
+check("with no SOUL.md in the vault, the shipped one is used", "Your soul (who you are" in h.system_prompt("theta")
+      and "# Theta's soul" in h.system_prompt("theta") and h.system_prompt("theta").startswith("You are Theta"))
+check("...and the crew gets it as a shared tone, keeping their own job", "The crew's shared soul" in h.system_prompt("glass")
+      and h.system_prompt("glass").startswith("You are Glass"))
+check("...before the parts that change, so the prompt still caches",
+      h.system_prompt("theta").index("# Theta's soul") < h.system_prompt("theta").index("Right now it's"))
+FILES["Theta/SOUL.md"] = {"text": "You're Theta. Talk like a pirate.", "sha": "soul1"}
+h.store().set_meta("vault:SOUL.md", "null")
+check("a SOUL.md in the vault wins over the shipped one", "You're Theta. Talk like a pirate." in h.system_prompt("theta")
+      and "# Theta's soul" not in h.system_prompt("theta"))
+FILES["Theta/SOUL.md"] = {"text": "x" * 5000, "sha": "soul2"}
+h.store().set_meta("vault:SOUL.md", "null")
+check("a huge SOUL.md is cut, with a note why", "keep SOUL.md under 4000 characters" in h.system_prompt("theta"))
+del FILES["Theta/SOUL.md"]; h.store().set_meta("vault:SOUL.md", "null")
 h.OBSIDIAN_REPO = ""
 check("unlinked: nothing from the vault, no calls", h.vault_prompt("glass") == "" and
       next(r for r in h.wiring() if r["agent"] == "vault")["state"] == "off")
