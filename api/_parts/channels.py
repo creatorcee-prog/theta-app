@@ -543,7 +543,7 @@ def handle(method, path, query, headers, body):
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
             try:
-                audio = orpheus_say(str(data.get("text") or ""), str(data.get("voice") or ""))
+                audio = server_say(str(data.get("text") or ""), str(data.get("voice") or ""))
             except ValueError as e:
                 return _json(400, {"ok": False, "error": str(e)})
             except LLMError as e:

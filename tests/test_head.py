@@ -6,7 +6,7 @@ import sys, json, os, io, threading
 sys.dont_write_bytecode = True
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 mode = sys.argv[1] if len(sys.argv) > 1 else "memory"
-BODIES, SPEECH = [], []
+BODIES, SPEECH, GSPEECH = [], [], []
 CALLS, SCRIPT, STATE = [], [], {"deepseek_down": False, "groq_down": False}
 
 
@@ -18,6 +18,13 @@ class Fake(BaseHTTPRequestHandler):
     def do_POST(self):
         n = int(self.headers.get("Content-Length") or 0); body = json.loads(self.rfile.read(n))
         who = self.path.split("/")[1]
+        if self.path.startswith("/gtts/"):  # Gemini's voice: the Interactions API isn't there, generateContent is
+            GSPEECH.append((self.path, body))
+            if self.path.endswith("/interactions"):
+                return self._send(404, {"error": {"message": "not found"}})
+            pcm = b"\x01\x00" * 2400
+            return self._send(200, {"candidates": [{"content": {"parts": [{"inlineData": {
+                "mimeType": "audio/L16;codec=pcm;rate=24000", "data": __import__("base64").b64encode(pcm).decode()}}]}}]})
         if self.path.endswith("/audio/speech"):  # Groq's Orpheus voice
             SPEECH.append(body)
             if STATE.get("voice") == "out":
@@ -217,7 +224,17 @@ STATE["voice"] = "terms"
 s_, ct, out = say({"text": "hi", "voice": "troy"})
 check("model terms not accepted yet: says where to accept them", s_ == 502 and b"accept the Orpheus model" in out)
 STATE["voice"] = None
+h._GEMINI_BASE = base + "/gtts"
+s_, ct, out = say({"text": "Morning! Light day today.", "voice": "gemini:Charon"})
+check("Gemini's voice: tries the Interactions API, falls back to generateContent, wraps its PCM as WAV",
+      s_ == 200 and ct == "audio/wav" and out[:4] == b"RIFF" and out[8:12] == b"WAVE" and len(out) == 44 + 4800
+      and [p for p, _ in GSPEECH] == ["/gtts/interactions", "/gtts/models/gemini-3.8-flash-tts:generateContent"]
+      and GSPEECH[-1][1]["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] == "Charon")
+check("...an unknown Gemini voice is refused", say({"text": "hi", "voice": "gemini:HAL"})[0] == 400)
+check("...and 'orpheus:troy' works like 'troy'", say({"text": "hi", "voice": "orpheus:troy"})[0] == 200)
 s_, page = get("/head", "key=dk")
+check("the picker offers Gemini, Piper and Kokoro too, the on-phone ones loaded from jsdelivr",
+      '"Charon"' in page and "piper:" in page and "kokoro:" in page and "vits-web@1.0.3" in page and "kokoro-js@1.2.1" in page)
 check("the Head page offers Theta's voices and the phone's, with a Test button and the phone fallback",
       'id="head-test"' in page and '["troy", "daniel", "austin", "autumn", "diana", "hannah"]' in page
       and '"orpheus:troy"' in page and "Using your phone's voice for now" in page and 'fetch("/api/voice/say"' in page)

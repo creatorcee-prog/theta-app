@@ -278,16 +278,29 @@ _HEAD_JS = r"""
 
   // ---- the voice: Theta's Orpheus voices (free, on Groq) or the phone's own speech
   const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
-  const ORPHEUS = __ORPHEUS__, CLIP_MAX = 200;
+  const ORPHEUS = __ORPHEUS__, GEMINI = __GEMINI__, CLIP_MAX = {orpheus: 200, gemini: 600};
+  // Voices that run on the phone itself: open source, free, no limit. Downloaded once, then kept.
+  const PIPER = [["en_GB-alan-medium", "Alan (British)"], ["en_GB-northern_english_male-medium", "Northern English man"],
+    ["en_GB-cori-high", "Cori (British)"], ["en_GB-jenny_dioco-medium", "Jenny (British)"], ["en_US-ryan-high", "Ryan (US)"],
+    ["en_US-lessac-high", "Lessac (US)"], ["en_US-joe-medium", "Joe (US)"]];
+  const KOKORO = [["bm_george", "George (British)"], ["bm_fable", "Fable (British)"], ["am_michael", "Michael (US)"],
+    ["am_fenrir", "Fenrir (US)"], ["af_heart", "Heart (US)"], ["bf_emma", "Emma (British)"]];
+  const PIPER_JS = "https://cdn.jsdelivr.net/npm/@diffusionstudio/vits-web@1.0.3/+esm";
+  const KOKORO_JS = "https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/dist/kokoro.web.js";
   const player = new Audio(); player.preload = "auto";
   const SILENT = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=";
-  let orpheusOut = 0; // when Groq last said no: the phone's voice for an hour after
+  let voiceOut = 0; // when the chosen voice last failed: the phone's voice for an hour after (picking a voice resets it)
   function voices() { return synth ? synth.getVoices().filter(v => /^en/i.test(v.lang)) : []; }
   function opt(value, label) { const o = document.createElement("option"); o.value = value; o.textContent = label; return o; }
+  function group(label, items) { const g = document.createElement("optgroup"); g.label = label; g.append(...items); return g; }
   function fillVoices() {
-    const og = document.createElement("optgroup"); og.label = "Theta's voices (free, Groq)";
-    og.append(...ORPHEUS.map(n => opt("orpheus:" + n, n[0].toUpperCase() + n.slice(1))));
-    const groups = [og], vs = voices();
+    const cap = n => n[0].toUpperCase() + n.slice(1);
+    const groups = [
+      group("Orpheus (free, Groq)", ORPHEUS.map(n => opt("orpheus:" + n, cap(n)))),
+      group("Gemini (free tier, Google)", GEMINI.map(n => opt("gemini:" + n, n))),
+      group("Piper (on your phone, open source)", PIPER.map(([id, l]) => opt("piper:" + id, l))),
+      group("Kokoro (on your phone, best quality, big download, may not work on iPhone)", KOKORO.map(([id, l]) => opt("kokoro:" + id, l))),
+    ], vs = voices();
     if (vs.length) {
       const pg = document.createElement("optgroup"); pg.label = "Your phone's voices";
       pg.append(...vs.map(v => opt("sys:" + v.name, v.name + " (" + v.lang + ")"))); groups.push(pg);
@@ -297,7 +310,7 @@ _HEAD_JS = r"""
     voiceSel.value = saved && [...voiceSel.options].some(o => o.value === saved) ? saved : "orpheus:troy";
   }
   fillVoices(); if (synth) synth.onvoiceschanged = fillVoices;
-  voiceSel.addEventListener("change", () => store("theta:voice", voiceSel.value));
+  voiceSel.addEventListener("change", () => { store("theta:voice", voiceSel.value); voiceOut = 0; note.textContent = ""; });
   if (store("theta:speak") === "off") voiceOn.checked = false;
   function hush() { if (synth) synth.cancel(); player.pause(); }
   voiceOn.addEventListener("change", () => { store("theta:speak", voiceOn.checked ? "on" : "off"); if (!voiceOn.checked) hush(); });
@@ -311,8 +324,8 @@ _HEAD_JS = r"""
       .replace(/https?:\/\/\S+/g, "the link").replace(/\[\d+\]/g, "").replace(/[*_#`>|]/g, "")
       .replace(/\s+([.,!?])/g, "$1").replace(/\s+/g, " ").trim();
   }
-  function clips(said) { // sentences packed into pieces Groq's free tier takes (CLIP_MAX characters)
-    const out = []; let cur = "";
+  function clips(said, max) { // sentences packed into pieces of at most `max` characters
+    const CLIP_MAX = max || 200, out = []; let cur = "";
     for (let s of said.match(/[^.!?]+[.!?]*\s*/g) || [said]) {
       s = s.trim();
       while (s.length > CLIP_MAX) { const cut = s.lastIndexOf(" ", CLIP_MAX) > 0 ? s.lastIndexOf(" ", CLIP_MAX) : CLIP_MAX; out.push(s.slice(0, cut)); s = s.slice(cut).trim(); }
@@ -336,12 +349,30 @@ _HEAD_JS = r"""
       player.play().catch(() => done());
     });
   }
-  async function speakOrpheus(said, voice) {
-    const parts = clips(said);
-    let next = fetchClip(parts[0], voice);
+  // On-phone engines, loaded the first time they're picked.
+  let piperMod = null, kokoroModel = null;
+  async function localClip(engine, id, text) {
+    if (engine === "piper") {
+      if (!piperMod) { note.textContent = "Downloading the Piper voice (once, about 20–60 MB)…"; piperMod = await import(PIPER_JS); }
+      const blob = await piperMod.predict({text, voiceId: id}); note.textContent = ""; return blob;
+    }
+    if (!kokoroModel) {
+      note.textContent = "Downloading Kokoro (once, about 90 MB)…";
+      const {KokoroTTS} = await import(KOKORO_JS);
+      kokoroModel = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {dtype: "q8", device: "wasm"});
+    }
+    const audio = await kokoroModel.generate(text, {voice: id}); note.textContent = ""; return audio.toBlob();
+  }
+  async function speakClips(said, choice) {
+    const [engine, id] = [choice.split(":")[0], choice.slice(choice.indexOf(":") + 1)];
+    const local = engine === "piper" || engine === "kokoro";
+    // On the phone, one sentence at a time: long text can crash an iPhone tab.
+    const parts = local ? (said.match(/[^.!?]+[.!?]*\s*/g) || [said]).map(p => p.trim()).filter(Boolean) : clips(said, CLIP_MAX[engine]);
+    const get = t => local ? localClip(engine, id, t) : fetchClip(t, choice);
+    let next = get(parts[0]);
     for (let i = 0; i < parts.length; i++) {
       const blob = await next;
-      if (i + 1 < parts.length) next = fetchClip(parts[i + 1], voice); // fetch the next while this one plays
+      if (i + 1 < parts.length) next = get(parts[i + 1]); // make the next while this one plays
       await play(blob);
     }
   }
@@ -363,9 +394,9 @@ _HEAD_JS = r"""
     if (!voiceOn.checked || !said) { setState("idle"); return; }
     hush();
     const choice = voiceSel.value || "orpheus:troy";
-    if (choice.startsWith("orpheus:") && Date.now() - orpheusOut > 3600e3) {
-      speakOrpheus(said, choice.slice(8)).then(() => setState("idle")).catch(e => {
-        orpheusOut = Date.now(); note.textContent = e.message + ". Using your phone's voice for now.";
+    if (!choice.startsWith("sys:") && Date.now() - voiceOut > 3600e3) {
+      speakClips(said, choice).then(() => setState("idle")).catch(e => {
+        voiceOut = Date.now(); note.textContent = (e.message || String(e)) + ". Using your phone's voice for now.";
         speakPhone(said);
       });
       return;
@@ -373,7 +404,7 @@ _HEAD_JS = r"""
     speakPhone(said);
   }
   document.getElementById("head-test").addEventListener("click", () => {
-    unlock(); orpheusOut = 0; note.textContent = "";
+    unlock(); voiceOut = 0; note.textContent = "";
     speak("Hey, it's Theta. This is how I'll sound when I talk to you.");
   });
 
@@ -451,5 +482,6 @@ def head_page(headers):
             '<button type="button" id="head-test" class="test">Test</button></div>'
             '<p class="note" id="head-note"></p>'
             + ("" if head_on() else '<p class="note">The crew is on (HEAD_MODE=crew), so whoever answers in chat answers here.</p>')
-            + '</section><script>' + _HEAD_JS.replace("__ORPHEUS__", json.dumps(list(ORPHEUS_VOICES))) + '</script>')
+            + '</section><script>' + _HEAD_JS.replace("__ORPHEUS__", json.dumps(list(ORPHEUS_VOICES)))
+            .replace("__GEMINI__", json.dumps(list(GEMINI_VOICES))) + '</script>')
     return page(headers, "Theta", "/head", body)
