@@ -44,6 +44,9 @@ def morning_digest(today=None):
             brief += [f"{c.split(' (')[0]} over budget" for c in over]
         else:
             lines.append("Budget: all categories on track.")
+    for line in sleep_facts(today):  # Theta's ideas from last night
+        lines.append(line)
+        brief.append("an idea from last night")
     since = store().get_meta("round:mistral:digest_id")
     recent = [m for m in store().list_chat(ALLCHAT_KEEP) if since and m["id"] > int(since)]
     if recent:

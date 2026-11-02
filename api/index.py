@@ -1260,6 +1260,11 @@ def apply_proposal(pid, yes):
             raise ValueError("That proposal is already settled.")
         p["status"] = "approved" if yes else "declined"
         store().set_meta("proposals", json.dumps(ps))
+    if p["kind"] == "dream":  # Keep / No on one of Theta's overnight ideas
+        try:
+            return dream_feedback(p, yes)
+        except (LLMError, ValueError) as e:
+            return f"✗ Couldn't keep it: {e}"
     if not yes:
         return f"Declined, nothing changed: {p['summary']}"
     try:
@@ -3338,6 +3343,7 @@ _load_part("ui")  # the app's look: themes, CSS, the shared page script and the 
 
 
 _load_part("home")  # Home: smart stack, Today's check, settings cards, benchmark UI: api/_parts/home.py
+_load_part("focus")  # help for an ADD brain: sleep and dreams, leave nudges, /focus, /break, /dump: api/_parts/focus.py
 
 
 _load_part("signin")  # Face ID sign-in (passkeys) and the sign-in page: api/_parts/signin.py

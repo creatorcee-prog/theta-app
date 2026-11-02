@@ -266,15 +266,15 @@ def _json_in(text):
         return None
 
 
-def propose_to_user(prop, text):
-    """A proposal you Approve or Decline in the chat, posted by Theta."""
+def propose_to_user(prop, text, labels=("Approve", "Decline")):
+    """A proposal you Approve or Decline (or labels) in the chat, posted by Theta."""
     pid = hashlib.sha1(f"{time.time_ns()}{text}".encode()).hexdigest()[:8]
     with _TOOL_LOCK:
         ps = proposals()
         ps[pid] = dict(prop, id=pid, by="theta", at=time.time(), status="open")
         store().set_meta("proposals", json.dumps(dict(list(ps.items())[-40:])))
-    store().add_chat("theta", text, buttons=[{"id": f"qp:{pid}:yes", "label": "Approve", "style": "primary"},
-                                             {"id": f"qp:{pid}:no", "label": "Decline"}])
+    store().add_chat("theta", text, buttons=[{"id": f"qp:{pid}:yes", "label": labels[0], "style": "primary"},
+                                             {"id": f"qp:{pid}:no", "label": labels[1]}])
     return pid
 
 

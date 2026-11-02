@@ -605,6 +605,24 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
 - [ ] Settings → Wiring → Theta should read "connected".
 
 
+## Stage 9: Help for an ADD brain (decided 2026-11-02, built; Telegram left for later)
+All in api/_parts/focus.py, run from the 5-minute tick.
+- [x] Sleep and dreams: once a night (SLEEP_HOUR, default 3 AM hub time; skipped if you wrote in the last 2 hours)
+  Theta runs its memory upkeep, then "dreams": 5 ideas from memory, 3 days of chat, the calendar and budgets,
+  scored, the best 1-2 posted as Keep / No cards. Kept ones go to Theta/Dreams.md (a note without the vault);
+  Keep / No steer later dreams. The morning brief mentions them. The shape of Google's sleep research
+  (consolidate, then dream and keep what helps), not its method: that retrains the model.
+- [x] Leave nudges: a push EVENT_NUDGE_MINUTES (15) before each timed event, plus EVENT_TRAVEL_MINUTES (20)
+  when it has a location. Needs REMI_CALENDAR_URLS. Never held by the typing guard.
+- [x] /focus [minutes] <task> (body double): check-ins every 10 minutes, a push that opens the Head page; also
+  Theta's focus action, so "sit with me while I do the dishes" works by voice.
+- [x] /break <task>: 3 tiny steps, the first under 2 minutes.
+- [x] /dump <everything>: reminders, spending, to-do and idea notes; memories wait for Approve. Theta also
+  sorts a spoken dump with its own actions.
+- [x] Sunday reset: in single-head mode the weekly review is 5 lines (Done, Slipped, Next week's 3), with the
+  week's focus sessions and kept dreams as facts.
+- [ ] Telegram (later).
+
 ## Stage 8: Single head (decided 2026-11-02)
 
 One assistant, Theta, runs everything; the crew is paused behind a switch,

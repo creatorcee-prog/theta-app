@@ -84,8 +84,19 @@ def head_system():
             "Put actions that change something (remind, spend, note, propose, ...) only in your final answer, once. "
             "Never say you did something without its ACTION line. Changes to how the hub works, and code, go through "
             "propose: the user taps Approve before anything happens."
+            + "\n\n" + HEAD_ADD_RULE
             + "\n\n" + HUB_GUIDE + _SECRETS_RULE
             + crew_facts())
+
+
+# Stage 9: the user has ADD. How Theta helps with starting, time, and the
+# messy pile in their head (focus.py has /focus, /break and /dump).
+HEAD_ADD_RULE = ("The user has ADD. When they're stuck starting something, give 3 tiny steps, the first under 2 "
+                 "minutes and with no decisions, and offer to sit with them (the focus action). When they want to "
+                 "work alongside you, start a focus session. When they unload a pile of things at once (a brain "
+                 "dump), sort it with your actions: a remind line for each thing with a time, spend for money, note "
+                 "for to-dos and ideas, and remember only for lasting facts about them; then say in one line where it "
+                 "all went.")
 
 
 # How long Theta's answers are. Spoken answers (the Head page with its voice
