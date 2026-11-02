@@ -55,3 +55,103 @@ def orpheus_say(text, voice):
     except Exception:
         pass
     return audio
+
+
+# ---- Gemini's voices (Google, free tier where the key's plan allows; not open
+# source). The current docs show Gemini TTS on the Interactions API; older
+# models used generateContent. Both are tried, and the audio is found in the
+# reply whichever shape it has, so a docs change doesn't break the voice.
+GEMINI_TTS_MODEL = os.environ.get("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts").strip()
+GEMINI_VOICES = ("Charon", "Iapetus", "Algieba", "Sulafat", "Gacrux", "Alnilam", "Achird", "Puck", "Kore",
+                 "Aoede", "Zephyr", "Algenib")  # a pick of the 30: informative, clear, smooth, warm, mature, ...
+GEMINI_SAY_MAX = 600
+_GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
+
+
+def _wav(pcm, rate=24000):
+    """16-bit mono PCM wrapped as a WAV file."""
+    import struct
+    return (b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
+            + b"data" + struct.pack("<I", len(pcm)) + pcm)
+
+
+def _find_audio(node):
+    """(mime, base64 data) of the first audio part anywhere in a reply."""
+    if isinstance(node, dict):
+        mime = node.get("mimeType") or node.get("mime_type") or ""
+        if (isinstance(node.get("data"), str) and len(node["data"]) > 64
+                and (mime.startswith("audio") or (not mime and node.get("type") == "audio"))):
+            return mime or "audio/wav", node["data"]
+        for v in node.values():
+            hit = _find_audio(v)
+            if hit:
+                return hit
+    elif isinstance(node, list):
+        for v in node:
+            hit = _find_audio(v)
+            if hit:
+                return hit
+    return None
+
+
+def gemini_say(text, voice):
+    """WAV bytes of `text` in one of Gemini's voices."""
+    text = " ".join((text or "").split())
+    if not text:
+        raise ValueError("nothing to say")
+    if len(text) > GEMINI_SAY_MAX:
+        raise ValueError(f"send at most {GEMINI_SAY_MAX} characters at a time")
+    if voice not in GEMINI_VOICES:
+        raise ValueError(f"unknown Gemini voice {voice!r}")
+    key = os.environ.get("GEMINI_API_KEY", "")
+    if not key:
+        raise LLMError("GEMINI_API_KEY isn't set")
+    tries = [
+        (f"{_GEMINI_BASE}/interactions", {
+            "model": GEMINI_TTS_MODEL,
+            "input": [{"type": "user_input", "content": [{"type": "text", "text": text}]}],
+            "response_format": {"type": "audio"},
+            "generation_config": {"speech_config": [{"voice": voice}]}}),
+        (f"{_GEMINI_BASE}/models/{GEMINI_TTS_MODEL}:generateContent", {
+            "contents": [{"parts": [{"text": text}]}],
+            "generationConfig": {"responseModalities": ["AUDIO"],
+                                 "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}}}),
+    ]
+    last = None
+    for url, body in tries:
+        req = urllib.request.Request(url, method="POST", data=json.dumps(body).encode(), headers={
+            "x-goog-api-key": key, "Content-Type": "application/json", "User-Agent": "bot-hub/1.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=25) as resp:
+                out = json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            raw = e.read()[:2000].decode("utf-8", "replace")
+            last = LLMError(("Gemini's voice is out of free uses for now (" if e.code == 429 else "Gemini's voice: (")
+                            + _llm_error_text("gemini", e.code, raw) + ")")
+            last.status = e.code
+            if e.code in (400, 404):  # this API shape isn't the one: try the other
+                continue
+            raise last
+        except (urllib.error.URLError, TimeoutError, ValueError) as e:
+            raise LLMError(f"Gemini's voice didn't answer: {type(e).__name__}")
+        hit = _find_audio(out)
+        if not hit:
+            last = LLMError("Gemini's voice sent back no audio")
+            continue
+        mime, data = hit
+        audio = base64.b64decode(data)
+        if audio[:4] == b"RIFF":
+            return audio
+        rate = re.search(r"rate=(\d+)", mime)
+        return _wav(audio, int(rate.group(1)) if rate else 24000)
+    raise last or LLMError("Gemini's voice didn't answer")
+
+
+def server_say(text, voice):
+    """WAV for a server-side voice: "orpheus:<name>" (or a bare Orpheus name) or "gemini:<name>"."""
+    engine, _, name = voice.partition(":") if ":" in voice else ("orpheus", "", voice)
+    if engine == "gemini":
+        return gemini_say(text, name)
+    if engine == "orpheus":
+        return orpheus_say(text, name)
+    raise ValueError(f"unknown voice {voice!r}")
