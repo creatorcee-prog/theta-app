@@ -659,11 +659,15 @@ the hub must work without.
       behavior change, tests unchanged: store, routing (route, llm_chat,
       providers), agents and prompts, memory and vault, rounds, tools,
       each page, then the router. Vercel keeps one function entry point.
-- [ ] **7.3 Obsidian as the main memory.** Move crew memory, agent notes
+- [x] **7.3 Obsidian as the main memory.** Move crew memory, agent notes
       and notes from Redis into the vault (Memory.md, Agents/, Notes/),
       keeping Redis only as the fallback copy; then playbooks (Hermes
       idea) in Theta/Playbooks, matched to the message before the model
-      answers. Inbox stays the review step.
+      answers. Inbox stays the review step. Built 2026-11-02: remember and
+      forget work on Memory.md (Redis is the fallback), with a size budget
+      and a planted-instruction / hidden-character check (Hermes); Redis
+      memory moved over once; playbooks via the playbook tool, matched by
+      their name and When to use. Notes (the note tool) still live in Redis.
 - [ ] **7.4 Finish route().** Move the remaining tier callers
       (pick_responders, summarize, master_work, story_brief, …) and the
       managers' desk-first step, then retire TIER_LLM / FALLBACK_LLM /
@@ -721,13 +725,13 @@ the hub must work without.
       2026-10-29: https://hermes-agent.nousresearch.com/docs). Their
       execution side (terminals, code sandboxes, subagents) doesn't fit a
       serverless hub; these do, smallest first:
-      - **Safe, bounded memory.** Scan every remember / self_note / note for
+      - (Done in 7.3.) **Safe, bounded memory.** Scan every remember / self_note / note for
         prompt-injection phrases and invisible Unicode before saving (a web
         page an agent read could try to plant a "memory"). Limit memory by
         size, not count, and when it's full have the agent merge entries
         instead of the oldest dropping off without a word.
       - **`/find <words>`.** Search the chat history directly, no model call.
-      - **Playbooks** (their "skills"): saved how-tos with When to use,
+      - (Done in 7.3.) **Playbooks** (their "skills"): saved how-tos with When to use,
         Steps, Pitfalls and How to check. Agents get one pass and never see a
         tool's result, so the hub matches playbooks to the message and adds
         the right one before the model answers (not loaded on request).
