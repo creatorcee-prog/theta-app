@@ -539,6 +539,17 @@ def handle(method, path, query, headers, body):
             return _json(200, {"ok": True, "agent": agent, "name": AGENTS[agent]["name"],
                                "model": agent_model(agent), "reply": reply, "image": image})
 
+        if path == "/api/voice/say":  # the Head page: a sentence or two in Theta's Orpheus voice, as WAV
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            try:
+                audio = orpheus_say(str(data.get("text") or ""), str(data.get("voice") or ""))
+            except ValueError as e:
+                return _json(400, {"ok": False, "error": str(e)})
+            except LLMError as e:
+                return _json(429 if getattr(e, "status", None) == 429 else 502, {"ok": False, "error": str(e)})
+            return 200, "audio/wav", audio, [("Cache-Control", "no-store")]
+
         if path == "/api/typing":  # the composer, while you type (typing guard)
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})

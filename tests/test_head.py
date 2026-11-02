@@ -6,7 +6,7 @@ import sys, json, os, io, threading
 sys.dont_write_bytecode = True
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 mode = sys.argv[1] if len(sys.argv) > 1 else "memory"
-BODIES = []
+BODIES, SPEECH = [], []
 CALLS, SCRIPT, STATE = [], [], {"deepseek_down": False, "groq_down": False}
 
 
@@ -18,6 +18,14 @@ class Fake(BaseHTTPRequestHandler):
     def do_POST(self):
         n = int(self.headers.get("Content-Length") or 0); body = json.loads(self.rfile.read(n))
         who = self.path.split("/")[1]
+        if self.path.endswith("/audio/speech"):  # Groq's Orpheus voice
+            SPEECH.append(body)
+            if STATE.get("voice") == "out":
+                return self._send(429, {"error": {"message": "Rate limit reached for requests per day"}})
+            if STATE.get("voice") == "terms":
+                return self._send(400, {"error": {"message": "The model requires terms acceptance"}})
+            b = b"RIFF$\x00\x00\x00WAVEfmt "; self.send_response(200); self.send_header("Content-Type", "audio/wav")
+            self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b); return
         CALLS.append((who, body["model"], body["messages"]))
         BODIES.append(body)
         if (who == "deepseek" and STATE["deepseek_down"]) or (who == "groq" and STATE["groq_down"]):
@@ -165,7 +173,7 @@ check("the Head page: the Rings avatar, a Talk button, a type-to-Theta box, the 
       s == 200 and 'id="head-av"' in page and 'id="head-talk"' in page and 'id="head-text"' in page
       and 'id="head-voice"' in page and "webkitSpeechRecognition" in page and "speechSynthesis" in page)
 check("...it talks through /api/allchat, so it's in the chat history too", 'fetch("/api/allchat"' in page)
-check("...and says the reply will be spoken when the voice is on", "spoken: !!(synth && voiceOn.checked)" in page)
+check("...and says the reply will be spoken when the voice is on", "spoken: !!voiceOn.checked" in page)
 check("...and Theta is a tab in the main navigation", 'href="/head"' in get("/", "key=dk")[1] and '<span>Theta</span>' in page)
 
 # ---- Theta's check-ins (8.5)
@@ -186,6 +194,33 @@ check("...and once a day", h.send_digest() is False)
 s_, page = get("/head", "key=dk&play=latest")
 check("the Head page has a Hear it button for a new message or a tapped push", 'id="head-hear"' in page
       and 'get("play") === "latest"' in page and 'store("theta:heard"' in page)
+
+# ---- Theta's voice: Orpheus on Groq (8.4b)
+def say(body, key="dk"):
+    raw = json.dumps(body).encode()
+    env = {"REQUEST_METHOD": "POST", "PATH_INFO": "/api/voice/say", "QUERY_STRING": "", "CONTENT_LENGTH": str(len(raw)),
+           "wsgi.input": io.BytesIO(raw), "HTTP_X_DASHBOARD_KEY": key}
+    setup_testing_defaults(env); got = {}
+    out = b"".join(h.app(env, lambda s, hd: got.update(s=s, h=dict(hd))))
+    return int(got["s"][:3]), got["h"].get("Content-Type"), out
+check("the voice needs the key", say({"text": "hi", "voice": "troy"}, key="nope")[0] == 401)
+s_, ct, out = say({"text": "Hey, it's Theta.", "voice": "troy"})
+check("Theta's voice: WAV from Groq's Orpheus, with the hub's Groq key", s_ == 200 and ct == "audio/wav" and out.startswith(b"RIFF")
+      and SPEECH[-1] == {"model": "canopylabs/orpheus-v1-english", "input": "Hey, it's Theta.", "voice": "troy", "response_format": "wav"})
+check("more than Groq's free 200 characters a request is refused (the page sends it in pieces)",
+      say({"text": "x" * 201, "voice": "troy"})[0] == 400)
+check("an unknown voice is refused", say({"text": "hi", "voice": "hal9000"})[0] == 400)
+STATE["voice"] = "out"
+s_, ct, out = say({"text": "hi", "voice": "troy"})
+check("out of free uses: a 429 the page falls back on, saying why", s_ == 429 and b"out of free uses" in out)
+STATE["voice"] = "terms"
+s_, ct, out = say({"text": "hi", "voice": "troy"})
+check("model terms not accepted yet: says where to accept them", s_ == 502 and b"accept the Orpheus model" in out)
+STATE["voice"] = None
+s_, page = get("/head", "key=dk")
+check("the Head page offers Theta's voices and the phone's, with a Test button and the phone fallback",
+      'id="head-test"' in page and '["troy", "daniel", "austin", "autumn", "diana", "hannah"]' in page
+      and '"orpheus:troy"' in page and "Using your phone's voice for now" in page and 'fetch("/api/voice/say"' in page)
 
 # ---- the switch back
 h.HEAD_MODE = "crew"

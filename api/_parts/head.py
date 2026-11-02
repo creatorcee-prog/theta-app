@@ -234,6 +234,7 @@ _HEAD_CSS = """
 .headpage .opts{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;justify-content:center;font-size:13px;color:var(--muted)}
 .headpage .opts select{font:inherit;max-width:220px;background:transparent;color:inherit;border:1px solid var(--line,rgba(127,127,127,.3));border-radius:8px;padding:4px 6px}
 .headpage .note{font-size:13px;color:var(--muted);margin:0;text-align:center}
+.headpage .opts .test{font:inherit;font-weight:700;padding:4px 12px;border-radius:999px;border:1px solid #4fd3ff;background:transparent;color:inherit;cursor:pointer}
 """
 
 _HEAD_JS = r"""
@@ -275,22 +276,34 @@ _HEAD_JS = r"""
   }
   requestAnimationFrame(draw);
 
-  // ---- the voice: the phone's own speech, a British voice when there is one
+  // ---- the voice: Theta's Orpheus voices (free, on Groq) or the phone's own speech
   const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
+  const ORPHEUS = __ORPHEUS__, CLIP_MAX = 200;
+  const player = new Audio(); player.preload = "auto";
+  const SILENT = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=";
+  let orpheusOut = 0; // when Groq last said no: the phone's voice for an hour after
   function voices() { return synth ? synth.getVoices().filter(v => /^en/i.test(v.lang)) : []; }
+  function opt(value, label) { const o = document.createElement("option"); o.value = value; o.textContent = label; return o; }
   function fillVoices() {
-    const vs = voices(); if (!vs.length) return;
+    const og = document.createElement("optgroup"); og.label = "Theta's voices (free, Groq)";
+    og.append(...ORPHEUS.map(n => opt("orpheus:" + n, n[0].toUpperCase() + n.slice(1))));
+    const groups = [og], vs = voices();
+    if (vs.length) {
+      const pg = document.createElement("optgroup"); pg.label = "Your phone's voices";
+      pg.append(...vs.map(v => opt("sys:" + v.name, v.name + " (" + v.lang + ")"))); groups.push(pg);
+    }
     const saved = store("theta:voice");
-    const pick = vs.find(v => v.name === saved) || vs.find(v => /en-GB/i.test(v.lang) && /daniel|arthur|george|male/i.test(v.name))
-      || vs.find(v => /en-GB/i.test(v.lang)) || vs[0];
-    voiceSel.replaceChildren(...vs.map(v => { const o = document.createElement("option"); o.value = v.name; o.textContent = v.name + " (" + v.lang + ")"; o.selected = v === pick; return o; }));
+    voiceSel.replaceChildren(...groups);
+    voiceSel.value = saved && [...voiceSel.options].some(o => o.value === saved) ? saved : "orpheus:troy";
   }
-  if (synth) { fillVoices(); synth.onvoiceschanged = fillVoices; } else { voiceOn.checked = false; voiceOn.disabled = true; }
+  fillVoices(); if (synth) synth.onvoiceschanged = fillVoices;
   voiceSel.addEventListener("change", () => store("theta:voice", voiceSel.value));
   if (store("theta:speak") === "off") voiceOn.checked = false;
-  voiceOn.addEventListener("change", () => { store("theta:speak", voiceOn.checked ? "on" : "off"); if (!voiceOn.checked && synth) synth.cancel(); });
-  function unlock() { // iPhone only speaks after a tap: start a silent line inside the tap
-    if (!synth) return; const u = new SpeechSynthesisUtterance(" "); u.volume = 0; synth.speak(u);
+  function hush() { if (synth) synth.cancel(); player.pause(); }
+  voiceOn.addEventListener("change", () => { store("theta:speak", voiceOn.checked ? "on" : "off"); if (!voiceOn.checked) hush(); });
+  function unlock() { // iPhone plays sound only from a tap: start silent sound inside the tap
+    if (synth) { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; synth.speak(u); }
+    player.src = SILENT; player.play().catch(() => {});
   }
   function forSpeech(text) {
     return text.split("\n").filter(l => !/^\s*(Sources:|\[\d+\]\s*https?:)/i.test(l))
@@ -298,11 +311,45 @@ _HEAD_JS = r"""
       .replace(/https?:\/\/\S+/g, "the link").replace(/\[\d+\]/g, "").replace(/[*_#`>|]/g, "")
       .replace(/\s+([.,!?])/g, "$1").replace(/\s+/g, " ").trim();
   }
-  function speak(text) {
-    const said = forSpeech(text);
-    if (!synth || !voiceOn.checked || !said) { setState("idle"); return; }
+  function clips(said) { // sentences packed into pieces Groq's free tier takes (CLIP_MAX characters)
+    const out = []; let cur = "";
+    for (let s of said.match(/[^.!?]+[.!?]*\s*/g) || [said]) {
+      s = s.trim();
+      while (s.length > CLIP_MAX) { const cut = s.lastIndexOf(" ", CLIP_MAX) > 0 ? s.lastIndexOf(" ", CLIP_MAX) : CLIP_MAX; out.push(s.slice(0, cut)); s = s.slice(cut).trim(); }
+      if ((cur + " " + s).trim().length > CLIP_MAX) { if (cur) out.push(cur); cur = s; } else cur = (cur + " " + s).trim();
+    }
+    if (cur) out.push(cur);
+    return out;
+  }
+  function fetchClip(text, voice) {
+    return fetch("/api/voice/say", {method: "POST", headers: H, body: JSON.stringify({text, voice})}).then(async r => {
+      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || ("Theta's voice said " + r.status)); }
+      return r.blob();
+    });
+  }
+  function play(blob) {
+    return new Promise(done => {
+      const url = URL.createObjectURL(blob);
+      player.onended = player.onerror = () => { URL.revokeObjectURL(url); done(); };
+      player.ontimeupdate = () => { burst = 0.5 + Math.random() * 0.5; };
+      player.src = url; setState("speaking");
+      player.play().catch(() => done());
+    });
+  }
+  async function speakOrpheus(said, voice) {
+    const parts = clips(said);
+    let next = fetchClip(parts[0], voice);
+    for (let i = 0; i < parts.length; i++) {
+      const blob = await next;
+      if (i + 1 < parts.length) next = fetchClip(parts[i + 1], voice); // fetch the next while this one plays
+      await play(blob);
+    }
+  }
+  function speakPhone(said) {
+    if (!synth) { setState("idle"); return; }
     synth.cancel();
-    const v = voices().find(x => x.name === voiceSel.value);
+    const vs = voices();
+    const v = vs.find(x => "sys:" + x.name === voiceSel.value) || vs.find(x => /en-GB/i.test(x.lang)) || vs[0];
     const parts = said.match(/[^.!?]+[.!?]*\s*/g) || [said]; // short pieces: long lines stall on iPhone
     parts.forEach((p, i) => {
       const u = new SpeechSynthesisUtterance(p.trim()); if (v) u.voice = v; u.rate = 1.03; u.pitch = 0.95;
@@ -311,6 +358,24 @@ _HEAD_JS = r"""
       synth.speak(u);
     });
   }
+  function speak(text) {
+    const said = forSpeech(text);
+    if (!voiceOn.checked || !said) { setState("idle"); return; }
+    hush();
+    const choice = voiceSel.value || "orpheus:troy";
+    if (choice.startsWith("orpheus:") && Date.now() - orpheusOut > 3600e3) {
+      speakOrpheus(said, choice.slice(8)).then(() => setState("idle")).catch(e => {
+        orpheusOut = Date.now(); note.textContent = e.message + ". Using your phone's voice for now.";
+        speakPhone(said);
+      });
+      return;
+    }
+    speakPhone(said);
+  }
+  document.getElementById("head-test").addEventListener("click", () => {
+    unlock(); orpheusOut = 0; note.textContent = "";
+    speak("Hey, it's Theta. This is how I'll sound when I talk to you.");
+  });
 
   // ---- talking to Theta
   function show(m) { replyEl.textContent = m ? m.text : ""; }
@@ -320,7 +385,7 @@ _HEAD_JS = r"""
     try {
       const rid = Math.random().toString(36).slice(2, 12);
       const d = await (await fetch("/api/allchat", {method: "POST", headers: H, body: JSON.stringify({text, channel: "all", rid,
-        spoken: !!(synth && voiceOn.checked)})})).json();
+        spoken: !!voiceOn.checked})})).json();
       if (!d.ok) throw new Error(d.error || "no answer");
       const mine = (d.messages || []).filter(m => m.from !== "you" && m.kind !== "event");
       const m = mine[mine.length - 1];
@@ -340,7 +405,7 @@ _HEAD_JS = r"""
   function stop() { if (rec) rec.stop(); }
   function start() {
     if (busy) return;
-    unlock(); if (synth) synth.cancel();
+    unlock(); hush();
     rec = new SR(); rec.lang = "en-US"; rec.interimResults = true; rec.continuous = false; heard = "";
     rec.onresult = e => { heard = [...e.results].map(r => r[0].transcript).join(" "); saidEl.textContent = heard; };
     rec.onerror = e => { note.textContent = e.error === "not-allowed" ? "Allow the microphone (and Siri/dictation) for this app in Settings." : "Didn't catch that (" + e.error + ")."; };
@@ -364,7 +429,7 @@ _HEAD_JS = r"""
     if (!mine.length || replyEl.textContent) return;
     latest = mine[mine.length - 1]; show(latest);
     const fromPush = new URLSearchParams(location.search).get("play") === "latest";
-    if (synth && (fromPush || String(latest.id) !== store("theta:heard"))) hear.hidden = false;
+    if (fromPush || String(latest.id) !== store("theta:heard")) hear.hidden = false;
   }).catch(() => {});
   setState("idle");
 })();
@@ -382,8 +447,9 @@ def head_page(headers):
             '<form id="head-type" autocomplete="off"><input id="head-text" type="text" placeholder="Or type to Theta" '
             'aria-label="Message Theta"><button type="submit">Send</button></form>'
             '<div class="opts"><label><input type="checkbox" id="head-voice-on" checked> Speak replies</label>'
-            '<label>Voice <select id="head-voice" aria-label="Theta\'s voice"></select></label></div>'
+            '<label>Voice <select id="head-voice" aria-label="Theta\'s voice"></select></label>'
+            '<button type="button" id="head-test" class="test">Test</button></div>'
             '<p class="note" id="head-note"></p>'
             + ("" if head_on() else '<p class="note">The crew is on (HEAD_MODE=crew), so whoever answers in chat answers here.</p>')
-            + f'</section><script>{_HEAD_JS}</script>')
+            + '</section><script>' + _HEAD_JS.replace("__ORPHEUS__", json.dumps(list(ORPHEUS_VOICES))) + '</script>')
     return page(headers, "Theta", "/head", body)

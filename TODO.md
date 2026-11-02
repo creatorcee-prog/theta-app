@@ -639,6 +639,18 @@ Free first: the user is on no budget for voice.
       button: Theta hears when you start talking) and being able to
       interrupt Theta mid-sentence. Needs continuous listening, which
       iPhone Safari limits; likely a local or native voice path first.
+      Watch: **Dessa** (Block), a full-duplex speech-to-speech model that
+      laughs, interrupts and keeps a back-and-forth; research preview
+      only (waitlist, safety researchers), no API, runs on an M4 Max Mac.
+      It would replace Theta's brain, not just its voice (no text step, so
+      no DeepSeek, tools, vault or SOUL.md) unless bridged to Theta's tools.
+- [x] **8.4b Theta's voice: Orpheus on Groq** (Apache-2.0 model, free tier
+      on the hub's Groq key, ~200 characters a request). Head page voice
+      picker (troy, daniel, austin, autumn, diana, hannah, plus the phone's
+      voices) with a Test button; falls back to the phone's voice when
+      Groq says no. Next free options if it's not it: MeloTTS (Cloudflare
+      Workers AI free tier), Piper in the browser; Kokoro once the desktop
+      is back.
 
 ## Memory that fades ("use it or lose it", idea 2026-11-02)
 

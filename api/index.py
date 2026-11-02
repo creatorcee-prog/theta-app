@@ -1357,6 +1357,7 @@ TOOLS = {
 TOOLS.update(BRIDGE_TOOLS)  # Phase 4 read-only tools + task ledger
 _load_part("head")  # single head (Stage 8.2), HEAD_MODE: api/_parts/head.py
 _load_part("memory")  # Obsidian as the main memory, playbooks (Stage 7.3): api/_parts/memory.py
+_load_part("voice")  # Theta's voice, Orpheus on Groq (Stage 8.4b): api/_parts/voice.py
 
 
 
