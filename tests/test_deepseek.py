@@ -5,7 +5,7 @@ import sys, json, os, io, threading
 sys.dont_write_bytecode = True
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 mode = sys.argv[1] if len(sys.argv) > 1 else "memory"
-SEEN, STATE = [], {"models": ["deepseek-flash", "deepseek-v4-pro"], "key": "dsk"}
+SEEN, BODIES, STATE = [], [], {"models": ["deepseek-flash", "deepseek-v4-pro"], "key": "dsk"}
 
 
 class Fake(BaseHTTPRequestHandler):
@@ -20,7 +20,7 @@ class Fake(BaseHTTPRequestHandler):
         self._send(404, {})
     def do_POST(self):
         n = int(self.headers.get("Content-Length") or 0); body = json.loads(self.rfile.read(n))
-        SEEN.append(body["model"])
+        SEEN.append(body["model"]); BODIES.append(body)
         q = body["messages"][-1]["content"]
         text = ("ACTION: web_search | Broncos score" if "Broncos" in q else "ESCALATE: big plan" if "plan next month" in q
                 else "ACTION: remind | friday 3pm car registration" if "ping me friday" in q else "Hey! Doing well.")
@@ -84,6 +84,17 @@ check("ROUTE_MANAGER_PROVIDER=deepseek: the managers answer on DeepSeek", out ==
 check("...and Diagnostics says so", "answers for: manager" in row()["note"])
 for k in ("ROUTE_MANAGER_PROVIDER", "ROUTE_MANAGER_MODEL"):
     os.environ.pop(k)
+
+# ---- thinking: off by default (it made replies slow and short), a setting turns it back on
+check("thinking is off by default: replies start at once and the tokens go to the answer",
+      BODIES[-1].get("thinking") == {"type": "disabled"} and "reasoning_effort" not in BODIES[-1])
+h.DEEPSEEK_THINKING = "low"
+h.llm_chat("manager", [{"role": "user", "content": "hi"}], primary=("deepseek", "deepseek-flash"))
+check("DEEPSEEK_THINKING=low turns it back on at that effort",
+      BODIES[-1].get("thinking") == {"type": "enabled"} and BODIES[-1].get("reasoning_effort") == "low")
+h.DEEPSEEK_THINKING = "off"
+check("QWERTY can propose changing it", "DEEPSEEK_THINKING" in h.SETTABLE)
+check("other providers don't get DeepSeek's fields", "thinking" not in h.provider_extra("groq", "openai/gpt-oss-20b"))
 
 # ---- benchmark: a DeepSeek column (no Claude here, so it runs alone)
 SEEN.clear()
