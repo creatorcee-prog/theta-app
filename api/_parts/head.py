@@ -84,8 +84,19 @@ def head_system():
             "Put actions that change something (remind, spend, note, propose, ...) only in your final answer, once. "
             "Never say you did something without its ACTION line. Changes to how the hub works, and code, go through "
             "propose: the user taps Approve before anything happens."
+            + "\n\n" + HEAD_ADD_RULE
             + "\n\n" + HUB_GUIDE + _SECRETS_RULE
             + crew_facts())
+
+
+# Stage 9: the user has ADD. How Theta helps with starting, time, and the
+# messy pile in their head (focus.py has /focus, /break and /dump).
+HEAD_ADD_RULE = ("The user has ADD. When they're stuck starting something, give 3 tiny steps, the first under 2 "
+                 "minutes and with no decisions, and offer to sit with them (the focus action). When they want to "
+                 "work alongside you, start a focus session. When they unload a pile of things at once (a brain "
+                 "dump), sort it with your actions: a remind line for each thing with a time, spend for money, note "
+                 "for to-dos and ideas, and remember only for lasting facts about them; then say in one line where it "
+                 "all went.")
 
 
 # How long Theta's answers are. Spoken answers (the Head page with its voice
@@ -159,6 +170,10 @@ def head_reply(thread, spoken=False):
         text += "\n" + "\n".join(f"ACTION: {n} | {a}" for n, a in final)
     if not text:  # it kept looking things up and never answered
         text = "I went looking but couldn't pull an answer together. Ask me again, maybe a bit more specific?"
+    try:
+        memory_mark_used(_ACTION_RE.sub("", text))  # use it or lose it: which memories this answer drew on
+    except Exception as e:
+        print(f"memory use count failed: {e!r}")
     return run_actions("theta", text, allowed=allowed)
 
 
@@ -280,9 +295,9 @@ _HEAD_JS = r"""
   const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
   const ORPHEUS = __ORPHEUS__, GEMINI = __GEMINI__, CLIP_MAX = {orpheus: 200, gemini: 600};
   // Voices that run on the phone itself: open source, free, no limit. Downloaded once, then kept.
-  const PIPER = [["en_GB-alan-medium", "Alan (British)"], ["en_GB-northern_english_male-medium", "Northern English man"],
-    ["en_GB-cori-high", "Cori (British)"], ["en_GB-jenny_dioco-medium", "Jenny (British)"], ["en_US-ryan-high", "Ryan (US)"],
-    ["en_US-lessac-high", "Lessac (US)"], ["en_US-joe-medium", "Joe (US)"]];
+  // Theta's voice: Piper's Northern English man, picked by ear on 2026-11-02 (runs on the phone, free, no limit).
+  const DEFAULT_VOICE = "piper:en_GB-northern_english_male-medium";
+  const PIPER = [["en_GB-northern_english_male-medium", "Northern English man (Theta's voice)"]];
   const KOKORO = [["bm_george", "George (British)"], ["bm_fable", "Fable (British)"], ["am_michael", "Michael (US)"],
     ["am_fenrir", "Fenrir (US)"], ["af_heart", "Heart (US)"], ["bf_emma", "Emma (British)"]];
   const PIPER_JS = "https://cdn.jsdelivr.net/npm/@diffusionstudio/vits-web@1.0.3/+esm";
@@ -296,9 +311,8 @@ _HEAD_JS = r"""
   function fillVoices() {
     const cap = n => n[0].toUpperCase() + n.slice(1);
     const groups = [
-      group("Orpheus (free, Groq)", ORPHEUS.map(n => opt("orpheus:" + n, cap(n)))),
-      group("Gemini (free tier, Google)", GEMINI.map(n => opt("gemini:" + n, n))),
       group("Piper (on your phone, open source)", PIPER.map(([id, l]) => opt("piper:" + id, l))),
+      group("Gemini (free tier, Google)", GEMINI.map(n => opt("gemini:" + n, n))),
       group("Kokoro (on your phone, best quality, big download, may not work on iPhone)", KOKORO.map(([id, l]) => opt("kokoro:" + id, l))),
     ], vs = voices();
     if (vs.length) {
@@ -307,7 +321,7 @@ _HEAD_JS = r"""
     }
     const saved = store("theta:voice");
     voiceSel.replaceChildren(...groups);
-    voiceSel.value = saved && [...voiceSel.options].some(o => o.value === saved) ? saved : "orpheus:troy";
+    voiceSel.value = saved && [...voiceSel.options].some(o => o.value === saved) ? saved : DEFAULT_VOICE;
   }
   fillVoices(); if (synth) synth.onvoiceschanged = fillVoices;
   voiceSel.addEventListener("change", () => { store("theta:voice", voiceSel.value); voiceOut = 0; note.textContent = ""; });
@@ -393,7 +407,7 @@ _HEAD_JS = r"""
     const said = forSpeech(text);
     if (!voiceOn.checked || !said) { setState("idle"); return; }
     hush();
-    const choice = voiceSel.value || "orpheus:troy";
+    const choice = voiceSel.value || DEFAULT_VOICE;
     if (!choice.startsWith("sys:") && Date.now() - voiceOut > 3600e3) {
       speakClips(said, choice).then(() => setState("idle")).catch(e => {
         voiceOut = Date.now(); note.textContent = (e.message || String(e)) + ". Using your phone's voice for now.";

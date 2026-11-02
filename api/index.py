@@ -1260,9 +1260,16 @@ def apply_proposal(pid, yes):
             raise ValueError("That proposal is already settled.")
         p["status"] = "approved" if yes else "declined"
         store().set_meta("proposals", json.dumps(ps))
+    if p["kind"] == "dream":  # Keep / No on one of Theta's overnight ideas
+        try:
+            return dream_feedback(p, yes)
+        except (LLMError, ValueError) as e:
+            return f"✗ Couldn't keep it: {e}"
     if not yes:
         return f"Declined, nothing changed: {p['summary']}"
     try:
+        if p["kind"] in ("memory_add", "memory_merge", "playbook_add"):  # Theta's own memory offers
+            return apply_memory_proposal(p)
         if p["kind"] == "setting":
             vercel_set_env(p["key"], p["value"], {k: v for k, v in p.get("sets", {}).items() if k != p["key"]})
             names = ", ".join(p.get("sets") or [p["key"]])
@@ -1271,7 +1278,7 @@ def apply_proposal(pid, yes):
                                             else "Redeploy in Vercel for it to take effect (or add VERCEL_DEPLOY_HOOK so I can)."))
         url, _ = file_issue(p["title"], p.get("details", ""))
         return f"✓ Filed the issue: {url}" if url else "✗ I wrote the issue but couldn't file it: GITHUB_TOKEN isn't set."
-    except LLMError as e:
+    except (LLMError, ValueError) as e:
         with _TOOL_LOCK:
             ps = proposals()
             if pid in ps:
@@ -3336,6 +3343,7 @@ _load_part("ui")  # the app's look: themes, CSS, the shared page script and the 
 
 
 _load_part("home")  # Home: smart stack, Today's check, settings cards, benchmark UI: api/_parts/home.py
+_load_part("focus")  # help for an ADD brain: sleep and dreams, leave nudges, /focus, /break, /dump: api/_parts/focus.py
 
 
 _load_part("signin")  # Face ID sign-in (passkeys) and the sign-in page: api/_parts/signin.py

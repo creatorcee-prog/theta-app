@@ -605,6 +605,24 @@ Vercel → Settings → Environment Variables, marked **Sensitive**, then
 - [ ] Settings → Wiring → Theta should read "connected".
 
 
+## Stage 9: Help for an ADD brain (decided 2026-11-02, built; Telegram left for later)
+All in api/_parts/focus.py, run from the 5-minute tick.
+- [x] Sleep and dreams: once a night (SLEEP_HOUR, default 3 AM hub time; skipped if you wrote in the last 2 hours)
+  Theta runs its memory upkeep, then "dreams": 5 ideas from memory, 3 days of chat, the calendar and budgets,
+  scored, the best 1-2 posted as Keep / No cards. Kept ones go to Theta/Dreams.md (a note without the vault);
+  Keep / No steer later dreams. The morning brief mentions them. The shape of Google's sleep research
+  (consolidate, then dream and keep what helps), not its method: that retrains the model.
+- [x] Leave nudges: a push EVENT_NUDGE_MINUTES (15) before each timed event, plus EVENT_TRAVEL_MINUTES (20)
+  when it has a location. Needs REMI_CALENDAR_URLS. Never held by the typing guard.
+- [x] /focus [minutes] <task> (body double): check-ins every 10 minutes, a push that opens the Head page; also
+  Theta's focus action, so "sit with me while I do the dishes" works by voice.
+- [x] /break <task>: 3 tiny steps, the first under 2 minutes.
+- [x] /dump <everything>: reminders, spending, to-do and idea notes; memories wait for Approve. Theta also
+  sorts a spoken dump with its own actions.
+- [x] Sunday reset: in single-head mode the weekly review is 5 lines (Done, Slipped, Next week's 3), with the
+  week's focus sessions and kept dreams as facts.
+- [ ] Telegram (later).
+
 ## Stage 8: Single head (decided 2026-11-02)
 
 One assistant, Theta, runs everything; the crew is paused behind a switch,
@@ -651,10 +669,13 @@ Free first: the user is on no budget for voice.
       Groq says no. Next free options if it's not it: MeloTTS (Cloudflare
       Workers AI free tier), Piper in the browser; Kokoro once the desktop
       is back.
+      Picked by ear 2026-11-02: Piper's Northern English man (on the
+      phone, open source, no limit) is Theta's voice. Gemini and Kokoro
+      stay in the picker; Orpheus is out of the picker (its route stays).
 
 ## Memory that fades ("use it or lose it", idea 2026-11-02)
 
-- [ ] Memories that get used stay; ones that don't fade or merge, like a
+- [x] Memories that get used stay; ones that don't fade or merge, like a
       brain. Each Memory.md line keeps a use count and last-used date
       (a small hidden note in the vault, or a side file, so Memory.md stays
       readable). A line counts as used when it's in a prompt AND the reply
@@ -664,7 +685,10 @@ Free first: the user is on no budget for voice.
       one by the model, shown to you as a proposal you Approve before
       Memory.md changes. Pinned lines (a "!" in front) never fade.
       Pairs with the size budget from 7.3: fading frees room instead of
-      Theta asking you to tidy.
+      Theta asking you to tidy. Built 2026-11-02 (api/_parts/memory.py):
+      use counts in Redis ("mem:use"; a reply counts a line when it shares
+      its key words), a weekly fade to Archive.md after MEMORY_FADE_DAYS
+      (30), "- ! ..." pins, merge offers as Approve buttons.
 
 ## Stage 7: Re-platform in place (decided 2026-11-01)
 
@@ -760,12 +784,12 @@ the hub must work without.
         page an agent read could try to plant a "memory"). Limit memory by
         size, not count, and when it's full have the agent merge entries
         instead of the oldest dropping off without a word.
-      - **`/find <words>`.** Search the chat history directly, no model call.
+      - (Done 2026-11-02.) **`/find <words>`.** Search the chat history directly, no model call.
       - (Done in 7.3.) **Playbooks** (their "skills"): saved how-tos with When to use,
         Steps, Pitfalls and How to check. Agents get one pass and never see a
         tool's result, so the hub matches playbooks to the message and adds
         the right one before the model answers (not loaded on request).
-      - **Round review.** Once a round, a cheap model reads the recent chat
+      - (Done 2026-11-02.) **Round review.** Once a round, a cheap model reads the recent chat
         and proposes memory or agent notes ("you corrected Glass twice about
         rounding"); each waits for your Approve, like QWERTY's proposals.
         Runs after the typing guard.

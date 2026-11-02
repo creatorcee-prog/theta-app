@@ -68,9 +68,10 @@ def _push_name(sub):
 
 
 def _urgent(title, body, url):
-    """Pushes the typing guard never holds: reminders, QWERTY's security
+    """Pushes the typing guard never holds: reminders, leave nudges and focus
+    check-ins (they're about the time), QWERTY's security
     and device alerts, health problems, and Settings' test push."""
-    return (url == REMINDER_URL or title == "QWERTY" or url.startswith("/diagnostics")
+    return (url in (REMINDER_URL, NUDGE_URL, FOCUS_URL) or title == "QWERTY" or url.startswith("/diagnostics")
             or body.startswith("Test: phone notifications"))
 
 

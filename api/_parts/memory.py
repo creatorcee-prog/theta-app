@@ -181,3 +181,264 @@ def _tool_playbook(arg, agent):
 
 TOOLS["playbook"] = ("playbook | <name> :: <when to use it> :: <steps, separated by ;> :: <pitfalls> :: <how to check>   "
                      "(save a how-to you'll follow next time)", _tool_playbook, None)
+
+
+# ---- Use it or lose it (2026-11-02). Each Memory.md line keeps a use count
+# and last-used time (in Redis, "mem:use", so Memory.md stays clean). A line
+# counts as used when a reply draws on it: it shares the line's key words.
+# Once a week, lines unused for MEMORY_FADE_DAYS move to Theta/Archive.md
+# (never deleted); a line written "- ! ..." is pinned and never fades.
+# Similar lines are offered as a merge you Approve, never merged on their own.
+MEMORY_FADE_DAYS = int(os.environ.get("MEMORY_FADE_DAYS", "30") or 30)
+MEMORY_REVIEW_MIN = 4  # new messages from you before the round review looks again
+
+
+def _key_words(text):
+    return {w for w in _WORD.findall(text.lower()) if w not in _COMMON}
+
+
+def _mem_key(line):
+    return line.strip().lower()[:200]
+
+
+def memory_usage():
+    return _meta_json("mem:use", {})
+
+
+def memory_mark_used(reply):
+    """Count the Memory.md lines this reply drew on; start the clock on new lines."""
+    if not vault_on() or not reply:
+        return
+    lines = memory_lines(vault_read("Memory.md")[0])
+    if not lines:
+        return
+    words, now, use = _key_words(reply), time.time(), memory_usage()
+    changed = False
+    for line in lines:
+        k = _mem_key(line)
+        if k not in use:
+            use[k] = {"n": 0, "first": now, "last": 0}
+            changed = True
+        lw = _key_words(line.lstrip("! "))
+        if lw and len(lw & words) >= min(2, len(lw)):
+            use[k]["n"] += 1
+            use[k]["last"] = now
+            changed = True
+    if changed:
+        keep = {_mem_key(l) for l in lines}
+        store().set_meta("mem:use", json.dumps({k: v for k, v in use.items() if k in keep}))
+
+
+def memory_fade(now=None):
+    """Move lines unused for MEMORY_FADE_DAYS to Archive.md. Returns how many."""
+    now = now or time.time()
+    text, sha = vault_read("Memory.md", fresh=True)
+    use, cutoff = memory_usage(), now - MEMORY_FADE_DAYS * 86400
+    gone = []
+    for line in memory_lines(text):
+        u = use.get(_mem_key(line))
+        if line.startswith("!") or not u:  # pinned, or not tracked yet: the clock hasn't started
+            continue
+        if u["first"] < cutoff and (u["last"] or u["first"]) < cutoff:
+            gone.append((line, u["n"]))
+    if not gone:
+        return 0
+    drop = {l for l, _ in gone}
+    kept = [l for l in text.splitlines() if not (l.startswith("- ") and l[2:].strip() in drop)]
+    vault_write("Memory.md", "\n".join(kept).rstrip("\n") + "\n", f"Theta: {len(gone)} unused memories to the archive", sha)
+    day = datetime.now(hub_tz()).strftime("%Y-%m-%d")
+    archive = vault_read("Archive.md", fresh=True)
+    body = archive[0].rstrip("\n") + "\n" if archive[0].strip() else (
+        "# Theta's archive\n\nMemories that went unused for a while. Move one back to Memory.md to keep it.\n\n")
+    vault_write("Archive.md", body + "".join(f"- {l} (archived {day}, used {n} times)\n" for l, n in gone),
+                "Theta: archived unused memories", archive[1])
+    return len(gone)
+
+
+def _json_in(text):
+    """The first JSON value in a model reply (it may wrap it in prose or a fence)."""
+    m = re.search(r"(\{.*\}|\[.*\])", text, re.S)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(1))
+    except ValueError:
+        return None
+
+
+def propose_to_user(prop, text, labels=("Approve", "Decline")):
+    """A proposal you Approve or Decline (or labels) in the chat, posted by Theta."""
+    pid = hashlib.sha1(f"{time.time_ns()}{text}".encode()).hexdigest()[:8]
+    with _TOOL_LOCK:
+        ps = proposals()
+        ps[pid] = dict(prop, id=pid, by="theta", at=time.time(), status="open")
+        store().set_meta("proposals", json.dumps(dict(list(ps.items())[-40:])))
+    store().add_chat("theta", text, buttons=[{"id": f"qp:{pid}:yes", "label": labels[0], "style": "primary"},
+                                             {"id": f"qp:{pid}:no", "label": labels[1]}])
+    return pid
+
+
+def memory_merge_offers(limit=2):
+    """Ask the head's model which memory lines say the same thing; offer each merge."""
+    lines = [l for l in memory_lines(vault_read("Memory.md")[0]) if not l.startswith("!")]
+    if len(lines) < 6:
+        return 0
+    listing = "\n".join(f"{i}. {l}" for i, l in enumerate(lines))
+    try:
+        got = _json_in(head_chat([{"role": "user", "content": (
+            "These are memory lines about a user. Find at most 2 groups of lines that overlap or repeat each other "
+            "and could be one shorter line without losing a fact. Reply with JSON only: "
+            '[{"lines": [numbers], "merged": "the one line"}], or [] if none.\n\n' + listing)}], 500))
+    except LLMError:
+        return 0
+    made = 0
+    for g in (got or [])[:limit]:
+        try:
+            idx = sorted({int(i) for i in g["lines"]})
+            merged = " ".join(str(g["merged"]).split())[:200]
+        except (KeyError, TypeError, ValueError):
+            continue
+        if len(idx) < 2 or any(i < 0 or i >= len(lines) for i in idx) or not merged:
+            continue
+        try:
+            memory_check(merged)
+        except ValueError:
+            continue
+        old = [lines[i] for i in idx]
+        propose_to_user({"kind": "memory_merge", "remove": old, "add": merged,
+                         "summary": f"Merge {len(old)} memories into: {merged}"},
+                        "I could tidy my memory. Merge these:\n" + "\n".join(f"- {o}" for o in old)
+                        + f"\ninto one line:\n- {merged}")
+        made += 1
+    return made
+
+
+def memory_review():
+    """The round review: from the chat since the last review, propose up to 3
+    memories and 1 playbook. Each waits for your Approve. Returns how many."""
+    st = store()
+    last = int(st.get_meta("mem:review_last_id") or 0)
+    msgs = [m for m in st.list_chat(ALLCHAT_KEEP) if m["id"] > last and m.get("kind") != "event"]
+    mine = [m for m in msgs if m["from"] == "you"]
+    if len(mine) < MEMORY_REVIEW_MIN:
+        return 0
+    st.set_meta("mem:review_last_id", str(msgs[-1]["id"]))
+    transcript = "\n".join(chat_line(m) for m in msgs[-40:])
+    current = vault_read("Memory.md")[0]
+    try:
+        got = _json_in(head_chat([{"role": "user", "content": (
+            "Read this chat between the user and Theta, their assistant. Propose what's worth keeping long-term:\n"
+            "- memories: up to 3 short facts about the user, their preferences, or corrections they made to how "
+            "Theta works, that aren't already in their memory file below. Only things they said or clearly showed; "
+            "never guesses, never secrets.\n"
+            "- playbook: at most 1, only if the user taught a repeatable way to do something.\n"
+            'Reply with JSON only: {"memories": ["..."], "playbook": null or {"name": "...", "when": "...", '
+            '"steps": ["..."]}}\n\nTheir memory file:\n' + (current or "(empty)") + "\n\nThe chat:\n" + transcript)}],
+            600))
+    except LLMError:
+        return 0
+    if not isinstance(got, dict):
+        return 0
+    have = {l.lower() for l in memory_lines(current)}
+    made = 0
+    for m in (got.get("memories") or [])[:3]:
+        line = " ".join(str(m).split())[:200]
+        try:
+            memory_check(line)
+        except ValueError:
+            continue
+        if not line or line.lower() in have:
+            continue
+        propose_to_user({"kind": "memory_add", "line": line, "summary": f"Remember: {line}"},
+                        f"Worth remembering?\n- {line}")
+        made += 1
+    pb = got.get("playbook")
+    if isinstance(pb, dict) and pb.get("name") and pb.get("when") and pb.get("steps"):
+        steps = "; ".join(str(s) for s in pb["steps"])[:800]
+        arg = f"{pb['name']} :: {pb['when']} :: {steps}"
+        try:
+            memory_check(arg)
+            propose_to_user({"kind": "playbook_add", "arg": arg, "summary": f"Save the playbook {pb['name']}"},
+                            f"You showed me a way to do something. Save it as a playbook?\n**{pb['name']}**: "
+                            f"{pb['when']}\n" + "\n".join(f"{i}. {s}" for i, s in enumerate(pb["steps"], 1)))
+            made += 1
+        except ValueError:
+            pass
+    return made
+
+
+def apply_memory_proposal(p):
+    """Carry out an approved memory_add / memory_merge / playbook_add."""
+    if p["kind"] == "memory_add":
+        full = vault_remember(p["line"])
+        return f"✓ Remembered: {p['line']}{full}"
+    if p["kind"] == "playbook_add":
+        return "✓ " + _tool_playbook(p["arg"], "theta")
+    remove = {r.lower() for r in p["remove"]}
+    for attempt in (0, 1):
+        text, sha = vault_read("Memory.md", fresh=True)
+        kept = [l for l in text.splitlines() if not (l.startswith("- ") and l[2:].strip().lower() in remove)]
+        new = "\n".join(kept).rstrip("\n") + f"\n- {p['add']}\n"
+        try:
+            vault_write("Memory.md", new, "Theta: merged memories", sha)
+            return f"✓ Merged into: {p['add']}"
+        except LLMError as e:
+            if getattr(e, "status", None) in (409, 422) and attempt == 0:
+                continue
+            raise
+    raise LLMError("the vault kept changing; try again")
+
+
+def memory_upkeep(now=None):
+    """Theta's round job for memory: the review each round, and once a week the
+    fade and the merge offers. Returns what it did, for the round line."""
+    if not vault_on():
+        return []
+    did, now = [], now or time.time()
+    try:
+        n = memory_review()
+        if n:
+            did.append(f"offered {n} thing{'s' if n != 1 else ''} to remember")
+        if now - float(store().get_meta("mem:fade_at") or 0) >= 7 * 86400:
+            store().set_meta("mem:fade_at", str(now))
+            gone = memory_fade(now)
+            if gone:
+                did.append(f"moved {gone} unused memor{'ies' if gone != 1 else 'y'} to the archive")
+            m = memory_merge_offers()
+            if m:
+                did.append(f"offered {m} memory merge{'s' if m != 1 else ''}")
+    except LLMError as e:
+        did.append(f"memory upkeep failed ({str(e)[:80]})")
+    return did
+
+
+# ---- /find <words>: search the chat the hub keeps and Memory.md, no model call.
+FIND_SHOW = 8
+
+
+def find_lines(arg):
+    """Lines for /find: the newest matches first, chat then memory."""
+    words = [w for w in arg.lower().split() if w]
+    if not words:
+        raise CommandError("Find what? Try /find dentist")
+    hits = [m for m in store().list_chat(ALLCHAT_KEEP)
+            if m.get("kind") != "event" and all(w in (m.get("text") or "").lower() for w in words)]
+    out = []
+    for m in reversed(hits[-FIND_SHOW:]):
+        text = " ".join(m["text"].split())
+        at = text.lower().find(words[0])
+        snip = (("…" if at > 60 else "") + text[max(0, at - 60):at + 120] + ("…" if at + 120 < len(text) else ""))
+        out.append(f"- {_chat_clock(m).strip()} {chat_name(m['from'])}: {snip}")
+    mem = [l for l in memory_lines(vault_read("Memory.md")[0]) if all(w in l.lower() for w in words)] if vault_on() else []
+    head = f"Found {len(hits)} message{'s' if len(hits) != 1 else ''} with “{arg.strip()}”"
+    head += f" (newest {FIND_SHOW} shown)" if len(hits) > FIND_SHOW else ""
+    lines = [head + ":" if hits else f"No messages with “{arg.strip()}” in the last {ALLCHAT_KEEP}."] + out
+    if mem:
+        lines += ["In your memory:"] + [f"- {l}" for l in mem[:5]]
+    return lines
+
+
+def _cmd_find(arg):
+    lines = find_lines(arg)
+    store().add_chat("theta" if head_on() else "hub", "\n".join(lines)[:4000])
+    return lines[0]

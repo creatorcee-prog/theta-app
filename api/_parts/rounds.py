@@ -64,6 +64,10 @@ def week_facts(today):
         nxt = [o for o in calendar_events(today + timedelta(days=1), today + timedelta(days=7)) if not o["birthday"]]
         bdays = [o["title"] for o in calendar_events(today + timedelta(days=1), today + timedelta(days=7)) if o["birthday"]]
         facts.append(f"Next 7 days: {len(nxt)} calendar events" + (f"; birthdays: {', '.join(bdays)}" if bdays else ""))
+    facts += focus_week(today)
+    kept = [t["idea"] for t in dream_taste() if t["kept"] and t["at"] >= since.timestamp()]
+    if kept:
+        facts.append("Overnight ideas the user kept this week: " + " | ".join(kept)[:400])
     last = st.get_meta("round:news:last")
     if last:
         facts.append(f"Latest story the news miners covered: {json.loads(last)['title']}")
@@ -89,9 +93,15 @@ def _round_theta(ctx):
         facts = week_facts(today)
         review = llm_chat("master", [
             {"role": "system", "content": system_prompt("theta")},
-            {"role": "user", "content": "Write this week's review for the crew in 4-6 sentences, then "
-             "'Priorities for next week:' with 2-3 bullets. Use only these facts; don't invent "
-             "numbers or events:\n" + "\n".join(f"- {f}" for f in facts)}], max_tokens=900)
+            {"role": "user", "content": (
+                # the Sunday reset (Stage 9): five short lines, for an ADD brain
+                "Write the user's Sunday reset, at most 5 short lines: 'Done:' (what got done), 'Slipped:' "
+                "(what didn't, kindly, or 'nothing'), then 'Next week:' with the 3 priorities, one line each. "
+                if head_on() else
+                "Write this week's review for the crew in 4-6 sentences, then "
+                "'Priorities for next week:' with 2-3 bullets. ")
+             + "Use only these facts; don't invent numbers or events:\n" + "\n".join(f"- {f}" for f in facts)}],
+            max_tokens=900)
         st.add_chat("theta", f"Weekly review ({today:%b %d}):\n{review.strip()}")
         save_card("theta", f"Weekly review, {today:%b} {today.day}", review.strip())
         st.set_meta("round:theta:week", today.isoformat())
@@ -99,6 +109,7 @@ def _round_theta(ctx):
         did.append("posted the weekly review")
     if projects():
         did += rerun_projects(time.time() + 45)
+    did += memory_upkeep()  # the review each round; the fade and merge offers weekly
     return ", ".join(did) or "nothing new to summarize"
 
 
