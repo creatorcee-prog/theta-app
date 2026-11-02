@@ -614,14 +614,17 @@ Free first: the user is on no budget for voice.
 - [x] **8.0 SOUL.md.** Theta's personality, first in every prompt:
       Theta/SOUL.md in the vault wins over the shipped api/_parts/SOUL.md.
       The crew takes its tone while paused agents still exist.
-- [ ] **8.1 DeepSeek provider** (`deepseek-flash`, served by V4.1 Flash
+- [x] **8.1 DeepSeek provider** (`deepseek-flash`, served by V4.1 Flash
       1017; DEEPSEEK_API_KEY is in Vercel) plus a tool-calling benchmark
-      against Haiku. The go/no-go for the head's model.
-- [ ] **8.2 HEAD_MODE=single.** Theta answers everything; the agents'
+      against Haiku. The go/no-go for the head's model. Result 2026-11-02:
+      DeepSeek 5/6 (the only one to hand off the planning question), Haiku
+      4/6 and 3/6: DeepSeek is the head.
+- [x] **8.2 HEAD_MODE=single.** Theta answers everything; the agents'
       jobs become Theta's tools (spend, remind, calendar, library, chart,
       search, propose with Approve). Native tool calling with a bounded
       loop (a few steps, inside Vercel's 60 s). HEAD_MODE=crew brings the
-      crew back.
+      crew back. Built as lookups-then-answer on the existing ACTION
+      format (up to 3 rounds); native function calling can come later.
 - [ ] **8.3 The Head page:** the chosen avatar (previews: Lens, Rings,
       Faceplate; "base idea" for now), push-to-talk, live transcript;
       the old chat stays.
