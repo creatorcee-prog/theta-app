@@ -27,6 +27,8 @@ class Fake(BaseHTTPRequestHandler):
         who = "pc" if self.path.startswith("/pc/") else "groq"
         if who == "pc" and not self._authed("lm-token"): return self._send(401, {})
         SEEN["chat"].append((who, body.get("model")))
+        if STATE.get("ctx_error") and who == "pc":  # LM Studio's own error shape: a plain string
+            return self._send(400, {"error": "The number of tokens to keep from the initial prompt is greater than the context length."})
         q = body["messages"][-1]["content"]
         text = ("SEARCH: Broncos score" if "Broncos" in q else "ESCALATE: big plan" if "plan next month" in q
                 else "ACTION: remind | friday 3pm car registration" if "ping me friday" in q else f"{who} says hi")
@@ -123,6 +125,19 @@ for k in ("ROUTE_MINER_PROVIDER", "ROUTE_MINER_MODEL"):
 fresh()
 h.llm_chat("manager", [{"role": "user", "content": "hi"}])
 check("unset: the legacy lookup is unchanged", SEEN["chat"] == [("groq", "openai/gpt-oss-120b")])
+
+# ---- LM Studio's errors are plain strings ({"error": "..."}): read, not crashed on (it was
+# "'str' object has no attribute 'get'" in production), with a hint for the usual cause
+STATE["up"] = True; STATE["ctx_error"] = True; fresh()
+try:
+    h._llm_call("local", "qwen3.6-35b-a3b", [{"role": "user", "content": "hi"}], 50); msg = ""
+except h.LLMError as e:
+    msg = str(e)
+check("LM Studio's own error text comes through", "greater than the context length" in msg and msg.startswith("local returned 400"))
+check("...with what to change", "longer context length" in msg)
+STATE["ctx_error"] = False
+check("Groq/Gemini's error shape still reads the same", h._llm_error_text("groq", 429, '{"error": {"message": "slow down"}}') == "groq returned 429: slow down")
+check("the benchmark counts the web_search tool as searching", h._bench_kind("Let me look.\nACTION: web_search | Broncos score") == "search")
 
 # ---- Diagnostics row
 STATE["up"] = True; fresh()
