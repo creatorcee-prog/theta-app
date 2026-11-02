@@ -152,3 +152,167 @@ def head_replies(thread):
         return [], {"Theta": str(e)[:200]}
     _REQ.trail = (getattr(_REQ, "trail", None) or []) + ["theta"]
     return [("theta", reply, reply_extra())], {}
+
+
+# ---- The Head page (Stage 8.3): Theta as the Rings avatar, push to talk.
+# Listening is Safari's own dictation (SpeechRecognition) and the voice is
+# the phone's built-in speech (speechSynthesis): both free, nothing to host.
+# Messages go through /api/allchat like the chat, so they land in its history.
+_HEAD_CSS = """
+.headpage{display:grid;justify-items:center;gap:14px;max-width:560px;margin:0 auto;padding-block:8px 24px}
+.headpage canvas{width:min(78vw,340px);aspect-ratio:1;display:block;cursor:pointer;touch-action:manipulation}
+.headpage .hstate{font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0;min-height:1.4em}
+.headpage .said{color:var(--muted);font-size:15px;text-align:center;margin:0;min-height:1.4em;max-width:46ch}
+.headpage .reply{font-size:17px;line-height:1.55;margin:0;max-width:46ch;white-space:pre-wrap;overflow-wrap:anywhere}
+.headpage .talk{font:inherit;font-weight:750;font-size:16px;padding:14px 28px;border-radius:999px;border:0;cursor:pointer;
+ color:#04121a;background:#4fd3ff;min-width:180px}
+.headpage .talk[aria-pressed=true]{background:#ff5d6c;color:#fff}
+.headpage .talk:disabled{opacity:.55;cursor:default}
+.headpage .talk:focus-visible,.headpage canvas:focus-visible{outline:2px solid #4fd3ff;outline-offset:3px}
+.headpage form{display:flex;gap:8px;width:100%}
+.headpage form input{flex:1;min-width:0;font:inherit;padding:11px 14px;border-radius:12px;border:1px solid var(--line,rgba(127,127,127,.3));background:transparent;color:inherit}
+.headpage form button{font:inherit;font-weight:700;padding:10px 16px;border-radius:12px;border:1px solid var(--line,rgba(127,127,127,.3));background:transparent;color:inherit;cursor:pointer}
+.headpage .opts{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;justify-content:center;font-size:13px;color:var(--muted)}
+.headpage .opts select{font:inherit;max-width:220px;background:transparent;color:inherit;border:1px solid var(--line,rgba(127,127,127,.3));border-radius:8px;padding:4px 6px}
+.headpage .note{font-size:13px;color:var(--muted);margin:0;text-align:center}
+"""
+
+_HEAD_JS = r"""
+(() => {
+  const H = window.THETA_H, cv = document.getElementById("head-av"); if (!cv) return;
+  const g = cv.getContext("2d"), S = cv.width, CY = "#4fd3ff";
+  const stateEl = document.getElementById("head-state"), saidEl = document.getElementById("head-said");
+  const replyEl = document.getElementById("head-reply"), talk = document.getElementById("head-talk");
+  const form = document.getElementById("head-type"), input = document.getElementById("head-text");
+  const voiceOn = document.getElementById("head-voice-on"), voiceSel = document.getElementById("head-voice");
+  const note = document.getElementById("head-note");
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const LABEL = {idle: "Tap to talk", listening: "Listening…", thinking: "Thinking…", speaking: "Speaking"};
+  let state = "idle", level = 0, burst = 0, busy = false;
+  const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } };
+  function setState(s) { state = s; stateEl.textContent = LABEL[s] || ""; }
+
+  // ---- the Rings avatar
+  function draw(ms) {
+    const t = ms / 1000 * (reduce ? 0.35 : 1), c = S / 2;
+    let target = state === "speaking" ? 0.25 + 0.5 * Math.max(0, 0.5 + 0.5 * Math.sin(t * 13) * Math.sin(t * 5.3 + 1.2)) + 0.35 * burst
+      : state === "listening" ? 0.2 + 0.1 * (0.5 + 0.5 * Math.sin(t * 2.2)) : state === "thinking" ? 0.12 : 0.06 + 0.05 * (0.5 + 0.5 * Math.sin(t * 1.3));
+    burst *= 0.86; level += (target - level) * 0.22;
+    g.clearRect(0, 0, S, S); g.lineCap = "round";
+    const spin = state === "thinking" ? 3.2 : state === "listening" ? 1.4 : 0.7;
+    [[0.40, 0.010, 3, 0.35, 0.5], [0.32, 0.016, 5, -0.6, 0.35], [0.24, 0.008, 8, 0.95, 0.25]].forEach(([r, w, segs, sp, gap], i) => {
+      const rr = S * (r + (state === "speaking" ? 0.025 * level * Math.sin(t * 9 + i) : 0) + (state === "listening" && i === 0 ? 0.012 * Math.sin(t * 4) : 0));
+      const step = Math.PI * 2 / segs, rot = t * sp * spin;
+      g.strokeStyle = CY; g.globalAlpha = 0.35 + 0.5 * level + (i === 1 ? 0.1 : 0); g.lineWidth = S * w;
+      for (let k = 0; k < segs; k++) { g.beginPath(); g.arc(c, c, rr, rot + k * step, rot + (k + 1) * step - gap); g.stroke(); }
+    });
+    g.globalAlpha = 0.25; g.lineWidth = S * 0.004;
+    for (let k = 0; k < 60; k++) { const a = k * Math.PI / 30 - t * 0.1; g.beginPath(); g.moveTo(c + Math.cos(a) * S * 0.445, c + Math.sin(a) * S * 0.445); g.lineTo(c + Math.cos(a) * S * 0.46, c + Math.sin(a) * S * 0.46); g.stroke(); }
+    g.globalAlpha = 1;
+    const cr = S * (0.07 + 0.06 * level), gr = g.createRadialGradient(c, c, 0, c, c, cr * 3);
+    gr.addColorStop(0, "#ffffff"); gr.addColorStop(0.18, "#bff0ff"); gr.addColorStop(0.45, CY); gr.addColorStop(1, "rgba(0,0,0,0)");
+    g.fillStyle = gr; g.beginPath(); g.arc(c, c, cr * 3, 0, 7); g.fill();
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+
+  // ---- the voice: the phone's own speech, a British voice when there is one
+  const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
+  function voices() { return synth ? synth.getVoices().filter(v => /^en/i.test(v.lang)) : []; }
+  function fillVoices() {
+    const vs = voices(); if (!vs.length) return;
+    const saved = store("theta:voice");
+    const pick = vs.find(v => v.name === saved) || vs.find(v => /en-GB/i.test(v.lang) && /daniel|arthur|george|male/i.test(v.name))
+      || vs.find(v => /en-GB/i.test(v.lang)) || vs[0];
+    voiceSel.replaceChildren(...vs.map(v => { const o = document.createElement("option"); o.value = v.name; o.textContent = v.name + " (" + v.lang + ")"; o.selected = v === pick; return o; }));
+  }
+  if (synth) { fillVoices(); synth.onvoiceschanged = fillVoices; } else { voiceOn.checked = false; voiceOn.disabled = true; }
+  voiceSel.addEventListener("change", () => store("theta:voice", voiceSel.value));
+  if (store("theta:speak") === "off") voiceOn.checked = false;
+  voiceOn.addEventListener("change", () => { store("theta:speak", voiceOn.checked ? "on" : "off"); if (!voiceOn.checked && synth) synth.cancel(); });
+  function unlock() { // iPhone only speaks after a tap: start a silent line inside the tap
+    if (!synth) return; const u = new SpeechSynthesisUtterance(" "); u.volume = 0; synth.speak(u);
+  }
+  function forSpeech(text) {
+    return text.split("\n").filter(l => !/^\s*(Sources:|\[\d+\]\s*https?:)/i.test(l))
+      .map(l => l.replace(/^\s*[✓✗]\s*/, "")).join(" ")
+      .replace(/https?:\/\/\S+/g, "the link").replace(/\[\d+\]/g, "").replace(/[*_#`>|]/g, "")
+      .replace(/\s+([.,!?])/g, "$1").replace(/\s+/g, " ").trim();
+  }
+  function speak(text) {
+    const said = forSpeech(text);
+    if (!synth || !voiceOn.checked || !said) { setState("idle"); return; }
+    synth.cancel();
+    const v = voices().find(x => x.name === voiceSel.value);
+    const parts = said.match(/[^.!?]+[.!?]*\s*/g) || [said]; // short pieces: long lines stall on iPhone
+    parts.forEach((p, i) => {
+      const u = new SpeechSynthesisUtterance(p.trim()); if (v) u.voice = v; u.rate = 1.03; u.pitch = 0.95;
+      u.onstart = () => setState("speaking"); u.onboundary = () => { burst = 1; };
+      if (i === parts.length - 1) u.onend = u.onerror = () => setState("idle");
+      synth.speak(u);
+    });
+  }
+
+  // ---- talking to Theta
+  function show(m) { replyEl.textContent = m ? m.text : ""; }
+  async function send(text) {
+    text = (text || "").trim(); if (!text || busy) return;
+    busy = true; talk.disabled = true; saidEl.textContent = "“" + text + "”"; setState("thinking");
+    try {
+      const rid = Math.random().toString(36).slice(2, 12);
+      const d = await (await fetch("/api/allchat", {method: "POST", headers: H, body: JSON.stringify({text, channel: "all", rid})})).json();
+      if (!d.ok) throw new Error(d.error || "no answer");
+      const mine = (d.messages || []).filter(m => m.from !== "you" && m.kind !== "event");
+      const m = mine[mine.length - 1];
+      if (!m) throw new Error(Object.values(d.errors || {})[0] || "no answer");
+      show(m);
+      note.textContent = m.buttons && m.buttons.length ? "This one needs your Approve: open Chat to tap it." : "";
+      speak(m.text);
+    } catch (e) { replyEl.textContent = ""; note.textContent = "Couldn't reach Theta: " + e.message; setState("idle"); }
+    busy = false; talk.disabled = false;
+  }
+  form.addEventListener("submit", e => { e.preventDefault(); unlock(); const t = input.value; input.value = ""; send(t); });
+
+  // ---- listening: Safari's own dictation
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec = null, heard = "";
+  if (!SR) { talk.hidden = true; note.textContent = "Voice input isn't available in this browser; type to Theta below."; }
+  function stop() { if (rec) rec.stop(); }
+  function start() {
+    if (busy) return;
+    unlock(); if (synth) synth.cancel();
+    rec = new SR(); rec.lang = "en-US"; rec.interimResults = true; rec.continuous = false; heard = "";
+    rec.onresult = e => { heard = [...e.results].map(r => r[0].transcript).join(" "); saidEl.textContent = heard; };
+    rec.onerror = e => { note.textContent = e.error === "not-allowed" ? "Allow the microphone (and Siri/dictation) for this app in Settings." : "Didn't catch that (" + e.error + ")."; };
+    rec.onend = () => { talk.setAttribute("aria-pressed", "false"); talk.textContent = "Talk"; rec = null; if (heard.trim()) send(heard); else setState("idle"); };
+    talk.setAttribute("aria-pressed", "true"); talk.textContent = "Done"; note.textContent = ""; setState("listening");
+    try { rec.start(); } catch (e) { rec.onend(); }
+  }
+  talk.addEventListener("click", () => rec ? stop() : start());
+  cv.addEventListener("click", () => { if (SR && !busy) (rec ? stop() : start()); });
+
+  // ---- open on Theta's latest message, without speaking it
+  fetch("/api/allchat?channel=all", {headers: H}).then(r => r.json()).then(d => {
+    const mine = (d.messages || []).filter(m => m.from !== "you" && m.kind !== "event");
+    if (mine.length && !replyEl.textContent) show(mine[mine.length - 1]);
+  }).catch(() => {});
+  setState("idle");
+})();
+"""
+
+
+def head_page(headers):
+    body = (f'<style>{_HEAD_CSS}</style><section class="headpage" aria-label="Talk to Theta">'
+            '<canvas id="head-av" width="560" height="560" tabindex="0" role="button" aria-label="Theta. Tap to talk"></canvas>'
+            '<p class="hstate" id="head-state" aria-live="polite"></p>'
+            '<p class="said" id="head-said"></p>'
+            '<p class="reply" id="head-reply" aria-live="polite"></p>'
+            '<button type="button" class="talk" id="head-talk" aria-pressed="false">Talk</button>'
+            '<form id="head-type" autocomplete="off"><input id="head-text" type="text" placeholder="Or type to Theta" '
+            'aria-label="Message Theta"><button type="submit">Send</button></form>'
+            '<div class="opts"><label><input type="checkbox" id="head-voice-on" checked> Speak replies</label>'
+            '<label>Voice <select id="head-voice" aria-label="Theta\'s voice"></select></label></div>'
+            '<p class="note" id="head-note"></p>'
+            + ("" if head_on() else '<p class="note">The crew is on (HEAD_MODE=crew), so whoever answers in chat answers here.</p>')
+            + f'</section><script>{_HEAD_JS}</script>')
+    return page(headers, "Theta", "/head", body)

@@ -625,10 +625,10 @@ Free first: the user is on no budget for voice.
       loop (a few steps, inside Vercel's 60 s). HEAD_MODE=crew brings the
       crew back. Built as lookups-then-answer on the existing ACTION
       format (up to 3 rounds); native function calling can come later.
-- [ ] **8.3 The Head page:** the chosen avatar (previews: Lens, Rings,
+- [x] **8.3 The Head page:** the chosen avatar (previews: Lens, Rings,
       Faceplate; "base idea" for now), push-to-talk, live transcript;
-      the old chat stays.
-- [ ] **8.4 Voice, free:** the browser's built-in speech for Theta's voice
+      the old chat stays. Built: /head, the Theta tab, with Rings.
+- [x] **8.4 Voice, free:** the browser's built-in speech for Theta's voice
       and Safari's dictation for listening, both free. Later, with the
       desktop: Kokoro or Chatterbox locally.
 - [ ] **8.5 Rounds become Theta's scheduled jobs** (morning brief, budget

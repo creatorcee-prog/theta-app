@@ -80,8 +80,8 @@ def rail_links(html):
     return re.findall(r'href="([^"]+)"', rail)
 
 home = page("/")
-check("bottom bar has exactly Home, Diagnostics, Settings",
-      tabbar_links(home) == ["/", "/diagnostics", "/settings"])
+check("bottom bar has exactly Home, Theta (the Head page, Stage 8.3), Diagnostics, Settings",
+      tabbar_links(home) == ["/", "/head", "/diagnostics", "/settings"])
 rl = rail_links(home)
 check("sidebar Sections still link Chat, Calendar, Money",
       "/chat" in rl and "/calendar" in rl and "/money" in rl)
