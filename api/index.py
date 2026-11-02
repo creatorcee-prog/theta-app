@@ -4885,6 +4885,7 @@ def notify(title, body, url="/"):
     if not _urgent(title, body, url) and user_typing():
         _hold(push={"title": title, "body": body[:240], "url": url})
         return 0
+    title, body = head_push(title, body)
     subs = push_subs()
     problem = push_problem()
     if problem:
@@ -5429,6 +5430,8 @@ def send_digest(opener=True, now=None):
             return False
         st.set_meta("round:mistral:digest_day", today)  # claimed first: a slow model can't double-send
     post, brief = morning_digest(now.date() if now else None)
+    if head_on():  # Stage 8.5: Theta's own short morning brief, made to be heard
+        return send_head_brief(post, brief)
     if opener:
         try:
             # Migration #3: selection comes from route(), executed by
@@ -13646,7 +13649,7 @@ def round_push(results):
         return None
     body = "; ".join(busy[:4]) + (f" (+{len(busy) - 4} more)" if len(busy) > 4 else "") + (
         f"{'. ' if busy else ''}Failed: {', '.join(failed)}" if failed else "")
-    notify("Theta", "Round done. " + body, "/chat")
+    notify("Theta", "Round done. " + body, HEAD_PLAY_URL if head_on() else "/chat")
     return body
 
 

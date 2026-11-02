@@ -631,8 +631,14 @@ Free first: the user is on no budget for voice.
 - [x] **8.4 Voice, free:** the browser's built-in speech for Theta's voice
       and Safari's dictation for listening, both free. Later, with the
       desktop: Kokoro or Chatterbox locally.
-- [ ] **8.5 Rounds become Theta's scheduled jobs** (morning brief, budget
-      alerts, releases), one voice.
+- [x] **8.5 Rounds become Theta's scheduled jobs** (morning brief, budget
+      alerts, releases), one voice. Built: the morning digest is Theta's
+      short spoken brief, every push is titled Theta and opens the Head
+      page with a "Hear it" button.
+- [ ] **8.6 Talk like a conversation (later).** Active listening (no
+      button: Theta hears when you start talking) and being able to
+      interrupt Theta mid-sentence. Needs continuous listening, which
+      iPhone Safari limits; likely a local or native voice path first.
 
 ## Stage 7: Re-platform in place (decided 2026-11-01)
 
