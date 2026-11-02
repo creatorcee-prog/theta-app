@@ -11817,13 +11817,14 @@ UI_ICONS = {
     "photo": '<rect x="3.5" y="5" width="17" height="14" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M4 17l5-4.5 3.5 3 3-2.5L20 17"/>',
     "users": '<circle cx="9" cy="8.5" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 5.2a3.5 3.5 0 0 1 0 6.6M18.5 20a6.5 6.5 0 0 0-2.7-5.3"/>',
     "bolt": '<path d="M13 3L5 13.5h6L10 21l8-10.5h-6z"/>',
+    "rings": '<circle cx="12" cy="12" r="2.4"/><path d="M12 4.5a7.5 7.5 0 0 1 7.5 7.5M12 19.5A7.5 7.5 0 0 1 4.5 12"/><path d="M12 7.5a4.5 4.5 0 0 1 4.5 4.5M12 16.5A4.5 4.5 0 0 1 7.5 12"/>',
     "news": '<path d="M5 4.5h11v15H6.5A1.5 1.5 0 0 1 5 18z"/><path d="M16 8.5h3v9.5a1.5 1.5 0 0 1-3 0M8 8.5h5M8 12h5M8 15.5h3"/>',
     "arrow": '<path d="M5 12h14M13 6l6 6-6 6"/>',
 }
 # Primary destinations in the bottom bar. Chat, Calendar and Money keep
 # their routes and are reached from the sidebar Sections list, the Home
 # quick actions and the persistent chat bar; nothing was removed.
-NAV = [("/", "Home", "home"), ("/diagnostics", "Diagnostics", "bolt"), ("/settings", "Settings", "settings")]
+NAV = [("/", "Home", "home"), ("/head", "Theta", "rings"), ("/diagnostics", "Diagnostics", "bolt"), ("/settings", "Settings", "settings")]
 NAV_MORE = [("/chat", "Chat", "chat"), ("/calendar", "Calendar", "calendar"), ("/money", "Money", "money")]
 
 
@@ -15628,7 +15629,8 @@ def handle(method, path, query, headers, body):
     pages = {"/chat": lambda: chat_page(headers, query), "/calendar": lambda: calendar_page(headers, query),
              "/diagnostics": lambda: diagnostics_page(headers), "/lenz": lambda: lenz_page(headers),
              "/mail": lambda: mail_page(headers),
-             "/money": lambda: money_page(headers), "/settings": lambda: settings_page(headers)}
+             "/money": lambda: money_page(headers), "/settings": lambda: settings_page(headers),
+             "/head": lambda: head_page(headers)}
     agent_path = path.startswith("/agent/") and path[len("/agent/"):] in AGENTS
     if path in pages or agent_path:
         if not _auth_dashboard(query, headers):

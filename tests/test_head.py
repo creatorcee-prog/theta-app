@@ -133,6 +133,21 @@ r = last_reply()
 check("the round update is Theta's own, on the head's model", r["from"] == "theta" and r["text"] == "Heads up: dining's at 92%."
       and CALLS[0][0] == "deepseek" and "don't name the crew" in CALLS[0][2][0]["content"])
 
+# ---- the Head page (8.3)
+def get(path, qs=""):
+    env = {"REQUEST_METHOD": "GET", "PATH_INFO": path, "QUERY_STRING": qs, "CONTENT_LENGTH": "0", "wsgi.input": io.BytesIO()}
+    setup_testing_defaults(env); got = {}
+    out = b"".join(h.app(env, lambda s, hd: got.update(s=s)))
+    return int(got["s"][:3]), out.decode()
+s, page = get("/head")
+check("the Head page needs the key like every page", s == 401)
+s, page = get("/head", "key=dk")
+check("the Head page: the Rings avatar, a Talk button, a type-to-Theta box, the voice options",
+      s == 200 and 'id="head-av"' in page and 'id="head-talk"' in page and 'id="head-text"' in page
+      and 'id="head-voice"' in page and "webkitSpeechRecognition" in page and "speechSynthesis" in page)
+check("...it talks through /api/allchat, so it's in the chat history too", 'fetch("/api/allchat"' in page)
+check("...and Theta is a tab in the main navigation", 'href="/head"' in get("/", "key=dk")[1] and '<span>Theta</span>' in page)
+
 # ---- the switch back
 h.HEAD_MODE = "crew"
 h.desk_replies = lambda thread: ([("mistral", "Mistral here.", {})], {})
