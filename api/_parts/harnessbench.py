@@ -11,7 +11,7 @@ one way (Vercel's 60 s), so the Diagnostics page asks for them in turn."""
 
 HB_CASES = [  # id, message, tools it should use {name: words its input should have}, what it checks
     ("chat", "hey, how's it going?", {}, "Small talk: no tools"),
-    ("money", "how much have I spent this month?", {"budget": ""}, "Looks up the budget"),
+    ("money", "how much have I spent this month?", "month_total", "Knows what you've spent (looked up, or from its prompt)"),
     ("remind", "make sure I call the bank tomorrow at 9am", {"remind": "bank"}, "Sets one reminder"),
     ("multi", "check my budget, then set a reminder for 6pm to pay rent, and log $12 for lunch",
      {"budget": "", "remind": "rent", "spend": "12"}, "Three steps in one ask"),
@@ -66,6 +66,13 @@ def hb_score(calls, want, reply=""):
     must have worked, or a named check for the harder cases."""
     good = [(c[0], c[1]) for c in calls if len(c) < 3 or c[2]]  # the calls that worked
     has = lambda n, w: any(c == n and (not w or w.lower() in a.lower()) for c, a in good)
+    if want == "month_total":  # right if it looked it up, or says the real total it already had
+        total = sum(v["spent"] for v in month_status().values())
+        said = re.sub(r"[,\s]", "", reply)
+        shown = {f"${total:.2f}", f"${total:.0f}", f"${int(total)}"}
+        if any(c == "budget" for c, _ in good) or any(x in said for x in shown):
+            return True, []
+        return False, [f"the real total (${total:,.2f}) or a budget lookup"]
     if want == "decide_dining":
         dining = sum(v["spent"] for c, v in month_status().items() if "dining" in c.lower() or "restaurant" in c.lower())
         if not any(c == "budget" for c, _ in good):
