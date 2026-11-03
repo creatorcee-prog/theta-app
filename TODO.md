@@ -622,6 +622,25 @@ All in api/_parts/focus.py, run from the 5-minute tick.
 - [x] Sunday reset: in single-head mode the weekly review is 5 lines (Done, Slipped, Next week's 3), with the
   week's focus sessions and kept dreams as facts.
 - [ ] Telegram (later).
+- [x] Conversations (Head page, "Record a conversation"): 30-second clips heard by Groq's Whisper, a summary at the
+  end, the full text saved to Theta/Conversations/ (a note without the vault). Never into memory on its own.
+  Only while the page is open (the screen is kept on). Recording people can need their consent.
+- [x] Translation, a turn at a time: "I speak" / "They speak", 13 languages, said in the phone's own voice.
+- [x] Directions: Theta's directions action gives an Apple Maps link (Open in Maps on the Head page); Maps speaks the turns.
+- [ ] Glasses mode taps don't arrive on the user's glasses (2026-11-03): a "Taps heard" counter added to find out where it breaks.
+- [x] More notifications, each with an on/off switch (Settings → Notifications): weather (HOME_CITY, Open-Meteo, free),
+  money (80% / 100% of a budget, BIG_SPEND), calendar changes, wind-down (WIND_DOWN_TIME), water and stretch breaks
+  (WATER_EVERY_HOURS, 10 AM to 8 PM), releases you follow the evening before, missed "until done" reminders with
+  Move to tomorrow (MISSED_TIME).
+
+## Harness upgrade (2026-11-03)
+- [x] Native tool calling for Theta (HEAD_NATIVE_TOOLS, on by default): tools go to DeepSeek as function tools,
+  Theta sees every result (failures too, so it fixes its input), and keeps going for up to 6 rounds, so a
+  multi-step job gets done in one answer. Changes show as receipts. A model that refuses tools falls back to
+  the ACTION-line way.
+- [x] Easier for every agent: one shared run_tool, up to 5 actions a reply (was 3), the same action twice runs once.
+- [x] Writing rule from Wikipedia's "Signs of AI writing" in every agent's prompt and every head_chat call.
+- [ ] MCP tools (later, once the desktop is back).
 
 ## Stage 8: Single head (decided 2026-11-02)
 

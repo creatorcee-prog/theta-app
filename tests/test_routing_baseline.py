@@ -97,12 +97,12 @@ def tool_done():
 
 
 # --- A. Tool registration, as it stands on main ---
-INTERNAL = ["remember", "forget", "cancel", "remind", "check", "note", "self_note", "spend", "calendar", "budget", "playbook", "focus",
+INTERNAL = ["remember", "forget", "cancel", "remind", "check", "note", "self_note", "spend", "calendar", "budget", "playbook", "focus", "directions",
             "watched", "project", "propose", "ask_qwerty", "ask", "chart", "workout"]
 BRIDGE = ["web_search", "fetch_page", "task_create", "task_list", "task_complete",
           "task_reopen", "task_note", "follow_create", "follow_list", "follow_cancel"]
-check("TOOLS holds exactly the 19 internal tools", sorted(
-    k for k in h.TOOLS if k in INTERNAL) == sorted(INTERNAL) and len(h.TOOLS) == 29)
+check("TOOLS holds exactly the 20 internal tools", sorted(
+    k for k in h.TOOLS if k in INTERNAL) == sorted(INTERNAL) and len(h.TOOLS) == 30)
 check("BRIDGE_TOOLS holds exactly the 10 bridge tools (incl. 3 follow tools)",
       sorted(h.BRIDGE_TOOLS) == sorted(BRIDGE))
 mp = h.tools_prompt("mistral")
@@ -305,9 +305,9 @@ check("single pass: tools.applied reports returned_to_model=0",
       len(applied()) == 1 and applied()[0]["returned_to_model"] == 0)
 
 diags.clear()
-out = h.run_actions("mistral", "\n".join(f"ACTION: task_create | Cap {i}" for i in range(4)))
-check("at most 3 actions run per reply",
-      out.count("✓") == 3)
+out = h.run_actions("mistral", "\n".join(f"ACTION: task_create | Cap {i}" for i in range(7)))
+check("at most ACTIONS_MAX (5) actions run per reply",
+      out.count("✓") == 5 == h.ACTIONS_MAX)
 
 prompts = []
 

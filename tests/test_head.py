@@ -1,4 +1,6 @@
-"""Single head (Stage 8.2): with HEAD_MODE=single, Theta alone answers every
+"""(The ACTION-line way, the fallback when native tool calling is off or
+refused: test_head_native.py covers native tool calling.)
+Single head (Stage 8.2): with HEAD_MODE=single, Theta alone answers every
 message on DeepSeek, reads lookups before answering, runs actions once, and
 the crew is only paused (HEAD_MODE=crew brings it back). A fake
 OpenAI-format server stands in for DeepSeek and Gemini; no live network."""
@@ -44,7 +46,7 @@ class Fake(BaseHTTPRequestHandler):
 srv = ThreadingHTTPServer(("127.0.0.1", 0), Fake)
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 base = f"http://127.0.0.1:{srv.server_address[1]}"
-os.environ.update(DASHBOARD_KEY="dk", GROQ_API_KEY="qk", GEMINI_API_KEY="gk", ANTHROPIC_API_KEY="", DEEPSEEK_API_KEY="dsk",
+os.environ.update(HEAD_NATIVE_TOOLS="off", DASHBOARD_KEY="dk", GROQ_API_KEY="qk", GEMINI_API_KEY="gk", ANTHROPIC_API_KEY="", DEEPSEEK_API_KEY="dsk",
                   GLASS_BUDGETS="Groceries:600,Dining:200", NEWS_FEEDS="http://127.0.0.1:1/x.xml",
                   ENTERTAINMENT_FEEDS="http://127.0.0.1:1/x.json")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "api"))

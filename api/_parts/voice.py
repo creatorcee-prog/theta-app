@@ -164,8 +164,9 @@ HEAR_MODEL = os.environ.get("HEAR_MODEL", "whisper-large-v3-turbo").strip()
 HEAR_MAX_BYTES = 3_000_000  # about a minute of phone audio; a clip is a few seconds
 
 
-def groq_hear(audio, mime="audio/mp4"):
-    """Text heard in a short audio clip; LLMError when Groq can't."""
+def groq_hear(audio, mime="audio/mp4", language="en", detail=False):
+    """Text heard in a short audio clip; LLMError when Groq can't.
+    language=None: Whisper works out the language. detail: (text, language)."""
     if not audio:
         raise ValueError("no audio")
     if len(audio) > HEAR_MAX_BYTES:
@@ -176,7 +177,9 @@ def groq_hear(audio, mime="audio/mp4"):
     ext = {"audio/webm": "webm", "audio/ogg": "ogg", "audio/wav": "wav", "audio/mpeg": "mp3"}.get(mime.split(";")[0], "m4a")
     boundary = "theta" + hashlib.sha1(audio[:64] + str(time.time()).encode()).hexdigest()[:16]
     parts = []
-    for name, value in (("model", HEAR_MODEL), ("language", "en"), ("response_format", "json")):
+    fields = [("model", HEAR_MODEL), ("response_format", "verbose_json" if detail else "json")]
+    fields += [("language", language)] if language else []
+    for name, value in fields:
         parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
     parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="clip.{ext}"\r\n'
                  f'Content-Type: {mime.split(";")[0] or "audio/mp4"}\r\n\r\n'.encode() + audio + b"\r\n")
@@ -195,4 +198,5 @@ def groq_hear(audio, mime="audio/mp4"):
         raise err
     except (urllib.error.URLError, TimeoutError, ValueError) as e:
         raise LLMError(f"Groq's hearing didn't answer: {type(e).__name__}")
-    return " ".join(str(out.get("text") or "").split())
+    text = " ".join(str(out.get("text") or "").split())
+    return (text, str(out.get("language") or "").lower()) if detail else text

@@ -207,6 +207,8 @@ def memory_usage():
 
 def memory_mark_used(reply):
     """Count the Memory.md lines this reply drew on; start the clock on new lines."""
+    if getattr(_REQ, "hb_calls", None) is not None:  # the harness test leaves memory counts alone
+        return
     if not vault_on() or not reply:
         return
     lines = memory_lines(vault_read("Memory.md")[0])

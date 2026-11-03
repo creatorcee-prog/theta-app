@@ -722,7 +722,7 @@ def settings_page(headers):
         '<button type="button" data-tilt="off">Off</button></div><p class="note small" id="tilt-note"></p></div>'
         f'<div><h3>Home layout</h3><p class="muted small">How the windows on Home are arranged.</p><div class="layouts">{layouts}</div></div></section>'
         '<p class="muted small">Phone notifications now live under Mistral on <a href="/">Home</a>.</p>'
-        + passkeys_card(headers) + devices_card(headers) + gmail_card(headers) + memory_card() + siri_card(headers) + phone_card(headers) +
+        + passkeys_card(headers) + devices_card(headers) + gmail_card(headers) + memory_card() + siri_card(headers) + phone_card(headers) + notifs_card() +
         '<section class="card stack"><div class="brow"><h2>Rounds</h2></div><p class="muted small">Every agent does its '
         'job three times a day (Supabase Cron). Run one now to refresh the windows.</p>'
         f'<p><button class="btn" type="button" data-run-round="round-status-s">{ui_icon("play")}Run a round now</button></p>'
@@ -1051,6 +1051,7 @@ def diagnostics_page(headers):
         f'<section class="card stack" id="security" style="margin-top:14px"><div class="hero" style="gap:12px">{avatar_img("qwerty", 40)}<div><h2>Security and health</h2>'
         '<p class="muted small">QWERTY checks this every round and tells you in #dev-and-security when it changes.</p></div></div>'
         f'<ul class="list">{security_rows()}</ul></section>'
+        + harness_card() +
         f'<script>{_DIAG_JS}</script>')
     return page(headers, "Diagnostics", "/diagnostics", body)
 

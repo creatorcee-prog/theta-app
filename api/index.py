@@ -1260,6 +1260,8 @@ def apply_proposal(pid, yes):
             raise ValueError("That proposal is already settled.")
         p["status"] = "approved" if yes else "declined"
         store().set_meta("proposals", json.dumps(ps))
+    if p["kind"] == "remind_move":  # the missed-reminders card
+        return move_to_tomorrow(p["ids"]) if yes else "Okay, leaving them."
     if p["kind"] == "dream":  # Keep / No on one of Theta's overnight ideas
         try:
             return dream_feedback(p, yes)
@@ -1447,8 +1449,43 @@ def tools_diag():
     }
 
 
+ACTIONS_MAX = 5  # actions run from one reply
+
+
+def run_tool(agent, name, arg, allowed=None):
+    """Run one tool: (ok, text, buttons). Never raises: a failure is (False,
+    "name: why", []), so the agent (or the user) sees what went wrong."""
+    tool = TOOLS.get(name.lower())
+    if not tool or (name.lower() not in allowed if allowed is not None else
+                    tool[2] is not None and agent not in tool[2]):
+        return False, f"{name}: not a tool I have", []
+    if getattr(_REQ, "hb_calls", None) is not None:  # the harness test: record, don't change anything
+        faked = hb_tool(name, arg)
+        if faked is not None:
+            return faked
+    who = AGENTS.get(agent, {}).get("name", agent)
+    t0 = time.perf_counter()
+    try:
+        got = tool[1](arg, agent)
+        more = []
+        if isinstance(got, tuple):  # a proposal: text plus Approve / Decline
+            got, more = got
+        activity(agent, f"{who} used {name}: {got}")
+        _diag("tool.done", tool=name, elapsed_ms=int((time.perf_counter() - t0) * 1000), status="ok")
+        return True, str(got), list(more or [])
+    except Exception as e:
+        # Any tool failure is a receipt, never a 500: the old narrow
+        # catch let non-ValueError tool exceptions escape to the
+        # generic "internal error" while the user saw nothing.
+        _diag("tool.done", tool=name, elapsed_ms=int((time.perf_counter() - t0) * 1000),
+              status="error", error_class=type(e).__name__, error=str(e),
+              error_category=_tool_error_category(name, e))
+        activity(agent, f"{who} tried {name}, but it didn't work: {e}")
+        return False, f"{name}: {str(e)[:200]}", []
+
+
 def run_actions(agent, reply, allowed=None):
-    """Run the reply's ACTION lines (at most 3); return the reply with
+    """Run the reply's ACTION lines (at most ACTIONS_MAX); return the reply with
     receipts in their place, plus a note when it claims an action it didn't take.
     allowed: the tool names this agent may use, when not each tool's own list
     (the single head uses the crew's tools)."""
@@ -1458,7 +1495,8 @@ def run_actions(agent, reply, allowed=None):
     skipped = False
     if found:
         _diag("tools.parsed", count=len(found), tools=",".join(n for n, _ in found[:3]))
-    for name, arg in found[:3]:
+    seen = {}
+    for name, arg in found[:3 if getattr(_REQ, "hb_old", False) else ACTIONS_MAX]:  # the old harness ran 3
         # A tool started with less than its worst case (15s) left could
         # push the request past Vercel's 60s wall; skip it and say so.
         left = _time_left()
@@ -1466,30 +1504,13 @@ def run_actions(agent, reply, allowed=None):
             _diag("tool.skipped", tool=name)
             skipped = True
             break
-        tool = TOOLS.get(name.lower())
-        if not tool or (name.lower() not in allowed if allowed is not None else
-                        tool[2] is not None and agent not in tool[2]):
-            receipts.append(f"✗ {name}: not a tool I have")
+        key = (name.lower(), arg.strip().lower())
+        if key in seen:  # the same action twice in one reply runs once
             continue
-        who = AGENTS.get(agent, {}).get("name", agent)
-        t0 = time.perf_counter()
-        try:
-            got = tool[1](arg, agent)
-            if isinstance(got, tuple):  # a proposal: text plus Approve / Decline
-                got, more = got
-                buttons += more
-            receipts.append("✓ " + got)
-            activity(agent, f"{who} used {name}: {got}")
-            _diag("tool.done", tool=name, elapsed_ms=int((time.perf_counter() - t0) * 1000), status="ok")
-        except Exception as e:
-            # Any tool failure is a receipt, never a 500: the old narrow
-            # catch let non-ValueError tool exceptions escape to the
-            # generic "internal error" while the user saw nothing.
-            _diag("tool.done", tool=name, elapsed_ms=int((time.perf_counter() - t0) * 1000),
-                  status="error", error_class=type(e).__name__, error=str(e),
-                  error_category=_tool_error_category(name, e))
-            receipts.append(f"✗ {name}: {str(e)[:200]}")
-            activity(agent, f"{who} tried {name}, but it didn't work: {e}")
+        ok, got, more = run_tool(agent, name, arg, allowed)
+        seen[key] = got
+        buttons += more
+        receipts.append(("✓ " if ok else "✗ ") + got)
     if found:
         # Single pass by design: results go into the user-visible reply,
         # not back to the model for a second turn.
@@ -1523,6 +1544,29 @@ def memory_prompt():
     mem = memory()
     return ("\n\nWhat the user asked the crew to remember (true unless they say otherwise):\n"
             + "\n".join(f"- {m['text']}" for m in mem[-25:])) if mem else ""
+
+
+# How every agent writes (2026-11-03): from Wikipedia's "Signs of AI writing"
+# (https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing). In every
+# agent's prompt and every head_chat call, so chat, notes, summaries, briefs,
+# dreams and pushes all sound like a person, not a chatbot.
+WRITING_RULE = (
+    "How you write, in everything (chat, notes, summaries, briefs, notifications): like a sharp friend texting, never "
+    "like a chatbot. Avoid the signs of AI writing:\n"
+    "- Words: never delve, crucial, pivotal, tapestry, testament, intricate, underscore, showcase, enduring, garner, "
+    "meticulous, robust, interplay, additionally, boasts, leverage, multifaceted, vibrant, seamless, realm, elevate, "
+    "foster, empower, unlock, embark, nestled, groundbreaking, renowned, and no figurative landscape, journey or navigate.\n"
+    "- Say \"is\", not \"serves as\", \"stands as\" or \"functions as\". No talk of significance or legacy (\"a key "
+    "turning point\", \"setting the stage\", \"an indelible mark\").\n"
+    "- No \"not only... but also\", \"it's not X, it's Y\" or \"X rather than Y\" framing. Don't group things in threes "
+    "for rhythm. No trailing -ing clauses that fake depth (\"highlighting...\", \"ensuring...\", \"reflecting...\").\n"
+    "- No vague sources (\"experts say\", \"studies show\", \"reports suggest\"): name the source or don't claim it.\n"
+    "- No chatbot filler: no \"Certainly!\", \"Great question\", \"You're absolutely right\", \"I hope this helps\", "
+    "\"Let me know if...\", \"Feel free to...\", \"Would you like me to...\" tacked on. No wrap-ups (\"In summary\", "
+    "\"Overall\", \"In conclusion\"). No \"details are limited\" or knowledge-cutoff disclaimers; just say what you don't know.\n"
+    "- Formatting: no em dashes (use a comma, colon or period), straight quotes, sentence-case headings, bold only "
+    "when it truly matters, no emoji in headings or list items, a list only for separate items, and no headers in a "
+    "short reply.")
 
 
 def system_prompt(agent_id, tools=False, now=True):
@@ -1574,11 +1618,11 @@ def system_prompt(agent_id, tools=False, now=True):
             "(Copy, Edit, Save posts the edited text as a chat message), ```flow with A -> B -> C lines (workflow "
             "boxes), ```bars with Label: number lines (bars, negatives count as 0), and ```quiz with a question on "
             "the first line and - option lines after it (the user picks one, then Submit sends the choice as a chat "
-            "message — use this when you are unsure what the user means instead of asking a paragraph of questions). "
+            "message; use this when you are unsure what the user means instead of asking a paragraph of questions). "
             "Never describe a control the chat cannot show: it cannot show line charts or architecture diagrams, "
-            "and buttons in chat exist only on cards and server-issued messages (QWERTY proposals, James commands) "
-            "— agents never emit buttons. Images only with ![alt](https link) for a link you were given)."
-            f"{soul_prompt(agent_id)}{extra}{now_line() if now else ''}{memory_prompt()}{vault_prompt(agent_id)}{seat_prompt(agent_id)}"
+            "and buttons in chat exist only on cards and server-issued messages (QWERTY proposals, James commands)"
+            ": agents never emit buttons. Images only with ![alt](https link) for a link you were given)."
+            f"{soul_prompt(agent_id)}{'' if getattr(_REQ, 'hb_old', False) else chr(10) * 2 + WRITING_RULE}{extra}{now_line() if now else ''}{memory_prompt()}{vault_prompt(agent_id)}{seat_prompt(agent_id)}"
             f"{chr(10) * 2 + HUB_GUIDE + hub_rules(agent_id) + tools_prompt(agent_id) if tools and not a.get('home') else ''}")
 
 
@@ -2214,7 +2258,9 @@ def local_status(fresh=False):
     return ok, why
 
 
-def _llm_call(provider, model, messages, max_tokens):
+def _llm_call(provider, model, messages, max_tokens, tools=None, tool_choice=None):
+    """The reply text; with `tools` (native tool calling, OpenAI-style), a dict
+    {"text", "calls", "message"} instead, where calls are the model's tool calls."""
     if provider == "local":  # skip a PC that's off, straight to the fallback
         up, why = local_status()
         if not up:
@@ -2228,8 +2274,13 @@ def _llm_call(provider, model, messages, max_tokens):
     key = os.environ.get(key_var, "")
     if not key:
         raise LLMError(f"{key_var} is not set in the project's env vars")
+    if getattr(_REQ, "hb_model_calls", None) is not None:  # the harness test counts model calls
+        _REQ.hb_model_calls += 1
     payload = {"model": model, "messages": messages, "max_tokens": max_tokens,
                **provider_extra(provider, model)}
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = tool_choice or "auto"
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode(),
         headers={"Authorization": f"Bearer {key}",
@@ -2246,7 +2297,9 @@ def _llm_call(provider, model, messages, max_tokens):
             if provider == "groq":
                 note_room(model, resp.headers)
             out = json.loads(resp.read())
-        text = out["choices"][0]["message"].get("content") or ""
+        msg = out["choices"][0]["message"]
+        text = msg.get("content") or ""
+        calls = msg.get("tool_calls") or [] if tools else []
         u = out.get("usage") or {}
         count_tokens(u.get("prompt_tokens"), u.get("completion_tokens"))
         _diag("model.call", provider=provider, model=model,
@@ -2273,9 +2326,11 @@ def _llm_call(provider, model, messages, max_tokens):
         _diag("model.call", provider=provider, model=model,
               elapsed_ms=int((time.perf_counter() - t0) * 1000), outcome="error", error_class="LLMError")
         raise LLMError(f"{provider} call failed: {e!r}")
-    if not text.strip():  # the fallback may still answer; the same model again likely won't
+    if not text.strip() and not calls:  # the fallback may still answer; the same model again likely won't
         raise LLMError(f"{model} returned an empty reply (it may have spent its "
                        "token budget thinking)", retryable=True, timed_out=True)
+    if tools:
+        return {"text": text, "calls": calls, "message": msg}
     return text
 
 
@@ -3343,6 +3398,9 @@ _load_part("ui")  # the app's look: themes, CSS, the shared page script and the 
 
 
 _load_part("home")  # Home: smart stack, Today's check, settings cards, benchmark UI: api/_parts/home.py
+_load_part("harnessbench")  # Diagnostics → Harness test: old vs new harness, nothing saved: api/_parts/harnessbench.py
+_load_part("notifs")  # more notifications: weather, money, calendar changes, wind-down, breaks, releases, missed: api/_parts/notifs.py
+_load_part("listen")  # conversations recorded to text, translation, directions: api/_parts/listen.py
 _load_part("phone")  # Theta on the Home Screen (Scriptable) and in Shortcuts automations: api/_parts/phone.py
 _load_part("focus")  # help for an ADD brain: sleep and dreams, leave nudges, /focus, /break, /dump: api/_parts/focus.py
 
