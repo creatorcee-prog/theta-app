@@ -74,9 +74,11 @@ def phone_event(text, now=None):
     return did
 
 
-def widget_script():
+def widget_script(origin=""):
+    """The widget's script, with this hub's address filled in (never a key)."""
     with open(os.path.join(_PARTS_DIR, "theta-widget.js"), encoding="utf-8") as fh:
-        return fh.read()
+        text = fh.read()
+    return text.replace("__ORIGIN__", origin if re.match(r"^https://[\w.-]+$", origin or "") else "__ORIGIN__", 1)
 
 
 # Shortcuts automations worth setting up: (when, the event Theta hears, why)
@@ -99,7 +101,7 @@ def phone_card(headers):
             '<h3>Widget (Scriptable)</h3><ol class="small" style="margin:0;padding-left:1.2em;line-height:1.6">'
             '<li>Install <b>Scriptable</b> from the App Store (free).</li>'
             '<li>Tap <b>Copy the script</b> below. In Scriptable: <b>+</b>, paste, name it <b>Theta</b>, tap \u25B6 once.</li>'
-            f'<li>It asks for your address (<code>{origin}</code>) and your ASK_KEY. They stay in the iPhone\u2019s Keychain.</li>'
+            f'<li>It asks for your ASK_KEY (your address, <code>{origin}</code>, is already in it). Both stay in the iPhone\u2019s Keychain. Run it again any time to change them.</li>'
             '<li>Long-press the Home Screen \u2192 <b>+</b> \u2192 Scriptable \u2192 Small or Medium \u2192 Add Widget. Then hold it '
             '\u2192 Edit Widget \u2192 Script: <b>Theta</b>.</li></ol>'
             '<p class="muted small">It shows Theta\u2019s rings, its latest line, your next event and any focus session. Tapping it '

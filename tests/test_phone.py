@@ -51,8 +51,12 @@ check("woke up: the morning brief goes out", h.phone_event("woke up", morning) =
 night = datetime.now(tz).replace(hour=2, minute=0).timestamp()
 check("not at 2 AM", h.phone_event("alarm stopped", night) == "noted")
 
-s, js = call("GET", "/api/phone/script")
+s, js = call("GET", "/api/phone/script", {"host": "theta.example"})
 check("the widget script is served", s == 200 and "ListWidget" in js and "/api/phone/widget" in js and "askme" not in js)
+check("the script comes with this hub's address", 'const DEFAULT_URL = "https://theta.example"' in js)
+check("a strange host isn't put in the script", '"__ORIGIN__"' in h.widget_script('https://x.com"; alert(1)'))
+check("the script can change the address and key, and says why it failed",
+      all(x in js for x in ("Change address", "Change key", "Wrong ASK_KEY", "Can't reach", "cleanUrl")))
 card = h.phone_card({"host": "theta.example"})
 check("Settings card: steps, the address, the copy button",
       "Scriptable" in card and "https://theta.example/api/phone/event" in card and 'id="copy-widget"' in card)

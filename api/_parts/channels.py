@@ -1267,7 +1267,7 @@ def handle(method, path, query, headers, body):
         return _json(200, bots)
 
     if path == "/api/phone/script":  # the widget's script, for Settings' Copy button (no secrets in it)
-        return 200, "text/plain; charset=utf-8", widget_script().encode()
+        return 200, "text/plain; charset=utf-8", widget_script(_rp(headers)[1]).encode()
 
     if path == "/api/phone/widget":  # the Scriptable Home Screen widget
         if not (ask_key_ok(headers) or _auth_dashboard(query, headers)):
