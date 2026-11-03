@@ -633,6 +633,15 @@ All in api/_parts/focus.py, run from the 5-minute tick.
   (WATER_EVERY_HOURS, 10 AM to 8 PM), releases you follow the evening before, missed "until done" reminders with
   Move to tomorrow (MISSED_TIME).
 
+## Harness upgrade (2026-11-03)
+- [x] Native tool calling for Theta (HEAD_NATIVE_TOOLS, on by default): tools go to DeepSeek as function tools,
+  Theta sees every result (failures too, so it fixes its input), and keeps going for up to 6 rounds, so a
+  multi-step job gets done in one answer. Changes show as receipts. A model that refuses tools falls back to
+  the ACTION-line way.
+- [x] Easier for every agent: one shared run_tool, up to 5 actions a reply (was 3), the same action twice runs once.
+- [x] Writing rule from Wikipedia's "Signs of AI writing" in every agent's prompt and every head_chat call.
+- [ ] MCP tools (later, once the desktop is back).
+
 ## Stage 8: Single head (decided 2026-11-02)
 
 One assistant, Theta, runs everything; the crew is paused behind a switch,

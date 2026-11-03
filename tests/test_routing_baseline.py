@@ -305,9 +305,9 @@ check("single pass: tools.applied reports returned_to_model=0",
       len(applied()) == 1 and applied()[0]["returned_to_model"] == 0)
 
 diags.clear()
-out = h.run_actions("mistral", "\n".join(f"ACTION: task_create | Cap {i}" for i in range(4)))
-check("at most 3 actions run per reply",
-      out.count("✓") == 3)
+out = h.run_actions("mistral", "\n".join(f"ACTION: task_create | Cap {i}" for i in range(7)))
+check("at most ACTIONS_MAX (5) actions run per reply",
+      out.count("✓") == 5 == h.ACTIONS_MAX)
 
 prompts = []
 
