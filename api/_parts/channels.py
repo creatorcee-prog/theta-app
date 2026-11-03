@@ -550,6 +550,17 @@ def handle(method, path, query, headers, body):
                 return _json(429 if getattr(e, "status", None) == 429 else 502, {"ok": False, "error": str(e)})
             return 200, "audio/wav", audio, [("Cache-Control", "no-store")]
 
+        if path == "/api/voice/hear":  # Glasses mode: a recorded clip -> text (Groq Whisper)
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            try:
+                audio = base64.b64decode(str(data.get("audio") or ""), validate=True)
+                return _json(200, {"ok": True, "text": groq_hear(audio, str(data.get("mime") or "audio/mp4"))})
+            except ValueError as e:  # bad base64 is a ValueError too
+                return _json(400, {"ok": False, "error": str(e) or "bad audio"})
+            except LLMError as e:
+                return _json(429 if getattr(e, "status", None) == 429 else 502, {"ok": False, "error": str(e)})
+
         if path == "/api/typing":  # the composer, while you type (typing guard)
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})

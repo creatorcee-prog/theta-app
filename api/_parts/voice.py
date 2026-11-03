@@ -155,3 +155,44 @@ def server_say(text, voice):
     if engine == "orpheus":
         return orpheus_say(text, name)
     raise ValueError(f"unknown voice {voice!r}")
+
+
+# ---- Hearing (Glasses mode): when Safari's own dictation won't start from a
+# tap on the glasses, the Head page records a clip and Groq's Whisper (free
+# tier, the GROQ_API_KEY the hub already has) turns it into text.
+HEAR_MODEL = os.environ.get("HEAR_MODEL", "whisper-large-v3-turbo").strip()
+HEAR_MAX_BYTES = 3_000_000  # about a minute of phone audio; a clip is a few seconds
+
+
+def groq_hear(audio, mime="audio/mp4"):
+    """Text heard in a short audio clip; LLMError when Groq can't."""
+    if not audio:
+        raise ValueError("no audio")
+    if len(audio) > HEAR_MAX_BYTES:
+        raise ValueError("that clip is too long")
+    key = os.environ.get("GROQ_API_KEY", "")
+    if not key:
+        raise LLMError("GROQ_API_KEY isn't set")
+    ext = {"audio/webm": "webm", "audio/ogg": "ogg", "audio/wav": "wav", "audio/mpeg": "mp3"}.get(mime.split(";")[0], "m4a")
+    boundary = "theta" + hashlib.sha1(audio[:64] + str(time.time()).encode()).hexdigest()[:16]
+    parts = []
+    for name, value in (("model", HEAR_MODEL), ("language", "en"), ("response_format", "json")):
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
+    parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="clip.{ext}"\r\n'
+                 f'Content-Type: {mime.split(";")[0] or "audio/mp4"}\r\n\r\n'.encode() + audio + b"\r\n")
+    parts.append(f"--{boundary}--\r\n".encode())
+    url = PROVIDERS["groq"][0].rsplit("/chat/completions", 1)[0] + "/audio/transcriptions"
+    req = urllib.request.Request(url, method="POST", data=b"".join(parts), headers={
+        "Authorization": f"Bearer {key}", "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "User-Agent": "bot-hub/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            out = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        err = LLMError(("Groq's hearing is out of free uses for now (" if e.code == 429 else "Groq's hearing: (")
+                       + _llm_error_text("groq", e.code, e.read()[:2000].decode("utf-8", "replace")) + ")")
+        err.status = e.code
+        raise err
+    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+        raise LLMError(f"Groq's hearing didn't answer: {type(e).__name__}")
+    return " ".join(str(out.get("text") or "").split())
