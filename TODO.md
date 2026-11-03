@@ -789,6 +789,22 @@ the hub must work without.
   for anything that has to run on the PC itself.
 
 ## Planned
+### Next features (picked 2026-11-03)
+- [ ] **Today's 3.** Each morning Theta picks the 3 things that matter most today from the calendar, reminders and
+      memory, shows them as a panel, and checks in on them at midday and in the evening (done / move / drop).
+      All the data exists already; no new keys.
+- [ ] **Bills and subscriptions.** Find repeating charges in the Rocket Money import (same payee, similar amount,
+      about a month apart), remind a few days before each is due, and flag ones that look unused. A panel and a
+      monthly total.
+- [ ] **Job hunt.** A daily background job that searches for openings matching what the user wants (asked once, kept
+      in memory) and sends the best 3 with links. Uses the web search the hub already has; job boards' own APIs
+      need keys (see Setup).
+- [ ] **"Since you were last here".** Opening the Theta page after a while shows a panel of what happened meanwhile:
+      new messages, memories saved, background jobs finished, reminders that went off, overnight ideas.
+- [ ] **Sleep from the iPhone.** A Shortcuts automation sends last night's sleep hours (Apple Health) each morning to
+      /api/phone/event; Theta keeps a short history and goes lighter on a short-sleep day ("5 hours: keep today
+      light"). Needs the user to allow Health in Shortcuts.
+
 
 - [ ] Get Remi's calendar and Gmail working (setup steps 7 and 4).
 - [ ] Get the job boards working: Adzuna and USAJOBS (setup step 8).
