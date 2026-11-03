@@ -1051,6 +1051,7 @@ def diagnostics_page(headers):
         f'<section class="card stack" id="security" style="margin-top:14px"><div class="hero" style="gap:12px">{avatar_img("qwerty", 40)}<div><h2>Security and health</h2>'
         '<p class="muted small">QWERTY checks this every round and tells you in #dev-and-security when it changes.</p></div></div>'
         f'<ul class="list">{security_rows()}</ul></section>'
+        + harness_card() +
         f'<script>{_DIAG_JS}</script>')
     return page(headers, "Diagnostics", "/diagnostics", body)
 

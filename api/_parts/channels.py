@@ -1180,6 +1180,16 @@ def handle(method, path, query, headers, body):
                 return _json(401, {"ok": False, "error": "CRON_SECRET or dashboard key required"})
             return _json(200, run_round(force=bool(data.get("force"))))
 
+        if path == "/api/hbench":  # Diagnostics → Harness test: one message one way per request
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            try:
+                hb_run(str(data.get("case") or ""), str(data.get("mode") or ""))
+            except ValueError as e:
+                return _json(400, {"ok": False, "error": str(e)})
+            rows = _meta_json("hbench:last", {}).get("rows", [])
+            return _json(200, {"ok": True, "rows": rows, "totals": hb_totals(rows)})
+
         if path == "/api/bench":  # Settings → Mistral benchmark: ~12 Haiku calls, a few cents
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
@@ -1389,6 +1399,12 @@ def handle(method, path, query, headers, body):
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
         return _json(200, {"ok": True, "reminders": [dict(r, line=reminder_line(r)) for r in reminders()]})
+
+    if path == "/api/hbench":
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        rows = _meta_json("hbench:last", {}).get("rows", [])
+        return _json(200, {"ok": True, "rows": rows, "totals": hb_totals(rows)})
 
     if path == "/api/bench":
         if not _auth_dashboard(query, headers):

@@ -130,7 +130,8 @@ HEAD_TYPED_RULE = ("Keep it short: 2 to 4 sentences unless they ask for detail. 
 def _with_writing_rule(messages):
     """Every head call writes like a person (WRITING_RULE), even the ones
     without Theta's whole prompt (dreams, summaries, translations)."""
-    if any(m["role"] == "system" and WRITING_RULE in (m.get("content") or "") for m in messages):
+    if getattr(_REQ, "hb_old", False) or any(m["role"] == "system" and WRITING_RULE in (m.get("content") or "")
+                                             for m in messages):
         return messages
     return [{"role": "system", "content": WRITING_RULE}] + list(messages)
 

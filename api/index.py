@@ -1459,6 +1459,10 @@ def run_tool(agent, name, arg, allowed=None):
     if not tool or (name.lower() not in allowed if allowed is not None else
                     tool[2] is not None and agent not in tool[2]):
         return False, f"{name}: not a tool I have", []
+    if getattr(_REQ, "hb_calls", None) is not None:  # the harness test: record, don't change anything
+        faked = hb_tool(name, arg)
+        if faked is not None:
+            return faked
     who = AGENTS.get(agent, {}).get("name", agent)
     t0 = time.perf_counter()
     try:
@@ -1492,7 +1496,7 @@ def run_actions(agent, reply, allowed=None):
     if found:
         _diag("tools.parsed", count=len(found), tools=",".join(n for n, _ in found[:3]))
     seen = {}
-    for name, arg in found[:ACTIONS_MAX]:
+    for name, arg in found[:3 if getattr(_REQ, "hb_old", False) else ACTIONS_MAX]:  # the old harness ran 3
         # A tool started with less than its worst case (15s) left could
         # push the request past Vercel's 60s wall; skip it and say so.
         left = _time_left()
@@ -1618,7 +1622,7 @@ def system_prompt(agent_id, tools=False, now=True):
             "Never describe a control the chat cannot show: it cannot show line charts or architecture diagrams, "
             "and buttons in chat exist only on cards and server-issued messages (QWERTY proposals, James commands)"
             ": agents never emit buttons. Images only with ![alt](https link) for a link you were given)."
-            f"{soul_prompt(agent_id)}\n\n{WRITING_RULE}{extra}{now_line() if now else ''}{memory_prompt()}{vault_prompt(agent_id)}{seat_prompt(agent_id)}"
+            f"{soul_prompt(agent_id)}{'' if getattr(_REQ, 'hb_old', False) else chr(10) * 2 + WRITING_RULE}{extra}{now_line() if now else ''}{memory_prompt()}{vault_prompt(agent_id)}{seat_prompt(agent_id)}"
             f"{chr(10) * 2 + HUB_GUIDE + hub_rules(agent_id) + tools_prompt(agent_id) if tools and not a.get('home') else ''}")
 
 
@@ -2270,6 +2274,8 @@ def _llm_call(provider, model, messages, max_tokens, tools=None, tool_choice=Non
     key = os.environ.get(key_var, "")
     if not key:
         raise LLMError(f"{key_var} is not set in the project's env vars")
+    if getattr(_REQ, "hb_model_calls", None) is not None:  # the harness test counts model calls
+        _REQ.hb_model_calls += 1
     payload = {"model": model, "messages": messages, "max_tokens": max_tokens,
                **provider_extra(provider, model)}
     if tools:
@@ -3392,6 +3398,7 @@ _load_part("ui")  # the app's look: themes, CSS, the shared page script and the 
 
 
 _load_part("home")  # Home: smart stack, Today's check, settings cards, benchmark UI: api/_parts/home.py
+_load_part("harnessbench")  # Diagnostics → Harness test: old vs new harness, nothing saved: api/_parts/harnessbench.py
 _load_part("notifs")  # more notifications: weather, money, calendar changes, wind-down, breaks, releases, missed: api/_parts/notifs.py
 _load_part("listen")  # conversations recorded to text, translation, directions: api/_parts/listen.py
 _load_part("phone")  # Theta on the Home Screen (Scriptable) and in Shortcuts automations: api/_parts/phone.py
