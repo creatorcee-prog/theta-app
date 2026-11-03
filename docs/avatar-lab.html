@@ -1,0 +1,498 @@
+<title>Theta Avatar Lab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a dark instrument bench. Controls up top, live specimens in a grid, a feedback strip at the end. Single dark look on purpose (it's Theta's HUD). */
+:root{
+  --bg:#070b10; --panel:#0d141c; --line:#1b2a36; --ink:#e3f2fa; --muted:#7f97a6; --accent:#4fd3ff;
+  --display:"Chakra Petch","Avenir Next Condensed","Arial Narrow",sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+html,body{background:var(--bg);color:var(--ink)}
+body{font-family:var(--body);font-size:15px;line-height:1.5;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 40px}
+.wrap{max-width:1180px;margin:0 auto;display:grid;gap:18px}
+header{display:grid;gap:6px}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+h1{font-family:var(--display);font-weight:700;font-size:clamp(28px,5vw,44px);line-height:1.05;margin:0;letter-spacing:.01em;text-wrap:balance}
+.lede{color:var(--muted);max-width:64ch;margin:0}
+.controls{display:grid;gap:12px;padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--panel);position:sticky;top:env(safe-area-inset-top,0px);z-index:5}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.row .lab{font-family:var(--mono);font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);width:64px;flex:none}
+.chip{font:600 14px var(--body);color:var(--ink);background:transparent;border:1px solid var(--line);border-radius:999px;padding:7px 13px;cursor:pointer;display:inline-flex;gap:7px;align-items:center}
+.chip[aria-pressed="true"]{border-color:var(--c,var(--accent));box-shadow:0 0 0 1px var(--c,var(--accent)) inset,0 0 14px -4px var(--c,var(--accent))}
+.chip .dot{width:9px;height:9px;border-radius:50%;background:var(--c)}
+.chip:focus-visible,.spec:focus-visible,.send:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+input[type=range]{accent-color:var(--accent);width:min(260px,60vw)}
+.val{font-family:var(--mono);font-size:12.5px;color:var(--muted);min-width:3ch}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:14px}
+.spec{border:1px solid var(--line);border-radius:16px;background:var(--panel);padding:12px 14px 14px;display:grid;gap:8px;cursor:pointer;text-align:left;color:inherit;font:inherit}
+.spec[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.spec .top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.spec h2{font-family:var(--display);font-weight:600;font-size:20px;margin:0;letter-spacing:.02em}
+.spec .code{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.spec canvas{width:100%;max-width:100%;aspect-ratio:1;display:block;border-radius:12px;background:#0b121a}
+.spec p{margin:0;color:var(--muted);font-size:14px}
+.tiny{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--muted);font-family:var(--mono)}
+.tiny canvas.small{width:72px;height:72px;aspect-ratio:auto;flex:none;border-radius:50%;background:#0b121a}
+.spec .pick{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+.send-box{display:grid;gap:10px;padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}
+.send-box h2{font-family:var(--display);font-size:20px;margin:0}
+.send-box p{margin:0;color:var(--muted);font-size:14px}
+textarea{width:100%;box-sizing:border-box;min-height:84px;font:15px var(--body);color:var(--ink);background:#0a1118;border:1px solid var(--line);border-radius:10px;padding:10px 12px;resize:vertical}
+.send{justify-self:start;font:700 15px var(--body);color:#04121a;background:var(--accent);border:0;border-radius:999px;padding:10px 20px;cursor:pointer}
+.send:disabled{opacity:.6;cursor:default}
+.status{font-size:14px;color:var(--muted);min-height:1.4em}
+.foot{color:var(--muted);font-size:14px;max-width:70ch}
+.foot b{color:var(--ink)}
+.history{font-size:13px;color:var(--muted)}
+.shelf{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:6px 0 -6px;font-weight:500}
+.spec.saved{border-style:dashed}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Generation 5 · Pour, in 3D</div>
+    <h1>Theta Avatar Lab</h1>
+    <p class="lede">You picked Pour. These four take it into real 3D: every dot has depth, so near ones are bigger and brighter, far ones fade into fog, and the halo passes behind and in front of the core while the camera drifts around it. Pour is saved on the shelf with your other favorites.</p>
+    <p class="history">Gen 1: Swarm, Reactor, Halo. Gen 2: four blends. Gen 3: One Swarm, Jarvis Lite (saved). Gen 4: Pour (saved).</p>
+  </header>
+
+  <section class="controls" aria-label="Controls">
+    <div class="row" role="group" aria-label="What Theta is doing"><span class="lab">State</span>
+      <button class="chip" data-state="idle" aria-pressed="true">Idle</button>
+      <button class="chip" data-state="listening" aria-pressed="false">Listening</button>
+      <button class="chip" data-state="thinking" aria-pressed="false">Thinking</button>
+      <button class="chip" data-state="speaking" aria-pressed="false">Speaking</button>
+      <button class="chip" id="tour" aria-pressed="false">Cycle all</button>
+    </div>
+    <div class="row" role="group" aria-label="Theta's mood"><span class="lab">Mood</span>
+      <button class="chip" data-mood="calm" aria-pressed="true" style="--c:#4fd3ff"><span class="dot"></span>Calm</button>
+      <button class="chip" data-mood="focused" aria-pressed="false" style="--c:#7d8bff"><span class="dot"></span>Focused</button>
+      <button class="chip" data-mood="happy" aria-pressed="false" style="--c:#ffc04d"><span class="dot"></span>Happy</button>
+      <button class="chip" data-mood="concerned" aria-pressed="false" style="--c:#ff6a5c"><span class="dot"></span>Concerned</button>
+      <button class="chip" data-mood="sleepy" aria-pressed="false" style="--c:#b58cff"><span class="dot"></span>Sleepy</button>
+      <button class="chip" data-mood="proud" aria-pressed="false" style="--c:#5ef0a2"><span class="dot"></span>Proud</button>
+    </div>
+    <div class="row"><span class="lab">Energy</span>
+      <input type="range" id="energy" min="20" max="160" value="100" aria-label="How much it moves"><span class="val" id="energy-v">100%</span>
+    </div>
+  </section>
+
+  <h2 class="shelf">Saved</h2>
+  <section class="grid" id="saved" aria-label="Saved favorites"></section>
+  <h2 class="shelf">Generation 5</h2>
+  <section class="grid" id="grid" aria-label="Avatar directions"></section>
+
+  <section class="send-box" aria-label="Send your picks">
+    <h2>Send your picks to Claude</h2>
+    <p>Tap the ones you like above, add anything you'd change, then send. Claude reads it straight from here, no retyping.</p>
+    <textarea id="note" placeholder="Like: 5.1, but the camera should turn slower; taller columns"></textarea>
+    <button class="send" id="send" type="button">Send picks</button>
+    <div class="status" id="status" role="status"></div>
+  </section>
+
+  <p class="foot"><b>In the app:</b> Speaking follows Theta's real voice and Listening follows your mic (here both are simulated). Theta sets the mood from what's going on, and style, colors per mood, energy and size are yours to change in Settings.</p>
+</div>
+
+<script>
+(() => {
+  const MOODS = {
+    calm:      {hue: 195, sat: 95, light: 62, speed: 1.0, jitter: 0, bounce: 0},
+    focused:   {hue: 232, sat: 95, light: 68, speed: 1.25, jitter: 0, bounce: 0},
+    happy:     {hue: 40,  sat: 100, light: 62, speed: 1.15, jitter: 0, bounce: 1},
+    concerned: {hue: 6,   sat: 100, light: 64, speed: 1.35, jitter: 1, bounce: 0},
+    sleepy:    {hue: 266, sat: 85, light: 70, speed: 0.45, jitter: 0, bounce: 0},
+    proud:     {hue: 150, sat: 85, light: 62, speed: 1.1, jitter: 0, bounce: 0.6},
+  };
+  const st = {state: "idle", mood: "calm", energy: 1};
+  const cur = {hue: 195, sat: 95, light: 62, speed: 1, jitter: 0, bounce: 0};
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const TAU = Math.PI * 2;
+  const C = (dh = 0, dl = 0, a = 1) => `hsla(${(cur.hue + dh + 360) % 360},${cur.sat}%,${Math.min(96, cur.light + dl)}%,${a})`;
+
+  // a believable voice / mic level
+  let level = 0;
+  function targetLevel(t) {
+    if (st.state === "speaking") { const phrase = Math.sin(t * 0.9) > -0.75 ? 1 : 0.1; return phrase * (0.25 + 0.75 * Math.max(0, Math.sin(t * 17) * 0.6 + Math.sin(t * 7.3 + 1) * 0.4)); }
+    if (st.state === "listening") return 0.15 + 0.35 * Math.max(0, Math.sin(t * 9.1) * Math.sin(t * 2.3));
+    return 0;
+  }
+  // the voice "spectrum" at angle a (0..TAU): shared by bars and the dot ring, so they move together
+  const spec = (a, t, lv) => lv * (0.55 * Math.abs(Math.sin(a * 5 + t * 9)) + 0.45 * Math.abs(Math.sin(a * 11 - t * 5)));
+
+  // ---- the swarm: springs toward a formation that depends on the state
+  function makeSwarm(N) {
+    const p = [];
+    for (let i = 0; i < N; i++) {
+      const y = 1 - (i / (N - 1)) * 2, r = Math.sqrt(1 - y * y), th = i * 2.39996;
+      p.push({bx: Math.cos(th) * r, by: y, bz: Math.sin(th) * r, s: Math.random(), x: 0, y: 0, vx: 0, vy: 0, d: 0.5, init: false});
+    }
+    return p;
+  }
+  // target (x, y in units of R, depth 0..1) for particle i
+  function formation(q, i, N, t, lv, sp) {
+    const s = q.s;
+    if (st.state === "listening") { // a tilted dish of rings, rippling inward with your voice
+      const u = (i % 60) / 60, ring = Math.floor(i / 60) / Math.ceil(N / 60), a = u * TAU + ring * 3 + t * 0.4 * sp;
+      let r = 0.25 + 0.85 * ring; r *= 1 + 0.08 * (0.4 + lv) * Math.sin(r * 14 - t * 8);
+      return [Math.cos(a) * r, Math.sin(a) * r * 0.42 + 0.05, 0.4 + 0.6 * (Math.sin(a) * 0.5 + 0.5)];
+    }
+    if (st.state === "thinking") { // a three-armed galaxy spinning up
+      const arm = i % 3, u = i / N, a = u * 9 + arm * TAU / 3 + t * 1.8 * sp + s * 0.4, r = 0.12 + 0.95 * Math.pow(u, 0.8) + (s - 0.5) * 0.08;
+      return [Math.cos(a) * r, Math.sin(a) * r * 0.55, 0.3 + 0.7 * (1 - u)];
+    }
+    if (st.state === "speaking") { // a ring of voice: each dot rides the spectrum at its angle
+      if (i % 7 === 0) { const a = s * TAU + t * 2, r = 0.25 * s; return [Math.cos(a) * r, Math.sin(a) * r, 1]; } // a few stay in the core
+      const a = i / N * TAU, band = (s - 0.5) * 0.18, r = 0.72 + band + spec(a, t, lv) * 0.55;
+      return [Math.cos(a) * r, Math.sin(a) * r, 0.5 + 0.5 * spec(a, t, lv) / Math.max(lv, 0.01)];
+    }
+    // idle: a breathing, slowly turning globe with flowing ripples; the mood bends its shape
+    const rot = t * 0.35 * sp, cr = Math.cos(rot), sr = Math.sin(rot);
+    let X = q.bx * cr - q.bz * sr, Z = q.bx * sr + q.bz * cr, Y = q.by * 0.94 - Z * 0.34; Z = q.by * 0.34 + Z * 0.94;
+    let k = 1 + 0.05 * Math.sin(t * 1.4 + q.by * 4) + 0.03 * Math.sin(t * 2.1 + s * 9);
+    k *= moodShape(Math.atan2(Y, X), t, s);
+    if (moodW.sleepy > 0.01) Y += moodW.sleepy * (0.12 + 0.05 * Math.sin(t * 0.6)) * (1 - Math.abs(X)); // sags
+    return [X * k, Y * k, (Z + 1) / 2];
+  }
+  // how far each mood is "in" (eased), so shape changes blend as the mood changes
+  const moodW = {calm: 1, focused: 0, happy: 0, concerned: 0, sleepy: 0, proud: 0};
+  function moodShape(a, t, s) {
+    let k = 1;
+    k *= 1 + moodW.concerned * 0.16 * Math.pow(Math.max(0, Math.sin(a * 9 + t * 3)), 6);  // spikes
+    k *= 1 + moodW.happy * 0.07 * Math.abs(Math.sin(t * 4.2));                           // bouncy pulse
+    k *= 1 - moodW.focused * 0.12;                                                        // tighter
+    k *= 1 + moodW.proud * (s > 0.97 ? 0.35 * Math.abs(Math.sin(t * 2 + s * 50)) : 0);   // sparkles fly out
+    return k;
+  }
+  function drawSwarm(g, S, t, lv, sw, R, opts = {}) {
+    const c = S / 2, sp = cur.speed * st.energy, N = sw.length;
+    const k = 0.06 + 0.04 * cur.bounce, damp = 0.78 + 0.1 * cur.bounce;
+    g.globalCompositeOperation = "lighter";
+    for (let i = 0; i < N; i++) {
+      const q = sw[i];
+      let [tx, ty, d] = (opts.form || formation)(q, i, N, t, lv, sp);
+      if (cur.jitter) { tx += (Math.random() - 0.5) * 0.03; ty += (Math.random() - 0.5) * 0.03; }
+      tx = c + tx * R; ty = c + ty * R;
+      if (!q.init) { q.x = tx; q.y = ty; q.init = true; }
+      q.vx = (q.vx + (tx - q.x) * k) * damp; q.vy = (q.vy + (ty - q.y) * k) * damp;
+      q.x += q.vx; q.y += q.vy; q.d += (d - q.d) * 0.15;
+      const speed = Math.min(1, Math.hypot(q.vx, q.vy) / (S * 0.02)), size = S * (0.0035 + 0.0055 * q.d) * (opts.scale || 1);
+      const spark = moodW.proud > 0.3 && q.s > 0.97 ? 0.5 : 0;
+      g.fillStyle = C(q.s * 40 - 20, q.d * 12 + speed * 10 + spark * 40, 0.1 + 0.42 * q.d + spark);
+      g.beginPath(); g.arc(q.x, q.y, size, 0, TAU); g.fill();
+    }
+    g.globalCompositeOperation = "source-over";
+  }
+  function core(g, S, r) {
+    const c = S / 2, cr = S * r, gr = g.createRadialGradient(c, c, 0, c, c, cr * 3.2);
+    gr.addColorStop(0, "#ffffff"); gr.addColorStop(0.16, C(0, 30)); gr.addColorStop(0.45, C(0, 0, 0.75)); gr.addColorStop(1, C(0, 0, 0));
+    g.fillStyle = gr; g.beginPath(); g.arc(c, c, cr * 3.2, 0, TAU); g.fill();
+  }
+  function bars(g, S, t, lv, store, r0, n, len) {
+    const c = S / 2, sp = cur.speed * st.energy;
+    for (let i = 0; i < n; i++) {
+      const a = i / n * TAU;
+      let target = 0.03 + 0.02 * Math.sin(t * 1.5 * sp + i * 0.4);
+      if (st.state === "speaking") target += spec(a, t, lv) * 0.6;
+      if (st.state === "listening") target += lv * 0.25 * Math.abs(Math.sin(i * 1.3 + t * 12));
+      if (st.state === "thinking") { const dd = ((a - t * 2.6 * sp) % TAU + TAU) % TAU; target += 0.25 * Math.max(0, 1 - dd / 1.2); }
+      store[i] += (target - store[i]) * 0.25;
+      const r1 = r0 + S * store[i] * len;
+      g.strokeStyle = C(i % 2 ? 8 : -8, store[i] * 40, 0.45 + store[i]); g.lineWidth = S * 0.009; g.lineCap = "round";
+      g.beginPath(); g.moveTo(c + Math.cos(a) * r0, c + Math.sin(a) * r0); g.lineTo(c + Math.cos(a) * r1, c + Math.sin(a) * r1); g.stroke();
+    }
+  }
+  // Reactor rings in 3D: tilted, segmented, passing in front of and behind the swarm
+  function rings3d(g, S, t, lv, R, front) {
+    const c = S / 2, sp = cur.speed * st.energy * (st.state === "thinking" ? 2.5 : 1);
+    [[1.18, 1.1, 0.35, 5, 0.012], [1.32, -0.6, -0.5, 3, 0.008]].forEach(([rr, tilt, spin, segs, w], j) => {
+      const rad = R * rr * (1 + 0.03 * lv), rot = t * spin * sp, ct = Math.cos(tilt + 0.15 * Math.sin(t * 0.3)), stt = Math.sin(tilt + 0.15 * Math.sin(t * 0.3));
+      g.lineWidth = S * w; g.lineCap = "round";
+      for (let k = 0; k < segs; k++) {
+        g.beginPath(); let started = false;
+        for (let u = 0; u <= 1.0001; u += 0.05) {
+          const a = rot + (k + u * 0.62) * TAU / segs, x = Math.cos(a) * rad, y0 = Math.sin(a) * rad;
+          const y = y0 * ct, z = y0 * stt;
+          if ((z >= 0) !== front) { started = false; continue; }
+          started ? g.lineTo(c + x, c + y) : g.moveTo(c + x, c + y); started = true;
+        }
+        g.strokeStyle = C(j * 15, front ? 15 : -10, front ? 0.85 : 0.3); g.stroke();
+      }
+    });
+  }
+  // the halo made of dots: columns of dots that rise with the voice
+  function dotBars(g, S, t, lv, sw, R) {
+    const c = S / 2, n = 72, per = Math.floor(sw.length / n), sp = cur.speed * st.energy;
+    g.globalCompositeOperation = "lighter";
+    for (let i = 0; i < n * per; i++) {
+      const q = sw[i], b = Math.floor(i / per), k = i % per, a = b / n * TAU;
+      let h;
+      if (st.state === "speaking") h = 0.05 + spec(a, t, lv) * 0.9;
+      else if (st.state === "listening") h = 0.05 + lv * 0.4 * Math.abs(Math.sin(b * 1.3 + t * 12));
+      else if (st.state === "thinking") { const dd = ((a - t * 2.6 * sp) % TAU + TAU) % TAU; h = 0.05 + 0.55 * Math.max(0, 1 - dd / 1.4); }
+      else h = 0.06 + 0.04 * Math.sin(t * 1.5 * sp + b * 0.5);
+      const r = R * (0.62 + (k / per) * h * 1.2) * (st.state === "listening" ? 0.85 : 1);
+      const tx = c + Math.cos(a) * r, ty = c + Math.sin(a) * r;
+      if (!q.init) { q.x = tx; q.y = ty; q.init = true; }
+      q.vx = (q.vx + (tx - q.x) * 0.12) * 0.75; q.vy = (q.vy + (ty - q.y) * 0.12) * 0.75; q.x += q.vx; q.y += q.vy;
+      const lit = k / per < h * 1.2 ? 1 : 0.25;
+      g.fillStyle = C((k / per) * 30, 5 + 12 * (k / per), 0.18 + 0.5 * lit);
+      g.beginPath(); g.arc(q.x, q.y, S * 0.0055, 0, TAU); g.fill();
+    }
+    g.globalCompositeOperation = "source-over";
+  }
+
+  // 3.2: one swarm that becomes the voice bars: the same dots fly out into columns when Theta speaks
+  function unified(q, i, N, t, lv, sp) {
+    if (st.state !== "speaking") return formation(q, i, N, t, lv, sp);
+    const n = 72, b = i % n, k = Math.floor(i / n), per = Math.ceil(N / n), a = b / n * TAU;
+    const h = 0.08 + spec(a, t, lv) * 0.85;
+    const r = 0.55 + (k / per) * h * 1.1;
+    return [Math.cos(a) * r, Math.sin(a) * r, 0.4 + 0.6 * (k / per < h ? 1 : 0.3)];
+  }
+  // a thin dot halo (Dot Spectrum's columns, fewer and finer) for around the swarm
+  function dotHalo(g, S, t, lv, sw, R0, n = 60, dot = 1) {
+    const c = S / 2, per = Math.floor(sw.length / n), sp = cur.speed * st.energy;
+    g.globalCompositeOperation = "lighter";
+    for (let i = 0; i < n * per; i++) {
+      const q = sw[i], b = Math.floor(i / per), k = i % per, a = b / n * TAU;
+      let h = 0.06 + 0.04 * Math.sin(t * 1.5 * sp + b * 0.5);
+      if (st.state === "speaking") h = 0.05 + spec(a, t, lv) * 0.9;
+      else if (st.state === "listening") h = 0.05 + lv * 0.4 * Math.abs(Math.sin(b * 1.3 + t * 12));
+      else if (st.state === "thinking") { const dd = ((a - t * 2.6 * sp) % TAU + TAU) % TAU; h = 0.05 + 0.6 * Math.max(0, 1 - dd / 1.4); }
+      const r = R0 * (1 + (k / per) * h * 0.55) * moodShape(a, t, 0.5);
+      const tx = c + Math.cos(a) * r, ty = c + Math.sin(a) * r;
+      if (!q.init) { q.x = tx; q.y = ty; q.init = true; }
+      q.vx = (q.vx + (tx - q.x) * 0.12) * 0.75; q.vy = (q.vy + (ty - q.y) * 0.12) * 0.75; q.x += q.vx; q.y += q.vy;
+      const lit = k / per < h * 1.2 ? 1 : 0.2;
+      g.fillStyle = C((k / per) * 30, 5 + 12 * (k / per), 0.15 + 0.5 * lit);
+      g.beginPath(); g.arc(q.x, q.y, S * 0.0048 * dot, 0, TAU); g.fill();
+    }
+    g.globalCompositeOperation = "source-over";
+  }
+  function oneRing(g, S, t, lv, R) {
+    const c = S / 2, sp = cur.speed * st.energy * (st.state === "thinking" ? 2.5 : 1), segs = 4;
+    g.lineWidth = S * 0.006; g.lineCap = "round"; g.strokeStyle = C(10, 5, 0.55);
+    for (let k = 0; k < segs; k++) { const a = t * 0.3 * sp + k * TAU / segs; g.beginPath(); g.arc(c, c, R * (1 + 0.02 * lv), a, a + TAU / segs * 0.7); g.stroke(); }
+  }
+
+  // halo column position in formation units (R0 = ring radius relative to the swarm's R)
+  function columns(i, N, n, t, lv, sp, R0, grow) {
+    const b = i % n, k = Math.floor(i / n), per = Math.ceil(N / n), a = b / n * TAU;
+    let h = 0.06 + 0.04 * Math.sin(t * 1.5 * sp + b * 0.5);
+    if (st.state === "speaking") h = 0.08 + spec(a, t, lv) * 0.85;
+    else if (st.state === "listening") h = 0.05 + lv * 0.4 * Math.abs(Math.sin(b * 1.3 + t * 12));
+    else if (st.state === "thinking") { const dd = ((a - t * 2.6 * sp) % TAU + TAU) % TAU; h = 0.05 + 0.6 * Math.max(0, 1 - dd / 1.4); }
+    const r = (R0 + (k / per) * h * grow) * moodShape(a, t, 0.5);
+    return [Math.cos(a) * r, Math.sin(a) * r, k / per < h ? 1 : 0.3];
+  }
+  // 4.2: One Swarm, smoother: when it thinks, the galaxy's outer stars ride a comet sweep; core dots never leave
+  function unified2(q, i, N, t, lv, sp) {
+    if (st.state === "thinking" && q.s > 0.78) { const a = t * 2.6 * sp - (q.s - 0.78) * 6, r = 0.98 + (q.s - 0.78) * 0.3; return [Math.cos(a) * r, Math.sin(a) * r, 1]; }
+    if (st.state === "speaking" && i % 9 === 0) { const a = q.s * TAU + t * 2, r = 0.28 * q.s; return [Math.cos(a) * r, Math.sin(a) * r, 1]; }
+    return unified(q, i, N, t, lv, sp);
+  }
+  // 4.3: one system: the inner swarm and the outer halo trade dots; when Theta talks, the swarm pours into the halo
+  function merged(q, i, N, t, lv, sp) {
+    const haloShare = 0.4;
+    if (st.state === "speaking" || q.s < haloShare) return columns(i, N, 60, t, lv, sp, 1.45, st.state === "speaking" ? 0.9 : 0.5);
+    return formation(q, i, N, t, lv, sp);
+  }
+  // a ring that answers the voice: each segment brightens with the spectrum at its angle; thinking lights a sweep
+  function liveRing(g, S, t, lv, R, segs = 24, ticks = false) {
+    const c = S / 2, sp = cur.speed * st.energy, step = TAU / segs, rot = t * 0.2 * sp;
+    g.lineCap = "round"; g.lineWidth = S * 0.007;
+    for (let k = 0; k < segs; k++) {
+      const a = rot + k * step;
+      let lit = 0.25;
+      if (st.state === "speaking") lit += Math.min(0.75, spec(a, t, lv) * 1.2);
+      if (st.state === "listening") lit += 0.35 * lv;
+      if (st.state === "thinking") { const dd = ((a - t * 2.6 * sp) % TAU + TAU) % TAU; lit += 0.7 * Math.max(0, 1 - dd / 1.6); }
+      g.strokeStyle = C(10, 5 + lit * 20, Math.min(1, lit)); g.beginPath(); g.arc(c, c, R * (1 + 0.015 * lv), a, a + step * 0.72); g.stroke();
+      if (ticks && k % 3 === 0) { g.lineWidth = S * 0.004; g.beginPath(); g.moveTo(c + Math.cos(a) * R * 1.06, c + Math.sin(a) * R * 1.06); g.lineTo(c + Math.cos(a) * R * 1.11, c + Math.sin(a) * R * 1.11); g.stroke(); g.lineWidth = S * 0.007; }
+    }
+  }
+
+  // ---------------- 3D: world-space springs, a drifting camera, depth sorting, fog
+  const pts3 = [];
+  function draw3d(g, S, t, lv, sw, form, opts = {}) {
+    const c = S / 2, sp = cur.speed * st.energy, N = sw.length, R = S * (opts.scale || 0.3);
+    const yaw = t * 0.18 * sp + (opts.yaw0 || 0), pitch = (opts.pitch ?? 0.5) + 0.06 * Math.sin(t * 0.37), D = 3.2;
+    const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), spn = Math.sin(pitch);
+    const k = 0.07 + 0.04 * cur.bounce, damp = 0.8 + 0.08 * cur.bounce;
+    pts3.length = 0;
+    for (let i = 0; i < N; i++) {
+      const q = sw[i];
+      const [tx, ty, tz, br] = form(q, i, N, t, lv, sp);
+      if (!q.w) { q.w = [tx, ty, tz]; q.v = [0, 0, 0]; }
+      for (let j = 0; j < 3; j++) { q.v[j] = (q.v[j] + ([tx, ty, tz][j] - q.w[j]) * k) * damp; q.w[j] += q.v[j]; }
+      let [x, y, z] = q.w;
+      if (cur.jitter) { x += (Math.random() - 0.5) * 0.015; y += (Math.random() - 0.5) * 0.015; }
+      const x1 = x * cy - z * sy, z1 = x * sy + z * cy;           // yaw
+      const y2 = y * cp - z1 * spn, z2 = y * spn + z1 * cp;       // pitch
+      const pr = D / (D + z2);
+      pts3.push([c + x1 * R * pr, c + y2 * R * pr, z2, pr, br, q.s, Math.hypot(q.v[0], q.v[1], q.v[2])]);
+      if (opts.mirror && y < 0) { // a faint reflection under the floor (y = 0)
+        const ym = -y, y3 = ym * cp - z1 * spn, z3 = ym * spn + z1 * cp, pm = D / (D + z3);
+        pts3.push([c + x1 * R * pm, c + y3 * R * pm, z3, pm, br * 0.22, q.s, 0, true]);
+      }
+    }
+    pts3.sort((a, b) => b[2] - a[2]); // far first
+    g.globalCompositeOperation = "lighter";
+    let coreDrawn = false;
+    for (const [px, py, z, pr, br, s, v, refl] of pts3) {
+      if (!coreDrawn && z < 0) { g.globalCompositeOperation = "source-over"; core(g, S, (opts.core || 0.035) + 0.045 * lv); g.globalCompositeOperation = "lighter"; coreDrawn = true; }
+      const fog = Math.max(0.12, Math.min(1, 0.62 - z * 0.55));   // far = dim
+      const spark = moodW.proud > 0.3 && s > 0.97 ? 0.45 : 0;
+      g.fillStyle = C(s * 40 - 20, (pr - 0.8) * 50 + Math.min(1, v * 40) * 12 + spark * 40, (0.08 + 0.5 * br) * fog + spark);
+      g.beginPath(); g.arc(px, py, S * 0.0052 * pr * pr * (refl ? 0.8 : 1) * (opts.dot || 1), 0, TAU); g.fill();
+    }
+    if (!coreDrawn) { g.globalCompositeOperation = "source-over"; core(g, S, (opts.core || 0.035) + 0.045 * lv); }
+    g.globalCompositeOperation = "source-over";
+  }
+  // the inner swarm, in 3D (world units: inner radius ~0.5)
+  function inner3(q, i, N, t, lv, sp, r0 = 0.5) {
+    const s = q.s;
+    if (st.state === "listening") { // a flat dish in the floor plane, rippling
+      const ring = (i % 7) / 7, a = s * TAU + t * 0.5 * sp;
+      let r = r0 * (0.25 + 0.85 * ring); r *= 1 + 0.1 * (0.4 + lv) * Math.sin(r * 18 - t * 8);
+      return [Math.cos(a) * r, -0.04 * Math.sin(r * 12 - t * 6) - 0.05, Math.sin(a) * r, 0.8];
+    }
+    if (st.state === "thinking") { // a galaxy lying in the floor plane, spinning
+      const arm = i % 3, u = s, a = u * 8 + arm * TAU / 3 + t * 1.8 * sp, r = r0 * (0.15 + 1.05 * Math.pow(u, 0.8));
+      return [Math.cos(a) * r, (q.by * 0.05), Math.sin(a) * r, 0.5 + 0.5 * (1 - u)];
+    }
+    const k = (1 + 0.05 * Math.sin(t * 1.4 + q.by * 4) + 0.03 * Math.sin(t * 2.1 + s * 9)) * moodShape(Math.atan2(q.by, q.bx), t, s);
+    let y = q.by * r0 * k; if (moodW.sleepy > 0.01) y += moodW.sleepy * 0.08 * (1 - Math.abs(q.bx));
+    return [q.bx * r0 * k, y - r0 * 0.15, q.bz * r0 * k, 0.7];
+  }
+  // 5.1 Skyline Pour: the halo is a ring of dot columns standing on the floor; Theta's voice pours the swarm into them and they rise
+  function skyline(q, i, N, t, lv, sp, mirror = false) {
+    const halo = st.state === "speaking" || q.s < 0.4;
+    if (!halo) return inner3(q, i, N, t, lv, sp);
+    const n = 48, b = i % n, kk = Math.floor(i / n), per = Math.ceil(N / n), a = b / n * TAU;
+    let h = 0.06 + 0.04 * Math.sin(t * 1.5 * sp + b * 0.5);
+    if (st.state === "speaking") h = 0.1 + spec(a, t, lv) * 1.1;
+    else if (st.state === "listening") h = 0.05 + lv * 0.5 * Math.abs(Math.sin(b * 1.3 + t * 12));
+    else if (st.state === "thinking") { const dd = ((a - t * 2.6 * sp) % TAU + TAU) % TAU; h = 0.05 + 0.7 * Math.max(0, 1 - dd / 1.4); }
+    const R0 = 1.05 * moodShape(a, t, 0.5), u = kk / per;
+    return [Math.cos(a) * R0, -u * h * 1.1 + 0.02, Math.sin(a) * R0, u < 0.98 ? 0.85 : 0.3];
+  }
+  // 5.2 Saturn Pour: the halo lies flat around the swarm like a planet's ring; the voice pushes the columns outward
+  function saturn(q, i, N, t, lv, sp) {
+    const halo = st.state === "speaking" || q.s < 0.4;
+    if (!halo) return inner3(q, i, N, t, lv, sp, 0.55);
+    const n = 60, b = i % n, kk = Math.floor(i / n), per = Math.ceil(N / n), a = b / n * TAU;
+    let h = 0.06 + 0.04 * Math.sin(t * 1.5 * sp + b * 0.5);
+    if (st.state === "speaking") h = 0.1 + spec(a, t, lv) * 0.9;
+    else if (st.state === "listening") h = 0.05 + lv * 0.4 * Math.abs(Math.sin(b * 1.3 + t * 12));
+    else if (st.state === "thinking") { const dd = ((a - t * 2.6 * sp) % TAU + TAU) % TAU; h = 0.05 + 0.6 * Math.max(0, 1 - dd / 1.4); }
+    const r = (0.95 + (kk / per) * h * 0.75) * moodShape(a, t, 0.5);
+    return [Math.cos(a) * r, Math.sin(a * 3 + t) * 0.02, Math.sin(a) * r, 0.85];
+  }
+  // 5.3 Urchin Pour: the voice pours out of the globe itself, in spikes along its surface, all the way round
+  function urchin(q, i, N, t, lv, sp) {
+    const lon = Math.atan2(q.bz, q.bx), lat = Math.asin(Math.max(-1, Math.min(1, q.by)));
+    let r = 0.55 * (1 + 0.04 * Math.sin(t * 1.4 + q.by * 4)) * moodShape(lon, t, q.s);
+    if (st.state === "speaking") r += q.s * 0.75 * spec(lon * 1.5 + lat, t, lv) * (0.6 + 0.4 * Math.sin(lat * 4 + t * 5));
+    if (st.state === "listening") r *= 0.82 + 0.08 * Math.sin(lat * 10 - t * 7) * (0.4 + lv);
+    let x = q.bx, y = q.by, z = q.bz;
+    if (st.state === "thinking") { const a = lon + t * (1.5 + Math.abs(lat)) * sp; x = Math.cos(a) * Math.cos(lat); z = Math.sin(a) * Math.cos(lat); }
+    return [x * r, y * r, z * r, 0.4 + 0.6 * q.s];
+  }
+
+  const SAVED = new Set(["3.2", "3.3", "4.3"]);
+  const DIRS = [
+    ["3.2", "One Swarm", "One set of dots that does everything: a globe, a dish, a galaxy, and when Theta talks the same dots fly out and become the voice bars.",
+      (g, S, t, lv, me) => { drawSwarm(g, S, t, lv, me.sw, S * 0.34, {form: unified, scale: 1.1}); core(g, S, 0.03 + 0.05 * lv); }],
+    ["3.3", "Jarvis Lite", "Full Jarvis, calmed down for a phone: the morphing swarm, a fine dot halo and one thin ring instead of two 3D rings and line bars.",
+      (g, S, t, lv, me) => { drawSwarm(g, S, t, lv, me.sw, S * 0.22); oneRing(g, S, t, lv, S * 0.3); dotHalo(g, S, t, lv, me.sw2, S * 0.36); core(g, S, 0.03 + 0.04 * lv); }],
+    ["4.3", "Pour", "Jarvis Lite as one system: the inner swarm and the outer dot halo share their dots, and when Theta talks the whole swarm pours outward into the voice bars, then drifts back.",
+      (g, S, t, lv, me) => { drawSwarm(g, S, t, lv, me.sw, S * 0.25, {form: merged}); liveRing(g, S, t, lv, S * 0.31, 16); core(g, S, 0.03 + 0.045 * lv); }],
+    ["5.1", "Skyline Pour", "The halo stands up: a ring of dot columns on a floor, seen from above at an angle. When Theta talks the swarm pours into them and they rise like a 3D equalizer.",
+      (g, S, t, lv, me) => draw3d(g, S, t, lv, me.sw, skyline, {scale: 0.32, pitch: 0.55})],
+    ["5.2", "Saturn Pour", "The halo lies flat around the swarm like a planet's ring, tilted toward you, passing behind and in front of the core. The voice pushes its columns outward.",
+      (g, S, t, lv, me) => draw3d(g, S, t, lv, me.sw, saturn, {scale: 0.36, pitch: 0.42})],
+    ["5.3", "Urchin Pour", "The voice pours out of the globe itself: spikes of dots grow from its surface all the way round as it turns. Thinking spins it in bands.",
+      (g, S, t, lv, me) => draw3d(g, S, t, lv, me.sw, urchin, {scale: 0.42, pitch: 0.3, dot: 1.1})],
+    ["5.4", "Skyline, mirrored", "Skyline Pour standing on a glassy floor: every column has a faint reflection under it, which sells the depth best. A touch more glow in the core.",
+      (g, S, t, lv, me) => draw3d(g, S, t, lv, me.sw, skyline, {scale: 0.3, pitch: 0.38, mirror: true, core: 0.045})],
+  ];
+  const grid = document.getElementById("grid"), shelf = document.getElementById("saved"), picks = new Set();
+  const cards = DIRS.map(([code, name, about, fn]) => {
+    const card = document.createElement("button"); card.type = "button"; card.className = "spec"; card.setAttribute("aria-pressed", "false");
+    card.innerHTML = `<div class="top"><h2>${name}</h2><span class="code">${code}</span></div><canvas width="480" height="480" aria-label="${name} avatar"></canvas>`
+      + `<div class="tiny"><canvas width="144" height="144" class="small" aria-label="${name} at chat size"></canvas><span>At its real size on the Theta page</span></div><p>${about}</p><span class="pick">Tap to pick</span>`;
+    const setPicked = on => { card.setAttribute("aria-pressed", on); card.querySelector(".pick").textContent = on ? "✓ Picked" : "Tap to pick"; };
+    card.addEventListener("click", () => { picks.has(code) ? picks.delete(code) : picks.add(code); setPicked(picks.has(code)); });
+    if (SAVED.has(code)) { card.classList.add("saved"); shelf.append(card); } else grid.append(card);
+    const cv = card.querySelector("canvas"), small = card.querySelector("canvas.small");
+    return {code, fn, cv, g: cv.getContext("2d"), small, gs: small.getContext("2d"), sw: makeSwarm(code === "3.2" ? 648 : code === "4.3" ? 700 : code.startsWith("5.") ? 760 : 420),
+            sw2: makeSwarm(360), b: new Float32Array(96), setPicked};
+  });
+
+  const setState = s => { st.state = s; document.querySelectorAll("[data-state]").forEach(x => x.setAttribute("aria-pressed", x.dataset.state === s)); };
+  document.querySelectorAll("[data-state]").forEach(b => b.addEventListener("click", () => { tour = false; tourBtn.setAttribute("aria-pressed", "false"); setState(b.dataset.state); }));
+  document.querySelectorAll("[data-mood]").forEach(b => b.addEventListener("click", () => {
+    st.mood = b.dataset.mood; document.querySelectorAll("[data-mood]").forEach(x => x.setAttribute("aria-pressed", x === b));
+    document.documentElement.style.setProperty("--accent", getComputedStyle(b).getPropertyValue("--c"));
+  }));
+  const tourBtn = document.getElementById("tour"); let tour = false, tourAt = 0;
+  tourBtn.addEventListener("click", () => { tour = !tour; tourBtn.setAttribute("aria-pressed", tour); tourAt = 0; });
+  const en = document.getElementById("energy"), ev = document.getElementById("energy-v");
+  en.addEventListener("input", () => { st.energy = en.value / 100; ev.textContent = en.value + "%"; });
+
+  // ---- send picks to Claude (a db document Claude reads); shown only where the page can save
+  const sendBtn = document.getElementById("send"), status = document.getElementById("status"), note = document.getElementById("note");
+  let db = null;
+  status.textContent = "Connecting…";
+  const giveUp = setTimeout(() => { if (!db) status.textContent = "Sending isn't available here: tell Claude your picks in the chat."; }, 10000);
+  window.claude?.use?.("db").then(async d => {
+    db = d; clearTimeout(giveUp);
+    if (!db) { status.textContent = "Sending isn't available here: tell Claude your picks in the chat."; sendBtn.disabled = true; return; }
+    status.textContent = "";
+    try {
+      const snap = await db.doc("feedback/gen5").get();
+      if (snap.exists) { const v = snap.data(); (v.picks || []).forEach(p => { picks.add(p); cards.find(c => c.code === p)?.setPicked(true); }); note.value = v.note || ""; status.textContent = "You sent picks before; sending again replaces them."; }
+    } catch (e) {}
+  }).catch(() => { clearTimeout(giveUp); status.textContent = "Sending isn't available here: tell Claude your picks in the chat."; });
+  sendBtn.addEventListener("click", async () => {
+    if (!db) { status.textContent = "Sending isn't available here: tell Claude your picks in the chat."; return; }
+    if (!picks.size && !note.value.trim()) { status.textContent = "Pick at least one, or write a note."; return; }
+    sendBtn.disabled = true; status.textContent = "Sending…";
+    try {
+      await db.doc("feedback/gen5").set({picks: [...picks].sort(), note: note.value.trim().slice(0, 2000), at: new Date().toISOString()});
+      status.textContent = "Sent. Tell Claude “sent” and it'll read them.";
+    } catch (e) { status.textContent = "Couldn't send (" + (e && e.message || e) + "). Tell Claude in the chat instead."; }
+    sendBtn.disabled = false;
+  });
+
+  let last = performance.now(), clock = 0;
+  const ORDER = ["idle", "listening", "thinking", "speaking"];
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    const m = MOODS[st.mood];
+    const dh = ((m.hue - cur.hue + 540) % 360) - 180; cur.hue = (cur.hue + dh * 0.06 + 360) % 360;
+    for (const k of ["sat", "light", "speed", "jitter", "bounce"]) cur[k] += (m[k] - cur[k]) * 0.06;
+    for (const k in moodW) moodW[k] += ((k === st.mood ? 1 : 0) - moodW[k]) * 0.05;
+    if (st.mood === "proud") cur.hue = (150 + 25 * Math.sin(clock * 0.8) + 360) % 360;
+    clock += dt * (reduce ? 0.3 : 1);
+    if (tour) { tourAt += dt; if (tourAt > 3.2) { tourAt = 0; setState(ORDER[(ORDER.indexOf(st.state) + 1) % 4]); } }
+    level += (targetLevel(clock) - level) * 0.3;
+    for (const me of cards) {
+      const {fn, cv, g} = me, S = cv.width;
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.fillStyle = "rgba(11,18,26,0.32)"; g.fillRect(0, 0, S, S); // light trails: the last frames fade instead of vanishing
+      g.translate(0, -S * cur.bounce * 0.012 * Math.abs(Math.sin(clock * 3)));
+      fn(g, S, clock, level, me);
+      me.gs.clearRect(0, 0, 144, 144); me.gs.drawImage(cv, 0, 0, 144, 144); // the same frame at chat size
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
