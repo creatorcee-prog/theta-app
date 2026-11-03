@@ -21,7 +21,8 @@ HEAD_PROVIDER = os.environ.get("HEAD_PROVIDER", "deepseek").strip().lower()
 HEAD_MODEL = os.environ.get("HEAD_MODEL", "").strip() or DEEPSEEK_MODEL
 HEAD_STEPS = 3  # lookup rounds before Theta must answer
 # Tools whose result Theta reads before answering (they change nothing).
-HEAD_LOOKUPS = {"web_search", "fetch_page", "task_list", "follow_list", "calendar", "budget"}
+HEAD_LOOKUPS = {"web_search", "fetch_page", "task_list", "follow_list", "calendar", "budget",
+                "reminders", "library", "training", "crew_reports", "settings", "hub_help", "mail"}
 _HEAD_SKIP = {"ask", "ask_qwerty"}  # nobody below Theta to ask while the crew is paused
 
 
@@ -63,6 +64,90 @@ TOOLS["calendar"] = ("calendar | today, tomorrow, week, or a number of days   (r
 TOOLS["budget"] = ("budget | this month   (budgets and the latest spending)", _tool_budget, {"theta"})
 
 
+# ---- Lookups that used to ride in every prompt (crew_facts, the hub map).
+# The lean prompt (native tool calling) keeps a short "at a glance" and lets
+# Theta fetch these only when a message needs them.
+def _tool_reminders(arg, agent):
+    rs = sorted(reminders(), key=lambda r: r["at"])
+    return ("Reminders set:\n" + "\n".join(f"- {reminder_line(r)}" for r in rs[:40])) if rs else "No reminders set."
+
+
+def _tool_library(arg, agent):
+    return (lenz_context().strip() or "The library is empty.")[:4000]
+
+
+def _tool_training(arg, agent):
+    j = james_summary()
+    return ("Garage Gym training (exact):\n" + json.dumps(j)[:3000]) if j else "No training data from Garage Gym."
+
+
+def _tool_crew_reports(arg, agent):
+    last = _meta_json("round:reports", {})
+    if not last.get("reports"):
+        return "No round reports yet."
+    return (f"The crew's last round reports ({datetime.fromtimestamp(last['at'], hub_tz()):%b %d %H:%M}):\n"
+            + "\n".join(f"- {AGENTS.get(a, {}).get('name', a)}: {t[:700]}" for a, t in last["reports"].items()))
+
+
+def _tool_settings(arg, agent):
+    return "Settings that can be changed on approval (exact):\n" + "\n".join(
+        f"- {k}={os.environ.get(k, '') or '(not set)'}" for k in sorted(SETTABLE))
+
+
+def _tool_hub_help(arg, agent):
+    return HUB_GUIDE
+
+
+def _tool_mail(arg, agent):
+    return (remi_mail_context() or "").strip() or "Gmail isn't connected, or there's nothing new."
+
+
+for _n, _d, _f in (("reminders", "reminders | all   (every reminder that's set, with times)", _tool_reminders),
+                   ("library", "library | all   (what the user watches, plays and reads: current, waiting, favorites, ratings)", _tool_library),
+                   ("training", "training | latest   (their Garage Gym training numbers)", _tool_training),
+                   ("crew_reports", "crew_reports | latest   (what the crew's last round found: news, releases, mail, ...)", _tool_crew_reports),
+                   ("settings", "settings | all   (the hub settings that can be changed on approval, with their values)", _tool_settings),
+                   ("hub_help", "hub_help | <topic>   (the hub's pages, sections and settings: check before describing any of them)", _tool_hub_help),
+                   ("mail", "mail | new   (Remi's sorted Gmail: what's new and what needs a reply)", _tool_mail)):
+    TOOLS[_n] = (_d, _f, {"theta"})
+
+
+def head_glance(now=None):
+    """The few facts most messages need, so Theta rarely has to look them up:
+    what's next on the calendar, reminders coming up, money this month, focus."""
+    now = now or time.time()
+    local = datetime.fromtimestamp(now, hub_tz())
+    today = local.date()
+    lines = []
+    try:
+        if calendar_linked():
+            evs = [o for o in calendar_events(today, today + timedelta(days=1)) if not o["birthday"]
+                   and (o["all_day"] or o["end"].timestamp() > now)][:4]
+            lines.append("Next on the calendar: " + ("; ".join(occurrence_text(o, with_day=True) for o in evs) or "nothing today or tomorrow"))
+    except Exception:
+        pass
+    soon = sorted((r for r in reminders() if r.get("pending") or r["at"] < now + 36 * 3600), key=lambda r: r["at"])[:4]
+    if soon:
+        lines.append("Reminders coming up: " + "; ".join(reminder_line(r) for r in soon))
+    try:
+        st = month_status()
+        spent = sum(v["spent"] for v in st.values())
+        over = [c for c, v in st.items() if v["budget"] and v["spent"] > v["budget"]]
+        lines.append(f"Spent this month: ${spent:,.0f}" + (f"; over budget: {', '.join(over)}" if over else ""))
+    except Exception:
+        pass
+    f = focus_state()
+    if f and f.get("until", 0) > now:
+        lines.append(f"In a focus session: {f['task']}, {max(1, round((f['until'] - now) / 60))} min left")
+    return ("\n\nAt a glance (exact; use your lookups for anything more):\n" + "\n".join(f"- {l}" for l in lines)) if lines else ""
+
+
+_FORMAT_LONG = re.compile(r"Present each answer in the format that helps most:.*?for a link you were given\)\.", re.S)
+HEAD_FORMAT_SHORT = ("Format: plain sentences by default; a short list only for separate items, - [ ] for to-dos, a table "
+                     "only to compare things, a fenced code block for code, never invent data. When you need the user to "
+                     "pick, a ```quiz card (a question line, then - option lines) beats a paragraph of questions.")
+
+
 def head_tools():
     """The tools Theta can use as the single head: everything the crew had,
     minus asking someone below, plus propose (which still waits for Approve)."""
@@ -80,8 +165,9 @@ _HEAD_ALONE = ("\n\nYou're the only one the user talks to now: you handle everyt
 
 def head_system(native=False):
     allowed = head_tools()
-    if native:  # the tools come as real function tools, so the prompt only says how to use them
-        return (system_prompt("theta", now=False) + _HEAD_ALONE
+    if native:  # the tools come as real function tools, so the prompt only says how to use them (and stays lean)
+        base = _FORMAT_LONG.sub(HEAD_FORMAT_SHORT, system_prompt("theta", now=False), count=1)
+        return (base + _HEAD_ALONE
                 + "\n\nTools: you have a function tool for everything you can look up or change. Use one whenever you "
                 f"need a fact you don't have or the user wants something done; you see each result before you answer and "
                 f"can keep going (up to {HEAD_TASK_STEPS} rounds), so for a bigger job do it step by step until it's done. "
@@ -91,8 +177,9 @@ def head_system(native=False):
                 "propose: the user taps Approve before anything happens. Your final message is what the user sees; the "
                 "hub adds a line for each thing you changed, so don't repeat those word for word."
                 + "\n\n" + HEAD_ADD_RULE
-                + "\n\n" + HUB_GUIDE + _SECRETS_RULE
-                + crew_facts())
+                + "\n\nThe hub: use hub_help before describing any page, button or setting, and never invent one. You "
+                "can't write code, deploy or change settings yourself: propose it, and it happens when the user taps "
+                "Approve." + _SECRETS_RULE)
     tools = "\n".join("ACTION: " + d for n, (d, _, _) in TOOLS.items() if n in allowed)
     return (system_prompt("theta", now=False) + _HEAD_ALONE
             + "\n\nTools. You change or look up things ONLY through these; put one line per action at the very end of "
@@ -183,7 +270,7 @@ def tool_schemas(allowed):
             what = d.split("|", 1)[1].strip() if "|" in d else d
             out.append({"type": "function", "function": {
                 "name": n, "description": what[:500],
-                "parameters": {"type": "object", "properties": {"input": {"type": "string", "description": what[:300]}},
+                "parameters": {"type": "object", "properties": {"input": {"type": "string", "description": "As the tool says."}},
                                "required": ["input"]}}})
         _SCHEMAS[key] = out
     return _SCHEMAS[key]
@@ -223,6 +310,22 @@ def head_chat(messages, max_tokens=900):
         return llm_chat("low_brain", messages, max_tokens, primary=last, fallback="off")
 
 
+HEAD_OLD_LINE_MAX = 500  # characters of each earlier chat message (the latest is whole)
+
+
+def head_transcript(thread):
+    """The chat so far, lean: the last CHAT_HISTORY messages, earlier ones cut
+    to HEAD_OLD_LINE_MAX (a long digest or news post doesn't ride along whole)."""
+    msgs = thread[-CHAT_HISTORY:]
+    out = []
+    for i, m in enumerate(msgs):
+        line = chat_line(m)
+        if i < len(msgs) - 1 and len(line) > HEAD_OLD_LINE_MAX:
+            line = line[:HEAD_OLD_LINE_MAX] + "…"
+        out.append(line)
+    return "\n".join(out)
+
+
 def head_reply_native(thread, spoken=False):
     """Theta's answer with native tool calling: it looks things up AND changes
     things mid-answer, sees every result (failures too, so it can fix its
@@ -231,14 +334,15 @@ def head_reply_native(thread, spoken=False):
     rule, budget = (HEAD_SPOKEN_RULE, 350) if spoken else (HEAD_TYPED_RULE, 900)
     working("theta")
     last = thread[-1]
-    transcript = "\n".join(chat_line(m) for m in thread[-CHAT_HISTORY:])
+    transcript = head_transcript(thread)
     ask = (f"The chat so far:\n{transcript}\n\nAnswer the latest message as Theta. Write only your message, "
            f"without your name in front. {rule}")
     if last["from"] == "you":
         ask += seen_notes(last) + playbook_prompt(last.get("text", ""))
     allowed = head_tools()
     tools = tool_schemas(allowed)
-    msgs = [{"role": "system", "content": head_system(native=True)}, {"role": "system", "content": now_line()},
+    msgs = [{"role": "system", "content": head_system(native=True)},
+            {"role": "system", "content": now_line() + head_glance()},  # these change often: after the cached part
             {"role": "user", "content": ask}]
     receipts, buttons, done = [], [], {}
     text = ""
