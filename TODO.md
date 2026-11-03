@@ -789,6 +789,15 @@ the hub must work without.
   for anything that has to run on the PC itself.
 
 ## Planned
+### Theta's avatar (2026-11-03)
+- [x] Avatar Lab: 5 generations (docs/avatar-lab.html; live at claude.ai/artifact/A3PWLpJuTdQ5mb9X3gMV4C).
+  Saved favorites: One Swarm (3.2), Jarvis Lite (3.3), Pour (4.3). Picked: Urchin Pour (5.3).
+- [x] Urchin Pour is the avatar: 3D swarm, depth-sorted with fog; speaking pours spikes from the real audio's
+  loudness (decoded, never rerouted); listening ripples; thinking spins in bands. Moods (calm, focused, happy,
+  concerned, sleepy, proud) change color and shape; Theta tags each reply's mood with plain rules. Settings in
+  "Voice and tools": style (Urchin / classic rings), size, energy, a color per mood (kept on the device).
+- [ ] Maybe later: the saved designs as more styles; the mic's real level while listening.
+
 ### Next features (picked 2026-11-03)
 - [ ] **Today's 3.** Each morning Theta picks the 3 things that matter most today from the calendar, reminders and
       memory, shows them as a panel, and checks in on them at midday and in the evening (done / move / drop).

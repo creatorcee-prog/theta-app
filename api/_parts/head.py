@@ -480,14 +480,42 @@ def head_reply_text(thread, spoken=False):
     return run_actions("theta", text, allowed=allowed)
 
 
+# The avatar's mood for a reply (the Head page eases into its color and shape). Read from the reply
+# and what's going on, with plain rules: no extra model call.
+_MOOD_CONCERNED = re.compile(r"(\u2717|\bover (?:the )?budget\b|\boverdue\b|\bcouldn'?t\b|\bcan'?t\b|\bfailed\b|\bwarning\b|"
+                             r"\bcareful\b|\bmissed\b|\burgent\b|\bproblem\b|\berror\b|\bworried\b|\bsorry\b)", re.I)
+_MOOD_PROUD = re.compile(r"\b(nice work|well done|great job|nailed it|crushed it|proud|finished|all done|that's done|you did it)\b", re.I)
+_MOOD_HAPPY = re.compile(r"\b(great|awesome|love|haha|yay|congrat\w*|glad|fun|happy|excited|sweet)\b", re.I)
+
+
+def reply_mood(text, now=None):
+    text = text or ""
+    if _MOOD_CONCERNED.search(text):
+        return "concerned"
+    if _MOOD_PROUD.search(text) or text.count("\u2713") >= 2:
+        return "proud"
+    if _MOOD_HAPPY.search(text):
+        return "happy"
+    try:
+        if focus_state() or any(j["status"] in ("queued", "running") for j in jobs()):
+            return "focused"
+    except Exception:
+        pass
+    hour = datetime.fromtimestamp(now or time.time(), hub_tz()).hour
+    if hour >= 22 or hour < 6:
+        return "sleepy"
+    return "calm"
+
+
 def head_replies(thread, spoken=False):
     """([(agent, reply, extra)], errors), the shape desk_replies returns."""
-    _REQ.trail, _REQ.tok, _REQ.panels = [], [0, 0], []
+    _REQ.trail, _REQ.tok, _REQ.panels, _REQ.mood = [], [0, 0], [], None
     try:
         reply = head_reply(thread, spoken=spoken)
     except LLMError as e:
         return [], {"Theta": str(e)[:200]}
     _REQ.trail = (getattr(_REQ, "trail", None) or []) + ["theta"]
+    _REQ.mood = reply_mood(reply["text"] if isinstance(reply, dict) else reply)
     return [("theta", reply, reply_extra())], {}
 
 
@@ -575,29 +603,159 @@ _HEAD_JS = r"""
   const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } };
   function setState(s) { state = s; stateEl.textContent = LABEL[s] || ""; }
 
-  // ---- the Rings avatar
-  function draw(ms) {
-    const t = ms / 1000 * (reduce ? 0.35 : 1), c = S / 2;
-    let target = state === "speaking" ? 0.25 + 0.5 * Math.max(0, 0.5 + 0.5 * Math.sin(t * 13) * Math.sin(t * 5.3 + 1.2)) + 0.35 * burst
-      : state === "listening" ? 0.2 + 0.1 * (0.5 + 0.5 * Math.sin(t * 2.2)) : state === "thinking" ? 0.12 : 0.06 + 0.05 * (0.5 + 0.5 * Math.sin(t * 1.3));
-    burst *= 0.86; level += (target - level) * 0.22;
-    g.clearRect(0, 0, S, S); g.lineCap = "round";
-    const spin = state === "thinking" ? 3.2 : state === "listening" ? 1.4 : 0.7;
+  // ---- Theta's avatar: Urchin Pour (picked in the Avatar Lab, generation 5), or the classic rings.
+  // A swarm of dots on a turning globe in real 3D (depth-sorted, near = bigger and brighter, far = fog).
+  // Speaking pours the voice out of the globe in spikes, following the real audio; listening pulls it in
+  // and ripples; thinking spins it in bands. Mood eases color and shape: concerned spiky, happy bouncy,
+  // focused tight, sleepy slow and sagging, proud sparkling. Style, size, energy and mood colors are in
+  // "Voice and tools" (kept on this device).
+  const AV_DEFAULT = {style: "urchin", size: "small", energy: 1, colors: {}};
+  let AV = Object.assign({}, AV_DEFAULT);
+  try { Object.assign(AV, JSON.parse(store("theta:avatar") || "{}")); } catch (e) {}
+  const MOODS = {
+    calm: ["#4fd3ff", 1.0, 0, 0], focused: ["#7d8bff", 1.25, 0, 0], happy: ["#ffc04d", 1.15, 0, 1],
+    concerned: ["#ff6a5c", 1.35, 1, 0], sleepy: ["#b58cff", 0.45, 0, 0], proud: ["#5ef0a2", 1.1, 0, 0.6]};
+  function hexHsl(hex) {
+    const n = parseInt((hex || "#4fd3ff").slice(1), 16), r = (n >> 16 & 255) / 255, gg = (n >> 8 & 255) / 255, b = (n & 255) / 255;
+    const mx = Math.max(r, gg, b), mn = Math.min(r, gg, b), l = (mx + mn) / 2, d = mx - mn;
+    let h = 0, s = 0;
+    if (d) { s = d / (1 - Math.abs(2 * l - 1)); h = mx === r ? ((gg - b) / d) % 6 : mx === gg ? (b - r) / d + 2 : (r - gg) / d + 4; h *= 60; }
+    return [(h + 360) % 360, Math.round(s * 100), Math.round(l * 100)];
+  }
+  let mood = "calm";
+  const cur = {hue: 195, sat: 95, light: 62, speed: 1, jitter: 0, bounce: 0};
+  const moodW = {calm: 1, focused: 0, happy: 0, concerned: 0, sleepy: 0, proud: 0};
+  const TAU = Math.PI * 2;
+  const col = (dh, dl, a) => `hsla(${(cur.hue + dh + 360) % 360},${cur.sat}%,${Math.min(96, cur.light + dl)}%,${a})`;
+  // the voice: the real loudness of the clip that's playing (decoded, not rerouted), else a stand-in
+  let voiceEnv = null, envFor = null;
+  function envelope(blob) {
+    envFor = blob; voiceEnv = null;
+    try {
+      const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext; if (!OAC) return;
+      blob.arrayBuffer().then(buf => new Promise((ok, no) => {
+        const ctx = new OAC(1, 22050, 22050), r = ctx.decodeAudioData(buf, ok, no); if (r && r.then) r.then(ok, no);
+      })).then(audio => {
+        if (envFor !== blob) return;
+        const d = audio.getChannelData(0), step = Math.max(1, Math.floor(audio.sampleRate / 30)), out = [];
+        let mx = 1e-6;
+        for (let i = 0; i < d.length; i += step) { let sum = 0; for (let j = i; j < Math.min(d.length, i + step); j++) sum += d[j] * d[j]; const v = Math.sqrt(sum / step); out.push(v); if (v > mx) mx = v; }
+        voiceEnv = out.map(v => Math.min(1, v / mx * 1.15));
+      }).catch(() => {});
+    } catch (e) {}
+  }
+  const spec = (a, t, lv) => lv * (0.55 * Math.abs(Math.sin(a * 5 + t * 9)) + 0.45 * Math.abs(Math.sin(a * 11 - t * 5)));
+  function moodShape(a, t, s) {
+    let k = 1;
+    k *= 1 + moodW.concerned * 0.16 * Math.pow(Math.max(0, Math.sin(a * 9 + t * 3)), 6);
+    k *= 1 + moodW.happy * 0.07 * Math.abs(Math.sin(t * 4.2));
+    k *= 1 - moodW.focused * 0.12;
+    k *= 1 + moodW.proud * (s > 0.97 ? 0.35 * Math.abs(Math.sin(t * 2 + s * 50)) : 0);
+    return k;
+  }
+  const N = 520, dots = [];
+  for (let i = 0; i < N; i++) { const y = 1 - (i / (N - 1)) * 2, r = Math.sqrt(1 - y * y), th = i * 2.39996;
+    dots.push({bx: Math.cos(th) * r, by: y, bz: Math.sin(th) * r, s: Math.random(), w: null, v: [0, 0, 0]}); }
+  function urchin(q, t, lv, sp) {
+    const lon = Math.atan2(q.bz, q.bx), lat = Math.asin(Math.max(-1, Math.min(1, q.by)));
+    let r = 0.55 * (1 + 0.04 * Math.sin(t * 1.4 + q.by * 4)) * moodShape(lon, t, q.s);
+    if (state === "speaking") r += q.s * 0.75 * spec(lon * 1.5 + lat, t, lv) * (0.6 + 0.4 * Math.sin(lat * 4 + t * 5));
+    if (state === "listening") r *= 0.82 + 0.08 * Math.sin(lat * 10 - t * 7) * (0.4 + lv);
+    let x = q.bx, y = q.by, z = q.bz;
+    if (state === "thinking") { const a = lon + t * (1.5 + Math.abs(lat)) * sp; x = Math.cos(a) * Math.cos(lat); z = Math.sin(a) * Math.cos(lat); }
+    if (moodW.sleepy > 0.01) y += moodW.sleepy * 0.12 * (1 - Math.abs(x));
+    return [x * r, y * r, z * r, 0.4 + 0.6 * q.s];
+  }
+  const pts = [];
+  function drawUrchin(t, lv) {
+    const c = S / 2, sp = cur.speed * AV.energy, R = S * 0.42, D = 3.2;
+    const yaw = t * 0.18 * sp, pitch = 0.3 + 0.06 * Math.sin(t * 0.37), cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), spn = Math.sin(pitch);
+    const k = 0.07 + 0.04 * cur.bounce, damp = 0.8 + 0.08 * cur.bounce;
+    pts.length = 0;
+    for (const q of dots) {
+      const [tx, ty, tz, br] = urchin(q, t, lv, sp), tg = [tx, ty, tz];
+      if (!q.w) q.w = tg.slice();
+      for (let j = 0; j < 3; j++) { q.v[j] = (q.v[j] + (tg[j] - q.w[j]) * k) * damp; q.w[j] += q.v[j]; }
+      let [x, y, z] = q.w;
+      if (cur.jitter > 0.05) { x += (Math.random() - 0.5) * 0.015 * cur.jitter; y += (Math.random() - 0.5) * 0.015 * cur.jitter; }
+      const x1 = x * cy - z * sy, z1 = x * sy + z * cy, y2 = y * cp - z1 * spn, z2 = y * spn + z1 * cp, pr = D / (D + z2);
+      pts.push([c + x1 * R * pr, c + y2 * R * pr, z2, pr, br, q.s, Math.hypot(q.v[0], q.v[1], q.v[2])]);
+    }
+    pts.sort((a, b) => b[2] - a[2]);
+    g.globalCompositeOperation = "lighter";
+    let coreDone = false;
+    for (const [px, py, z, pr, br, s, v] of pts) {
+      if (!coreDone && z < 0) { core(c, 0.035 + 0.045 * lv); coreDone = true; }
+      const fog = Math.max(0.12, Math.min(1, 0.62 - z * 0.55)), spark = moodW.proud > 0.3 && s > 0.97 ? 0.45 : 0;
+      g.fillStyle = col(s * 40 - 20, (pr - 0.8) * 50 + Math.min(1, v * 40) * 12 + spark * 40, (0.1 + 0.55 * br) * fog + spark);
+      g.beginPath(); g.arc(px, py, S * 0.0075 * pr * pr, 0, TAU); g.fill();
+    }
+    if (!coreDone) core(c, 0.035 + 0.045 * lv);
+    g.globalCompositeOperation = "source-over";
+  }
+  function core(c, r) {
+    const op = g.globalCompositeOperation; g.globalCompositeOperation = "source-over";
+    const cr = S * r, gr = g.createRadialGradient(c, c, 0, c, c, cr * 3.2);
+    gr.addColorStop(0, "#ffffff"); gr.addColorStop(0.16, col(0, 30, 1)); gr.addColorStop(0.45, col(0, 0, 0.75)); gr.addColorStop(1, col(0, 0, 0));
+    g.fillStyle = gr; g.beginPath(); g.arc(c, c, cr * 3.2, 0, TAU); g.fill(); g.globalCompositeOperation = op;
+  }
+  function drawRings(t) { // the classic avatar, kept as a style
+    const c = S / 2, spin = state === "thinking" ? 3.2 : state === "listening" ? 1.4 : 0.7;
+    g.lineCap = "round";
     [[0.40, 0.010, 3, 0.35, 0.5], [0.32, 0.016, 5, -0.6, 0.35], [0.24, 0.008, 8, 0.95, 0.25]].forEach(([r, w, segs, sp, gap], i) => {
-      const rr = S * (r + (state === "speaking" ? 0.025 * level * Math.sin(t * 9 + i) : 0) + (state === "listening" && i === 0 ? 0.012 * Math.sin(t * 4) : 0));
-      const step = Math.PI * 2 / segs, rot = t * sp * spin;
-      g.strokeStyle = CY; g.globalAlpha = 0.35 + 0.5 * level + (i === 1 ? 0.1 : 0); g.lineWidth = S * w;
+      const rr = S * (r + (state === "speaking" ? 0.025 * level * Math.sin(t * 9 + i) : 0)), step = TAU / segs, rot = t * sp * spin * AV.energy;
+      g.strokeStyle = col(0, 0, 0.35 + 0.5 * level + (i === 1 ? 0.1 : 0)); g.lineWidth = S * w;
       for (let k = 0; k < segs; k++) { g.beginPath(); g.arc(c, c, rr, rot + k * step, rot + (k + 1) * step - gap); g.stroke(); }
     });
-    g.globalAlpha = 0.25; g.lineWidth = S * 0.004;
-    for (let k = 0; k < 60; k++) { const a = k * Math.PI / 30 - t * 0.1; g.beginPath(); g.moveTo(c + Math.cos(a) * S * 0.445, c + Math.sin(a) * S * 0.445); g.lineTo(c + Math.cos(a) * S * 0.46, c + Math.sin(a) * S * 0.46); g.stroke(); }
-    g.globalAlpha = 1;
-    const cr = S * (0.07 + 0.06 * level), gr = g.createRadialGradient(c, c, 0, c, c, cr * 3);
-    gr.addColorStop(0, "#ffffff"); gr.addColorStop(0.18, "#bff0ff"); gr.addColorStop(0.45, CY); gr.addColorStop(1, "rgba(0,0,0,0)");
-    g.fillStyle = gr; g.beginPath(); g.arc(c, c, cr * 3, 0, 7); g.fill();
+    core(c, 0.07 + 0.06 * level);
+  }
+  let clock = 0, lastMs = 0;
+  function draw(ms) {
+    const dt = Math.min(0.05, (ms - (lastMs || ms)) / 1000); lastMs = ms; clock += dt * (reduce ? 0.35 : 1);
+    const t = clock, m = MOODS[mood] || MOODS.calm, [mh, msat, ml] = hexHsl((AV.colors || {})[mood] || m[0]);
+    const dh = ((mh - cur.hue + 540) % 360) - 180; cur.hue = (cur.hue + dh * 0.06 + 360) % 360;
+    cur.sat += (msat - cur.sat) * 0.06; cur.light += (Math.max(45, Math.min(72, ml)) - cur.light) * 0.06;
+    cur.speed += (m[1] - cur.speed) * 0.06; cur.jitter += (m[2] - cur.jitter) * 0.06; cur.bounce += (m[3] - cur.bounce) * 0.06;
+    for (const k in moodW) moodW[k] += ((k === mood ? 1 : 0) - moodW[k]) * 0.05;
+    let target = 0;
+    if (state === "speaking") {
+      const env = voiceEnv && !player.paused ? voiceEnv[Math.floor(player.currentTime * 30)] : null;
+      target = env != null ? env : 0.25 + 0.5 * Math.max(0, 0.5 + 0.5 * Math.sin(t * 13) * Math.sin(t * 5.3 + 1.2)) + 0.35 * burst;
+    } else if (state === "listening") target = 0.15 + 0.3 * Math.max(0, Math.sin(t * 9.1) * Math.sin(t * 2.3));
+    burst *= 0.86; level += (Math.min(1, target) - level) * 0.3;
+    g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, S, S);
+    g.translate(0, -S * cur.bounce * 0.012 * Math.abs(Math.sin(t * 3)));
+    if (AV.style === "rings") drawRings(t); else drawUrchin(t, level);
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);
+  // mood: from Theta's latest reply (the server tags it), and sleepy late at night when nothing else is going on
+  function setMood(m) { mood = MOODS[m] ? m : "calm"; cv.dataset.mood = mood; }
+  document.addEventListener("theta:thread", e => {
+    const m = [...(e.detail || [])].reverse().find(x => x.from === "theta" && x.kind !== "event");
+    const at = m && m.at ? new Date(m.at.replace(" ", "T") + "Z").getTime() : 0, h = new Date().getHours();
+    const fresh = m && m.mood && Date.now() - at < 2 * 3600e3;
+    setMood(fresh ? m.mood : (h >= 22 || h < 6) ? "sleepy" : "calm");
+  });
+  // the avatar settings (kept on this device)
+  function saveAV() { store("theta:avatar", JSON.stringify(AV)); applySize(); }
+  function applySize() { cv.classList.toggle("big", AV.size === "large"); }
+  applySize();
+  const avStyle = document.getElementById("av-style"), avSize = document.getElementById("av-size"), avEnergy = document.getElementById("av-energy");
+  if (avStyle) {
+    avStyle.value = AV.style; avSize.value = AV.size; avEnergy.value = Math.round(AV.energy * 100);
+    avStyle.onchange = () => { AV.style = avStyle.value; saveAV(); };
+    avSize.onchange = () => { AV.size = avSize.value; saveAV(); };
+    avEnergy.oninput = () => { AV.energy = avEnergy.value / 100; saveAV(); };
+    document.querySelectorAll("[data-avmood]").forEach(inp => {
+      const k = inp.dataset.avmood; inp.value = (AV.colors || {})[k] || MOODS[k][0];
+      inp.oninput = () => { AV.colors = Object.assign({}, AV.colors, {[k]: inp.value}); saveAV(); setMood(k); };
+    });
+    document.getElementById("av-reset").onclick = () => {
+      AV = Object.assign({}, AV_DEFAULT, {colors: {}}); avStyle.value = AV.style; avSize.value = AV.size; avEnergy.value = 100;
+      document.querySelectorAll("[data-avmood]").forEach(inp => { inp.value = MOODS[inp.dataset.avmood][0]; }); saveAV();
+    };
+  }
 
   // ---- the voice: Theta's Orpheus voices (free, on Groq) or the phone's own speech
   const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
@@ -668,7 +826,7 @@ _HEAD_JS = r"""
       const url = URL.createObjectURL(blob);
       player.onended = player.onerror = () => { URL.revokeObjectURL(url); done(); };
       player.ontimeupdate = () => { burst = 0.5 + Math.random() * 0.5; };
-      player.src = url; setState("speaking"); heardVoice();
+      player.src = url; setState("speaking"); heardVoice(); envelope(blob); // the avatar follows this clip's real loudness
       player.play().catch(() => done());
     });
   }
@@ -990,7 +1148,14 @@ _DECK_CSS = """
  max-height:58dvh;overflow-y:auto}
 .hud [hidden]{display:none!important}
 .hud-top{display:flex;align-items:center;gap:12px;justify-content:flex-start}
-#head-av{width:72px;height:72px;flex:none;cursor:pointer;touch-action:manipulation}
+#head-av{width:88px;height:88px;flex:none;cursor:pointer;touch-action:manipulation;transition:width .3s,height .3s}
+#head-av.big{width:150px;height:150px}
+.av-set{display:grid;gap:8px;margin:8px 0;font-size:13px;color:var(--muted)}
+.av-set .row{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.av-set select{font:inherit;background:transparent;color:inherit;border:1px solid var(--line,rgba(127,127,127,.3));border-radius:8px;padding:4px 6px}
+.av-set input[type=color]{width:34px;height:26px;padding:0;border:1px solid var(--line,rgba(127,127,127,.3));border-radius:6px;background:none}
+.av-set label.mc{display:inline-flex;gap:6px;align-items:center}
+.av-set button{font:inherit;font-weight:700;padding:4px 12px;border-radius:999px;border:1px solid #4fd3ff;background:transparent;color:inherit;cursor:pointer}
 .hud-mid{flex:1;min-width:0}
 .hud .hstate{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#4fd3ff;margin:0;text-align:left;min-height:0}
 .hud .said{margin:2px 0 0;font-size:14px;color:var(--muted);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:0;max-width:none}
@@ -1112,7 +1277,7 @@ def head_hud():
     said, Talk, the panel deck, and the voice options folded away."""
     langs = "".join(f'<option value="{c}">{html.escape(n)}</option>' for c, (n, _) in LANGUAGES.items() if c != "en")
     return ('<section class="hud" aria-label="Talk to Theta">'
-            '<div class="hud-top"><canvas id="head-av" width="240" height="240" tabindex="0" role="button" aria-label="Theta. Tap to talk"></canvas>'
+            '<div class="hud-top"><canvas id="head-av" width="300" height="300" tabindex="0" role="button" aria-label="Theta. Tap to talk"></canvas>'
             '<div class="hud-mid"><p class="hstate" id="head-state" aria-live="polite"></p><p class="said" id="head-said"></p>'
             '<p class="note" id="head-timing" aria-live="off"></p></div>'
             '<button type="button" class="talk" id="head-talk" aria-pressed="false">Talk</button></div>'
@@ -1126,6 +1291,14 @@ def head_hud():
             '<label>Voice <select id="head-voice" aria-label="Theta\'s voice"></select></label>'
             '<button type="button" id="head-test" class="test">Test</button>'
             '<label title="Tap your Bluetooth glasses or earbuds to talk"><input type="checkbox" id="head-glasses"> Glasses mode</label></div>'
+            '<div class="av-set" aria-label="Avatar"><div class="row"><b>Avatar</b>'
+            '<label>Style <select id="av-style"><option value="urchin">Urchin Pour</option><option value="rings">Classic rings</option></select></label>'
+            '<label>Size <select id="av-size"><option value="small">Small</option><option value="large">Large</option></select></label>'
+            '<label>Energy <input type="range" id="av-energy" min="20" max="160" value="100" aria-label="How much the avatar moves"></label></div>'
+            '<div class="row"><span>Mood colors</span>'
+            + "".join(f'<label class="mc"><input type="color" data-avmood="{k}" aria-label="{n} color">{n}</label>'
+                      for k, n in (("calm", "Calm"), ("focused", "Focused"), ("happy", "Happy"), ("concerned", "Concerned"), ("sleepy", "Sleepy"), ("proud", "Proud")))
+            + '<button type="button" id="av-reset">Reset</button></div></div>'
             '<div class="modes"><button type="button" class="hear" id="head-convo" aria-pressed="false">\u25CF Record a conversation</button>'
             f'<div class="tr" role="group" aria-label="Translate"><span>Translate</span><select id="head-lang" aria-label="Their language">{langs}</select>'
             '<button type="button" id="head-tr-me">I speak</button><button type="button" id="head-tr-them">They speak</button></div></div>'
