@@ -1260,6 +1260,8 @@ def apply_proposal(pid, yes):
             raise ValueError("That proposal is already settled.")
         p["status"] = "approved" if yes else "declined"
         store().set_meta("proposals", json.dumps(ps))
+    if p["kind"] == "remind_move":  # the missed-reminders card
+        return move_to_tomorrow(p["ids"]) if yes else "Okay, leaving them."
     if p["kind"] == "dream":  # Keep / No on one of Theta's overnight ideas
         try:
             return dream_feedback(p, yes)
@@ -3343,6 +3345,7 @@ _load_part("ui")  # the app's look: themes, CSS, the shared page script and the 
 
 
 _load_part("home")  # Home: smart stack, Today's check, settings cards, benchmark UI: api/_parts/home.py
+_load_part("notifs")  # more notifications: weather, money, calendar changes, wind-down, breaks, releases, missed: api/_parts/notifs.py
 _load_part("listen")  # conversations recorded to text, translation, directions: api/_parts/listen.py
 _load_part("phone")  # Theta on the Home Screen (Scriptable) and in Shortcuts automations: api/_parts/phone.py
 _load_part("focus")  # help for an ADD brain: sleep and dreams, leave nudges, /focus, /break, /dump: api/_parts/focus.py

@@ -117,6 +117,10 @@ def glass_log_reply(parsed):
     """Log a chat expense; Glass confirms with exact numbers (no model call)."""
     amount, category, note = parsed
     exp = add_expense(amount, category, note)
+    try:
+        money_alert(amount, exp["category"])  # big purchase, or the budget passing 80% / 100%
+    except Exception as e:
+        print(f"money alert failed: {e!r}")
     v = month_status()[exp["category"]]
     tail = (f" {exp['category']} this month: ${v['spent']:,.2f} of ${v['budget']:,.0f}."
             if v["budget"] else f" {exp['category']} this month: ${v['spent']:,.2f} (no budget set).")

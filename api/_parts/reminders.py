@@ -230,7 +230,7 @@ def run_tick(now=None):
         release_held()  # what the typing guard held, now that you've stopped
     except Exception as e:
         print(f"releasing held posts failed: {e!r}")
-    for job in (event_nudges, focus_tick, run_sleep, convo_sweep):  # Stage 9: none of them may stop reminders
+    for job in (event_nudges, focus_tick, run_sleep, convo_sweep, notifs_tick):  # Stage 9: none of them may stop reminders
         try:
             job(now)
         except Exception as e:

@@ -873,6 +873,15 @@ def handle(method, path, query, headers, body):
             return _json(200, {"ok": True, "speech": speech[:1500],
                                "replies": [{"from": chat_name(m["from"]), "text": m["text"]} for m in replies]})
 
+        if path == "/api/settings/notifs":  # Settings → Notifications: one kind on or off
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            try:
+                notif_set(str(data.get("kind") or ""), bool(data.get("on")))
+            except ValueError as e:
+                return _json(400, {"ok": False, "error": str(e)})
+            return _json(200, {"ok": True})
+
         if path == "/api/settings/notify":
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})

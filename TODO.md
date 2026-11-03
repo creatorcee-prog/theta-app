@@ -628,7 +628,10 @@ All in api/_parts/focus.py, run from the 5-minute tick.
 - [x] Translation, a turn at a time: "I speak" / "They speak", 13 languages, said in the phone's own voice.
 - [x] Directions: Theta's directions action gives an Apple Maps link (Open in Maps on the Head page); Maps speaks the turns.
 - [ ] Glasses mode taps don't arrive on the user's glasses (2026-11-03): a "Taps heard" counter added to find out where it breaks.
-- [ ] More notifications (the user wants "all kinds"; which ones to be picked).
+- [x] More notifications, each with an on/off switch (Settings → Notifications): weather (HOME_CITY, Open-Meteo, free),
+  money (80% / 100% of a budget, BIG_SPEND), calendar changes, wind-down (WIND_DOWN_TIME), water and stretch breaks
+  (WATER_EVERY_HOURS, 10 AM to 8 PM), releases you follow the evening before, missed "until done" reminders with
+  Move to tomorrow (MISSED_TIME).
 
 ## Stage 8: Single head (decided 2026-11-02)
 
