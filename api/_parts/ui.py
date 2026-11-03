@@ -2394,13 +2394,16 @@ _CHAT_JS = r'''
     if (near) box.scrollTop = box.scrollHeight;
     first = false;
   }
+  // The Head page (voice, panels) shares this thread: it hears about every change and can hand it new messages.
+  function announce() { document.dispatchEvent(new CustomEvent("theta:thread", {detail: thread})); }
+  window.thetaChat = {take(ms) { thread = ms; render(); box.scrollTop = box.scrollHeight; announce(); }, load: () => load()};
   async function load() {
     try {
       const d = await (await fetch("/api/allchat?channel=" + C.channel, {headers: H})).json();
       if (d.ok) {
         thetaLatest(d.latest);
         const ids = d.messages.map(m => m.id).join();
-        if (ids !== thread.map(m => m.id).join()) { thread = d.messages; render(); }
+        if (ids !== thread.map(m => m.id).join()) { thread = d.messages; render(); announce(); }
       }
     } catch (_) {}
   }
@@ -2678,7 +2681,7 @@ _CHAT_JS = r'''
       const d = await (await fetch("/api/allchat", {method: "POST", headers: H, body: JSON.stringify(body)})).json();
       stopWorking();
       if (!d.ok) { const e = new Error(d.error); e.serverError = true; throw e; }
-      thread = d.messages; render(); box.scrollTop = box.scrollHeight;
+      thread = d.messages; render(); box.scrollTop = box.scrollHeight; announce();
       thetaLatest(d.latest);
       if (isCmd) { status.textContent = d.result; status.classList.remove("is-error"); }
       else {
@@ -2708,7 +2711,7 @@ _CHAT_JS = r'''
   if (C.to && C.agents[C.to]) { msg.value = "@" + C.agents[C.to].name + " "; grow(); }
   if (C.draft) { msg.value = C.draft; grow(); }  // draft from the mini bar (?say=): prefilled, not sent
   thread = C.initial || [];
-  render();
+  render(); announce();
   load();
   // A refresh mid-reply resumes the indicator from the hub note, if it
   // is still working; a finished or pruned note just clears the draft.
@@ -2861,7 +2864,7 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
     more = "".join(f'<a href="{href}" class="{"on" if href == active else ""}" aria-label="{label}" title="{label}"'
                    f'{" aria-current=page" if href == active else ""}>{ui_icon(icon)}<span>{label}</span></a>'
                    for href, label, icon in NAV_MORE)
-    show_minibar = body_class != "chatpage"  # the chat page already has the full composer
+    show_minibar = "chatpage" not in body_class.split()  # the chat page (and the Head page, which is the chat) has the full composer
     body_cls = ("hasminibar " + body_class).strip() if show_minibar else body_class
     return (
         f'<!doctype html><html lang="en" data-theme="{theme}" data-mode="{mode}" data-layout="{layout}" data-glassstyle="{glassstyle}" data-bg="{bg}"{flags}{bgstyle}>'

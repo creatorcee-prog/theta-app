@@ -652,6 +652,13 @@ All in api/_parts/focus.py, run from the 5-minute tick.
   speaks the first words first, and the page shows "Reply Xs · voice Ys".
 - [x] Background jobs: Theta's background action; the tick works on a job about 35 s at a time (what's left of the
   tick), carrying its place over, up to 24 rounds / 12 ticks, then posts and pushes the result. /jobs, /jobs cancel N.
+- [x] Buttons fixed (2026-11-03): Approve / Decline only worked on QWERTY's and James's messages, so Theta's own
+  offers (memories, dreams, missed reminders, propose) said "That button is gone". A failed Approve now brings its
+  buttons back.
+- [x] The Head page is the chat: rings, Talk and voice options on top of the same thread, cards and composer;
+  /chat is the same page in single-head mode. Jarvis-style panels: what a reply looks up or changes (calendar,
+  money, reminders, map, sources, weather, focus timer, background jobs) slides in above the chat, built from the
+  hub's own data; close with the X or say "close the panels". Spoken replies stay one line and may add one card.
 - [ ] MCP tools (later, once the desktop is back).
 
 ## Stage 8: Single head (decided 2026-11-02)

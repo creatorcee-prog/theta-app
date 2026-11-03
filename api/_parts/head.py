@@ -144,8 +144,13 @@ def head_glance(now=None):
 
 _FORMAT_LONG = re.compile(r"Present each answer in the format that helps most:.*?for a link you were given\)\.", re.S)
 HEAD_FORMAT_SHORT = ("Format: plain sentences by default; a short list only for separate items, - [ ] for to-dos, a table "
-                     "only to compare things, a fenced code block for code, never invent data. When you need the user to "
-                     "pick, a ```quiz card (a question line, then - option lines) beats a paragraph of questions.")
+                     "only to compare things, a fenced code block for code, never invent data. The chat shows cards when "
+                     "they fit: ```quiz (a question line, then - option lines; they pick one) beats a paragraph of "
+                     "questions; ```config (select Label: a | b, check Label: on|off lines) for choices; ```doc for a "
+                     "draft they can edit; ```bars (Label: number lines) for a quick chart; ```flow (A -> B -> C) for "
+                     "steps. When the user asks to see, show or pull up something (my calendar, my budget, reminders, "
+                     "the weather, directions), use its lookup: it appears on their screen as a panel, so your words can "
+                     "stay short.")
 
 
 def head_tools():
@@ -208,8 +213,12 @@ HEAD_ADD_RULE = ("The user has ADD. When they're stuck starting something, give 
 # on) are much shorter: a long reply is hard to follow by ear.
 HEAD_SPOKEN_RULE = ("This reply will be read aloud, to someone with ADD. Say it in 1 or 2 short sentences, about 30 "
                     "words at most: the one thing that matters first. No lists, no markdown, no links, no numbers of "
-                    "sources. If there's more worth knowing, end with a short offer like \"Want the details?\". If they "
-                    "ask for more or the details, give the fuller answer, still spoken and under about 80 words.")
+                    "sources in what you say. What your lookups find shows on their screen as a panel (calendar, "
+                    "money, reminders, map, sources, weather), so don't read it all out: say the one thing that "
+                    "matters. If they'd pick from options or tick things off, you can add ONE card after your spoken "
+                    "line (```quiz, ```config or a - [ ] checklist); it shows on screen and isn't read aloud. If there's "
+                    "more worth knowing, end with a short offer like \"Want the details?\". If they ask for more, give "
+                    "the fuller answer, still spoken and under about 80 words.")
 HEAD_TYPED_RULE = ("Keep it short: 2 to 4 sentences unless they ask for detail. Lead with the answer. Use a list only "
                    "when there are several separate items.")
 
@@ -363,6 +372,7 @@ def tool_rounds(msgs, tools, allowed, budget, steps, st, must_finish=True, reser
                 working("theta", "looking it up" if name.lower() in HEAD_LOOKUPS else f"using {name}")
                 ok, got, more = run_tool("theta", name, arg, allowed)
                 st["buttons"] += more
+                note_panel(name, arg, ok, got)  # what this pulls up on the Head page
                 result = ("done: " if ok else "failed: ") + got
                 if name.lower() not in HEAD_LOOKUPS:
                     st["receipts"].append(("\u2713 " if ok else "\u2717 ") + got)
@@ -472,7 +482,7 @@ def head_reply_text(thread, spoken=False):
 
 def head_replies(thread, spoken=False):
     """([(agent, reply, extra)], errors), the shape desk_replies returns."""
-    _REQ.trail, _REQ.tok = [], [0, 0]
+    _REQ.trail, _REQ.tok, _REQ.panels = [], [0, 0], []
     try:
         reply = head_reply(thread, spoken=spoken)
     except LLMError as e:
@@ -630,7 +640,8 @@ _HEAD_JS = r"""
     if (synth) { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; synth.speak(u); }
     player.src = SILENT; player.play().catch(() => {});
   }
-  function forSpeech(text) {
+  function forSpeech(text) { // cards (```quiz and the like) show on screen; they're never read aloud
+    text = text.replace(/```[\s\S]*?```/g, " ").replace(/^\s*- \[[ xX]\]\s.*$/gm, " ");
     return text.split("\n").filter(l => !/^\s*(Sources:|\[\d+\]\s*https?:)/i.test(l))
       .map(l => l.replace(/^\s*[✓✗]\s*/, "")).join(" ")
       .replace(/https?:\/\/\S+/g, "the link").replace(/\[\d+\]/g, "").replace(/[*_#`>|]/g, "")
@@ -742,13 +753,17 @@ _HEAD_JS = r"""
 
   // ---- talking to Theta
   const mapsEl = document.getElementById("head-maps");
+  const MERGED = !!document.getElementById("msgs"); // the Head page is the chat too: replies show in the thread
   function show(m) {
-    replyEl.textContent = m ? m.text : "";
+    if (!MERGED) replyEl.textContent = m ? m.text : "";
     const link = m && (m.text.match(/https:\/\/maps\.apple\.com\/\?\S+/) || [])[0];
-    mapsEl.hidden = !link; if (link) mapsEl.href = link.replace(/[).,]+$/, "");
+    mapsEl.hidden = MERGED || !link; if (link) mapsEl.href = link.replace(/[).,]+$/, ""); // merged: the map panel has it
   }
   async function send(text) {
     text = (text || "").trim(); if (!text || busy) return;
+    if (/^(ok(ay)?\s+|theta,?\s+)?(close|clear|hide|dismiss)\s+(the\s+|all\s+|those\s+)?(panels?|screens?|that|it|everything)[.!]?$/i.test(text)) {
+      document.dispatchEvent(new CustomEvent("theta:clear-panels")); saidEl.textContent = "\u201c" + text + "\u201d"; setState("idle"); return;
+    }
     busy = true; talk.disabled = true; saidEl.textContent = "“" + text + "”"; setState("thinking");
     tSent = performance.now(); tReply = 0; warmVoice();
     try {
@@ -760,13 +775,14 @@ _HEAD_JS = r"""
       const m = mine[mine.length - 1];
       if (!m) throw new Error(Object.values(d.errors || {})[0] || "no answer");
       tReply = performance.now();
+      if (window.thetaChat) window.thetaChat.take(d.messages); // the thread shows it, cards and buttons included
       show(m); latest = m; store("theta:heard", String(m.id)); hear.hidden = true;
-      note.textContent = m.buttons && m.buttons.length ? "This one needs your Approve: open Chat to tap it." : "";
+      note.textContent = m.buttons && m.buttons.length ? (MERGED ? "This one needs your tap: the buttons are on the message below." : "This one needs your Approve: open Chat to tap it.") : "";
       speak(m.text);
     } catch (e) { replyEl.textContent = ""; note.textContent = "Couldn't reach Theta: " + e.message; setState("idle"); }
     busy = false; talk.disabled = false;
   }
-  form.addEventListener("submit", e => { e.preventDefault(); unlock(); const t = input.value; input.value = ""; send(t); });
+  if (form) form.addEventListener("submit", e => { e.preventDefault(); unlock(); const t = input.value; input.value = ""; send(t); });
 
   // ---- listening: Safari's own dictation
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -957,7 +973,7 @@ _HEAD_JS = r"""
   });
   fetch("/api/allchat?channel=all", {headers: H}).then(r => r.json()).then(d => {
     const mine = (d.messages || []).filter(m => m.from !== "you" && m.kind !== "event");
-    if (!mine.length || replyEl.textContent) return;
+    if (!mine.length || (!MERGED && replyEl.textContent)) return;
     latest = mine[mine.length - 1]; show(latest);
     const fromPush = new URLSearchParams(location.search).get("play") === "latest";
     if (fromPush || String(latest.id) !== store("theta:heard")) hear.hidden = false;
@@ -968,29 +984,161 @@ _HEAD_JS = r"""
 """
 
 
-def head_page(headers):
-    body = (f'<style>{_HEAD_CSS}</style><section class="headpage" aria-label="Talk to Theta">'
-            '<canvas id="head-av" width="560" height="560" tabindex="0" role="button" aria-label="Theta. Tap to talk"></canvas>'
-            '<p class="hstate" id="head-state" aria-live="polite"></p>'
-            '<p class="said" id="head-said"></p>'
+# ---- Jarvis-style panels on the Head page (panels.py builds them on the server)
+_DECK_CSS = """
+.hud{display:block;max-width:none;margin:0;padding:10px 14px 6px;border-bottom:1px solid var(--border,rgba(127,127,127,.25));flex:none;
+ max-height:58dvh;overflow-y:auto}
+.hud [hidden]{display:none!important}
+.hud-top{display:flex;align-items:center;gap:12px;justify-content:flex-start}
+#head-av{width:72px;height:72px;flex:none;cursor:pointer;touch-action:manipulation}
+.hud-mid{flex:1;min-width:0}
+.hud .hstate{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#4fd3ff;margin:0;text-align:left;min-height:0}
+.hud .said{margin:2px 0 0;font-size:14px;color:var(--muted);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:0;max-width:none}
+.hud .note{text-align:left;font-size:12px}.hud .note:empty{display:none}
+.hud .talk{padding:10px 20px;min-width:0;font-size:15px}
+.hud .reply{max-width:none;font-size:15px;margin:6px 0 0}.hud .reply:empty{display:none}
+.hud-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}.hud-row:not(:has(:not([hidden]))){display:none}
+.hud .hear{padding:7px 16px;font-size:14px}
+.hud-more{margin-top:6px}.hud-more summary{cursor:pointer;font-size:13px;color:var(--muted);padding:4px 0;list-style-position:inside}
+.hud-more .opts{justify-content:flex-start;margin:6px 0}.hud-more .modes{justify-items:start}.hud-more .tr{justify-content:flex-start}
+.deck{display:flex;width:100%;max-width:100%;min-width:0;box-sizing:border-box;gap:10px;overflow-x:auto;padding:10px 2px 6px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;align-items:flex-start}
+.deck:empty{display:none}
+.holo{flex:0 0 min(80vw,300px);scroll-snap-align:start;position:relative;border-radius:14px;padding:10px 12px 12px;color:#e6f6ff;
+ background:linear-gradient(160deg,rgba(79,211,255,.16),rgba(6,14,22,.88) 45%);border:1px solid rgba(79,211,255,.6);
+ box-shadow:0 0 18px rgba(79,211,255,.28),inset 0 0 24px rgba(79,211,255,.08);overflow:hidden;
+ animation:holoIn .45s cubic-bezier(.2,.8,.2,1) both}
+.holo::after{content:"";position:absolute;inset:0;pointer-events:none;
+ background:linear-gradient(180deg,transparent,rgba(79,211,255,.16) 50%,transparent);transform:translateY(-100%);animation:holoScan 1.1s .25s ease-out both}
+@keyframes holoIn{from{opacity:0;transform:translateY(16px) scale(.95);filter:blur(5px)}to{opacity:1;transform:none;filter:none}}
+@keyframes holoScan{to{transform:translateY(100%)}}
+@media (prefers-reduced-motion:reduce){.holo,.holo::after{animation:none}}
+.holo header{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.holo .ic{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:12px;border:1px solid #4fd3ff;color:#4fd3ff;box-shadow:0 0 8px rgba(79,211,255,.6)}
+.holo h3{margin:0;font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;color:#4fd3ff;flex:1;font-weight:700}
+.holo .x{background:none;border:0;color:#9fb8c8;font-size:18px;line-height:1;cursor:pointer;padding:2px 4px}
+.holo .row{display:flex;gap:8px;font-size:14px;padding:5px 0;border-top:1px solid rgba(79,211,255,.16);align-items:baseline}
+.holo .row b{color:#bff0ff;font-weight:650;white-space:nowrap}.holo .row span{min-width:0;overflow-wrap:anywhere}
+.holo .dim{color:#8fa9b8;font-size:12.5px}
+.holo .big{font-size:30px;font-weight:760;color:#f2fcff;text-shadow:0 0 14px rgba(79,211,255,.7);line-height:1.1}
+.holo .bar{height:6px;border-radius:3px;background:rgba(79,211,255,.16);overflow:hidden;margin-top:4px}
+.holo .bar i{display:block;height:100%;background:#4fd3ff;box-shadow:0 0 8px #4fd3ff}.holo .bar i.over{background:#ff5d6c;box-shadow:0 0 8px #ff5d6c}
+.holo a.go{display:inline-block;margin-top:10px;padding:8px 16px;border-radius:999px;border:1px solid #4fd3ff;color:#e6f6ff;text-decoration:none;font-weight:700;font-size:14px;box-shadow:0 0 10px rgba(79,211,255,.35)}
+.holo .chips{display:flex;flex-wrap:wrap;gap:6px}.holo .chips a{font-size:13px;padding:4px 10px;border-radius:999px;border:1px solid rgba(79,211,255,.45);color:#e6f6ff;text-decoration:none}
+.holo .tag{font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid rgba(255,93,108,.6);color:#ffb3ba;margin-left:auto}
+.holo svg.ring{display:block;margin:4px auto}
+"""
+
+_DECK_JS = r"""
+(() => {
+  // The panel deck: when Theta looks something up or changes something, what it pulled up shows here,
+  // newest reply only, until you close it (the X, or say "close the panels").
+  const deck = document.getElementById("deck"); if (!deck) return;
+  let shown = null, tick = 0;
+  const gone = new Set();
+  const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
+  const money = n => "$" + Number(n).toLocaleString(undefined, {maximumFractionDigits: 0});
+  const ICON = {calendar: "◷", budget: "$", reminders: "⏰", map: "➤", sources: "⌕", weather: "☁",
+    focus: "◎", jobs: "⚙", list: "≡"};
+  function row(a, b, c) { const r = el("div", "row"); r.append(el("b", null, a), el("span", null, b)); if (c) r.append(c); return r; }
+  function body(p) {
+    const box = el("div");
+    if (p.kind === "calendar") {
+      if (!p.items.length) box.append(el("div", "dim", "Nothing scheduled."));
+      p.items.forEach(i => box.append(row(i.when, i.title + (i.where ? " · " + i.where : ""))));
+    } else if (p.kind === "budget") {
+      box.append(el("div", "big", money(p.total)), el("div", "dim", "spent so far"));
+      p.rows.forEach(r => {
+        const w = el("div"), b = el("div", "bar"), f = el("i"), frac = r.budget ? r.spent / r.budget : 0;
+        f.style.width = Math.min(100, Math.round(frac * 100)) + "%"; if (frac > 1) f.className = "over";
+        b.append(f); w.append(row(r.name, money(r.spent) + (r.budget ? " of " + money(r.budget) : ""))); if (r.budget) w.append(b); box.append(w);
+      });
+    } else if (p.kind === "reminders") {
+      if (!p.items.length) box.append(el("div", "dim", "No reminders coming up."));
+      p.items.forEach(i => box.append(row(i.when, i.what, i.pending ? el("span", "tag", "to do") : null)));
+    } else if (p.kind === "map") {
+      box.append(el("div", "big", p.place));
+      const a = el("a", "go", "Open in Maps →"); a.href = p.url; a.target = "_blank"; a.rel = "noopener"; box.append(a);
+    } else if (p.kind === "sources") {
+      if (p.query) box.append(el("div", "dim", p.query));
+      const c = el("div", "chips"); p.items.forEach(i => { const a = el("a", null, i.host); a.href = i.url; a.target = "_blank"; a.rel = "noopener"; c.append(a); });
+      box.append(c);
+    } else if (p.kind === "weather") {
+      box.append(el("div", "big", p.hi + "° / " + p.lo + "°"), el("div", "dim", p.rain + "% chance of rain" + (p.rain_at ? ", most likely around " + p.rain_at : "")));
+    } else if (p.kind === "focus") {
+      const ns = "http://www.w3.org/2000/svg", svg = document.createElementNS(ns, "svg"), R = 34, L = 2 * Math.PI * R;
+      svg.setAttribute("viewBox", "0 0 90 90"); svg.setAttribute("width", "90"); svg.setAttribute("height", "90"); svg.setAttribute("class", "ring");
+      const bg = document.createElementNS(ns, "circle"), fg = document.createElementNS(ns, "circle");
+      [bg, fg].forEach(c => { c.setAttribute("cx", 45); c.setAttribute("cy", 45); c.setAttribute("r", R); c.setAttribute("fill", "none"); c.setAttribute("stroke-width", 5); });
+      bg.setAttribute("stroke", "rgba(79,211,255,.18)"); fg.setAttribute("stroke", "#4fd3ff"); fg.setAttribute("stroke-linecap", "round");
+      fg.setAttribute("transform", "rotate(-90 45 45)"); fg.setAttribute("stroke-dasharray", L); svg.append(bg, fg);
+      const t = el("div", "big"); t.style.textAlign = "center";
+      const upd = () => {
+        const left = Math.max(0, p.until * 1000 - Date.now()), all = p.minutes * 60e3;
+        fg.setAttribute("stroke-dashoffset", L * (1 - left / all));
+        t.textContent = left ? Math.floor(left / 60e3) + ":" + String(Math.floor(left / 1000) % 60).padStart(2, "0") : "Time!";
+      };
+      upd(); clearInterval(tick); tick = setInterval(upd, 1000);
+      box.append(svg, t, el("div", "dim", p.task));
+    } else if (p.kind === "jobs") {
+      p.items.forEach(i => box.append(row("#" + i.id, i.task, el("span", "tag", i.status))));
+    } else if (p.kind === "list") {
+      p.items.forEach(i => box.append(row("•", i)));
+    }
+    return box;
+  }
+  function card(p, i) {
+    const c = el("article", "holo holo-" + p.kind); c.style.animationDelay = (i * 90) + "ms";
+    const h = el("header"), x = el("button", "x", "×");
+    x.type = "button"; x.setAttribute("aria-label", "Close " + p.title);
+    x.onclick = () => { c.remove(); if (!deck.children.length && shown) gone.add(shown); };
+    h.append(el("span", "ic", ICON[p.kind] || "◈"), el("h3", null, p.title), x);
+    c.append(h, body(p)); return c;
+  }
+  document.addEventListener("theta:thread", e => {
+    const m = [...(e.detail || [])].reverse().find(x => x.from === "theta" && x.kind !== "event" && x.panels && x.panels.length);
+    if (!m || m.id === shown || gone.has(m.id)) return;
+    const at = m.at ? new Date(m.at.replace(" ", "T") + "Z").getTime() : Date.now();
+    if (Date.now() - at > 30 * 60e3) return; // only what was just pulled up
+    shown = m.id; clearInterval(tick);
+    deck.replaceChildren(...m.panels.map(card)); deck.scrollLeft = 0;
+  });
+  document.addEventListener("theta:clear-panels", () => { if (shown) gone.add(shown); clearInterval(tick); deck.replaceChildren(); });
+})();
+"""
+
+
+def head_hud():
+    """The top of the Head page (which is the chat too): Theta's rings, what you
+    said, Talk, the panel deck, and the voice options folded away."""
+    langs = "".join(f'<option value="{c}">{html.escape(n)}</option>' for c, (n, _) in LANGUAGES.items() if c != "en")
+    return ('<section class="hud" aria-label="Talk to Theta">'
+            '<div class="hud-top"><canvas id="head-av" width="240" height="240" tabindex="0" role="button" aria-label="Theta. Tap to talk"></canvas>'
+            '<div class="hud-mid"><p class="hstate" id="head-state" aria-live="polite"></p><p class="said" id="head-said"></p>'
+            '<p class="note" id="head-timing" aria-live="off"></p></div>'
+            '<button type="button" class="talk" id="head-talk" aria-pressed="false">Talk</button></div>'
             '<p class="reply" id="head-reply" aria-live="polite"></p>'
-            '<button type="button" class="hear" id="head-hear" hidden>▶ Hear it</button>'
-            '<button type="button" class="talk" id="head-talk" aria-pressed="false">Talk</button>'
-            '<form id="head-type" autocomplete="off"><input id="head-text" type="text" placeholder="Or type to Theta" '
-            'aria-label="Message Theta"><button type="submit">Send</button></form>'
-            '<div class="opts"><label><input type="checkbox" id="head-voice-on" checked> Speak replies</label>'
+            '<div class="hud-row"><button type="button" class="hear" id="head-hear" hidden>\u25B6 Hear it</button>'
+            '<a class="hear" id="head-maps" hidden target="_blank" rel="noopener">Open in Maps</a></div>'
+            '<p class="note" id="head-note"></p><p class="note" id="head-taps" hidden></p>'
+            '<div class="deck" id="deck" aria-label="What Theta pulled up" aria-live="polite"></div>'
+            '<details class="hud-more"><summary>Voice and tools</summary><div class="opts">'
+            '<label><input type="checkbox" id="head-voice-on" checked> Speak replies</label>'
             '<label>Voice <select id="head-voice" aria-label="Theta\'s voice"></select></label>'
             '<button type="button" id="head-test" class="test">Test</button>'
             '<label title="Tap your Bluetooth glasses or earbuds to talk"><input type="checkbox" id="head-glasses"> Glasses mode</label></div>'
-            '<p class="note" id="head-timing" aria-live="off"></p>'
-            '<p class="note" id="head-taps" hidden></p>'
-            '<a class="hear" id="head-maps" hidden target="_blank" rel="noopener">Open in Maps</a>'
-            '<p class="note" id="head-note"></p>'
             '<div class="modes"><button type="button" class="hear" id="head-convo" aria-pressed="false">\u25CF Record a conversation</button>'
-            '<div class="tr" role="group" aria-label="Translate"><span>Translate</span><select id="head-lang" aria-label="Their language">'
-            + "".join(f'<option value="{c}">{html.escape(n)}</option>' for c, (n, _) in LANGUAGES.items() if c != "en")
-            + '</select><button type="button" id="head-tr-me">I speak</button><button type="button" id="head-tr-them">They speak</button></div></div>'
+            f'<div class="tr" role="group" aria-label="Translate"><span>Translate</span><select id="head-lang" aria-label="Their language">{langs}</select>'
+            '<button type="button" id="head-tr-me">I speak</button><button type="button" id="head-tr-them">They speak</button></div></div>'
             + ("" if head_on() else '<p class="note">The crew is on (HEAD_MODE=crew), so whoever answers in chat answers here.</p>')
-            + '</section><script>' + _HEAD_JS.replace("__ORPHEUS__", json.dumps(list(ORPHEUS_VOICES)))
-            .replace("__GEMINI__", json.dumps(list(GEMINI_VOICES))) + '</script>')
-    return page(headers, "Theta", "/head", body)
+            + '</details></section>')
+
+
+def head_script():
+    return (f'<style>{_HEAD_CSS.replace(".headpage", ".hud")}{_DECK_CSS}</style><script>'
+            + _HEAD_JS.replace("__ORPHEUS__", json.dumps(list(ORPHEUS_VOICES))).replace("__GEMINI__", json.dumps(list(GEMINI_VOICES)))
+            + "</script><script>" + _DECK_JS + "</script>")
+
+
+def head_page(headers, query=None):
+    """The Head page is the chat now (with the rings, voice and panels on top)."""
+    return chat_page(headers, query or {}, head=True)

@@ -907,19 +907,25 @@ def handle(method, path, query, headers, body):
             m = next((x for x in store().list_chat(ALLCHAT_KEEP) if x["id"] == mid), None)
             b = next((x for x in (m or {}).get("buttons") or [] if x["id"] == bid and x.get("value") == data.get("value")), None)
             pressed = _meta_json("chat:pressed", [])
-            if not m or not b or m["from"] not in ("james", "qwerty"):
+            proposal = bool(re.match(r"^qp:[0-9a-f]{8}:(yes|no)$", bid))
+            # Approve / Decline (and Keep / No, Move to tomorrow) work on whoever posted them: QWERTY's
+            # proposals, and Theta's own offers since it answers everything (single head). James's
+            # workout buttons are his.
+            if not m or not b or not (proposal or m["from"] == "james"):
                 return _json(400, {"ok": False, "error": "That button is gone."})
             if mid in pressed:
                 return _json(409, {"ok": False, "error": "Already done."})
             store().set_meta("chat:pressed", json.dumps((pressed + [mid])[-300:]))  # one press per message, like Discord
-            if m["from"] == "qwerty":  # Approve / Decline on a proposal
+            if proposal:
                 pm = re.match(r"^qp:([0-9a-f]{8}):(yes|no)$", bid)
                 try:
                     line = apply_proposal(pm.group(1), pm.group(2) == "yes") if pm else "That button is gone."
                 except ValueError as e:
                     line = str(e)
                 ch = message_channel(m)
-                store().add_chat("qwerty", line, channel=ch)
+                if line.startswith("\u2717"):  # it didn't work: the buttons come back, to try again
+                    store().set_meta("chat:pressed", json.dumps([x for x in _meta_json("chat:pressed", []) if x != mid]))
+                store().add_chat("theta" if head_on() else "qwerty", line, channel=ch)
                 return _json(200, {"ok": True, "messages": allchat_view(channel=str(data.get("channel") or ch)),
                                    "latest": latest_by_channel()})
             try:
@@ -1257,11 +1263,12 @@ def handle(method, path, query, headers, body):
             st.set_meta("hub:origin", f"https://{host}")  # the push "subject" when VAPID_SUBJECT is unset
         return 200, "text/html; charset=utf-8", home_page(headers).encode(), _login_cookie(query)
 
-    pages = {"/chat": lambda: chat_page(headers, query), "/calendar": lambda: calendar_page(headers, query),
+    # In single-head mode the chat and the Head page are one page.
+    pages = {"/chat": lambda: chat_page(headers, query, head=head_on()), "/calendar": lambda: calendar_page(headers, query),
              "/diagnostics": lambda: diagnostics_page(headers), "/lenz": lambda: lenz_page(headers),
              "/mail": lambda: mail_page(headers),
              "/money": lambda: money_page(headers), "/settings": lambda: settings_page(headers),
-             "/head": lambda: head_page(headers)}
+             "/head": lambda: chat_page(headers, query, head=True)}
     agent_path = path.startswith("/agent/") and path[len("/agent/"):] in AGENTS
     if path in pages or agent_path:
         if not _auth_dashboard(query, headers):
