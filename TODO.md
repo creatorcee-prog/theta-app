@@ -622,6 +622,13 @@ All in api/_parts/focus.py, run from the 5-minute tick.
 - [x] Sunday reset: in single-head mode the weekly review is 5 lines (Done, Slipped, Next week's 3), with the
   week's focus sessions and kept dreams as facts.
 - [ ] Telegram (later).
+- [x] Conversations (Head page, "Record a conversation"): 30-second clips heard by Groq's Whisper, a summary at the
+  end, the full text saved to Theta/Conversations/ (a note without the vault). Never into memory on its own.
+  Only while the page is open (the screen is kept on). Recording people can need their consent.
+- [x] Translation, a turn at a time: "I speak" / "They speak", 13 languages, said in the phone's own voice.
+- [x] Directions: Theta's directions action gives an Apple Maps link (Open in Maps on the Head page); Maps speaks the turns.
+- [ ] Glasses mode taps don't arrive on the user's glasses (2026-11-03): a "Taps heard" counter added to find out where it breaks.
+- [ ] More notifications (the user wants "all kinds"; which ones to be picked).
 
 ## Stage 8: Single head (decided 2026-11-02)
 

@@ -561,6 +561,26 @@ def handle(method, path, query, headers, body):
             except LLMError as e:
                 return _json(429 if getattr(e, "status", None) == 429 else 502, {"ok": False, "error": str(e)})
 
+        if path in ("/api/convo/start", "/api/convo/chunk", "/api/convo/end", "/api/voice/translate"):
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            try:
+                if path == "/api/convo/start":  # a conversation recording begins (Head page)
+                    cid = hashlib.sha1(f"{time.time_ns()}".encode()).hexdigest()[:12]
+                    convo_open(cid)
+                    return _json(200, {"ok": True, "id": cid})
+                if path == "/api/convo/end":
+                    return _json(200, {"ok": True, "text": convo_end(str(data.get("id") or ""), str(data.get("title") or ""))})
+                audio = base64.b64decode(str(data.get("audio") or ""), validate=True)
+                mime = str(data.get("mime") or "audio/mp4")
+                if path == "/api/convo/chunk":
+                    return _json(200, {"ok": True, "text": convo_add(str(data.get("id") or ""), audio, mime)})
+                return _json(200, {"ok": True, **translate_clip(audio, mime, str(data.get("to") or ""))})
+            except ValueError as e:  # bad base64 is a ValueError too
+                return _json(400, {"ok": False, "error": str(e) or "bad audio"})
+            except LLMError as e:
+                return _json(429 if getattr(e, "status", None) == 429 else 502, {"ok": False, "error": str(e)})
+
         if path == "/api/typing":  # the composer, while you type (typing guard)
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})

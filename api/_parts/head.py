@@ -249,6 +249,11 @@ _HEAD_CSS = """
 .headpage .opts{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;justify-content:center;font-size:13px;color:var(--muted)}
 .headpage .opts select{font:inherit;max-width:220px;background:transparent;color:inherit;border:1px solid var(--line,rgba(127,127,127,.3));border-radius:8px;padding:4px 6px}
 .headpage .note{font-size:13px;color:var(--muted);margin:0;text-align:center}
+.headpage .modes{display:grid;gap:10px;justify-items:center;width:100%}
+.headpage .tr{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;font-size:14px}
+.headpage .tr select,.headpage .tr button{font:inherit;padding:8px 12px;border-radius:10px;border:1px solid var(--line,rgba(127,127,127,.3));background:transparent;color:inherit}
+.headpage .tr button{font-weight:700;cursor:pointer;border-color:#4fd3ff}
+.headpage a.hear{text-decoration:none;display:inline-block}
 .headpage .opts .test{font:inherit;font-weight:700;padding:4px 12px;border-radius:999px;border:1px solid #4fd3ff;background:transparent;color:inherit;cursor:pointer}
 """
 
@@ -423,7 +428,12 @@ _HEAD_JS = r"""
   });
 
   // ---- talking to Theta
-  function show(m) { replyEl.textContent = m ? m.text : ""; }
+  const mapsEl = document.getElementById("head-maps");
+  function show(m) {
+    replyEl.textContent = m ? m.text : "";
+    const link = m && (m.text.match(/https:\/\/maps\.apple\.com\/\?\S+/) || [])[0];
+    mapsEl.hidden = !link; if (link) mapsEl.href = link.replace(/[).,]+$/, "");
+  }
   async function send(text) {
     text = (text || "").trim(); if (!text || busy) return;
     busy = true; talk.disabled = true; saidEl.textContent = "“" + text + "”"; setState("thinking");
@@ -471,7 +481,8 @@ _HEAD_JS = r"""
   // dictation won't start from a tap, the backup ear records the clip and
   // Groq's Whisper hears it (/api/voice/hear). Works while this page is open.
   const glasses = document.getElementById("head-glasses"), ms = navigator.mediaSession;
-  let keep = null, clip = null, srBlocked = false;
+  let keep = null, clip = null, srBlocked = false, taps = 0;
+  const tapsEl = document.getElementById("head-taps");
   function glassesOn() { return !!keep; }
   function quietWav(sec) {
     const rate = 8000, n = rate * sec, b = new ArrayBuffer(44 + n * 2), v = new DataView(b);
@@ -519,20 +530,107 @@ _HEAD_JS = r"""
     if (!on) {
       if (keep) { keep.pause(); keep = null; }
       if (ms) ACTIONS.forEach(a => { try { ms.setActionHandler(a, null); } catch (e) {} });
-      note.textContent = ""; return;
+      note.textContent = ""; tapsEl.hidden = true; return;
     }
     if (!ms) { note.textContent = "This browser can't take taps from headphones."; glasses.checked = false; return; }
     unlock();
     keep = new Audio(quietWav(5)); keep.loop = true;
     keep.play().catch(() => { note.textContent = "Couldn't start it: turn Glasses mode off and on again."; });
     try { ms.metadata = new MediaMetadata({title: "Theta", artist: "Tap your glasses to talk"}); } catch (e) {}
-    ACTIONS.forEach(a => { try { ms.setActionHandler(a, () => { tapped(); keepAlive(); }); } catch (e) {} });
+    ACTIONS.forEach(a => { try { ms.setActionHandler(a, () => {
+      taps += 1; tapsEl.textContent = "Taps heard: " + taps + " (last: " + a + ")"; tapped(); keepAlive(); }); } catch (e) {} });
     ms.playbackState = "playing";
     note.textContent = "Glasses mode on: tap your glasses to talk, tap again when you're done, tap while I talk to stop me.";
+    tapsEl.hidden = false; tapsEl.textContent = "Taps heard: 0. Tap your glasses once: this number should go up.";
   }
   if (glasses) glasses.addEventListener("change", () => glassesMode(glasses.checked));
   const _setState = setState;
   setState = s => { _setState(s); if (s === "idle") keepAlive(); }; // after Theta talks, the page stays "now playing"
+
+  // ---- recording with a tap on the screen (allowed by iPhone), heard by Groq's Whisper
+  function recorder(onBlob, maxMs) { // starts at once; returns {stop()}
+    let stream = null, mr = null, done = false, cap = 0;
+    const ctl = {stop() { done = true; clearTimeout(cap); if (mr && mr.state !== "inactive") mr.stop(); else if (stream) stream.getTracks().forEach(t => t.stop()); }};
+    if (!navigator.mediaDevices || !window.MediaRecorder) { note.textContent = "This browser can't record."; setTimeout(() => onBlob(new Blob([]), ""), 0); return ctl; }
+    navigator.mediaDevices.getUserMedia({audio: true}).then(s => {
+      stream = s; if (done) { s.getTracks().forEach(t => t.stop()); return; }
+      const mime = window.MediaRecorder && MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4" : "audio/webm", chunks = [];
+      mr = new MediaRecorder(s, {mimeType: mime});
+      mr.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+      mr.onstop = () => { s.getTracks().forEach(t => t.stop()); onBlob(new Blob(chunks, {type: mime}), mime); };
+      mr.start(); if (maxMs) cap = setTimeout(() => ctl.stop(), maxMs);
+    }).catch(() => { note.textContent = "Allow the microphone for this app in Settings."; onBlob(new Blob([]), ""); });
+    return ctl;
+  }
+  function b64(blob) { return new Promise((ok, no) => { const f = new FileReader(); f.onload = () => ok(String(f.result).split(",")[1]); f.onerror = no; f.readAsDataURL(blob); }); }
+  async function postAudio(url, blob, mime, extra) {
+    const d = await (await fetch(url, {method: "POST", headers: H, body: JSON.stringify({audio: await b64(blob), mime, ...(extra || {})})})).json();
+    if (!d.ok) throw new Error(d.error || "no answer"); return d;
+  }
+
+  // Conversations: 30-second clips, each heard and added; Stop saves it with a summary.
+  const convoBtn = document.getElementById("head-convo");
+  let convo = null; // {id, rec, lock, n, stopping}
+  async function convoClip() {
+    if (!convo || convo.stopping) return;
+    const c = convo;
+    c.rec = recorder(async (blob, mime) => {
+      if (blob.size > 2000) {
+        c.pending = (c.pending || 0) + 1;
+        postAudio("/api/convo/chunk", blob, mime, {id: c.id}).then(d => { if (d.text) { c.n += 1; saidEl.textContent = "…" + d.text.slice(-120); } })
+          .catch(e => { note.textContent = "A piece didn't save: " + e.message; })
+          .finally(() => { c.pending -= 1; if (c.stopping && !c.pending) convoFinish(c); });
+      }
+      if (!c.stopping) convoClip(); else if (!c.pending) convoFinish(c);
+    }, 30000);
+  }
+  async function convoFinish(c) {
+    if (c.finished) return; c.finished = true;
+    setState("thinking"); note.textContent = "Saving the conversation…";
+    try { const d = await (await fetch("/api/convo/end", {method: "POST", headers: H, body: JSON.stringify({id: c.id})})).json();
+      if (!d.ok) throw new Error(d.error); show({text: d.text}); note.textContent = ""; }
+    catch (e) { note.textContent = "Couldn't save it: " + e.message; }
+    setState("idle"); convoBtn.textContent = "● Record a conversation"; convoBtn.setAttribute("aria-pressed", "false");
+  }
+  convoBtn.addEventListener("click", async () => {
+    if (convo) { convo.stopping = true; if (convo.lock) convo.lock.release().catch(() => {}); convo.rec && convo.rec.stop(); convo = null; return; }
+    try {
+      const d = await (await fetch("/api/convo/start", {method: "POST", headers: H, body: "{}"})).json();
+      if (!d.ok) throw new Error(d.error);
+      convo = {id: d.id, n: 0};
+      try { convo.lock = await navigator.wakeLock.request("screen"); } catch (e) {} // keep the screen on: iPhone stops a locked page's mic
+      convoBtn.textContent = "■ Stop and save"; convoBtn.setAttribute("aria-pressed", "true"); setState("listening");
+      note.textContent = "Recording. Keep this page open; I'll save the text and a summary when you stop. Let people know you're recording.";
+      convoClip();
+    } catch (e) { note.textContent = "Couldn't start: " + e.message; }
+  });
+
+  // Translation, a turn at a time: tap, speak, tap again.
+  const langSel = document.getElementById("head-lang"), trMe = document.getElementById("head-tr-me"), trThem = document.getElementById("head-tr-them");
+  let tr = null;
+  function sayIn(text, lang) {
+    if (!synth) return; synth.cancel(); hush();
+    const u = new SpeechSynthesisUtterance(text), v = synth.getVoices().find(x => x.lang.replace("_", "-").toLowerCase().startsWith(lang.slice(0, 2).toLowerCase()));
+    u.lang = lang; if (v) u.voice = v; u.onstart = () => setState("speaking"); u.onend = u.onerror = () => setState("idle"); synth.speak(u);
+  }
+  function trTurn(btn, to) {
+    if (tr) { tr.stop(); return; }
+    unlock(); const label = btn.textContent; btn.textContent = "Done"; setState("listening");
+    tr = recorder(async (blob, mime) => {
+      tr = null; btn.textContent = label;
+      if (blob.size < 2000) { setState("idle"); return; }
+      setState("thinking");
+      try {
+        const d = await postAudio("/api/voice/translate", blob, mime, {to});
+        saidEl.textContent = d.heard ? "“" + d.heard + "”" : ""; replyEl.textContent = d.text || "Didn't catch that.";
+        if (d.text) { if (to === "en") speak(d.text); else sayIn(d.text, d.say); } else setState("idle");
+      } catch (e) { note.textContent = "Couldn't translate: " + e.message; setState("idle"); }
+    }, 30000);
+  }
+  trMe.addEventListener("click", () => trTurn(trMe, langSel.value));
+  trThem.addEventListener("click", () => trTurn(trThem, "en"));
+  try { const l = store("theta:lang"); if (l) langSel.value = l; } catch (e) {}
+  langSel.addEventListener("change", () => store("theta:lang", langSel.value));
 
   // ---- open on Theta's latest message. A new one (since you last heard it,
   // or the push you tapped) gets a "Hear it" button: speech needs a tap.
@@ -568,7 +666,13 @@ def head_page(headers):
             '<label>Voice <select id="head-voice" aria-label="Theta\'s voice"></select></label>'
             '<button type="button" id="head-test" class="test">Test</button>'
             '<label title="Tap your Bluetooth glasses or earbuds to talk"><input type="checkbox" id="head-glasses"> Glasses mode</label></div>'
+            '<p class="note" id="head-taps" hidden></p>'
+            '<a class="hear" id="head-maps" hidden target="_blank" rel="noopener">Open in Maps</a>'
             '<p class="note" id="head-note"></p>'
+            '<div class="modes"><button type="button" class="hear" id="head-convo" aria-pressed="false">\u25CF Record a conversation</button>'
+            '<div class="tr" role="group" aria-label="Translate"><span>Translate</span><select id="head-lang" aria-label="Their language">'
+            + "".join(f'<option value="{c}">{html.escape(n)}</option>' for c, (n, _) in LANGUAGES.items() if c != "en")
+            + '</select><button type="button" id="head-tr-me">I speak</button><button type="button" id="head-tr-them">They speak</button></div></div>'
             + ("" if head_on() else '<p class="note">The crew is on (HEAD_MODE=crew), so whoever answers in chat answers here.</p>')
             + '</section><script>' + _HEAD_JS.replace("__ORPHEUS__", json.dumps(list(ORPHEUS_VOICES)))
             .replace("__GEMINI__", json.dumps(list(GEMINI_VOICES))) + '</script>')
