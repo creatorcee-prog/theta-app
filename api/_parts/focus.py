@@ -5,7 +5,8 @@ namespace by _load_part() (see store.py).
   its memory (the same review, fade and merge offers as the rounds) and
   "dreams": it reads what it knows about you, the week's chat, your
   calendar and your budget, comes up with ideas, scores them, and keeps the
-  best one or two as Keep / No cards. Your answers steer later dreams.
+  best one or two, saved to Theta/Dreams.md on their own (no Approve), and says
+  so in the chat. Saved ideas aren't repeated.
   This copies the shape of Google's sleep research (consolidate, then
   generate and keep what helps), not the method: that retrains the model,
   and the model here is rented.
@@ -82,8 +83,10 @@ def _dream_context(now):
         return ""
     taste = dream_taste()[-10:]
     if taste:
-        parts.append("Past ideas and what the user said (do more like the kept ones, none like the declined):\n"
-                     + "\n".join(f"- {'kept' if t['kept'] else 'declined'}: {t['idea']}" for t in taste))
+        parts.append("Ideas you already had (don't repeat them; where the user said what they thought, do more like the "
+                     "kept ones, none like the declined):\n"
+                     + "\n".join(f"- {'already saved' if t.get('auto') else 'kept' if t['kept'] else 'declined'}: {t['idea']}"
+                                  for t in taste))
     return "\n\n".join(parts)
 
 
@@ -120,13 +123,31 @@ def dream(now=None):
         if idea and score >= DREAM_MIN_SCORE:
             ideas.append((score, idea, " ".join(str(d.get("from") or "").split())[:200]))
     ideas.sort(key=lambda x: -x[0])
-    kept = []
-    for _score, idea, src in ideas[:DREAM_KEEP]:
-        propose_to_user({"kind": "dream", "idea": idea, "summary": f"Dream: {idea}"},
-                        f"💭 An idea from last night:\n{idea}" + (f"\n(From: {src})" if src else "") + "\nKeep it?",
-                        labels=("Keep", "No"))
-        kept.append(idea)
-    return kept
+    kept = [(idea, src) for _score, idea, src in ideas[:DREAM_KEEP]]
+    if not kept:
+        return []
+    where = dream_save([i for i, _ in kept])  # saved on its own: ideas don't wait for an Approve (the user's call, 2026-11-03)
+    store().add_chat("theta", f"\U0001F4AD Ideas from last night (saved to {where}):\n"
+                     + "\n".join(f"- {i}" + (f" _(from: {s})_" if s else "") for i, s in kept))
+    return [i for i, _ in kept]
+
+
+def dream_save(ideas):
+    """Save ideas to Theta/Dreams.md (a note without the vault), and remember
+    them so later dreams don't repeat them. Returns where they went."""
+    day = datetime.now(hub_tz()).date().isoformat()
+    with _TOOL_LOCK:
+        taste = dream_taste() + [{"idea": i, "kept": None, "auto": True, "at": time.time()} for i in ideas]
+        store().set_meta("dream:taste", json.dumps(taste[-30:]))
+    if vault_on():
+        try:
+            for i in ideas:
+                vault_append("Dreams.md", f"- {day}: {i}", "Theta: saved an idea")
+            return "Dreams.md"
+        except LLMError as e:
+            print(f"dreams to vault failed: {e!r}")
+    _tool_note(f"Ideas {day} :: " + "\n".join(f"- {i}" for i in ideas), "theta")
+    return "your notes"
 
 
 def dream_feedback(p, kept):
@@ -169,7 +190,7 @@ def sleep_facts(today):
     last = _meta_json("sleep:last", {})
     if last.get("day") != today.isoformat() or not last.get("dreams"):
         return []
-    return ["Ideas Theta had overnight (waiting for Keep or No in the chat): " + " | ".join(last["dreams"])]
+    return ["Ideas Theta had overnight (already saved): " + " | ".join(last["dreams"])]
 
 
 # ---- Leave nudges: a push before each timed event
@@ -358,9 +379,11 @@ def brain_dump(text):
             memory_check(line)
         except ValueError:
             continue
-        propose_to_user({"kind": "memory_add", "line": line, "summary": f"Remember: {line}"},
-                        f"From your dump, worth remembering?\n- {line}")
-        out.append(f"🧠 Asked to remember: {line}")
+        try:  # saved on its own, like every memory now (vault, or the hub without it)
+            _tool_remember(line, "theta")
+            out.append(f"\U0001F9E0 Remembered: {line}")
+        except (LLMError, ValueError) as e:
+            out.append(f"\U0001F9E0 Couldn't remember \u201c{line}\u201d: {e}")
     return out
 
 

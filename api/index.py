@@ -2690,7 +2690,9 @@ def reply_extra():
     """Who worked on the reply being posted, in order, and the tokens it took."""
     trail = list(dict.fromkeys(getattr(_REQ, "trail", None) or []))
     tok = getattr(_REQ, "tok", None) or [0, 0]
-    return {**({"trail": trail} if trail else {}), **({"tokens": {"in": tok[0], "out": tok[1]}} if tok[0] or tok[1] else {})}
+    panels = getattr(_REQ, "panels", None) or []  # Jarvis-style panels for the Head page (panels.py)
+    return {**({"trail": trail} if trail else {}), **({"tokens": {"in": tok[0], "out": tok[1]}} if tok[0] or tok[1] else {}),
+            **({"panels": panels} if panels else {})}
 
 
 def activity(sender, text):
@@ -3404,6 +3406,7 @@ _load_part("notifs")  # more notifications: weather, money, calendar changes, wi
 _load_part("listen")  # conversations recorded to text, translation, directions: api/_parts/listen.py
 _load_part("phone")  # Theta on the Home Screen (Scriptable) and in Shortcuts automations: api/_parts/phone.py
 _load_part("focus")  # help for an ADD brain: sleep and dreams, leave nudges, /focus, /break, /dump: api/_parts/focus.py
+_load_part("panels")  # Jarvis-style panels: what a reply pulls up on the Head page: api/_parts/panels.py
 
 
 _load_part("signin")  # Face ID sign-in (passkeys) and the sign-in page: api/_parts/signin.py

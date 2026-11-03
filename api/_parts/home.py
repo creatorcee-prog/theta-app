@@ -313,7 +313,9 @@ def home_page(headers):
     return page(headers, "Home", "/", body, statuses=statuses, chat=chat)
 
 
-def chat_page(headers, query):
+def chat_page(headers, query, head=False):
+    """The chat. head=True: the Head page, which is the chat now too: Theta's
+    rings, voice and Jarvis-style panels on top of the same thread and cards."""
     ch = query.get("ch", ["all"])[0]
     ch = ch if ch in CHANNEL_IDS else "all"
     c = CHANNEL_IDS[ch]
@@ -339,7 +341,7 @@ def chat_page(headers, query):
         '<div class="chat">'
         f'<aside class="chans" aria-label="Channels"><div class="brand" style="padding-left:10px;font-size:18px">{APP_NAME} crew</div>'
         f'<div class="label">Channels</div>{chans}</aside>'
-        '<section class="thread">'
+        '<section class="thread">' + (head_hud() if head else "") +
         '<div class="msgs" id="msgs" role="log" aria-live="polite"></div>'
         '<form class="composer" id="chat-form"><ul id="chat-menu" role="listbox" hidden></ul>'
         '<div class="working" id="chat-working" role="status" aria-live="polite" hidden><div class="trail" id="chat-working-done"></div>'
@@ -347,14 +349,16 @@ def chat_page(headers, query):
         '<span id="chat-working-text"></span><span class="elapsed" id="chat-working-elapsed" aria-hidden="true"></span></div></div>'
         '<div class="attach" id="chat-attach" hidden></div>'
         f'<div class="box"><label class="btn ghost pick" aria-label="Attach an image">{ui_icon("photo")}'
-        f'<input type="file" id="chat-file" accept="image/*,.pdf,.txt,.md" multiple hidden></label><textarea id="chat-msg" rows="1" placeholder="Message #{html.escape(c["name"])}" '
+        f'<input type="file" id="chat-file" accept="image/*,.pdf,.txt,.md" multiple hidden></label><textarea id="chat-msg" rows="1" placeholder="{"Talk or type to Theta" if head else "Message #" + html.escape(c["name"])}" '
         'aria-label="Message" aria-autocomplete="list" aria-controls="chat-menu"></textarea>'
         f'<button class="btn send" id="chat-send" aria-label="Send">{ui_icon("send")}</button></div>'
         '<div class="note" id="chat-status"></div></form></section>'
         f'<aside class="members glass" id="members" aria-label="Members">{"".join(by_tier)}</aside>'
         '<div class="scrim" id="scrim"></div></div>'
         + _json_script("HUB_MENU", menu_data()) + _json_script("HUB_CHAT", data)
-        + f'<script src="/chat.js?v={_ASSET_V}" defer></script>')
+        + f'<script src="/chat.js?v={_ASSET_V}" defer></script>' + (head_script() if head else ""))
+    if head:
+        return page(headers, "Theta", "/head", body, "chatpage headchat", statuses)
     return page(headers, f"#{c['name']}", "/chat", body, "chatpage", statuses)
 
 

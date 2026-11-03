@@ -178,8 +178,8 @@ def get(path, qs=""):
 s, page = get("/head")
 check("the Head page needs the key like every page", s == 401)
 s, page = get("/head", "key=dk")
-check("the Head page: the Rings avatar, a Talk button, a type-to-Theta box, the voice options",
-      s == 200 and 'id="head-av"' in page and 'id="head-talk"' in page and 'id="head-text"' in page
+check("the Head page: the Rings avatar, a Talk button, the chat's own composer (it's the chat too), the voice options",
+      s == 200 and 'id="head-av"' in page and 'id="head-talk"' in page and 'id="chat-msg"' in page and 'id="msgs"' in page
       and 'id="head-voice"' in page and "webkitSpeechRecognition" in page and "speechSynthesis" in page)
 check("...it talks through /api/allchat, so it's in the chat history too", 'fetch("/api/allchat"' in page)
 check("...and says the reply will be spoken when the voice is on", "spoken: !!voiceOn.checked" in page)
