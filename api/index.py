@@ -3343,6 +3343,7 @@ _load_part("ui")  # the app's look: themes, CSS, the shared page script and the 
 
 
 _load_part("home")  # Home: smart stack, Today's check, settings cards, benchmark UI: api/_parts/home.py
+_load_part("phone")  # Theta on the Home Screen (Scriptable) and in Shortcuts automations: api/_parts/phone.py
 _load_part("focus")  # help for an ADD brain: sleep and dreams, leave nudges, /focus, /break, /dump: api/_parts/focus.py
 
 

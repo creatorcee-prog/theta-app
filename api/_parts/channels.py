@@ -800,6 +800,14 @@ def handle(method, path, query, headers, body):
                 return _json(502, {"ok": False, "error": str(e)[:200]})
             return _json(200, {"ok": True, **out})
 
+        if path == "/api/phone/event":  # a Shortcuts automation: "arrived at the gym", "alarm stopped"
+            if not (ask_key_ok(headers) or _auth_dashboard(query, headers)):
+                return _json(401, {"ok": False, "error": "key required"})
+            try:
+                return _json(200, {"ok": True, "did": phone_event(data.get("event") or data.get("text"))})
+            except ValueError as e:
+                return _json(400, {"ok": False, "error": str(e)})
+
         if path == "/api/ask":  # Siri Shortcut: say it, the crew answers, Siri reads it out
             ask_ok = ASK_KEY and hmac.compare_digest(str(headers.get("x-ask-key") or ""), ASK_KEY)
             if not (ask_ok or _auth_dashboard(query, headers)):
@@ -1257,6 +1265,14 @@ def handle(method, path, query, headers, body):
             bots.append({"bot_id": bot_id, "name": display_name(bot_id), "role": role_of(bot_id),
                          "model": agent_model(bot_id) if bot_id in AGENTS else MODELS[role_of(bot_id)]})
         return _json(200, bots)
+
+    if path == "/api/phone/script":  # the widget's script, for Settings' Copy button (no secrets in it)
+        return 200, "text/plain; charset=utf-8", widget_script().encode()
+
+    if path == "/api/phone/widget":  # the Scriptable Home Screen widget
+        if not (ask_key_ok(headers) or _auth_dashboard(query, headers)):
+            return _json(401, {"ok": False, "error": "key required"})
+        return _json(200, phone_widget())
 
     if path == "/api/agents":
         if not _auth_dashboard(query, headers):
