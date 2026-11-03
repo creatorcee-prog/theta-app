@@ -660,6 +660,12 @@ Free first: the user is on no budget for voice.
       Watch: **Dessa** (Block), a full-duplex speech-to-speech model that
       laughs, interrupts and keeps a back-and-forth; research preview
       only (waitlist, safety researchers), no API, runs on an M4 Max Mac.
+- [x] **Glasses mode (2026-11-03).** The Head page takes the tap on Bluetooth
+      glasses or earbuds (a headphone play/pause, through the Media Session
+      API): tap to talk, tap to send, tap while Theta talks to stop it (the
+      first piece of 8.6's interrupting). Backup ear: a recorded clip heard by
+      Groq's Whisper (/api/voice/hear) when Safari's dictation won't start
+      from a tap. Only while the page is open; untested on the user's glasses.
       It would replace Theta's brain, not just its voice (no text step, so
       no DeepSeek, tools, vault or SOUL.md) unless bridged to Theta's tools.
 - [x] **8.4b Theta's voice: Orpheus on Groq** (Apache-2.0 model, free tier

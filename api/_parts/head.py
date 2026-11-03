@@ -453,13 +453,86 @@ _HEAD_JS = r"""
     unlock(); hush();
     rec = new SR(); rec.lang = "en-US"; rec.interimResults = true; rec.continuous = false; heard = "";
     rec.onresult = e => { heard = [...e.results].map(r => r[0].transcript).join(" "); saidEl.textContent = heard; };
-    rec.onerror = e => { note.textContent = e.error === "not-allowed" ? "Allow the microphone (and Siri/dictation) for this app in Settings." : "Didn't catch that (" + e.error + ")."; };
+    rec.onerror = e => {
+      if (glassesOn() && /not-allowed|service-not-allowed|audio-capture/.test(e.error)) { srBlocked = true; heard = ""; setTimeout(recordClip, 60); return; }
+      note.textContent = e.error === "not-allowed" ? "Allow the microphone (and Siri/dictation) for this app in Settings." : "Didn't catch that (" + e.error + ").";
+    };
     rec.onend = () => { talk.setAttribute("aria-pressed", "false"); talk.textContent = "Talk"; rec = null; if (heard.trim()) send(heard); else setState("idle"); };
     talk.setAttribute("aria-pressed", "true"); talk.textContent = "Done"; note.textContent = ""; setState("listening");
     try { rec.start(); } catch (e) { rec.onend(); }
   }
   talk.addEventListener("click", () => rec ? stop() : start());
   cv.addEventListener("click", () => { if (SR && !busy) (rec ? stop() : start()); });
+
+  // ---- Glasses mode: to the iPhone, a tap on Bluetooth glasses (or earbuds) is
+  // a headphone play/pause button. A near-silent loop keeps this page the
+  // phone's "now playing", so the tap comes here (Media Session API): tap to
+  // talk, tap again to send, tap while Theta talks to stop it. If Safari's
+  // dictation won't start from a tap, the backup ear records the clip and
+  // Groq's Whisper hears it (/api/voice/hear). Works while this page is open.
+  const glasses = document.getElementById("head-glasses"), ms = navigator.mediaSession;
+  let keep = null, clip = null, srBlocked = false;
+  function glassesOn() { return !!keep; }
+  function quietWav(sec) {
+    const rate = 8000, n = rate * sec, b = new ArrayBuffer(44 + n * 2), v = new DataView(b);
+    const w = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+    w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVEfmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+    v.setUint16(22, 1, true); v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true);
+    v.setUint16(34, 16, true); w(36, "data"); v.setUint32(40, n * 2, true);
+    for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.round((Math.random() - 0.5) * 4), true); // a whisper of noise: iOS ignores pure silence
+    return URL.createObjectURL(new Blob([b], {type: "audio/wav"}));
+  }
+  function keepAlive() { if (keep && keep.paused) keep.play().catch(() => {}); if (ms && keep) ms.playbackState = "playing"; }
+  async function recordClip() { // the backup ear: records until the next tap (or 12 s)
+    if (clip) { clip.stop(); return; }
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({audio: true}); }
+    catch (e) { note.textContent = "Allow the microphone for this app in Settings."; setState("idle"); return; }
+    const mime = window.MediaRecorder && MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4" : "audio/webm", chunks = [];
+    let cap = 0;
+    clip = new MediaRecorder(stream, {mimeType: mime});
+    clip.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+    clip.onstop = async () => {
+      clearTimeout(cap); stream.getTracks().forEach(t => t.stop()); clip = null;
+      const blob = new Blob(chunks, {type: mime});
+      if (blob.size < 2000) { setState("idle"); return; }
+      setState("thinking");
+      try {
+        const b64 = await new Promise((ok, no) => { const f = new FileReader(); f.onload = () => ok(String(f.result).split(",")[1]); f.onerror = no; f.readAsDataURL(blob); });
+        const d = await (await fetch("/api/voice/hear", {method: "POST", headers: H, body: JSON.stringify({audio: b64, mime})})).json();
+        if (!d.ok) throw new Error(d.error || "no answer");
+        if (d.text) { setState("idle"); send(d.text); } else { note.textContent = "Didn't catch that."; setState("idle"); }
+      } catch (e) { note.textContent = "Couldn't hear that: " + e.message; setState("idle"); }
+    };
+    cap = setTimeout(() => clip && clip.stop(), 12000);
+    clip.start(); setState("listening"); saidEl.textContent = "Listening… tap again when you're done.";
+  }
+  function tapped() {
+    if (state === "speaking") { hush(); setState("idle"); return; } // interrupt Theta
+    if (busy) return;
+    if (clip) { clip.stop(); return; }
+    if (rec) { stop(); return; }
+    if (SR && !srBlocked) start(); else recordClip();
+  }
+  const ACTIONS = ["play", "pause", "nexttrack", "previoustrack", "stop"];
+  function glassesMode(on) {
+    if (!on) {
+      if (keep) { keep.pause(); keep = null; }
+      if (ms) ACTIONS.forEach(a => { try { ms.setActionHandler(a, null); } catch (e) {} });
+      note.textContent = ""; return;
+    }
+    if (!ms) { note.textContent = "This browser can't take taps from headphones."; glasses.checked = false; return; }
+    unlock();
+    keep = new Audio(quietWav(5)); keep.loop = true;
+    keep.play().catch(() => { note.textContent = "Couldn't start it: turn Glasses mode off and on again."; });
+    try { ms.metadata = new MediaMetadata({title: "Theta", artist: "Tap your glasses to talk"}); } catch (e) {}
+    ACTIONS.forEach(a => { try { ms.setActionHandler(a, () => { tapped(); keepAlive(); }); } catch (e) {} });
+    ms.playbackState = "playing";
+    note.textContent = "Glasses mode on: tap your glasses to talk, tap again when you're done, tap while I talk to stop me.";
+  }
+  if (glasses) glasses.addEventListener("change", () => glassesMode(glasses.checked));
+  const _setState = setState;
+  setState = s => { _setState(s); if (s === "idle") keepAlive(); }; // after Theta talks, the page stays "now playing"
 
   // ---- open on Theta's latest message. A new one (since you last heard it,
   // or the push you tapped) gets a "Hear it" button: speech needs a tap.
@@ -493,7 +566,8 @@ def head_page(headers):
             'aria-label="Message Theta"><button type="submit">Send</button></form>'
             '<div class="opts"><label><input type="checkbox" id="head-voice-on" checked> Speak replies</label>'
             '<label>Voice <select id="head-voice" aria-label="Theta\'s voice"></select></label>'
-            '<button type="button" id="head-test" class="test">Test</button></div>'
+            '<button type="button" id="head-test" class="test">Test</button>'
+            '<label title="Tap your Bluetooth glasses or earbuds to talk"><input type="checkbox" id="head-glasses"> Glasses mode</label></div>'
             '<p class="note" id="head-note"></p>'
             + ("" if head_on() else '<p class="note">The crew is on (HEAD_MODE=crew), so whoever answers in chat answers here.</p>')
             + '</section><script>' + _HEAD_JS.replace("__ORPHEUS__", json.dumps(list(ORPHEUS_VOICES)))
