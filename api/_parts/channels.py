@@ -1188,7 +1188,7 @@ def handle(method, path, query, headers, body):
             except ValueError as e:
                 return _json(400, {"ok": False, "error": str(e)})
             rows = _meta_json("hbench:last", {}).get("rows", [])
-            return _json(200, {"ok": True, "rows": rows, "totals": hb_totals(rows)})
+            return _json(200, {"ok": True, "rows": rows, "totals": hb_totals(rows), "sizes": prompt_sizes()})
 
         if path == "/api/bench":  # Settings → Mistral benchmark: ~12 Haiku calls, a few cents
             if not _auth_dashboard(query, headers):
@@ -1404,7 +1404,7 @@ def handle(method, path, query, headers, body):
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
         rows = _meta_json("hbench:last", {}).get("rows", [])
-        return _json(200, {"ok": True, "rows": rows, "totals": hb_totals(rows)})
+        return _json(200, {"ok": True, "rows": rows, "totals": hb_totals(rows), "sizes": prompt_sizes()})
 
     if path == "/api/bench":
         if not _auth_dashboard(query, headers):

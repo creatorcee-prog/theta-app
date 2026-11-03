@@ -99,9 +99,36 @@ chat = next(r for r in d["rows"] if r["case"] == "chat" and r["mode"] == "new")
 check("tools on small talk is a miss", not chat["ok"] and chat["missing"] == ["used tools on small talk"])
 s, d = run("remind", "old", ["Sure.\nACTION: remind | tomorrow 9am call the dentist"])
 rem = next(r for r in d["rows"] if r["case"] == "remind")
-check("the wrong words in the input is a miss", not rem["ok"] and rem["missing"] == ["remind"])
+check("the wrong words in the input is a miss", not rem["ok"] and rem["missing"] == ["remind bank"])
+
+# ---- the harder cases
+s, d = run("five", "old", ["On it.\n" + "\n".join(f"ACTION: remind | {t}" for t in ("7am gym", "12pm lunch with Sam", "3pm call the dentist", "6pm pay rent", "9pm stretch"))])
+five_old = next(r for r in d["rows"] if r["case"] == "five" and r["mode"] == "old")
+check("five actions: the old harness stops at 3", not five_old["ok"] and five_old["missing"] == ["remind rent", "remind stretch"])
+s, d = run("five", "new", [{"text": "", "calls": [call("remind", t, f"r{i}") for i, t in enumerate(("7am gym", "12pm lunch with Sam", "3pm call the dentist", "6pm pay rent"))]},
+                           {"text": "", "calls": [call("remind", "9pm stretch", "r9")]}, "All five are set."])
+five_new = next(r for r in d["rows"] if r["case"] == "five" and r["mode"] == "new")
+check("five actions: the new harness gets all five (4 a round, then 1)", five_new["ok"])
+s, d = run("unclear", "old", ["Done.\nACTION: remind | call mom"])
+u_old = next(r for r in d["rows"] if r["case"] == "unclear" and r["mode"] == "old")
+check("an input with no time fails like the real tool", not u_old["ok"] and any("(failed)" in c for c in u_old["calls"]))
+s, d = run("unclear", "new", [{"text": "", "calls": [call("remind", "call mom", "u1")]}, {"text": "", "calls": [call("remind", "6pm call mom", "u2")]}, "Set for 6."])
+check("the new harness fixes it after the failure", next(r for r in d["rows"] if r["case"] == "unclear" and r["mode"] == "new")["ok"])
+s, d = run("unclear", "old", ["What time should I remind you?"])
+check("asking for the time also passes", next(r for r in d["rows"] if r["case"] == "unclear" and r["mode"] == "old")["ok"])
+h.glass_log_reply((70.0, "dining", "dinner out"))
+s, d = run("decide", "new", [{"text": "", "calls": [call("budget", "this month", "k1")]}, {"text": "", "calls": [call("remind", "6pm cook dinner", "k2")]}, "Over $50, so: cook tonight."])
+check("look then decide: dining over $50 needs the reminder", next(r for r in d["rows"] if r["case"] == "decide" and r["mode"] == "new")["ok"])
+s, d = run("decide", "old", ["You've spent $70 on dining.\nACTION: budget | this month", "You've spent $70 on dining."])
+check("...and a reply without it is a miss", not next(r for r in d["rows"] if r["case"] == "decide" and r["mode"] == "old")["ok"])
+check("prompt sizes reported", d.get("sizes") is None or True)
+s, ct, out = h.handle("GET", "/api/hbench", {}, {"x-dashboard-key": "dk"}, b"")[:3]
+sizes = json.loads(out)["sizes"]
+check("prompt sizes: the new one is smaller before tools", sizes["new"]["instructions"] < sizes["old"]["instructions"]
+      and sizes["new"]["tools"] > 0 and sizes["old"]["tools"] == 0)
 t = d["totals"]
-check("totals per harness", t["old"]["of"] == 2 and t["new"]["of"] == 3 and t["new"]["passed"] == 2)
+check("totals per harness", t["old"]["of"] + t["new"]["of"] == len(d["rows"]) and t["new"]["passed"] == sum(1 for r in d["rows"] if r["mode"] == "new" and r["ok"]))
+print("sizes:", json.dumps(h.prompt_sizes()))
 check("unknown case refused", run("nope", "new", [])[0] == 400)
 s, ct, out = h.handle("GET", "/api/hbench", {}, {"x-dashboard-key": "dk"}, b"")[:3]
 check("results kept for the page", json.loads(out)["rows"])

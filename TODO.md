@@ -640,6 +640,11 @@ All in api/_parts/focus.py, run from the 5-minute tick.
   the ACTION-line way.
 - [x] Easier for every agent: one shared run_tool, up to 5 actions a reply (was 3), the same action twice runs once.
 - [x] Writing rule from Wikipedia's "Signs of AI writing" in every agent's prompt and every head_chat call.
+- [x] Harness test (Diagnostics): old vs new on the real model. First run (2026-11-03): both 6/6; new 0 AI-writing
+  signs vs 4; same speed; 21% more tokens; about 20k tokens a call, mostly the prompt.
+- [x] Lean prompt for the native harness: the short format guide; crew_facts and the hub map moved behind lookups
+  (reminders, library, training, crew_reports, settings, hub_help, mail); a short "at a glance" instead; earlier chat
+  messages cut to 500 characters. Harder test cases: five actions, a no-time reminder, look-then-decide.
 - [ ] MCP tools (later, once the desktop is back).
 
 ## Stage 8: Single head (decided 2026-11-02)
