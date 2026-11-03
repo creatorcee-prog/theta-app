@@ -659,6 +659,9 @@ All in api/_parts/focus.py, run from the 5-minute tick.
   /chat is the same page in single-head mode. Jarvis-style panels: what a reply looks up or changes (calendar,
   money, reminders, map, sources, weather, focus timer, background jobs) slides in above the chat, built from the
   hub's own data; close with the X or say "close the panels". Spoken replies stay one line and may add one card.
+- [x] Overnight ideas save themselves (the user's call, 2026-11-03): no Keep / No; saved to Dreams.md (or notes),
+  posted as one message, and not repeated in later dreams. Memory offers still wait for Approve.
+- [ ] Theta opening PRs: discussed (gated: Approve first, drafts only, small allowlist, no preview builds); not now.
 - [ ] MCP tools (later, once the desktop is back).
 
 ## Stage 8: Single head (decided 2026-11-02)

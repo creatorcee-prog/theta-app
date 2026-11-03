@@ -50,27 +50,27 @@ SCRIPT[:] = [json.dumps([
 did = h.run_sleep(night)
 check("slept and dreamed", did is not None and any("dreamed up 2 ideas" in d for d in did))
 check("the dream prompt saw the chat", "call the bank" in ASKED[-1])
-cards = [m for m in chat() if m["text"].startswith("💭")]
-check("two dream cards, best first", len(cards) == 2 and "Call the bank" in cards[0]["text"])
+cards = [m for m in chat() if m["text"].startswith("\U0001F4AD")]
+check("one message with both ideas, best first", len(cards) == 1 and cards[0]["text"].index("Call the bank") < cards[0]["text"].index("card's number"))
 check("low scores and planted text dropped", not any("Drink water" in m["text"] or "Ignore previous" in m["text"] for m in chat()))
-check("Keep / No buttons", [b["label"] for b in cards[0]["buttons"]] == ["Keep", "No"])
+check("saved on its own: no buttons to approve", not cards[0].get("buttons") and "saved to your notes" in cards[0]["text"])
+check("...in the notes (no vault here)", any("Call the bank" in n["text"] and "card's number" in n["text"] for n in h.notes()))
 check("once a night", h.run_sleep(night + 600) is None)
 
-# Keep and No steer later dreams
-pid_keep = cards[0]["buttons"][0]["id"].split(":")[1]
-pid_no = cards[1]["buttons"][0]["id"].split(":")[1]
-out = h.apply_proposal(pid_keep, True)
-check("kept: saved (a note without the vault)", out.startswith("✓ Kept") and any("Call the bank" in n["text"] for n in h.notes()))
-out = h.apply_proposal(pid_no, False)
-check("declined: said so", out.startswith("Okay, not that one"))
+# saved ideas aren't repeated
 taste = h.dream_taste()
-check("taste remembered", [t["kept"] for t in taste[-2:]] == [True, False])
-check("taste fed to the next dream", "kept: Call the bank" in h._dream_context(night))
+check("saved ideas remembered", [t.get("auto") for t in taste[-2:]] == [True, True])
+check("...and the next dream is told not to repeat them", "already saved: Call the bank" in h._dream_context(night)
+      and "don't repeat them" in h._dream_context(night))
+
+# an old Keep / No card still in the chat still works
+pid = h.propose_to_user({"kind": "dream", "idea": "An old card", "summary": "Dream: An old card"}, "x", labels=("Keep", "No"))
+check("an old Keep card still works", h.apply_proposal(pid, True).startswith("\u2713 Kept"))
 
 # the morning brief mentions last night's ideas
 today = datetime.fromtimestamp(night, tz).date()
 post, brief = h.morning_digest(today)
-check("morning brief has the dreams", "Ideas Theta had overnight" in post and "idea from last night" in brief)
+check("morning brief has the dreams", "Ideas Theta had overnight (already saved)" in post and "idea from last night" in brief)
 
 # ---- leave nudges
 now = time.time()
