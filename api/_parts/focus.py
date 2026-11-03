@@ -379,9 +379,11 @@ def brain_dump(text):
             memory_check(line)
         except ValueError:
             continue
-        propose_to_user({"kind": "memory_add", "line": line, "summary": f"Remember: {line}"},
-                        f"From your dump, worth remembering?\n- {line}")
-        out.append(f"🧠 Asked to remember: {line}")
+        try:  # saved on its own, like every memory now (vault, or the hub without it)
+            _tool_remember(line, "theta")
+            out.append(f"\U0001F9E0 Remembered: {line}")
+        except (LLMError, ValueError) as e:
+            out.append(f"\U0001F9E0 Couldn't remember \u201c{line}\u201d: {e}")
     return out
 
 

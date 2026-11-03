@@ -660,7 +660,10 @@ All in api/_parts/focus.py, run from the 5-minute tick.
   money, reminders, map, sources, weather, focus timer, background jobs) slides in above the chat, built from the
   hub's own data; close with the X or say "close the panels". Spoken replies stay one line and may add one card.
 - [x] Overnight ideas save themselves (the user's call, 2026-11-03): no Keep / No; saved to Dreams.md (or notes),
-  posted as one message, and not repeated in later dreams. Memory offers still wait for Approve.
+  posted as one message, and not repeated in later dreams.
+- [x] Memory saves itself too (the user's call, 2026-11-03): the round review's memories and playbooks, merges
+  (the old lines copied to Archive.md first) and /dump's memories, each said in one chat message. Safety nets kept:
+  planted text and hidden characters are refused, unused lines fade, "forget ..." drops one.
 - [ ] Theta opening PRs: discussed (gated: Approve first, drafts only, small allowlist, no preview builds); not now.
 - [ ] MCP tools (later, once the desktop is back).
 

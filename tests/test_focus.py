@@ -135,7 +135,8 @@ check("/dump: spending logged", "💵" in text)
 check("/dump: a reminder with no time became a to-do", "fix the sink" in text and "clean the car" in text)
 check("/dump: to-dos and ideas saved as notes", any(n["title"].startswith("To do") for n in h.notes())
       and any(n["title"].startswith("Ideas") for n in h.notes()))
-check("/dump: memories wait for Approve", any(m["text"].startswith("From your dump") and m.get("buttons") for m in post))
+check("/dump: memories saved on their own", "\U0001F9E0 Remembered: I hate mornings" in text
+      and any("I hate mornings" in x.get("text", "") for x in h.memory()))
 check("/dump, /focus, /break in the menu, before /help",
       [c["name"] for c in h.COMMANDS][-4:] == ["focus", "break", "dump", "help"])
 

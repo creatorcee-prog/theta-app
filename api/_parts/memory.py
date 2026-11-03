@@ -293,7 +293,7 @@ def memory_merge_offers(limit=2):
             '[{"lines": [numbers], "merged": "the one line"}], or [] if none.\n\n' + listing)}], 500))
     except LLMError:
         return 0
-    made = 0
+    made, done = 0, []
     for g in (got or [])[:limit]:
         try:
             idx = sorted({int(i) for i in g["lines"]})
@@ -307,17 +307,18 @@ def memory_merge_offers(limit=2):
         except ValueError:
             continue
         old = [lines[i] for i in idx]
-        propose_to_user({"kind": "memory_merge", "remove": old, "add": merged,
-                         "summary": f"Merge {len(old)} memories into: {merged}"},
-                        "I could tidy my memory. Merge these:\n" + "\n".join(f"- {o}" for o in old)
-                        + f"\ninto one line:\n- {merged}")
-        made += 1
+        got_line = memory_auto({"kind": "memory_merge", "remove": old, "add": merged})
+        if got_line and got_line.startswith("\u2713"):
+            done.append(f"- {merged}  _(was: {'; '.join(old)})_")
+            made += 1
+    if done:
+        store().add_chat("theta", "\U0001F9F9 I tidied my memory (the old lines are in Archive.md):\n" + "\n".join(done))
     return made
 
 
 def memory_review():
-    """The round review: from the chat since the last review, propose up to 3
-    memories and 1 playbook. Each waits for your Approve. Returns how many."""
+    """The round review: from the chat since the last review, save up to 3
+    memories and 1 playbook on their own, and say so in one message. Returns how many."""
     st = store()
     last = int(st.get_meta("mem:review_last_id") or 0)
     msgs = [m for m in st.list_chat(ALLCHAT_KEEP) if m["id"] > last and m.get("kind") != "event"]
@@ -342,7 +343,7 @@ def memory_review():
     if not isinstance(got, dict):
         return 0
     have = {l.lower() for l in memory_lines(current)}
-    made = 0
+    made, saved = 0, []
     for m in (got.get("memories") or [])[:3]:
         line = " ".join(str(m).split())[:200]
         try:
@@ -351,22 +352,43 @@ def memory_review():
             continue
         if not line or line.lower() in have:
             continue
-        propose_to_user({"kind": "memory_add", "line": line, "summary": f"Remember: {line}"},
-                        f"Worth remembering?\n- {line}")
-        made += 1
+        got_line = memory_auto({"kind": "memory_add", "line": line})
+        if got_line and got_line.startswith("\u2713"):
+            saved.append(f"- {line}")
+            made += 1
+        elif got_line:
+            saved.append(got_line)
     pb = got.get("playbook")
     if isinstance(pb, dict) and pb.get("name") and pb.get("when") and pb.get("steps"):
         steps = "; ".join(str(s) for s in pb["steps"])[:800]
         arg = f"{pb['name']} :: {pb['when']} :: {steps}"
         try:
             memory_check(arg)
-            propose_to_user({"kind": "playbook_add", "arg": arg, "summary": f"Save the playbook {pb['name']}"},
-                            f"You showed me a way to do something. Save it as a playbook?\n**{pb['name']}**: "
-                            f"{pb['when']}\n" + "\n".join(f"{i}. {s}" for i, s in enumerate(pb["steps"], 1)))
-            made += 1
+            got_line = memory_auto({"kind": "playbook_add", "arg": arg})
+            if got_line and got_line.startswith("\u2713"):
+                saved.append(f"- New playbook: **{pb['name']}** ({pb['when']})")
+                made += 1
         except ValueError:
             pass
+    if saved:
+        store().add_chat("theta", "\U0001F9E0 I remembered this from our chat:\n" + "\n".join(saved)
+                         + "\n_Say \"forget\" and the words to drop one._")
     return made
+
+
+def memory_auto(p):
+    """Save a memory change on its own (the user's call, 2026-11-03: memory
+    doesn't wait for an Approve). The safety nets stay: memory_check before,
+    use it or lose it after, and merged lines are copied to Archive.md first.
+    Returns the result line ("\u2713 ..." or "\u2717 ..."), never raises."""
+    try:
+        if p["kind"] == "memory_merge" and vault_on():
+            day = datetime.now(hub_tz()).date().isoformat()
+            vault_append("Archive.md", "\n".join(f"- {o} (merged {day} into: {p['add']})" for o in p["remove"]),
+                         "Theta: kept the lines it merged")
+        return apply_memory_proposal(p)
+    except (LLMError, ValueError) as e:
+        return f"\u2717 Couldn't save it: {e}"
 
 
 def apply_memory_proposal(p):
