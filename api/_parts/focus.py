@@ -39,7 +39,7 @@ def _chat_ts(m):
 def last_you_at():
     """When you last sent a message (0 if never)."""
     for m in reversed(store().list_chat(ALLCHAT_KEEP)):
-        if m["from"] == "you":
+        if m["from"] == "you" and not m["text"].startswith("📱"):  # a phone automation isn't you being up
             return _chat_ts(m)
     return 0
 
