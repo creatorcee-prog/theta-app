@@ -648,6 +648,10 @@ All in api/_parts/focus.py, run from the 5-minute tick.
 - [x] Second run, after the lean prompt (2026-11-03): old 4/9, new 8/9; prompt per call ~19.7k tokens old vs ~5.7k new
   (instructions 18k -> 2k with real data); whole test 243k tokens old vs 81k new; AI-writing signs 8 vs 0; new 0.6 s
   slower on average (17 model calls vs 11). The money case now passes on the right total without a lookup.
+- [x] Voice starts sooner: the on-phone voice warms up when the Head page opens (and while Theta thinks), loads once,
+  speaks the first words first, and the page shows "Reply Xs · voice Ys".
+- [x] Background jobs: Theta's background action; the tick works on a job about 35 s at a time (what's left of the
+  tick), carrying its place over, up to 24 rounds / 12 ticks, then posts and pushes the result. /jobs, /jobs cancel N.
 - [ ] MCP tools (later, once the desktop is back).
 
 ## Stage 8: Single head (decided 2026-11-02)

@@ -3398,6 +3398,7 @@ _load_part("ui")  # the app's look: themes, CSS, the shared page script and the 
 
 
 _load_part("home")  # Home: smart stack, Today's check, settings cards, benchmark UI: api/_parts/home.py
+_load_part("jobs")  # background jobs: big asks worked on by the tick, then pushed: api/_parts/jobs.py
 _load_part("harnessbench")  # Diagnostics → Harness test: old vs new harness, nothing saved: api/_parts/harnessbench.py
 _load_part("notifs")  # more notifications: weather, money, calendar changes, wind-down, breaks, releases, missed: api/_parts/notifs.py
 _load_part("listen")  # conversations recorded to text, translation, directions: api/_parts/listen.py

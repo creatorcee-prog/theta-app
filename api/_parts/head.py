@@ -326,6 +326,51 @@ def head_transcript(thread):
     return "\n".join(out)
 
 
+def tool_rounds(msgs, tools, allowed, budget, steps, st, must_finish=True, reserve=20):
+    """Native tool calling, round by round, on `msgs` (appended to in place):
+    the model calls tools, sees every result, and goes on until it answers.
+    st holds what carries over: receipts (changes, for the user), buttons, and
+    done (call -> result, so the same call runs once). must_finish: when time
+    or steps run out, one last call answers with no tools; otherwise (a
+    background job) it stops and returns None, to go on later."""
+    for step in range(steps + 1):
+        left = _time_left()
+        low = left is not None and left < reserve
+        if low and not must_finish:
+            return None
+        final = step == steps or low
+        out = head_chat_tools(msgs, tools, budget, "none" if final else "auto")
+        calls = [] if final else out["calls"]
+        if not calls:
+            return out["text"] or ""
+        n = len(msgs)
+        msgs.append({"role": "assistant", "content": out["text"] or "", "tool_calls": [
+            {"id": c.get("id") or f"call{n}_{i}", "type": "function",
+             "function": {"name": (c.get("function") or {}).get("name", ""),
+                          "arguments": (c.get("function") or {}).get("arguments") or "{}"}}
+            for i, c in enumerate(calls)]})
+        ids = [t["id"] for t in msgs[-1]["tool_calls"]]
+        for i, c in enumerate(calls):
+            name, arg = (c.get("function") or {}).get("name", ""), _call_input(c)
+            key = name.lower() + "\x00" + arg.strip().lower()
+            if i >= HEAD_CALLS_MAX:
+                result = "skipped: too many tools at once; do the rest in the next round"
+            elif key in st["done"]:
+                result = st["done"][key]
+            elif _time_left() is not None and _time_left() < 16:
+                result = "skipped: out of time for this answer"
+            else:
+                working("theta", "looking it up" if name.lower() in HEAD_LOOKUPS else f"using {name}")
+                ok, got, more = run_tool("theta", name, arg, allowed)
+                st["buttons"] += more
+                result = ("done: " if ok else "failed: ") + got
+                if name.lower() not in HEAD_LOOKUPS:
+                    st["receipts"].append(("\u2713 " if ok else "\u2717 ") + got)
+                st["done"][key] = result
+            msgs.append({"role": "tool", "tool_call_id": ids[i], "content": result[:4000]})
+    return ""
+
+
 def head_reply_native(thread, spoken=False):
     """Theta's answer with native tool calling: it looks things up AND changes
     things mid-answer, sees every result (failures too, so it can fix its
@@ -344,41 +389,9 @@ def head_reply_native(thread, spoken=False):
     msgs = [{"role": "system", "content": head_system(native=True)},
             {"role": "system", "content": now_line() + head_glance()},  # these change often: after the cached part
             {"role": "user", "content": ask}]
-    receipts, buttons, done = [], [], {}
-    text = ""
-    for step in range(HEAD_TASK_STEPS + 1):
-        left = _time_left()
-        final = step == HEAD_TASK_STEPS or (left is not None and left < 20)
-        out = head_chat_tools(msgs, tools, budget, "none" if final else "auto")
-        calls = [] if final else out["calls"]
-        if not calls:
-            text = out["text"] or ""
-            break
-        msgs.append({"role": "assistant", "content": out["text"] or "", "tool_calls": [
-            {"id": c.get("id") or f"call{step}_{i}", "type": "function",
-             "function": {"name": (c.get("function") or {}).get("name", ""),
-                          "arguments": (c.get("function") or {}).get("arguments") or "{}"}}
-            for i, c in enumerate(calls)]})
-        ids = [t["id"] for t in msgs[-1]["tool_calls"]]
-        for i, c in enumerate(calls):
-            cid = ids[i]
-            name, arg = (c.get("function") or {}).get("name", ""), _call_input(c)
-            key = (name.lower(), arg.strip().lower())
-            if i >= HEAD_CALLS_MAX:
-                result = "skipped: too many tools at once; do the rest in the next round"
-            elif key in done:
-                result = done[key]
-            elif _time_left() is not None and _time_left() < 16:
-                result = "skipped: out of time for this answer"
-            else:
-                working("theta", "looking it up" if name.lower() in HEAD_LOOKUPS else f"using {name}")
-                ok, got, more = run_tool("theta", name, arg, allowed)
-                buttons += more
-                result = ("done: " if ok else "failed: ") + got
-                if name.lower() not in HEAD_LOOKUPS:
-                    receipts.append(("✓ " if ok else "✗ ") + got)
-                done[key] = result
-            msgs.append({"role": "tool", "tool_call_id": cid, "content": result[:4000]})
+    st = {"receipts": [], "buttons": [], "done": {}}
+    text = tool_rounds(msgs, tools, allowed, budget, HEAD_TASK_STEPS, st)
+    receipts, buttons, done = st["receipts"], st["buttons"], st["done"]
     text = re.sub(r"^\s*SEARCH:.*$", "", text or "", flags=re.I | re.M).strip()
     if _ACTION_RE.search(text):  # an old habit: ACTION lines in the text still run
         got = run_actions("theta", text, allowed=allowed)
@@ -609,7 +622,7 @@ _HEAD_JS = r"""
     voiceSel.value = saved && [...voiceSel.options].some(o => o.value === saved) ? saved : DEFAULT_VOICE;
   }
   fillVoices(); if (synth) synth.onvoiceschanged = fillVoices;
-  voiceSel.addEventListener("change", () => { store("theta:voice", voiceSel.value); voiceOut = 0; note.textContent = ""; });
+  voiceSel.addEventListener("change", () => { store("theta:voice", voiceSel.value); voiceOut = 0; note.textContent = ""; setTimeout(warmVoice, 50); });
   if (store("theta:speak") === "off") voiceOn.checked = false;
   function hush() { if (synth) synth.cancel(); player.pause(); }
   voiceOn.addEventListener("change", () => { store("theta:speak", voiceOn.checked ? "on" : "off"); if (!voiceOn.checked) hush(); });
@@ -644,29 +657,49 @@ _HEAD_JS = r"""
       const url = URL.createObjectURL(blob);
       player.onended = player.onerror = () => { URL.revokeObjectURL(url); done(); };
       player.ontimeupdate = () => { burst = 0.5 + Math.random() * 0.5; };
-      player.src = url; setState("speaking");
+      player.src = url; setState("speaking"); heardVoice();
       player.play().catch(() => done());
     });
   }
-  // On-phone engines, loaded the first time they're picked.
-  let piperMod = null, kokoroModel = null;
-  async function localClip(engine, id, text) {
+  // Timings, so a slow reply or a slow voice shows where the wait is.
+  const timingEl = document.getElementById("head-timing");
+  let tSent = 0, tReply = 0;
+  function heardVoice() {
+    if (!tReply) return;
+    timingEl.textContent = `Reply ${((tReply - tSent) / 1000).toFixed(1)}s \u00b7 voice ${((performance.now() - tReply) / 1000).toFixed(1)}s`;
+    tReply = 0;
+  }
+  // On-phone engines, loaded the first time they're picked, and warmed up
+  // when the page opens, so the first reply doesn't wait for the engine.
+  let piperMod = null, kokoroModel = null, warmed = "";
+  async function warmVoice() {
+    const choice = voiceSel.value || DEFAULT_VOICE, engine = choice.split(":")[0], id = choice.slice(choice.indexOf(":") + 1);
+    if (warmed === choice || !voiceOn.checked || !(engine === "piper" || engine === "kokoro")) return;
+    warmed = choice;
+    try { await localClip(engine, id, "Hi."); } catch (e) { warmed = ""; } // made and thrown away: the engine is loaded now
+  }
+  async function localClip(engine, id, text) { // the engine loads once, even when the warm-up and a reply ask at once
     if (engine === "piper") {
-      if (!piperMod) { note.textContent = "Downloading the Piper voice (once, about 20–60 MB)…"; piperMod = await import(PIPER_JS); }
-      const blob = await piperMod.predict({text, voiceId: id}); note.textContent = ""; return blob;
+      if (!piperMod) { note.textContent = "Downloading the Piper voice (once, about 20\u201360 MB)\u2026"; piperMod = import(PIPER_JS); piperMod.catch(() => { piperMod = null; }); }
+      const blob = await (await piperMod).predict({text, voiceId: id}); note.textContent = ""; return blob;
     }
     if (!kokoroModel) {
-      note.textContent = "Downloading Kokoro (once, about 90 MB)…";
-      const {KokoroTTS} = await import(KOKORO_JS);
-      kokoroModel = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {dtype: "q8", device: "wasm"});
+      note.textContent = "Downloading Kokoro (once, about 90 MB)\u2026";
+      kokoroModel = import(KOKORO_JS).then(({KokoroTTS}) =>
+        KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {dtype: "q8", device: "wasm"}));
+      kokoroModel.catch(() => { kokoroModel = null; });
     }
-    const audio = await kokoroModel.generate(text, {voice: id}); note.textContent = ""; return audio.toBlob();
+    const audio = await (await kokoroModel).generate(text, {voice: id}); note.textContent = ""; return audio.toBlob();
   }
   async function speakClips(said, choice) {
     const [engine, id] = [choice.split(":")[0], choice.slice(choice.indexOf(":") + 1)];
     const local = engine === "piper" || engine === "kokoro";
     // On the phone, one sentence at a time: long text can crash an iPhone tab.
     const parts = local ? (said.match(/[^.!?]+[.!?]*\s*/g) || [said]).map(p => p.trim()).filter(Boolean) : clips(said, CLIP_MAX[engine]);
+    if (local && parts[0].length > 40) { // start on the first few words (to the first comma) while the rest is made
+      const cut = parts[0].indexOf(", ");
+      if (cut >= 12 && cut < parts[0].length - 12) parts.splice(0, 1, parts[0].slice(0, cut + 1), parts[0].slice(cut + 2));
+    }
     const get = t => local ? localClip(engine, id, t) : fetchClip(t, choice);
     let next = get(parts[0]);
     for (let i = 0; i < parts.length; i++) {
@@ -683,7 +716,7 @@ _HEAD_JS = r"""
     const parts = said.match(/[^.!?]+[.!?]*\s*/g) || [said]; // short pieces: long lines stall on iPhone
     parts.forEach((p, i) => {
       const u = new SpeechSynthesisUtterance(p.trim()); if (v) u.voice = v; u.rate = 1.03; u.pitch = 0.95;
-      u.onstart = () => setState("speaking"); u.onboundary = () => { burst = 1; };
+      u.onstart = () => { setState("speaking"); heardVoice(); }; u.onboundary = () => { burst = 1; };
       if (i === parts.length - 1) u.onend = u.onerror = () => setState("idle");
       synth.speak(u);
     });
@@ -717,6 +750,7 @@ _HEAD_JS = r"""
   async function send(text) {
     text = (text || "").trim(); if (!text || busy) return;
     busy = true; talk.disabled = true; saidEl.textContent = "“" + text + "”"; setState("thinking");
+    tSent = performance.now(); tReply = 0; warmVoice();
     try {
       const rid = Math.random().toString(36).slice(2, 12);
       const d = await (await fetch("/api/allchat", {method: "POST", headers: H, body: JSON.stringify({text, channel: "all", rid,
@@ -725,6 +759,7 @@ _HEAD_JS = r"""
       const mine = (d.messages || []).filter(m => m.from !== "you" && m.kind !== "event");
       const m = mine[mine.length - 1];
       if (!m) throw new Error(Object.values(d.errors || {})[0] || "no answer");
+      tReply = performance.now();
       show(m); latest = m; store("theta:heard", String(m.id)); hear.hidden = true;
       note.textContent = m.buttons && m.buttons.length ? "This one needs your Approve: open Chat to tap it." : "";
       speak(m.text);
@@ -928,6 +963,7 @@ _HEAD_JS = r"""
     if (fromPush || String(latest.id) !== store("theta:heard")) hear.hidden = false;
   }).catch(() => {});
   setState("idle");
+  setTimeout(() => (window.requestIdleCallback || (f => setTimeout(f, 300)))(() => warmVoice()), 600); // warm the voice up while you get ready to talk
 })();
 """
 
@@ -946,6 +982,7 @@ def head_page(headers):
             '<label>Voice <select id="head-voice" aria-label="Theta\'s voice"></select></label>'
             '<button type="button" id="head-test" class="test">Test</button>'
             '<label title="Tap your Bluetooth glasses or earbuds to talk"><input type="checkbox" id="head-glasses"> Glasses mode</label></div>'
+            '<p class="note" id="head-timing" aria-live="off"></p>'
             '<p class="note" id="head-taps" hidden></p>'
             '<a class="hear" id="head-maps" hidden target="_blank" rel="noopener">Open in Maps</a>'
             '<p class="note" id="head-note"></p>'

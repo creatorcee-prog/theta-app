@@ -199,6 +199,7 @@ def delete_reminder(rid):
 def run_tick(now=None):
     """Send what's due: reminders whose time came, and nags for "until done"
     ones not marked done yet. Cheap; meant for every few minutes."""
+    t_start = time.time()
     now = now or time.time()
     fired, nagged = [], []
     store().set_meta("tick:last", str(time.time()))
@@ -250,6 +251,10 @@ def run_tick(now=None):
             digest = send_digest(opener=False, now=local)
         except Exception as e:  # never let the digest stop reminders
             print(f"digest failed in tick: {e!r}")
+    try:  # last: a background job gets what's left of the tick's time
+        jobs_tick(seconds=min(JOB_TICK_SECONDS, 50 - (time.time() - t_start)))
+    except Exception as e:
+        print(f"background job failed in tick: {e!r}")
     return {"fired": fired, "nagged": nagged, "digest": digest}
 
 
