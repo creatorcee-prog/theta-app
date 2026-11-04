@@ -708,6 +708,65 @@ _HEAD_JS = r"""
       }).catch(() => {});
     } catch (e) {}
   }
+  // ---- voice effects (Voice and tools -> Effect): each clip is run through the effect before it plays, rendered
+  // offline into a new WAV, so playback itself is untouched (Bluetooth, glasses and the avatar's envelope still work).
+  // Works on Fish Audio, Piper and Kokoro; the phone's own voice can't be processed.
+  const fxSel = document.getElementById("head-fx"), fxAmt = document.getElementById("head-fx-amt");
+  const getS = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  const putS = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+  if (fxSel) { fxSel.value = getS("theta:fx") || "off"; if (!fxSel.value) fxSel.value = "off"; fxSel.onchange = () => putS("theta:fx", fxSel.value); }
+  if (fxAmt) { fxAmt.value = getS("theta:fxAmt") || "60"; fxAmt.onchange = () => putS("theta:fxAmt", fxAmt.value); }
+  function impulse(ctx, secs, decay) { // a made-up room: noise that fades out
+    const n = Math.floor(ctx.sampleRate * secs), b = ctx.createBuffer(2, n, ctx.sampleRate);
+    for (let c = 0; c < 2; c++) { const d = b.getChannelData(c); for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, decay); }
+    return b;
+  }
+  function wavOf(buf) { // 16-bit mono WAV
+    const d = buf.getChannelData(0), n = d.length, out = new DataView(new ArrayBuffer(44 + n * 2)), sr = buf.sampleRate;
+    const str = (o, t) => { for (let i = 0; i < t.length; i++) out.setUint8(o + i, t.charCodeAt(i)); };
+    str(0, "RIFF"); out.setUint32(4, 36 + n * 2, true); str(8, "WAVEfmt "); out.setUint32(16, 16, true); out.setUint16(20, 1, true);
+    out.setUint16(22, 1, true); out.setUint32(24, sr, true); out.setUint32(28, sr * 2, true); out.setUint16(32, 2, true); out.setUint16(34, 16, true);
+    str(36, "data"); out.setUint32(40, n * 2, true);
+    let peak = 1e-6; for (let i = 0; i < n; i++) peak = Math.max(peak, Math.abs(d[i]));
+    const g = peak > 0.98 ? 0.98 / peak : 1; // effects can add level: never clip
+    for (let i = 0; i < n; i++) out.setInt16(44 + i * 2, Math.max(-1, Math.min(1, d[i] * g)) * 0x7fff, true);
+    return new Blob([out], {type: "audio/wav"});
+  }
+  const FX = { // each builds wet = effect(src) into `out`; rate changes pitch and speed together
+    robot(c, src, out) { const m = c.createGain(), o = c.createOscillator(); m.gain.value = 0; o.frequency.value = 55; o.connect(m.gain); o.start();
+      src.connect(m); m.connect(out); },
+    radio(c, src, out) { const hp = c.createBiquadFilter(), lp = c.createBiquadFilter(), pk = c.createBiquadFilter(), sh = c.createWaveShaper();
+      hp.type = "highpass"; hp.frequency.value = 420; lp.type = "lowpass"; lp.frequency.value = 3000; pk.type = "peaking"; pk.frequency.value = 1600; pk.gain.value = 7;
+      const k = new Float32Array(1024); for (let i = 0; i < 1024; i++) { const x = i / 512 - 1; k[i] = Math.tanh(2.2 * x); } sh.curve = k;
+      src.connect(hp); hp.connect(pk); pk.connect(sh); sh.connect(lp); lp.connect(out); },
+    jarvis(c, src, out) { // the Iron Man helper's sound: a light flange, presence, a small metal room
+      const dl = c.createDelay(0.05), lfo = c.createOscillator(), dep = c.createGain(), fb = c.createGain(), hp = c.createBiquadFilter(), pr = c.createBiquadFilter(), rv = c.createConvolver(), rg = c.createGain();
+      dl.delayTime.value = 0.006; lfo.frequency.value = 0.35; dep.gain.value = 0.0025; lfo.connect(dep); dep.connect(dl.delayTime); lfo.start(); fb.gain.value = 0.45;
+      hp.type = "highpass"; hp.frequency.value = 140; pr.type = "peaking"; pr.frequency.value = 3200; pr.gain.value = 5;
+      rv.buffer = impulse(c, 0.45, 3); rg.gain.value = 0.35;
+      src.connect(hp); hp.connect(pr); pr.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(out); pr.connect(out); pr.connect(rv); rv.connect(rg); rg.connect(out); },
+    hologram(c, src, out) { const hp = c.createBiquadFilter(), ec = c.createDelay(1), fb = c.createGain(), rv = c.createConvolver(), rg = c.createGain();
+      hp.type = "highpass"; hp.frequency.value = 260; ec.delayTime.value = 0.12; fb.gain.value = 0.32; rv.buffer = impulse(c, 1.2, 2.5); rg.gain.value = 0.4;
+      src.connect(hp); hp.connect(out); hp.connect(ec); ec.connect(fb); fb.connect(ec); ec.connect(out); hp.connect(rv); rv.connect(rg); rg.connect(out); },
+    space(c, src, out) { const rv = c.createConvolver(); rv.buffer = impulse(c, 2.6, 2); src.connect(rv); rv.connect(out); },
+    deep(c, src, out) { const ls = c.createBiquadFilter(); ls.type = "lowshelf"; ls.frequency.value = 220; ls.gain.value = 6; src.connect(ls); ls.connect(out); },
+  };
+  const FX_RATE = {deep: 0.9}, FX_TAIL = {space: 2.6, hologram: 1.4, jarvis: 0.6};
+  async function voiceFx(blob) {
+    const kind = fxSel ? fxSel.value : "off", build = FX[kind];
+    if (!build) return blob;
+    try {
+      const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext; if (!OAC) return blob;
+      const buf = await blob.arrayBuffer();
+      const audio = await new Promise((ok, no) => { const c0 = new OAC(1, 22050, 22050), r = c0.decodeAudioData(buf, ok, no); if (r && r.then) r.then(ok, no); });
+      const rate = FX_RATE[kind] || 1, sr = audio.sampleRate, len = Math.ceil((audio.duration / rate + (FX_TAIL[kind] || 0.1)) * sr);
+      const c = new OAC(1, len, sr), src = c.createBufferSource(), dry = c.createGain(), wet = c.createGain(), amt = Math.max(0.1, Math.min(1, (fxAmt ? +fxAmt.value : 60) / 100));
+      src.buffer = audio; src.playbackRate.value = rate;
+      dry.gain.value = kind === "deep" ? 1 - amt * 0.5 : 1 - amt * 0.85; wet.gain.value = kind === "deep" ? amt : amt;
+      src.connect(dry); dry.connect(c.destination); build(c, src, wet); wet.connect(c.destination); src.start();
+      return wavOf(await c.startRendering());
+    } catch (e) { return blob; } // an effect is a nice-to-have: the plain voice plays if it fails
+  }
   const spec = (a, t, lv) => lv * (0.55 * Math.abs(Math.sin(a * 5 + t * 9)) + 0.45 * Math.abs(Math.sin(a * 11 - t * 5)));
   function moodShape(a, t, s) {
     let k = 1;
@@ -965,7 +1024,7 @@ _HEAD_JS = r"""
       const cut = parts[0].indexOf(", ");
       if (cut >= 12 && cut < parts[0].length - 12) parts.splice(0, 1, parts[0].slice(0, cut + 1), parts[0].slice(cut + 2));
     }
-    const get = t => local ? localClip(engine, id, t) : fetchClip(t, choice);
+    const get = t => (local ? localClip(engine, id, t) : fetchClip(t, choice)).then(voiceFx);
     let next = get(parts[0]);
     for (let i = 0; i < parts.length; i++) {
       const blob = await next;
@@ -1239,7 +1298,7 @@ _HEAD_JS = r"""
   }).catch(() => {});
   // hooks for the page's opening (the stage script): assemble, greet, mood
   window.thetaHead = {
-    speak: t => speak(t), unlock: () => unlock(), setMood: m => setMood(m), talking: () => state === "speaking",
+    speak: t => speak(t), unlock: () => unlock(), setMood: m => setMood(m), talking: () => state === "speaking", fx: b => voiceFx(b),
     scatter(near) { for (const q of dots) { const a = Math.random() * TAU, b = Math.acos(2 * Math.random() - 1), r = near ? 1.1 + Math.random() * 0.9 : 2.4 + Math.random() * 2;
       q.w = [Math.cos(a) * Math.sin(b) * r, Math.cos(b) * r, Math.sin(a) * Math.sin(b) * r]; q.v = [0, 0, 0]; } },
   };
@@ -1605,6 +1664,10 @@ _STAGE_JS = r"""
 """
 
 
+VOICE_FX = {"off": "None", "jarvis": "Jarvis (light flange, metal room)", "robot": "Robot", "radio": "Radio",
+            "hologram": "Hologram (echo)", "space": "Big space (reverb)", "deep": "Deeper (and a bit slower)"}
+
+
 def theme_stage(headers):
     """The colors Theta's avatar takes from the theme: its calm color (the theme's second accent, dark
     palette) and the dark "space" it floats in. A theme whose accent is too dark keeps Theta's cyan."""
@@ -1639,9 +1702,12 @@ def head_hud(headers=None):
             '<p class="note" id="head-note"></p><p class="note" id="head-taps" hidden></p>'
             '<div class="deck" id="deck" aria-label="What Theta pulled up" aria-live="polite"></div>'
             '<details class="hud-more"><summary>Voice and tools</summary><div class="opts">'
-            '<label><input type="checkbox" id="imm-on" checked> Hide the controls until I tap</label>'
+            '<label><input type="checkbox" id="imm-on" checked> Hide the controls until I tap the text box area</label>'
             '<label><input type="checkbox" id="head-voice-on" checked> Speak replies</label>'
             '<label>Voice <select id="head-voice" aria-label="Theta\'s voice"></select></label>'
+            '<label>Effect <select id="head-fx" aria-label="Effect on Theta\'s voice">' + "".join(
+                f'<option value="{k}">{html.escape(v)}</option>' for k, v in VOICE_FX.items()) + '</select></label>'
+            '<label>Strength <input type="range" id="head-fx-amt" min="10" max="100" value="60" aria-label="How strong the effect is"></label>'
             '<button type="button" id="head-test" class="test">Test</button>'
             '<label title="Tap your Bluetooth glasses or earbuds to talk"><input type="checkbox" id="head-glasses"> Glasses mode</label></div>'
             '<div class="av-set" aria-label="Avatar"><div class="row"><b>Avatar</b>'
