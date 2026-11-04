@@ -316,7 +316,13 @@ def notifs_card():
         for k, label in NOTIF_KINDS.items())
     city = (f"Weather for <b>{html.escape(HOME_CITY)}</b>." if HOME_CITY else
             "Weather needs <code>HOME_CITY</code> in Vercel (like <code>St George, UT</code>).")
-    return ('<section class="card stack" id="notifs"><h2>Notifications</h2><p class="muted small">Theta’s extra heads-ups. '
+    return ('<section class="card stack" id="notifs"><h2>Notifications</h2>'
+            # the switch for this phone: moved here from Home's collapsed Mistral section (2026-11-04)
+            '<p class="muted small">Turn them on for this phone first. On iPhone, open Theta from its Home Screen icon.</p>'
+            '<p><button class="btn" id="push-on" type="button">Turn on</button> <button class="btn ghost" id="push-test" '
+            'type="button">Send a test</button></p><p class="note" id="push-status" style="white-space:pre-line"></p>'
+            f'<script>{_PUSH_JS}</script>'
+            '<p class="muted small">Theta’s extra heads-ups. '
             f'{city} Times are set in Vercel: <code>WEATHER_TIME</code> ({html.escape(WEATHER_TIME)}), '
             f'<code>WIND_DOWN_TIME</code> ({html.escape(WIND_DOWN_TIME)}), <code>MISSED_TIME</code> ({html.escape(MISSED_TIME)}), '
             f'<code>WATER_EVERY_HOURS</code> ({WATER_EVERY_HOURS:g}), <code>BIG_SPEND</code> (${BIG_SPEND:,.0f}).</p>'

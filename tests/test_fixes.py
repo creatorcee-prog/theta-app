@@ -264,8 +264,8 @@ check("push failure recorded with device", s_ == 200 and h._meta_json("push:fail
 page = call("GET", "/settings", headers=K)[1]
 check("Devices details show why notifications didn't turn on", b"Notifications didn" in page and b"permission is denied" in page)
 check("QWERTY sees it too", "Recent notification sign-up failures" in h.devices_text())
-home = call("GET", "/", headers=K)[1].decode()
-check("phone reports failures from every step (script moved to Home, Stage 2)", 'report("permission"' in home.replace("'", '"') or "/api/push/fail" in home)
+sett = call("GET", "/settings", headers=K)[1].decode()
+check("phone reports failures from every step (script in Settings, Notifications, since 2026-11-04)", 'report("permission"' in sett.replace("'", '"') or "/api/push/fail" in sett)
 # speed card
 h._PERF.clear(); h._PERF_SAVED[0] = 0
 for _ in range(3):

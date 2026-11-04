@@ -744,7 +744,6 @@ def settings_page(headers):
         '<div class="seg" role="group" aria-label="Shine follows tilt"><button type="button" data-tilt="on">Follow tilt</button>'
         '<button type="button" data-tilt="off">Off</button></div><p class="note small" id="tilt-note"></p></div>'
         f'<div><h3>Home layout</h3><p class="muted small">How the windows on Home are arranged.</p><div class="layouts">{layouts}</div></div></section>'
-        '<p class="muted small">Phone notifications now live under Mistral on <a href="/">Home</a>.</p>'
         + passkeys_card(headers) + devices_card(headers) + gmail_card(headers) + memory_card() + siri_card(headers) + fish_card() + phone_card(headers) + notifs_card() +
         '<section class="card stack"><div class="brow"><h2>Rounds</h2></div><p class="muted small">Every agent does its '
         'job three times a day (Supabase Cron). Run one now to refresh the windows.</p>'
