@@ -27,7 +27,8 @@ BOARD_PURPOSE = ("The board (the user's widgets when you're minimized) has one g
                  "world. News, entertainment, releases and weather are meant to stay; everything else (reminders, "
                  "money, calendar, diagnostics, jobs, the daily check) is something to deal with and clear. When a "
                  "widget is waiting to be cleared, help the user clear it: do it with your tools, or say the one "
-                 "step that clears it. A clear board is the user caught up.")
+                 "step that clears it. Reminders that aren't due yet, the calendar, a running focus session and ordinary "
+                 "spending are for later, not to clear. A clear board is the user caught up; say so when it is.")
 
 # What you tap first on the board counts most: a widget's reward is 1 for a first tap, 1/2 for a second,
 # 1/3 for a third (in one look at the board), fading by half every two weeks. News keeps its own order
@@ -90,15 +91,17 @@ def _sig(*parts):
 
 
 def _w(wid, size, title, score, *, eyebrow="", big="", sub="", rows=None, items=None, open_="", important=False,
-       tone="", search="", sig_parts=None):
-    rows = [r for r in (rows or []) if r and r[0]]
+       tone="", search="", sig_parts=None, cat=None):
+    rows = [r for r in (rows or []) if r and r[0]][:6]
     items = [i for i in (items or []) if i and i.get("t")]
-    return {"id": wid, "cat": "world" if wid in BOARD_WORLD else "task", "size": size, "title": title, "eyebrow": eyebrow, "big": big, "sub": sub,
-            "rows": [[str(a)[:80], str(b)[:80]] for a, b in rows][:6], "items": items[:5], "open": open_,
+    acts = [(r[2] if len(r) > 2 else None) for r in rows]
+    return {"id": wid, "cat": cat or ("world" if wid in BOARD_WORLD else "task"), "size": size, "title": title, "eyebrow": eyebrow,
+            "big": big, "sub": sub, "rows": [[str(r[0])[:80], str(r[1])[:80]] for r in rows], "acts": acts if any(acts) else [],
+            "items": items[:5], "open": open_,
             "important": bool(important), "tone": tone, "score": score,
-            "search": " ".join([title, eyebrow, big, sub, search] + [f"{a} {b}" for a, b in rows]
+            "search": " ".join([title, eyebrow, big, sub, search] + [f"{r[0]} {r[1]}" for r in rows]
                                + [i.get("t", "") for i in items]).lower()[:1200],
-            "sig": _sig(sig_parts if sig_parts is not None else [big, sub, rows, [i.get("t") for i in items]])}
+            "sig": _sig(sig_parts if sig_parts is not None else [big, sub, [r[:2] for r in rows], [i.get("t") for i in items]])}
 
 
 def board(now=None, world=True):
@@ -124,26 +127,47 @@ def board(now=None, world=True):
         show = (due + soon)[:5]
         if not show:
             return None
-        return _w("reminders", 3, "Reminders", 95 if late else 60, eyebrow="Overdue" if late else "Coming up",
-                  rows=[(("now" if r["at"] <= t else _clock(datetime.fromtimestamp(r["at"], hub_tz())))
-                         if r["at"] - t < 20 * 3600 else datetime.fromtimestamp(r["at"], hub_tz()).strftime("%a"),
-                         r["what"]) for r in show], open_="/calendar#reminders", important=bool(late), tone="warn" if late else "")
+        when = lambda r: (("now" if r["at"] <= t else _clock(datetime.fromtimestamp(r["at"], hub_tz())))
+                          if r["at"] - t < 20 * 3600 else datetime.fromtimestamp(r["at"], hub_tz()).strftime("%a"))
+        done = lambda r: {"post": f"/api/reminders/{r['id']}/done?early=1", "label": "Done"} if (r in due and "id" in r) else None
+        return _w("reminders", 2, "Reminders", 95 if late else 60 if due else 20,
+                  eyebrow="Overdue" if late else "Due soon" if due else "Coming up",
+                  rows=[(when(r), r["what"], done(r)) for r in show], open_="/calendar#reminders", important=bool(late),
+                  tone="warn" if late else "", cat=None if due else "later")
 
     def w_calendar():
+        """Today only, with the day as a ring: 24 hours round, each event an arc, a hand at now; the middle
+        scores the day's schedule (how much of today's scheduled time is behind you, and what's left)."""
         if not calendar_linked():
             return None
-        evs = calendar_events(now.date(), now.date() + timedelta(days=1))
-        timed = [e for e in evs if not e["all_day"] and isinstance(e["start"], datetime) and e["end"] > now]
+        today = now.date()
+        evs = [e for e in calendar_events(today, today + timedelta(days=1))
+               if (e["start"] if e["all_day"] else e["start"].date()) == today and not e.get("birthday")]
         if not evs:
             return None
-        nxt = timed[0] if timed else None
+        timed = sorted((e for e in evs if not e["all_day"] and isinstance(e["start"], datetime)), key=lambda e: e["start"])
+        day0 = datetime.combine(today, datetime.min.time(), hub_tz())
+        m = lambda d: max(0, min(1440, round((d - day0).total_seconds() / 60)))
+        nowm = m(now)
+        arcs = [{"s": m(e["start"]), "e": max(m(e["start"]) + 10, m(e["end"])), "t": e["title"][:40]} for e in timed]
+        total = sum(x["e"] - x["s"] for x in arcs)
+        behind = sum(max(0, min(x["e"], nowm) - x["s"]) for x in arcs)
+        left = [e for e in timed if e["end"] > now]
+        nxt = left[0] if left else None
         mins = (nxt["start"] - now).total_seconds() / 60 if nxt else None
-        return _w("calendar", 2, "Up next" if nxt else "Today", 90 if mins is not None and mins <= 120 else 50,
-                  eyebrow=("Happening now" if mins is not None and mins <= 0 else f"In {int(mins)} min" if mins is not None and mins < 120
-                           else f"{len(evs)} on the calendar"),
-                  big=(nxt or evs[0])["title"][:60], sub=(_clock(nxt["start"]) + (f" · {nxt['location']}" if nxt.get("location") else "")) if nxt else "",
-                  rows=[(_clock(e["start"]) if not e["all_day"] else "all day", e["title"]) for e in (timed or evs)[1:3]],
-                  open_="/calendar", important=mins is not None and mins <= 60)
+        allday = [e for e in evs if e["all_day"]]
+        w = _w("calendar", 2, "Today", 90 if mins is not None and mins <= 120 else 50,
+               eyebrow=("Happening now" if mins is not None and mins <= 0 else f"Next in {int(mins)} min" if mins is not None and mins < 120
+                        else f"Next at {_clock(nxt['start'])}" if nxt else "Nothing left today"),
+               big=nxt["title"][:60] if nxt else ("All done for today" if timed else allday[0]["title"][:60]),
+               sub=((_clock(nxt["start"]) + (f" \u00b7 {nxt['location']}" if nxt.get("location") else "")) if nxt else
+                    (f"all day \u00b7 {len(allday)} event{'s' if len(allday) != 1 else ''}" if allday and not timed else "")),
+               rows=[(_clock(e["start"]), e["title"]) for e in left[1:3]] + [("all day", e["title"]) for e in allday[:1] if timed],
+               open_="/calendar", important=mins is not None and mins <= 60, cat="later",
+               sig_parts=[today.isoformat(), [x["t"] for x in arcs], len(left), bool(nxt and mins is not None and mins <= 0)])
+        w["ring"] = {"now": nowm, "arcs": arcs, "score": round(100 * behind / total) if total else None,
+                     "left": len(left), "total": len(timed)}
+        return w
 
     def w_money():
         st = month_status(now.strftime("%Y-%m"))
@@ -160,7 +184,7 @@ def board(now=None, world=True):
         share = spent / budget if budget else 0
         return _w("money", 1, "Money", 74 if share >= .9 else 35, eyebrow=now.strftime("%B"), big=f"${spent:,.0f}",
                   sub=f"{share:.0%} of ${budget:,.0f}" if budget else "spent so far", open_="/money",
-                  important=share >= .9, tone="warn" if share >= .9 else "")
+                  important=share >= .9, tone="warn" if share >= .9 else "", cat=None if share >= .9 else "later")
 
     def w_diag():
         bad = []
@@ -177,7 +201,7 @@ def board(now=None, world=True):
         if not rows:
             return _w("diagnostics-ok", 1, "Diagnostics", 5, eyebrow="Health", big="All good", sub="no problems found",
                       open_="/diagnostics", sig_parts=["ok"])
-        return _w("diagnostics", 2 if len(rows) < 3 else 3, "Diagnostics", 97 if high else 66,
+        return _w("diagnostics", 2, "Diagnostics", 97 if high else 66,
                   eyebrow=f"{len(rows)} to look at", rows=rows, open_="/diagnostics", important=high, tone="bad" if high else "warn")
 
     def w_news():
@@ -229,9 +253,11 @@ def board(now=None, world=True):
         if not items:
             return None
         left = [i for i in items if i["id"] not in done]
-        return _w("daily", 2, "Today's check", 55 if left else 8, eyebrow=f"{len(items) - len(left)} of {len(items)} done",
-                  rows=[("☐" if i["id"] not in done else "☑", i["text"]) for i in items[:4]], open_="/#today",
-                  sig_parts=[now.date().isoformat(), len(left)])
+        if not left:
+            return None  # all done today: cleared
+        return _w("daily", 2, "Today's check", 55, eyebrow=f"{len(items) - len(left)} of {len(items)} done",
+                  rows=[("\u2610", i["text"], {"post": "/api/daily/toggle", "body": {"id": i["id"]}, "label": "Done"}) for i in left[:4]],
+                  open_="/#today", sig_parts=[now.date().isoformat(), len(left)])
 
     def w_focus():
         f = focus_state()
@@ -239,7 +265,7 @@ def board(now=None, world=True):
             return None
         left = max(1, round((f["until"] - time.time()) / 60))
         return _w("focus", 1, "Focus", 93, eyebrow="Focusing", big=f"{left} min", sub=f["task"][:40], important=True,
-                  open_="", sig_parts=[f["task"], f["until"]])
+                  open_="", sig_parts=[f["task"], f["until"]], cat="later")
 
     def w_weather():
         w = _meta_json("weather:today", {})
@@ -255,7 +281,8 @@ def board(now=None, world=True):
         if not js:
             return None
         return _w("jobs", 2, "Background jobs", 70 if live else 12, eyebrow=f"{len(live)} running" if live else "Done",
-                  rows=[(f"#{j['id']}", f"{j['status']}: {j['task'][:60]}") for j in reversed(js)], open_="#chat")
+                  rows=[(f"#{j['id']}", f"{j['status']}: {j['task'][:60]}") for j in reversed(js)], open_="#chat",
+                  cat="later" if live else None)
 
     def w_dreams():
         ideas = [x for x in dream_taste() if x.get("auto") and x.get("at", 0) > time.time() - 36 * 3600]
@@ -273,7 +300,7 @@ def board(now=None, world=True):
                 for w in wins[:4] if w.get("agent")]
 
     fns = (w_reminders, w_calendar, w_money, w_diag, w_news, w_trending, w_releases, w_daily, w_focus,
-           w_weather, w_jobs, w_dreams, w_crew)
+           w_weather, w_jobs, w_dreams)  # the crew's old windows repeat what other widgets say: off the board (2026-11-04)
     for fn in fns if world else [f for f in fns if f not in (w_news, w_trending, w_releases, w_weather)]:
         part(fn)
     rw = board_rewards()
@@ -322,6 +349,7 @@ def board_markup():
 
 
 BOARD_CSS = r"""
+
 /* the ticker: a crawl across the top while Theta is minimized, like a sports or news channel */
 .ticker{position:fixed;top:calc(env(safe-area-inset-top,0px) + 14px);left:max(12px,env(safe-area-inset-left,0px));
  right:calc(env(safe-area-inset-right,0px) + 72px);height:38px;z-index:7;overflow:hidden;display:none;align-items:center;
@@ -368,7 +396,7 @@ body.docked #board{display:block}
 .w .items small{color:var(--muted);font-size:11px;margin-right:6px}
 .w .thumb{width:100%;height:96px;object-fit:cover;border-radius:calc(var(--r) - 6px);margin:2px 0 4px}
 .w.bad{border-color:color-mix(in srgb,var(--bad) 60%,var(--border))}.w.warn{border-color:color-mix(in srgb,var(--warn) 55%,var(--border))}
-.w.important::after{content:"";position:absolute;top:10px;right:10px;width:8px;height:8px;border-radius:50%;background:var(--bad);box-shadow:0 0 8px var(--bad)}
+.w.important::after{z-index:1;content:"";position:absolute;top:10px;right:10px;width:8px;height:8px;border-radius:50%;background:var(--bad);box-shadow:0 0 8px var(--bad)}
 .w.app{grid-row:span 1;justify-content:flex-end;min-height:0}
 .w.app h3{font-size:15px}.w.app .ey{opacity:.7}
 .board-open{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--formh,96px) + 10px);z-index:5;display:inline-flex;align-items:center;gap:8px;
@@ -403,6 +431,39 @@ body.showchat .msgs{opacity:1!important;pointer-events:auto!important;transform:
 .wsheet-bar b{font-family:var(--f-head);font-size:16px}
 .wsheet iframe{flex:1;width:100%;border:0;background:var(--bg)}
 @media (prefers-reduced-motion:reduce){.w,.term,.wsheet{animation:none}}
+/* ---- live board (2026-11-04): dots, Start here, one-tap Done, leaving, cleared toast, app chips */
+.w.isnew::after{content:"";position:absolute;top:10px;right:10px;width:8px;height:8px;border-radius:50%;background:var(--accent2);box-shadow:0 0 8px var(--accent2)}
+.w .start{position:absolute;top:-1px;left:12px;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--on);background:var(--accent);padding:1px 7px;border-radius:0 0 6px 6px}
+.w.first{box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 55%,transparent),var(--shadow)}
+.w.first .ey{margin-top:8px}
+.w .rows{display:flex;flex-direction:column;gap:2px}
+.w .rrow{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:9px;align-items:center;min-height:30px;transition:opacity .3s}
+.w .rrow.doneit{opacity:.35;text-decoration:line-through}
+.w .rdone{width:32px;height:32px;border-radius:50%;border:1.5px solid color-mix(in srgb,var(--good) 70%,var(--border));background:transparent;color:var(--good);font-size:15px;font-weight:800;cursor:pointer;flex:none}
+.w .rdone:active{transform:scale(.9);background:color-mix(in srgb,var(--good) 20%,transparent)}
+@media (pointer:coarse){.w .rdone{width:40px;height:40px}.bchip{min-height:38px}}
+.w.kept{animation:none}
+.w.leaving{animation:wleave .4s ease forwards;pointer-events:none}
+@keyframes wleave{to{opacity:0;transform:scale(.92)}}
+.approw{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.bchip.more{grid-column:1/-1;justify-self:start}
+#board.allclear .bhead span{color:var(--good);font-weight:700}
+.btoast{position:fixed;left:50%;bottom:calc(var(--formh,96px) + 60px);transform:translate(-50%,10px);z-index:12;opacity:0;pointer-events:none;
+ padding:9px 16px;border-radius:999px;background:color-mix(in srgb,var(--good) 22%,var(--surface));border:1px solid color-mix(in srgb,var(--good) 60%,transparent);
+ color:var(--text);font-weight:700;font-size:14px;transition:opacity .25s,transform .25s;max-width:86vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.btoast.in{opacity:1;transform:translate(-50%,0)}
+@media (prefers-reduced-motion:reduce){.w.leaving{animation:none;display:none}}
+
+/* the calendar's day ring */
+.w.hasring{display:grid;grid-template-columns:112px minmax(0,1fr);column-gap:12px;align-items:start}
+.w.hasring > *{grid-column:2}.w.hasring > .dayring{grid-column:1;grid-row:1 / span 6;width:112px;height:112px;align-self:center}
+.dayring .dr-track{fill:none;stroke:color-mix(in srgb,var(--text) 12%,transparent);stroke-width:8}
+.dayring .dr-tick{stroke:color-mix(in srgb,var(--text) 35%,transparent);stroke-width:1.5}
+.dayring .dr-left{fill:none;stroke:var(--accent);stroke-width:8;stroke-linecap:butt}
+.dayring .dr-done{fill:none;stroke:color-mix(in srgb,var(--accent) 35%,transparent);stroke-width:8}
+.dayring .dr-now{stroke:var(--text);stroke-width:2.5;stroke-linecap:round}
+.dayring .dr-score{fill:var(--text);font:800 19px var(--f-head);text-anchor:middle}
+.dayring .dr-sub{fill:var(--muted);font:600 10.5px var(--f-body);text-anchor:middle}
 """
 
 BOARD_JS = r"""
@@ -427,50 +488,123 @@ BOARD_JS = r"""
   addEventListener("resize", measure); setInterval(measure, 1500);
   if (window.ResizeObserver && deck) new ResizeObserver(measure).observe(deck);
 
-  // ---- what shows: important first, then anything new since you last saw it (decided once per refresh,
-  // so a widget never vanishes while you're looking at it)
+  // ---- what shows: important first, then anything new since you last saw it. The set grows live (something
+  // new or newly important appears at once) and a widget whose thing got dealt with leaves at once; one you've
+  // only looked at stays until you next minimize Theta, so nothing vanishes under your finger.
+  let newIds = new Set(), moreOpen = false;
+  const TASKS_MAX = 4; // more than four things to do at once is a wall, not a list
   function fresh() { return data.widgets.filter(w => w.important || seen[w.id] !== w.sig); }
-  function visible() { if (!shown) shown = new Set(fresh().map(w => w.id)); return data.widgets.filter(w => showAll || shown.has(w.id)); }
-  function card(w, i) {
-    const c = el("article", "w card s" + (w.size || 1) + (w.tone ? " " + w.tone : "") + (w.important ? " important" : "") + (w.app ? " app" : ""));
-    c.tabIndex = 0; c.setAttribute("role", "button"); c.style.animationDelay = Math.min(i, 8) * 45 + "ms";
-    if (w.app) { c.append(el("span", "ey", "Open"), el("h3", null, w.title)); }
-    else {
-      if (w.eyebrow) c.append(el("span", "ey", w.eyebrow));
-      c.append(el("h3", null, w.title));
-      const img = (w.items || []).find(x => x.img);
-      if (w.size === 4 && img) { const im = el("img", "thumb"); im.src = img.img; im.alt = ""; im.loading = "lazy"; c.append(im); }
-      if (w.big) c.append(el("div", "big", w.big));
-      if (w.sub) c.append(el("div", "sub", w.sub));
-      if (w.rows && w.rows.length) { const r = el("div", "rows"); w.rows.slice(0, w.size >= 3 ? 6 : 2).forEach(([a, b]) => r.append(el("b", null, a), el("span", null, b))); c.append(r); }
-      if (w.items && w.items.length) {
-        const l = el("div", "items");
-        w.items.slice(0, w.size === 4 ? 4 : 2).forEach(x => { const a = el("a"); a.href = x.u || "#"; if (x.s) a.append(el("small", null, x.s)); a.append(x.t);
-          if (/^https?:/.test(x.u || "")) { a.target = "_blank"; a.rel = "noopener"; } a.onclick = e => { e.stopPropagation(); if (w.id === "news" || w.id === "breaking") tap({kind: "news", title: x.t}); if (!/^https?:/.test(x.u || "")) { e.preventDefault(); openW({open: x.u, title: w.title}); } }; l.append(a); });
-        c.append(l);
-      }
+  function visible() {
+    if (!shown) shown = new Set();
+    fresh().forEach(w => { if (!shown.has(w.id)) { shown.add(w.id); if (!w.important && seen[w.id] !== w.sig) newIds.add(w.id); } });
+    return data.widgets.filter(w => showAll || shown.has(w.id));
+  }
+  const isTask = w => w.cat === "task" && w.id !== "diagnostics-ok";
+  function act(w, i, btn) { // one tap clears a row (a reminder done, a daily check ticked); the board updates at once
+    const a = w.acts[i]; if (!a) return;
+    btn.disabled = true; btn.closest(".rrow").classList.add("doneit");
+    fetch(a.post, {method: "POST", headers: H, body: JSON.stringify(a.body || {})}).then(r => r.json()).then(d => {
+      if (!d.ok) throw new Error(d.error || "didn’t work"); if (window.thetaSfx) thetaSfx.play(); setTimeout(load, 350);
+    }).catch(e => { btn.disabled = false; btn.closest(".rrow").classList.remove("doneit"); toast(e.message || String(e)); });
+  }
+  function card(w, i, first) {
+    const c = el("article", "w card s" + (w.size || 1) + (w.tone ? " " + w.tone : "") + (w.important ? " important" : newIds.has(w.id) ? " isnew" : "") + (first ? " first" : ""));
+    c.dataset.id = w.id; c.tabIndex = 0; c.setAttribute("role", "button"); c.style.animationDelay = Math.min(i, 8) * 45 + "ms";
+    c.setAttribute("aria-label", w.title + (w.important ? ", important" : newIds.has(w.id) ? ", new" : ""));
+    if (first) c.append(el("span", "start", "Start here"));
+    if (w.eyebrow) c.append(el("span", "ey", w.eyebrow));
+    c.append(el("h3", null, w.title));
+    const img = (w.items || []).find(x => x.img);
+    if (w.size === 4 && img) { const im = el("img", "thumb"); im.src = img.img; im.alt = ""; im.loading = "lazy"; c.append(im); }
+    if (w.ring) { c.classList.add("hasring"); c.append(dayRing(w.ring)); }
+    if (w.big) c.append(el("div", "big", w.big));
+    if (w.sub) c.append(el("div", "sub", w.sub));
+    if (w.rows && w.rows.length) {
+      const r = el("div", "rows");
+      w.rows.slice(0, w.size >= 3 ? 6 : 3).forEach(([a, b], k) => {
+        const row = el("div", "rrow"); row.append(el("b", null, a), el("span", null, b));
+        if (w.acts && w.acts[k]) { const bt = el("button", "rdone", "✓"); bt.type = "button"; bt.title = w.acts[k].label; bt.setAttribute("aria-label", w.acts[k].label + ": " + b);
+          bt.onclick = e => { e.stopPropagation(); act(w, k, bt); }; row.append(bt); }
+        r.append(row);
+      });
+      c.append(r);
+    }
+    if (w.items && w.items.length) {
+      const l = el("div", "items");
+      w.items.slice(0, w.size === 4 ? 4 : 2).forEach(x => { const a = el("a"); a.href = x.u || "#"; if (x.s) a.append(el("small", null, x.s)); a.append(x.t);
+        if (/^https?:/.test(x.u || "")) { a.target = "_blank"; a.rel = "noopener"; } a.onclick = e => { e.stopPropagation(); if (w.id === "news" || w.id === "breaking") tap({kind: "news", title: x.t}); if (!/^https?:/.test(x.u || "")) { e.preventDefault(); openW({open: x.u, title: w.title}); } }; l.append(a); });
+      c.append(l);
     }
     c.onclick = () => openW(w); c.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openW(w); } };
     return c;
   }
+  function dayRing(r) { // the day as a ring: midnight at the top, each event an arc (done ones dim), a hand at now
+    const NS = "http://www.w3.org/2000/svg", S = 112, C = S / 2, R = 44, svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("viewBox", `0 0 ${S} ${S}`); svg.setAttribute("class", "dayring"); svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", r.total ? `${r.score}% of today's schedule is behind you, ${r.left} left` : "Nothing timed today");
+    const pt = (min, rad) => { const a = min / 1440 * 2 * Math.PI - Math.PI / 2; return [C + Math.cos(a) * rad, C + Math.sin(a) * rad]; };
+    const mk = (tag, at) => { const e = document.createElementNS(NS, tag); for (const k in at) e.setAttribute(k, at[k]); svg.append(e); return e; };
+    mk("circle", {cx: C, cy: C, r: R, class: "dr-track"});
+    [0, 360, 720, 1080].forEach(h => { const [x1, y1] = pt(h, R - 7), [x2, y2] = pt(h, R - 3); mk("line", {x1, y1, x2, y2, class: "dr-tick"}); });
+    const arc = (s, e, cls) => { if (e - s < 1) return; const [x1, y1] = pt(s, R), [x2, y2] = pt(Math.min(e, 1439.9), R);
+      mk("path", {d: `M${x1} ${y1} A${R} ${R} 0 ${e - s > 720 ? 1 : 0} 1 ${x2} ${y2}`, class: cls}); };
+    r.arcs.forEach(a => { arc(a.s, Math.min(a.e, r.now), "dr-done"); arc(Math.max(a.s, r.now), a.e, "dr-left"); });
+    const [hx, hy] = pt(r.now, R + 6), [ix, iy] = pt(r.now, R - 12); mk("line", {x1: ix, y1: iy, x2: hx, y2: hy, class: "dr-now"});
+    const t1 = mk("text", {x: C, y: C - 2, class: "dr-score"}); t1.textContent = r.total ? r.score + "%" : "Free";
+    const t2 = mk("text", {x: C, y: C + 14, class: "dr-sub"}); t2.textContent = r.total ? (r.left ? r.left + " left" : "all done") : "day";
+    return svg;
+  }
+  function chips(apps) { // the full pages, as small chips at the end: always there, never in the way
+    const row = el("div", "approw"); row.setAttribute("aria-label", "Pages");
+    apps.forEach(a => { const b = el("button", "bchip", a.title); b.type = "button"; b.onclick = () => openW(a); row.append(b); });
+    return row;
+  }
+  // live, keyed: a widget that's still there keeps its element (no flicker); one that left slides out
+  function place(list, extra) {
+    const old = new Map([...grid.children].filter(n => n.dataset.id).map(n => [n.dataset.id, n]));
+    const next = list.map(([w, i, first]) => { const o = old.get(w.id);
+      if (o && o.dataset.sig === w.sig + (first ? "1" : "") + (newIds.has(w.id) ? "n" : "")) { old.delete(w.id); o.style.animationDelay = "0ms"; o.classList.add("kept"); return o; }
+      const c = card(w, i, first); c.dataset.sig = w.sig + (first ? "1" : "") + (newIds.has(w.id) ? "n" : ""); return c; });
+    old.forEach(n => { if (n.classList.contains("leaving")) return; n.classList.add("leaving"); });
+    const leaving = [...old.values()];
+    grid.replaceChildren(...next, ...leaving, ...extra);
+    setTimeout(() => leaving.forEach(n => n.remove()), 420);
+  }
   function render() {
     const q = (msg && msg.value || "").trim().toLowerCase();
-    let list, label;
+    let list = [], label, extra = [];
     if (q && !q.startsWith("/") && !q.startsWith("@")) {
-      const words = q.split(/\s+/).filter(Boolean);
-      list = data.widgets.concat(data.apps).filter(w => words.every(x => (w.search || "").includes(x)));
-      label = list.length ? `${list.length} on the board for “${q}” · send to ask Theta` : `Nothing on the board for “${q}” · send to ask Theta`;
+      const words = q.split(/\s+/).filter(Boolean), hit = w => words.every(x => (w.search || "").includes(x));
+      list = data.widgets.filter(hit).map((w, i) => [w, i, false]);
+      const apps = data.apps.filter(hit); if (apps.length) extra = [chips(apps)];
+      const n = list.length + apps.length;
+      label = n ? `${n} on the board for “${q}” · send to ask Theta` : `Nothing on the board for “${q}” · send to ask Theta`;
     } else {
-      const v = visible(), imp = v.filter(w => w.important).length, left = v.filter(w => w.cat === "task" && w.id !== "diagnostics-ok").length;
-      list = v.concat(data.apps); taps = 0; // a new look at the board
-      label = !left ? "All clear · just the world now" : `${left} to clear` + (imp ? ` · ${imp} important` : "") + (v.length > left ? ` · ${v.length - left} from the world` : "");
+      const v = visible(), tasks = v.filter(isTask), rest = v.filter(w => !isTask(w)), imp = tasks.filter(w => w.important).length;
+      const showT = moreOpen ? tasks : tasks.slice(0, TASKS_MAX);
+      list = showT.map((w, i) => [w, i, i === 0]).concat(rest.map((w, i) => [w, showT.length + i, false]));
+      if (tasks.length > showT.length) { const m = el("button", "bchip more", `+${tasks.length - showT.length} more to clear`); m.type = "button"; m.onclick = () => { moreOpen = true; render(); }; extra.push(m); }
+      extra.push(chips(data.apps)); taps = 0; // a new look at the board
+      const done = clearedToday();
+      label = !tasks.length ? `All clear · just the world now${done ? ` · ${done} cleared today ✓` : ""}`
+        : `${tasks.length} to clear` + (imp ? ` · ${imp} important` : "") + (done ? ` · ${done} cleared today ✓` : "");
+      boardEl.classList.toggle("allclear", !tasks.length);
     }
-    grid.replaceChildren(...list.map(card)); title.textContent = label;
+    place(list, extra); title.textContent = label;
     allBtn.hidden = !!q; allBtn.textContent = showAll ? "Only new" : "Show all";
-    const n = fresh().length, imp = data.widgets.filter(w => w.important).length;
+    const imp = data.widgets.filter(w => w.important).length, n = fresh().length;
     countEl.textContent = imp ? `${imp} important` : n ? `${n} new` : "Widgets"; openBtn.hidden = false;
     clearTimeout(seenTimer);
     if (!q && ST() && ST().docked()) seenTimer = setTimeout(() => { visible().forEach(w => { seen[w.id] = w.sig; }); put("theta:seen", seen); }, 2500);
+  }
+  // ---- cleared: a task widget that leaves because its thing got done counts, with a small toast
+  const today = () => new Date().toDateString();
+  function clearedToday() { const c = get("theta:cleared", {}); return c.day === today() ? c.n || 0 : 0; }
+  function addCleared(names) { const c = get("theta:cleared", {}); const n = (c.day === today() ? c.n || 0 : 0) + names.length; put("theta:cleared", {day: today(), n}); }
+  let toastEl = null, toastT = 0;
+  function toast(text) {
+    if (!toastEl) { toastEl = el("div", "btoast"); toastEl.setAttribute("role", "status"); document.body.append(toastEl); }
+    toastEl.textContent = text; toastEl.classList.add("in"); clearTimeout(toastT); toastT = setTimeout(() => toastEl.classList.remove("in"), 2600);
   }
   allBtn.onclick = () => { showAll = !showAll; render(); };
 
@@ -511,6 +645,7 @@ BOARD_JS = r"""
   // ---- minimizing Theta: the Widgets button, typing (the type bar searches the board), or swiping up
   openBtn.onclick = () => { if (ST()) ST().dock("board"); };
   document.addEventListener("theta:docked", e => { if (e.detail) { measure(); render(); } else { shown = null; body.classList.remove("showchat"); } });
+  if (msg) { msg.addEventListener("focus", () => $("ticker").classList.add("held")); msg.addEventListener("blur", () => $("ticker").classList.remove("held")); }
   if (msg) msg.addEventListener("input", () => {
     const q = msg.value.trim();
     if (q && !q.startsWith("/") && !q.startsWith("@") && ST() && !ST().docked()) ST().dock("search");
@@ -559,10 +694,22 @@ BOARD_JS = r"""
     try {
       const d = await (await fetch("/api/board", {headers: H})).json();
       if (!d.ok) return;
-      data = d; seen = get("theta:seen", {}); if (!(ST() && ST().docked())) shown = null; render(); tick();
+      const before = new Map((data.widgets || []).filter(isTask).map(w => [w.id, w.title]));
+      data = d; seen = get("theta:seen", {});
+      if (!(ST() && ST().docked())) { shown = null; newIds = new Set(); moreOpen = false; }
+      const gone = [...before].filter(([id]) => !d.widgets.some(w => w.id === id && isTask(w))).map(([, t]) => t); // dealt with: gone, or no longer a task
+      if (gone.length && before.size) { addCleared(gone); toast("\u2713 Cleared: " + gone.join(", ")); }
+      render(); tick();
     } catch (e) {}
   }
-  load(); setInterval(() => { if (!document.hidden) load(); }, 120000);
+  // live: every 20 s while the board is up, every 2 min otherwise, at once after Theta answers or acts
+  load(); setInterval(() => { if (!document.hidden && ST() && ST().docked()) load(); }, 20000);
+  setInterval(() => { if (!document.hidden && !(ST() && ST().docked())) load(); }, 120000);
+  let lastTheta = null;
+  document.addEventListener("theta:thread", e => {
+    const ms = (e.detail || []).filter(x => x.from === "theta"), m = ms[ms.length - 1];
+    if (!m) return; if (lastTheta !== null && m.id !== lastTheta) setTimeout(load, 1200); lastTheta = m.id;
+  });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
 
   // a page asked for directly (/settings, /money...) opens here, in the sheet

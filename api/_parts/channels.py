@@ -1197,7 +1197,8 @@ def handle(method, path, query, headers, body):
             parts = path.split("/")  # /api/reminders/<id>/<done|delete>
             if len(parts) != 5 or not parts[3].isdigit() or parts[4] not in ("done", "delete"):
                 return _json(404, {"ok": False, "error": "unknown route"})
-            r = (ack_reminder if parts[4] == "done" else delete_reminder)(int(parts[3]))
+            r = (ack_reminder(int(parts[3]), early=query.get("early", [""])[0] == "1") if parts[4] == "done"
+                 else delete_reminder(int(parts[3])))
             return _json(200 if r else 404, {"ok": bool(r), **({} if r else {"error": "no such reminder"})})
 
         if path == "/api/round":
