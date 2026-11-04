@@ -35,6 +35,7 @@ Local test (memory mode, no KV needed):
 import base64
 import csv
 import hashlib
+import math
 import hmac
 import html
 import io

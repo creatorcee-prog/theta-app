@@ -675,6 +675,22 @@ def siri_card(headers):
             'if((await r.json()).ok)document.querySelectorAll("[data-roundnotify]").forEach(x=>x.classList.toggle("on",x===b));});</script></section>')
 
 
+def theme_globe(name):
+    """A small still of Theta's avatar in a theme's colors, for its swatch: themes are built around Theta."""
+    try:
+        t = THEMES[name]["dark"]
+        calm = t["accent2"] if re.fullmatch(r"#[0-9a-fA-F]{6}", t["accent2"]) else "#4fd3ff"
+    except KeyError:
+        calm = "#4fd3ff"
+    dots = []
+    for i in range(46):
+        y = 1 - i / 45 * 2; r = (1 - y * y) ** 0.5; a = i * 2.39996
+        x, z = math.cos(a) * r, math.sin(a) * r
+        dots.append(f'<circle cx="{12 + x * 8:.1f}" cy="{12 + y * 8:.1f}" r="{0.55 + 0.45 * (z + 1) / 2:.2f}" opacity="{0.35 + 0.65 * (z + 1) / 2:.2f}"/>')
+    return (f'<svg class="globe" viewBox="0 0 24 24" aria-hidden="true" style="background:{THEMES.get(name, THEMES["theta"])["dark"]["bg"]}">'
+            f'<g fill="{calm}">{"".join(dots)}</g><circle cx="12" cy="12" r="2.4" fill="#fff" opacity=".9"/></svg>')
+
+
 def settings_page(headers):
     theme, mode, layout, glassstyle, bg = ui_prefs(headers)
     st = store()
@@ -684,7 +700,7 @@ def settings_page(headers):
             f'<span style="background:{t[m]["bg"]}"><i style="background:{t[m]["accent"]};width:80%"></i>'
             f'<i style="background:{t[m]["accent2"]};width:50%"></i><i style="background:{t[m]["muted"]};width:65%;opacity:.5"></i></span>'
             for m in ("light", "dark"))
-        + f'</span><span class="nm">{html.escape(t["label"])}<small>{html.escape(t["about"])}</small></span></button>'
+        + f'</span><span class="nm">{theme_globe(n)}{html.escape(t["label"])}<small>{html.escape(t["about"])}</small></span></button>'
         for n, t in THEMES.items())
     modes = "".join(f'<button type="button" data-pref="mode" data-val="{m}">{label}</button>' for m, label in MODES.items())
     layouts = "".join(

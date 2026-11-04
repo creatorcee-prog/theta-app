@@ -32,7 +32,7 @@ h._REQ.mood = "happy"
 x = h.reply_extra()
 check("the reply carries its mood, once", x.get("mood") == "happy" and "mood" not in h.reply_extra())
 
-js = h._HEAD_JS
+js = h._HEAD_JS.replace('__THEME__', '{"calm": "#4fd3ff"}')
 check("Urchin Pour is the avatar, the classic rings a style", 'style: "urchin"' in js and "function drawUrchin" in js and "function drawRings" in js)
 check("real 3D: depth-sorted, near bigger, far fogged", "pts.sort((a, b) => b[2] - a[2])" in js and "const fog" in js)
 check("follows the real voice: the playing clip's loudness, never rerouted", "envelope(blob)" in js and "OfflineAudioContext" in js
@@ -47,4 +47,41 @@ check("reduced motion slows it", "reduce ? 0.35 : 1" in js)
 with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
     f.write(js.replace("__ORPHEUS__", "[]").replace("__GEMINI__", "[]"))
 check("the script parses", subprocess.run(["node", "--check", f.name], capture_output=True).returncode == 0)
+# ---- the opening: assemble, greet, update only if it matters, then ask
+h.head_chat = lambda *a, **k: (_ for _ in ()).throw(h.LLMError("down"))
+d = h.head_hello(60)
+check("back within minutes: just the question", d["text"] == "What are we working on?")
+h.add_reminder("in 30 min take the meds")
+d = h.head_hello(6 * 3600)
+check("away hours, model down: a greeting, the update and the question", d["text"].startswith("Good ")
+      and "Coming up: take the meds" in d["text"] and d["text"].endswith("What are we working on?"))
+h.head_chat = lambda msgs, *a, **k: (ASKED.append(msgs[-1]["content"]), "Evening! Meds in half an hour.")[1]
+ASKED = []
+d = h.head_hello(6 * 3600)
+check("the model writes it from the facts, and the question is always there", d["text"] == "Evening! Meds in half an hour. What are we working on?"
+      and "take the meds" in ASKED[-1] and "Under 30 words" in ASKED[-1])
+import json as _j
+s_, ct, out = h.handle("GET", "/api/head/hello", {"away": ["60"]}, {"x-dashboard-key": "dk"}, b"")[:3]
+check("the page asks /api/head/hello", s_ == 200 and _j.loads(out)["text"] == "What are we working on?")
+stage = h._STAGE_JS
+check("the opening scatters the dots so they fly in, on a blank stage", "TH.scatter()" in stage and 'body.classList.add("opening")' in stage
+      and "body.opening .deck" in h._STAGE_CSS)
+check("the greeting is spoken on the first tap (iPhone needs one), shown at once", "TH.speak(greeting)" in stage and "cap.textContent = greeting" in stage)
+check("the controls hide until a tap, and go 1.5 s after", "1500" in stage and 'body.classList.add("ui-hidden")' in stage
+      and 'id="imm-on"' in page and "body.immersive.ui-hidden .msgs" in h._STAGE_CSS)
+check("...not while typing or a menu is open", "function busy()" in stage and ".hud-more[open]" in stage)
+check("...and a scroll by the page itself doesn't count", 'addEventListener("scroll", reveal' not in stage)
+# ---- themes built around Theta
+check("the avatar's calm color and its space come from the theme", h.theme_stage({}) == {"calm": "#3dd6f0", "stage": "#0c0e1a"})
+h.THEMES["_dim"] = {"label": "x", "about": "x", "dark": dict(h.THEMES["theta"]["dark"], accent2="#222222"), "light": h.THEMES["theta"]["light"]}
+h.ui_prefs = (lambda real: (lambda headers: ("_dim",) + tuple(real(headers)[1:]) if headers.get("dim") else real(headers)))(h.ui_prefs)
+check("a theme whose accent is too dark keeps Theta's cyan", h.theme_stage({"dim": "1"})["calm"] == "#4fd3ff")
+del h.THEMES["_dim"]
+check("the page's glow, panels and Talk follow the mood", "var(--mood" in h._DECK_CSS and "var(--mood" in h._STAGE_CSS
+      and 'setProperty("--mood"' in js)
+check("each theme's swatch shows Theta in its colors", 'class="globe"' in h.theme_globe("forest") and "#f2cc3d" in h.theme_globe("forest"))
+# ---- the widget wears Theta's avatar and mood
+w = h.widget_script("https://x.example")
+check("the widget draws Urchin Pour, in the mood's color", "function urchin(size, hex)" in w and "rings(" not in w and "d.color" in w)
+check("the widget data carries the mood and its color", {"mood", "color"} <= set(h.phone_widget().keys()))
 print("done")
