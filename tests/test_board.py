@@ -27,7 +27,7 @@ check("the board answers, signed in only", s == 200 and d["ok"] and h.handle("GE
 check("widgets are 1 to 4 spaces", all(w["size"] in (1, 2, 3, 4) for w in d["widgets"]))
 check("over budget is important, and says by how much", ws["money"]["important"] and "Dining" in ws["money"]["big"])
 check("a focus session is important while it runs", ws["focus"]["important"] and "taxes" in ws["focus"]["sub"])
-check("reminders are a tall list", ws["reminders"]["size"] == 3 and any("call the bank" in r[1] for r in ws["reminders"]["rows"]))
+check("reminders are a wide list (the words and their Done button both fit)", ws["reminders"]["size"] == 2 and any("call the bank" in r[1] for r in ws["reminders"]["rows"]))
 imp = [w["important"] for w in d["widgets"]]
 check("important ones come first", imp == sorted(imp, reverse=True))
 check("each widget has a signature that changes only with what it says", all(re.fullmatch(r"[0-9a-f]{12}", w["sig"]) for w in d["widgets"]))
@@ -48,7 +48,7 @@ for i in ("board", "bgrid", "board-open", "term", "term-body", "wsheet", "wsheet
 js = h.BOARD_JS
 check("shown: important, or new since you looked", "w.important || seen[w.id] !== w.sig" in js and '"theta:seen"' in js)
 check("seen only after a look (2.5 s on the board), and never while searching", "seenTimer = setTimeout" in js and "if (!q &&" in js)
-check("the type bar searches every widget, seen or not", "data.widgets.concat(data.apps).filter(w => words.every" in js)
+check("the type bar searches every widget and page, seen or not", "list = data.widgets.filter(hit)" in js and "data.apps.filter(hit)" in js)
 check("commands and mentions aren't searches", '!q.startsWith("/") && !q.startsWith("@")' in js)
 check("typing minimizes Theta to show the results", 'ST().dock("search")' in js)
 check("the Widgets button and a swipe up minimize Theta", 'openBtn.onclick = () => { if (ST()) ST().dock("board")' in js and "dy > 80" in js)
@@ -74,7 +74,7 @@ print("done")
 
 # ---- the board's goal, learning your order, news interests (2026-11-04, later)
 d = h.board()
-check("every widget is a task to clear or the world", all(w["cat"] in ("task", "world") for w in d["widgets"])
+check("every widget is a task to clear, the world, or for later", all(w["cat"] in ("task", "world", "later") for w in d["widgets"])
       and all(w["cat"] == "world" for w in d["widgets"] if w["id"] in h.BOARD_WORLD))
 check("Theta knows the goal: in its prompt, its glance, and a board lookup", h.BOARD_PURPOSE in h.head_system(native=True)
       and h.BOARD_PURPOSE in h.head_system() and "Board:" in h.head_glance() and "board" in h.head_tools() and "board" in h.HEAD_LOOKUPS)
@@ -160,3 +160,34 @@ check("your picture as the background, kept on this device", 'localStorage.getIt
 sett = h.handle("GET", "/settings", {}, K, b"")[2].decode()
 check("Settings: Spotlight, Your picture, and a picker", 'data-val="spotlight"' in sett and 'data-val="image"' in sett and 'id="bg-pick"' in sett)
 print("backgrounds done")
+
+# ---- live clearing, new dots, and the ADD pass (2026-11-04, later)
+h.add_reminder("in 1 minute stretch your legs")
+d = {w["id"]: w for w in h.board()["widgets"]}
+r = d["reminders"]
+due = [a for a in r["acts"] if a]
+check("a due reminder clears in one tap (Done, even before its time)", r["cat"] == "task" and due and due[0]["post"].endswith("/done?early=1"))
+rid = int(due[0]["post"].split("/")[3])
+check("...and the API removes a one-off done early", json.loads(h.handle("POST", f"/api/reminders/{rid}/done", {"early": ["1"]}, K, b"{}")[2])["ok"]
+      and not any(x["id"] == rid for x in h.reminders()))
+d = {w["id"]: w for w in h.board()["widgets"]}
+check("with nothing due, reminders are for later, not something to clear", d.get("reminders", {}).get("cat") in ("later", None))
+dl = d.get("daily")
+check("the daily check clears one item per tap, and leaves when all are done", dl and all(a and a["post"] == "/api/daily/toggle" for a in dl["acts"]))
+for a in dl["acts"]:
+    h.handle("POST", "/api/daily/toggle", {}, K, json.dumps(a["body"]).encode())
+check("...gone once every item is ticked", "daily" not in {w["id"] for w in h.board()["widgets"]})
+check("the calendar, a running focus and plain spending are for later, not to clear", all(w["cat"] != "task" for w in h.board()["widgets"]
+      if w["id"] in ("calendar", "focus") or (w["id"] == "money" and not w["important"])))
+check("the crew's old windows are off the board (they repeated other widgets)", not any(w["id"].startswith("crew-") for w in h.board()["widgets"]))
+js, css = h.BOARD_JS, h.BOARD_CSS
+check("live: every 20 s while the board is up, and right after Theta answers or a tap", "}, 20000);" in js and "setTimeout(load, 1200)" in js and "setTimeout(load, 350)" in js)
+check("live: something new appears at once; what got dealt with leaves at once, sliding out", "shown.add(w.id)" in js and 'classList.add("leaving")' in js and "@keyframes wleave" in css)
+check("live: what stays keeps its element (no flicker)", "o.dataset.sig === w.sig" in js and ".w.kept{animation:none}" in css)
+check("new widgets wear a dot of their own color (red stays for important)", ".w.isnew::after" in css and "var(--accent2)" in css and '" isnew"' in js)
+check("cleared: counted for today, with a toast", '"theta:cleared"' in js and "Cleared: " in js and ".btoast" in css)
+check("ADD: one thing marked Start here; at most four to clear at once, the rest behind +N more", '"Start here"' in js and "TASKS_MAX = 4" in js and "more to clear" in js)
+check("ADD: the full pages are small chips, not big tiles", "function chips(apps)" in js and ".approw" in css)
+check("ADD: the ticker holds still while you type", '$("ticker").classList.add("held")' in js)
+check("ADD: tap targets are big enough on a phone", "@media (pointer:coarse){.w .rdone{width:40px;height:40px}.bchip{min-height:38px}}" in css)
+print("live done")

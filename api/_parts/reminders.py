@@ -171,15 +171,16 @@ def reminder_line(r):
             + (", until done" if r["nag"] else "") + (". Waiting for you to mark it done" if r.get("pending") else ""))
 
 
-def ack_reminder(rid):
-    """Mark a reminder done: stops its nagging; a one-off is then removed."""
+def ack_reminder(rid, early=False):
+    """Mark a reminder done: stops its nagging; a one-off is then removed. early: done before its time
+    (the board's one-tap Done), so a one-off is removed now instead of firing later."""
     with _REM_LOCK:
         rs = reminders()
         r = next((x for x in rs if x["id"] == rid), None)
         if not r:
             return None
         r.update(pending=False, nags=0)
-        if not r["repeat"] and r["at"] <= time.time():
+        if not r["repeat"] and (early or r["at"] <= time.time()):
             rs.remove(r)
         _save_reminders(rs)
     post_event("remi", f"You marked done: {r['what']}")
