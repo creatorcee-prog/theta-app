@@ -15,6 +15,7 @@ Both take the ASK_KEY header (x-ask-key), the key that can only ask, or a
 signed-in browser."""
 
 PHONE_EVENT_MAX = 200
+MOOD_COLORS = {"calm": "#4fd3ff", "focused": "#7d8bff", "happy": "#ffc04d", "concerned": "#ff6a5c", "sleepy": "#b58cff", "proud": "#5ef0a2"}
 _WAKE = re.compile(r"\b(woke|wake|awake|alarm (?:stopped|off|dismissed)|good morning|up now)\b", re.I)
 
 
@@ -37,6 +38,9 @@ def phone_widget(now=None):
     out = {"ok": True, "name": "Theta", "line": _short(last["text"], 140) if last else "Tap to talk to me.",
            "at": _clock(datetime.fromtimestamp(_chat_ts(last), hub_tz())) if last else "",
            "next": None, "focus": None, "waiting": 0, "reminders": 0, "url": "/head"}
+    out["mood"] = (last.get("mood") if last and last.get("mood") and now - _chat_ts(last) < 2 * 3600
+                   else "sleepy" if not 6 <= datetime.fromtimestamp(now, hub_tz()).hour < 22 else "calm")
+    out["color"] = MOOD_COLORS.get(out["mood"], MOOD_COLORS["calm"])  # the widget's avatar wears Theta's mood
     if calendar_linked():
         today = datetime.fromtimestamp(now, hub_tz()).date()
         soon = [o for o in calendar_events(today, today + timedelta(days=1))

@@ -1407,6 +1407,15 @@ def handle(method, path, query, headers, body):
             return _json(401, {"ok": False, "error": "dashboard key required"})
         return _json(200, {"ok": True, "reminders": [dict(r, line=reminder_line(r)) for r in reminders()]})
 
+    if path == "/api/head/hello":  # the Theta page's opening greeting
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        try:
+            away = max(0.0, float(query.get("away", ["0"])[0]))
+        except ValueError:
+            away = 0.0
+        return _json(200, {"ok": True, **head_hello(away)})
+
     if path == "/api/hbench":
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})

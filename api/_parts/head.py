@@ -507,6 +507,70 @@ def reply_mood(text, now=None):
     return "calm"
 
 
+# The opening greeting (the Theta page): hello, a quick update only when something matters, then
+# "what are we working on?". Short, to be heard. Back within a few minutes: just the question.
+HELLO_ASK = "What are we working on?"
+
+
+def hello_facts(away, now=None):
+    """What's worth a mention after `away` seconds gone: the next event soon, reminders due or left
+    undone, background jobs finished, overnight ideas, focus. Exact, from the hub's own data."""
+    now = now or time.time()
+    local = datetime.fromtimestamp(now, hub_tz())
+    facts = []
+    try:
+        if calendar_linked():
+            soon = [o for o in calendar_events(local.date(), local.date()) if not o["all_day"] and not o["birthday"]
+                    and 0 <= o["start"].timestamp() - now <= 3 * 3600]
+            if soon:
+                facts.append(f"Next: {soon[0]['title']} at {_clock(soon[0]['start'])}")
+    except Exception:
+        pass
+    soon = [r for r in reminders() if 0 <= r["at"] - now <= 2 * 3600]
+    left = [r for r in reminders() if r.get("pending") and r not in soon]
+    if soon:
+        facts.append("Coming up: " + ", ".join(f"{r['what']} at {_clock(datetime.fromtimestamp(r['at'], hub_tz()))}" for r in soon[:2]))
+    if left:
+        facts.append("Still to do: " + ", ".join(r["what"] for r in left[:2]))
+    done = [j for j in jobs() if j["status"] == "done" and j.get("finished", 0) > now - away]
+    if done:
+        facts.append("Background jobs finished: " + "; ".join(j["task"][:60] for j in done[:2]))
+    last = _meta_json("sleep:last", {})
+    if last.get("day") == local.date().isoformat() and last.get("dreams") and away > 4 * 3600:
+        facts.append("Ideas saved overnight: " + " | ".join(last["dreams"])[:200])
+    f = focus_state()
+    if f and f.get("until", 0) > now:
+        facts.append(f"In a focus session on {f['task']}")
+    return facts
+
+
+def head_hello(away, now=None):
+    """{"text", "mood"} for the Theta page's opening."""
+    now = now or time.time()
+    if away < 10 * 60:
+        return {"text": HELLO_ASK, "mood": reply_mood("", now)}
+    local = datetime.fromtimestamp(now, hub_tz())
+    part = "morning" if 4 <= local.hour < 12 else "afternoon" if local.hour < 17 else "evening"
+    facts = hello_facts(away, now)
+    text = ""
+    try:
+        text = head_chat([
+            {"role": "system", "content": system_prompt("theta", now=False)},
+            {"role": "system", "content": now_line()},
+            {"role": "user", "content": (
+                f"The user just opened your page (gone {round(away / 3600, 1)} hours). Greet them for the {part} in a few "
+                "words, then, only if one of these facts matters right now, say the single most important one in one "
+                "short sentence, then end with exactly: \"" + HELLO_ASK + "\" Under 30 words, to be read aloud, no lists. "
+                "Use only these facts:\n" + ("\n".join(f"- {x}" for x in facts) or "- nothing pressing"))}], 200).strip()
+    except LLMError:
+        pass
+    if not text or len(text) > 400:
+        text = f"Good {part}." + (f" {facts[0]}." if facts else "") + f" {HELLO_ASK}"
+    elif HELLO_ASK.lower() not in text.lower():
+        text = text.rstrip() + " " + HELLO_ASK
+    return {"text": text, "mood": reply_mood(" ".join(facts), now)}
+
+
 def head_replies(thread, spoken=False):
     """([(agent, reply, extra)], errors), the shape desk_replies returns."""
     _REQ.trail, _REQ.tok, _REQ.panels, _REQ.mood = [], [0, 0], [], None
@@ -613,7 +677,7 @@ _HEAD_JS = r"""
   let AV = Object.assign({}, AV_DEFAULT);
   try { Object.assign(AV, JSON.parse(store("theta:avatar") || "{}")); } catch (e) {}
   const MOODS = {
-    calm: ["#4fd3ff", 1.0, 0, 0], focused: ["#7d8bff", 1.25, 0, 0], happy: ["#ffc04d", 1.15, 0, 1],
+    calm: [__THEME__.calm, 1.0, 0, 0], focused: ["#7d8bff", 1.25, 0, 0], happy: ["#ffc04d", 1.15, 0, 1],
     concerned: ["#ff6a5c", 1.35, 1, 0], sleepy: ["#b58cff", 0.45, 0, 0], proud: ["#5ef0a2", 1.1, 0, 0.6]};
   function hexHsl(hex) {
     const n = parseInt((hex || "#4fd3ff").slice(1), 16), r = (n >> 16 & 255) / 255, gg = (n >> 8 & 255) / 255, b = (n & 255) / 255;
@@ -730,7 +794,11 @@ _HEAD_JS = r"""
   }
   requestAnimationFrame(draw);
   // mood: from Theta's latest reply (the server tags it), and sleepy late at night when nothing else is going on
-  function setMood(m) { mood = MOODS[m] ? m : "calm"; cv.dataset.mood = mood; }
+  function setMood(m) {
+    mood = MOODS[m] ? m : "calm"; cv.dataset.mood = mood;
+    document.documentElement.style.setProperty("--mood", (AV.colors || {})[mood] || MOODS[mood][0]); // the page's glow follows Theta
+  }
+  setMood("calm");
   document.addEventListener("theta:thread", e => {
     const m = [...(e.detail || [])].reverse().find(x => x.from === "theta" && x.kind !== "event");
     const at = m && m.at ? new Date(m.at.replace(" ", "T") + "Z").getTime() : 0, h = new Date().getHours();
@@ -1136,6 +1204,12 @@ _HEAD_JS = r"""
     const fromPush = new URLSearchParams(location.search).get("play") === "latest";
     if (fromPush || String(latest.id) !== store("theta:heard")) hear.hidden = false;
   }).catch(() => {});
+  // hooks for the page's opening (the stage script): assemble, greet, mood
+  window.thetaHead = {
+    speak: t => speak(t), unlock: () => unlock(), setMood: m => setMood(m),
+    scatter() { for (const q of dots) { const a = Math.random() * TAU, b = Math.acos(2 * Math.random() - 1), r = 2.4 + Math.random() * 2;
+      q.w = [Math.cos(a) * Math.sin(b) * r, Math.cos(b) * r, Math.sin(a) * Math.sin(b) * r]; q.v = [0, 0, 0]; } },
+  };
   setState("idle");
   setTimeout(() => (window.requestIdleCallback || (f => setTimeout(f, 300)))(() => warmVoice()), 600); // warm the voice up while you get ready to talk
 })();
@@ -1155,9 +1229,9 @@ _DECK_CSS = """
 .av-set select{font:inherit;background:transparent;color:inherit;border:1px solid var(--line,rgba(127,127,127,.3));border-radius:8px;padding:4px 6px}
 .av-set input[type=color]{width:34px;height:26px;padding:0;border:1px solid var(--line,rgba(127,127,127,.3));border-radius:6px;background:none}
 .av-set label.mc{display:inline-flex;gap:6px;align-items:center}
-.av-set button{font:inherit;font-weight:700;padding:4px 12px;border-radius:999px;border:1px solid #4fd3ff;background:transparent;color:inherit;cursor:pointer}
+.av-set button{font:inherit;font-weight:700;padding:4px 12px;border-radius:999px;border:1px solid var(--mood,#4fd3ff);background:transparent;color:inherit;cursor:pointer}
 .hud-mid{flex:1;min-width:0}
-.hud .hstate{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#4fd3ff;margin:0;text-align:left;min-height:0}
+.hud .hstate{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--mood,#4fd3ff);margin:0;text-align:left;min-height:0}
 .hud .said{margin:2px 0 0;font-size:14px;color:var(--muted);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:0;max-width:none}
 .hud .note{text-align:left;font-size:12px}.hud .note:empty{display:none}
 .hud .talk{padding:10px 20px;min-width:0;font-size:15px}
@@ -1178,16 +1252,16 @@ _DECK_CSS = """
 @keyframes holoScan{to{transform:translateY(100%)}}
 @media (prefers-reduced-motion:reduce){.holo,.holo::after{animation:none}}
 .holo header{display:flex;align-items:center;gap:8px;margin-bottom:6px}
-.holo .ic{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:12px;border:1px solid #4fd3ff;color:#4fd3ff;box-shadow:0 0 8px rgba(79,211,255,.6)}
-.holo h3{margin:0;font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;color:#4fd3ff;flex:1;font-weight:700}
+.holo .ic{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:12px;border:1px solid var(--mood,#4fd3ff);color:var(--mood,#4fd3ff);box-shadow:0 0 8px rgba(79,211,255,.6)}
+.holo h3{margin:0;font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--mood,#4fd3ff);flex:1;font-weight:700}
 .holo .x{background:none;border:0;color:#9fb8c8;font-size:18px;line-height:1;cursor:pointer;padding:2px 4px}
 .holo .row{display:flex;gap:8px;font-size:14px;padding:5px 0;border-top:1px solid rgba(79,211,255,.16);align-items:baseline}
 .holo .row b{color:#bff0ff;font-weight:650;white-space:nowrap}.holo .row span{min-width:0;overflow-wrap:anywhere}
 .holo .dim{color:#8fa9b8;font-size:12.5px}
 .holo .big{font-size:30px;font-weight:760;color:#f2fcff;text-shadow:0 0 14px rgba(79,211,255,.7);line-height:1.1}
 .holo .bar{height:6px;border-radius:3px;background:rgba(79,211,255,.16);overflow:hidden;margin-top:4px}
-.holo .bar i{display:block;height:100%;background:#4fd3ff;box-shadow:0 0 8px #4fd3ff}.holo .bar i.over{background:#ff5d6c;box-shadow:0 0 8px #ff5d6c}
-.holo a.go{display:inline-block;margin-top:10px;padding:8px 16px;border-radius:999px;border:1px solid #4fd3ff;color:#e6f6ff;text-decoration:none;font-weight:700;font-size:14px;box-shadow:0 0 10px rgba(79,211,255,.35)}
+.holo .bar i{display:block;height:100%;background:var(--mood,#4fd3ff);box-shadow:0 0 8px var(--mood,#4fd3ff)}.holo .bar i.over{background:#ff5d6c;box-shadow:0 0 8px #ff5d6c}
+.holo a.go{display:inline-block;margin-top:10px;padding:8px 16px;border-radius:999px;border:1px solid var(--mood,#4fd3ff);color:#e6f6ff;text-decoration:none;font-weight:700;font-size:14px;box-shadow:0 0 10px rgba(79,211,255,.35)}
 .holo .chips{display:flex;flex-wrap:wrap;gap:6px}.holo .chips a{font-size:13px;padding:4px 10px;border-radius:999px;border:1px solid rgba(79,211,255,.45);color:#e6f6ff;text-decoration:none}
 .holo .tag{font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid rgba(255,93,108,.6);color:#ffb3ba;margin-left:auto}
 .holo svg.ring{display:block;margin:4px auto}
@@ -1272,21 +1346,132 @@ _DECK_JS = r"""
 """
 
 
-def head_hud():
+# ---- The stage (the Theta page, immersive): Theta alone on its theme's dark "space", the controls and
+# chat appearing when you tap and fading 1.5 s after you stop; the opening assembles Theta and greets.
+_STAGE_CSS = """
+.hud{background:radial-gradient(60% 45% at 50% 40%,color-mix(in srgb,var(--mood,#4fd3ff) 13%,transparent),transparent 72%),var(--stage,#070b10);color:#e6f2fa}
+.hud .hstate{color:var(--mood,#4fd3ff)}.hud .said,.hud .note{color:#9fb3c2}
+.hud .talk{background:var(--mood,#4fd3ff)}.hud .hear{border-color:var(--mood,#4fd3ff)}
+.caption{margin:6px 0 0;font-size:15px;line-height:1.45}.caption:empty{display:none}
+.hint{font-size:12.5px!important}
+body.immersive .chat{height:100dvh}
+body.immersive .hud{position:fixed;inset:0;z-index:1;max-height:none;overflow:hidden;border:0;padding:0 max(16px,env(safe-area-inset-left,0px));
+ display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px}
+body.immersive .hud-top{flex-direction:column;gap:8px}
+body.immersive #head-av,body.immersive #head-av.big{width:min(76vw,50dvh,420px);height:min(76vw,50dvh,420px)}
+body.immersive .hud-mid{text-align:center;min-height:2.6em}
+body.immersive .hud .hstate,body.immersive .hud .said,body.immersive .hud .note{text-align:center;white-space:normal}
+body.immersive .caption{text-align:center;font-size:clamp(16px,4.4vw,19px);max-width:min(92vw,560px);color:#e6f2fa}
+body.immersive .deck{position:fixed;top:calc(env(safe-area-inset-top,0px) + 6px);left:0;right:0;z-index:3;padding-inline:max(16px,env(safe-area-inset-left,0px))}
+body.immersive .msgs{position:fixed;left:0;right:0;bottom:calc(var(--tabh,64px) + 78px);max-height:44dvh;z-index:4;
+ background:color-mix(in srgb,var(--bg) 90%,transparent);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);
+ border-top:1px solid var(--border);border-radius:18px 18px 0 0}
+body.immersive #chat-form{position:fixed;left:0;right:0;bottom:var(--tabh,64px);z-index:5;background:var(--bg)}
+body.immersive .hud-more{position:fixed;top:calc(env(safe-area-inset-top,0px) + 8px);right:max(12px,env(safe-area-inset-right,0px));z-index:6;
+ background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:4px 12px;max-width:min(92vw,520px);max-height:72dvh;overflow:auto}
+body.immersive .chans,body.immersive .members{display:none}
+body.opening .deck,body.opening .caption,body.opening #head-note{opacity:0;pointer-events:none}
+.deck,.caption{transition:opacity .5s ease}
+body.immersive .msgs,body.immersive #chat-form,body.immersive .hud-more,body.immersive .hud .talk,body.immersive .tabbar,body.immersive .rail,
+body.immersive .hud-row,body.immersive #head-timing{transition:opacity .35s ease,transform .35s ease}
+body.immersive.ui-hidden .msgs,body.immersive.ui-hidden #chat-form,body.immersive.ui-hidden .hud-more,body.immersive.ui-hidden .hud .talk,
+body.immersive.ui-hidden .tabbar,body.immersive.ui-hidden .rail,body.immersive.ui-hidden .hud-row,body.immersive.ui-hidden #head-timing{opacity:0;pointer-events:none}
+body.immersive.ui-hidden .tabbar,body.immersive.ui-hidden #chat-form{transform:translateY(24px)}
+body.immersive.ui-hidden .msgs{transform:translateY(16px)}
+@media (prefers-reduced-motion:reduce){body.immersive .msgs,body.immersive #chat-form,body.immersive .tabbar{transition:opacity .2s}}
+"""
+
+_STAGE_JS = r"""
+(() => {
+  const body = document.body, TH = window.thetaHead; if (!body.classList.contains("headchat") || !TH) return;
+  const H = window.THETA_H, get = k => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    put = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+  const cap = document.getElementById("head-caption"), hint = document.getElementById("head-hint"), immBox = document.getElementById("imm-on");
+
+  // the controls: hidden until you tap, gone 1.5 s after you stop (not while you type or a menu is open)
+  let imm = get("theta:immersive") !== "off", timer = 0;
+  function busy() {
+    const a = document.activeElement, msg = document.getElementById("chat-msg");
+    return (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) || (msg && msg.value.trim())
+      || document.querySelector(".hud-more[open]") || document.querySelector("#chat-menu:not([hidden])");
+  }
+  function hideSoon() { clearTimeout(timer); if (imm) timer = setTimeout(() => busy() ? hideSoon() : body.classList.add("ui-hidden"), 1500); }
+  function reveal() { if (!imm) return; body.classList.remove("ui-hidden"); hideSoon(); }
+  function apply() { body.classList.toggle("immersive", imm); if (imm) body.classList.add("ui-hidden"); else { clearTimeout(timer); body.classList.remove("ui-hidden"); } }
+  ["pointerdown", "keydown", "input", "focusin", "wheel", "touchmove"].forEach(ev => document.addEventListener(ev, reveal, {passive: true, capture: true}));
+  if (immBox) { immBox.checked = imm; immBox.onchange = () => { imm = immBox.checked; put("theta:immersive", imm ? "on" : "off"); apply(); reveal(); }; }
+  apply();
+
+  // the caption: the greeting, then Theta's latest line (cards and receipts left out)
+  const clean = t => (t || "").replace(/```[\s\S]*?```/g, " ").split("\n").filter(l => !/^\s*[✓✗]/.test(l)).join(" ")
+    .replace(/https?:\/\/\S+/g, "").replace(/[*_#`>|]/g, "").replace(/\s+/g, " ").trim();
+  let seen = null;
+  document.addEventListener("theta:thread", e => {
+    const ms = (e.detail || []).filter(x => x.from !== "you" && x.kind !== "event"), m = ms[ms.length - 1];
+    if (!m) return;
+    if (seen === null) { seen = m.id; return; } // what was there when the page opened: the greeting has the caption
+    if (m.id === seen) return;
+    seen = m.id; const t = clean(m.text); cap.textContent = t.length > 220 ? t.slice(0, 217) + "…" : t;
+  });
+
+  // the opening: Theta assembles from scattered dots, then greets (spoken on your first tap: iPhone needs one)
+  const last = Number(get("theta:lastSeen") || 0), away = last ? Math.max(0, (Date.now() - last) / 1000) : 86400;
+  const stamp = () => put("theta:lastSeen", String(Date.now()));
+  stamp(); setInterval(stamp, 30000); document.addEventListener("visibilitychange", stamp);
+  TH.scatter();
+  body.classList.add("opening"); // a blank stage while Theta assembles: no panels, no caption yet
+  let greeting = "", pending = false, swallow = false;
+  const hello = fetch("/api/head/hello?away=" + Math.round(away), {headers: H}).then(r => r.json()).catch(() => null);
+  setTimeout(async () => {
+    const d = await hello;
+    greeting = d && d.ok && d.text ? d.text : "What are we working on?";
+    if (d && d.mood) TH.setMood(d.mood);
+    cap.textContent = greeting; pending = true; hint.hidden = false; body.classList.remove("opening");
+  }, 1400);
+  document.addEventListener("pointerdown", e => {
+    if (!pending) return;
+    pending = false; hint.hidden = true; swallow = !!e.target.closest("#head-av");
+    TH.unlock(); TH.speak(greeting);
+  }, {capture: true});
+  document.addEventListener("click", e => { if (swallow && e.target.closest("#head-av")) { e.stopPropagation(); e.preventDefault(); } swallow = false; }, true);
+})();
+"""
+
+
+def theme_stage(headers):
+    """The colors Theta's avatar takes from the theme: its calm color (the theme's second accent, dark
+    palette) and the dark "space" it floats in. A theme whose accent is too dark keeps Theta's cyan."""
+    try:
+        t = THEMES[ui_prefs(headers)[0]]["dark"]
+    except Exception:
+        t = THEMES["theta"]["dark"]
+    calm = t["accent2"] if re.fullmatch(r"#[0-9a-fA-F]{6}", t["accent2"] or "") else "#4fd3ff"
+    r, g_, b = (int(calm[i:i + 2], 16) for i in (1, 3, 5))
+    if 0.2126 * r + 0.7152 * g_ + 0.0722 * b < 110:
+        calm = "#4fd3ff"
+    stage = t["bg"] if re.fullmatch(r"#[0-9a-fA-F]{6}", t["bg"] or "") else "#070b10"
+    return {"calm": calm, "stage": stage}
+
+
+def head_hud(headers=None):
     """The top of the Head page (which is the chat too): Theta's rings, what you
     said, Talk, the panel deck, and the voice options folded away."""
     langs = "".join(f'<option value="{c}">{html.escape(n)}</option>' for c, (n, _) in LANGUAGES.items() if c != "en")
-    return ('<section class="hud" aria-label="Talk to Theta">'
-            '<div class="hud-top"><canvas id="head-av" width="300" height="300" tabindex="0" role="button" aria-label="Theta. Tap to talk"></canvas>'
+    th = theme_stage(headers or {})
+    return (f'<section class="hud" aria-label="Talk to Theta" style="--stage:{th["stage"]}">'
+            '<div class="hud-top"><canvas id="head-av" width="420" height="420" tabindex="0" role="button" aria-label="Theta. Tap to talk"></canvas>'
             '<div class="hud-mid"><p class="hstate" id="head-state" aria-live="polite"></p><p class="said" id="head-said"></p>'
             '<p class="note" id="head-timing" aria-live="off"></p></div>'
             '<button type="button" class="talk" id="head-talk" aria-pressed="false">Talk</button></div>'
+            '<p class="caption" id="head-caption" aria-live="polite"></p>'
+            '<p class="note hint" id="head-hint" hidden>Tap anywhere to hear Theta</p>'
             '<p class="reply" id="head-reply" aria-live="polite"></p>'
             '<div class="hud-row"><button type="button" class="hear" id="head-hear" hidden>\u25B6 Hear it</button>'
             '<a class="hear" id="head-maps" hidden target="_blank" rel="noopener">Open in Maps</a></div>'
             '<p class="note" id="head-note"></p><p class="note" id="head-taps" hidden></p>'
             '<div class="deck" id="deck" aria-label="What Theta pulled up" aria-live="polite"></div>'
             '<details class="hud-more"><summary>Voice and tools</summary><div class="opts">'
+            '<label><input type="checkbox" id="imm-on" checked> Hide the controls until I tap</label>'
             '<label><input type="checkbox" id="head-voice-on" checked> Speak replies</label>'
             '<label>Voice <select id="head-voice" aria-label="Theta\'s voice"></select></label>'
             '<button type="button" id="head-test" class="test">Test</button>'
@@ -1306,10 +1491,12 @@ def head_hud():
             + '</details></section>')
 
 
-def head_script():
-    return (f'<style>{_HEAD_CSS.replace(".headpage", ".hud")}{_DECK_CSS}</style><script>'
+def head_script(headers=None):
+    th = theme_stage(headers or {})
+    return (f'<style>{_HEAD_CSS.replace(".headpage", ".hud")}{_DECK_CSS}{_STAGE_CSS}</style><script>'
             + _HEAD_JS.replace("__ORPHEUS__", json.dumps(list(ORPHEUS_VOICES))).replace("__GEMINI__", json.dumps(list(GEMINI_VOICES)))
-            + "</script><script>" + _DECK_JS + "</script>")
+            .replace("__THEME__", json.dumps(th))
+            + "</script><script>" + _DECK_JS + "</script><script>" + _STAGE_JS + "</script>")
 
 
 def head_page(headers, query=None):

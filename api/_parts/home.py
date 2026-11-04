@@ -341,7 +341,7 @@ def chat_page(headers, query, head=False):
         '<div class="chat">'
         f'<aside class="chans" aria-label="Channels"><div class="brand" style="padding-left:10px;font-size:18px">{APP_NAME} crew</div>'
         f'<div class="label">Channels</div>{chans}</aside>'
-        '<section class="thread">' + (head_hud() if head else "") +
+        '<section class="thread">' + (head_hud(headers) if head else "") +
         '<div class="msgs" id="msgs" role="log" aria-live="polite"></div>'
         '<form class="composer" id="chat-form"><ul id="chat-menu" role="listbox" hidden></ul>'
         '<div class="working" id="chat-working" role="status" aria-live="polite" hidden><div class="trail" id="chat-working-done"></div>'
@@ -356,7 +356,7 @@ def chat_page(headers, query, head=False):
         f'<aside class="members glass" id="members" aria-label="Members">{"".join(by_tier)}</aside>'
         '<div class="scrim" id="scrim"></div></div>'
         + _json_script("HUB_MENU", menu_data()) + _json_script("HUB_CHAT", data)
-        + f'<script src="/chat.js?v={_ASSET_V}" defer></script>' + (head_script() if head else ""))
+        + f'<script src="/chat.js?v={_ASSET_V}" defer></script>' + (head_script(headers) if head else ""))
     if head:
         return page(headers, "Theta", "/head", body, "chatpage headchat", statuses)
     return page(headers, f"#{c['name']}", "/chat", body, "chatpage", statuses)

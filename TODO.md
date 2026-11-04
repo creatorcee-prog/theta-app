@@ -797,6 +797,13 @@ the hub must work without.
   concerned, sleepy, proud) change color and shape; Theta tags each reply's mood with plain rules. Settings in
   "Voice and tools": style (Urchin / classic rings), size, energy, a color per mood (kept on the device).
 - [ ] Maybe later: the saved designs as more styles; the mic's real level while listening.
+- [x] The widget draws Urchin Pour in Theta's mood color. The Theta page opens on a blank stage: the dots fly in
+  and assemble, Theta greets (spoken on the first tap), says one update only if it matters, and asks "What are we
+  working on?". The controls hide until a tap and fade 1.5 s after (not while typing; can be switched off). Themes
+  are built around Theta: its calm color and space come from the theme, the page's glow follows its mood, and each
+  theme swatch shows Theta in its colors.
+- [ ] Maybe: Theta's small mark (chat avatars, app icon) as a dot globe too; the code says that mark never changes,
+  so ask first.
 
 ### Next features (picked 2026-11-03)
 - [ ] **Today's 3.** Each morning Theta picks the 3 things that matter most today from the calendar, reminders and

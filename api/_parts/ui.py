@@ -631,6 +631,7 @@ html,body{overflow-x:clip;max-width:100%}
 
 /* Settings */
 .swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:10px}
+.sw .globe{width:26px;height:26px;border-radius:50%;float:right;margin:0 0 4px 6px}
 .sw{display:flex;flex-direction:column;justify-content:flex-start;width:100%;border:2px solid var(--border);border-radius:16px;padding:0;overflow:hidden;background:var(--surface);cursor:pointer;text-align:left;color:var(--text)}
 .sw.on{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 28%,transparent)}
 .sw .pv{display:grid;grid-template-columns:1fr 1fr;height:62px}
