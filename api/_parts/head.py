@@ -139,6 +139,11 @@ def head_glance(now=None):
     f = focus_state()
     if f and f.get("until", 0) > now:
         lines.append(f"In a focus session: {f['task']}, {max(1, round((f['until'] - now) / 60))} min left")
+    try:  # the board's goal: only the world left (board.py)
+        left = board_to_clear()
+        lines.append("Board: " + (f"{len(left)} to clear ({', '.join(w['title'] for w in left[:5])})" if left else "clear, only the world left"))
+    except Exception:
+        pass
     return ("\n\nAt a glance (exact; use your lookups for anything more):\n" + "\n".join(f"- {l}" for l in lines)) if lines else ""
 
 
@@ -172,7 +177,7 @@ def head_system(native=False):
     allowed = head_tools()
     if native:  # the tools come as real function tools, so the prompt only says how to use them (and stays lean)
         base = _FORMAT_LONG.sub(HEAD_FORMAT_SHORT, system_prompt("theta", now=False), count=1)
-        return (base + _HEAD_ALONE
+        return (base + _HEAD_ALONE + "\n\n" + BOARD_PURPOSE
                 + "\n\nTools: you have a function tool for everything you can look up or change. Use one whenever you "
                 f"need a fact you don't have or the user wants something done; you see each result before you answer and "
                 f"can keep going (up to {HEAD_TASK_STEPS} rounds), so for a bigger job do it step by step until it's done. "
@@ -186,7 +191,7 @@ def head_system(native=False):
                 "can't write code, deploy or change settings yourself: propose it, and it happens when the user taps "
                 "Approve." + _SECRETS_RULE)
     tools = "\n".join("ACTION: " + d for n, (d, _, _) in TOOLS.items() if n in allowed)
-    return (system_prompt("theta", now=False) + _HEAD_ALONE
+    return (system_prompt("theta", now=False) + _HEAD_ALONE + "\n\n" + BOARD_PURPOSE
             + "\n\nTools. You change or look up things ONLY through these; put one line per action at the very end of "
             "your message, exactly in this form:\n" + tools
             + "\nLookups (" + ", ".join(sorted(HEAD_LOOKUPS & allowed)) + ") come back to you with their results "
