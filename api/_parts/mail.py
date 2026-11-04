@@ -576,7 +576,9 @@ def gmail_card(headers):
     elif not gmail_connected():
         state = ('<p class="muted small">Ready. Remi asks Google for permission to read, label and draft in your Gmail '
                  '(she never deletes). If Google warns the app isn\'t verified, that\'s because it\'s your own: '
-                 'Advanced → Go to Theta.</p><a class="btn" href="/api/gmail/connect">Connect Gmail</a>')
+                 'Advanced → Go to Theta.</p><a class="btn" href="/api/gmail/connect" target="_top">Connect Gmail</a>'
+                 # the whole window: Google won't show its sign-in inside the Theta page's sheet (a frame)
+                 '')
     else:
         state = (f'<p class="muted small">Connected as <b>{html.escape(store().get_meta("gmail:me") or "")}</b>. '
                  'Remi checks your inbox each round.</p><div style="display:flex;gap:8px"><a class="btn" href="/mail">'

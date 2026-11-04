@@ -399,3 +399,6 @@ c = h.cooling("gemini", h.TIER_LLM["low_brain"][1])
 check("per-minute 429 cools down for its retry delay only", c and not c["daily"] and 30 < c["until"] - time.time() < 40)
 GEMINI_429[0] = ""; h.store().set_meta("llm:cooldown", "{}")
 print("done")
+# Settings opens in the Theta page's sheet (a frame), and Google refuses to show its sign-in in one (2026-11-04)
+_c = h.gmail_card({"host": "hub.example.app"}) if h.gmail_configured() else ""
+check("Connect Gmail opens in the whole window, not the sheet", not _c or 'href="/api/gmail/connect" target="_top"' in _c)
