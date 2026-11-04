@@ -57,7 +57,8 @@ check("widgets wear the frame (they're cards) and arrive its way", '"w card s"' 
 check("no tab bar on the only page", "body.headchat .tabbar{display:none}" in h.BOARD_CSS)
 check("the stage can be minimized by the board, and panels closing don't undo it", "window.thetaStage = {dock, undock" in h._STAGE_JS
       and 'dockBy === "panels") undock()' in h._STAGE_JS)
-check("terminal: the card itself moves there, so its buttons work", "tbody.replaceChildren(r)" in js and ".quizcard,.doccard,.cfgcard,.codeblock,table,.msg-acts" in js)
+check("terminal: a copy, so the message stays in the chat; taps and typing go to the real card", "mirror(r)" in js
+      and "o.click()" in js and 'o.dispatchEvent(new Event("input"' in js and "tbody.replaceChildren(r)" not in js)
 check("terminal: an old card doesn't pop up on open, and a closed one stays closed", "30 * 60e3" in js and '"theta:termClosed"' in js)
 check("chat rows carry their id", "row.dataset.id = m.id" in h._CHAT_JS)
 
@@ -153,7 +154,7 @@ check("Spotlight: big posters, not thumbnails", "/t/p/w780/" in sp[0]["image"])
 check("Spotlight: answers signed in only", h.handle("GET", "/api/spotlight", {}, {}, b"")[0] == 401
       and json.loads(h.handle("GET", "/api/spotlight", {}, K, b"")[2])["items"])
 ui = h._UI_JS
-check("the page rotates it, crossfading, with a caption that links to the source", "function startSpot()" in ui and 'a.textContent = "Found on " + it.site' in ui
+check("the page rotates it, crossfading, with a caption that links to the source", "function startSpot()" in ui and 'a.setAttribute("aria-label", "Found on " + it.site)' in ui
       and 'target="_blank" rel="noopener"' in ui and "15000" in ui)
 check("your picture as the background, kept on this device", 'localStorage.getItem("theta:bgimg")' in ui
       and h.ui_prefs({"cookie": "theta_ui=theta.dark.grid.plus.image"})[4] == "image" and h.ui_prefs({"cookie": "theta_ui=theta.dark.grid.plus.spotlight"})[4] == "spotlight")
@@ -207,3 +208,11 @@ check("the ring scores the day: how much of today's scheduled time is behind you
 check("the page draws it (done arcs dim, a now hand, the score in the middle)", "function dayRing(r)" in h.BOARD_JS and '"dr-done"' in h.BOARD_JS
       and '"dr-now"' in h.BOARD_JS and ".dayring .dr-score" in h.BOARD_CSS)
 print("calendar done")
+
+# ---- Spotlight's credit is a small line at the top, out of the replies' way (2026-11-04, later)
+css = h._UI_CSS
+check("Spotlight's credit: one small line at the top, hidden under panels, the board and the sheet",
+      ".spot-cap{position:fixed;left:max(12px,env(safe-area-inset-left,0px));top:calc(env(safe-area-inset-top,0px) + 10px)" in css
+      and "body.docked .spot-cap,body.has-panels .spot-cap,body.sheet-open .spot-cap{display:none}" in css)
+check("panels on screen mark the page, so the credit steps aside", 'document.body.classList.toggle("has-panels", n > 0)' in h._DECK_JS)
+print("credit done")

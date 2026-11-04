@@ -462,6 +462,38 @@ def mail_set_sender(email, cat):
     return s
 
 
+def gmail_status_line():
+    """Why Gmail can't be read right now, in plain words (or "" when it can)."""
+    if not gmail_configured():
+        return "Gmail isn't set up: GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are missing in Vercel."
+    if not gmail_connected():
+        last = _meta_json("gmail:last_error", {})
+        return ("Gmail isn't connected yet. The user connects it in Settings, Gmail, Connect Gmail (a Google sign-in, "
+                "no API key needed)." + (f" The last try failed: {last['why']}" if last.get("why") else ""))
+    return ""
+
+
+def theta_mail(deadline=None):
+    """Theta's mail lookup: reads the inbox itself when the copy is old (no round needed), then lists what's new
+    and what waits on a reply."""
+    why = gmail_status_line()
+    if why:
+        return why
+    try:
+        if time.time() - float(store().get_meta("gmail:synced") or 0) > 600:
+            gmail_sync(deadline=deadline or time.time() + 12, drafts=0)
+            store().set_meta("gmail:synced", str(time.time()))
+    except LLMError as e:
+        return f"Gmail is connected but reading it failed: {e}"
+    ts = sorted(mail_threads().values(), key=lambda x: -x.get("at", 0))
+    if not ts:
+        return "Gmail is connected; nothing in the inbox from the last two weeks."
+    waiting = [t for t in ts if t.get("waiting") and t.get("wants_reply") and t.get("status") not in ("sent", "skipped")]
+    lines = [f"- {t.get('name') or t.get('email')}: {t.get('subject', '')[:80]}" + (" (waiting on a reply)" if t in waiting else "")
+             for t in ts[:10]]
+    return f"Inbox ({store().get_meta('gmail:me') or 'Gmail'}), newest first:\n" + "\n".join(lines)
+
+
 def remi_mail_context():
     if not gmail_connected():
         return ""
@@ -590,6 +622,11 @@ def gmail_card(headers):
     if flash:
         store().set_meta("gmail:flash", "")
         state = f'<p class="note">{html.escape(flash)}</p>' + state
+    elif not gmail_connected():
+        last = _meta_json("gmail:last_error", {})
+        if last.get("why"):
+            state = (f'<p class="note small">The last try didn\u2019t work ({_ago(last.get("at", 0))} ago): '
+                     f'{html.escape(last["why"])}</p>') + state
     return f'<section class="card stack" id="gmail"><h2>Gmail</h2>{state}</section>'
 
 

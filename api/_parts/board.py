@@ -720,17 +720,35 @@ BOARD_JS = r"""
   }
 
   // ---- the terminal: when Theta makes a card (a table, a quiz, a doc, code, buttons to press), it shows
-  // above everything. The card itself is moved here, so its buttons keep working.
+  // above everything. It shows a copy, so the message stays in the chat too; taps and typing in the copy are
+  // passed to the real card (found by the message's id, since the chat re-draws), and the copy refreshes after.
   const term = $("term"), tbody = $("term-body");
   let termId = null, closed = get("theta:termClosed", null), firstThread = true;
   const CARD = ".quizcard,.doccard,.cfgcard,.codeblock,table,.msg-acts";
+  const CTRL = "button,input,label,select,textarea,a";
+  const realRow = () => document.querySelector(`#msgs .msg[data-id="${CSS.escape(String(termId))}"]`);
+  function mirror(r) { const c = r.cloneNode(true); c.removeAttribute("id"); c.querySelectorAll("[id]").forEach(n => n.removeAttribute("id")); tbody.replaceChildren(c); }
+  function twin(e) { // the real control matching the one touched in the copy
+    const copy = tbody.firstElementChild, real = realRow(); if (!copy || !real) return null;
+    const t = e.target.closest(CTRL); if (!t || !copy.contains(t)) return null;
+    const i = [...copy.querySelectorAll(CTRL)].indexOf(t); return i < 0 ? null : real.querySelectorAll(CTRL)[i] || null;
+  }
+  tbody.addEventListener("click", e => {
+    const t = e.target.closest(CTRL), o = twin(e); if (!o) return;
+    if (t.tagName === "A" && t.target === "_blank") return; // links open as they are
+    if (/^(TEXTAREA|SELECT)$/.test(t.tagName) || (t.tagName === "INPUT" && !/^(radio|checkbox|button|submit)$/.test(t.type))) return;
+    e.preventDefault(); o.click(); setTimeout(() => { const r = realRow(); if (r) mirror(r); }, 250);
+  });
+  tbody.addEventListener("input", e => { const o = twin(e); if (o && "value" in o) { o.value = e.target.value; o.dispatchEvent(new Event("input", {bubbles: true})); } });
+  tbody.addEventListener("change", e => { const o = twin(e); if (o && "value" in o) { o.value = e.target.value; o.dispatchEvent(new Event("change", {bubbles: true})); } });
   document.addEventListener("theta:thread", () => setTimeout(() => {
     const rows = [...document.querySelectorAll("#msgs .msg:not(.mine)")].filter(r => r.querySelector(CARD));
     const r = rows[rows.length - 1], wasFirst = firstThread; firstThread = false;
     if (!r) return;
     const id = r.dataset.id || "", t = r.querySelector("time"), at = t ? Date.parse(t.dateTime) : Date.now();
     if (id === String(closed) || (wasFirst && Date.now() - at > 30 * 60e3)) return;
-    tbody.replaceChildren(r); term.hidden = false; termId = id;
+    if (id === termId && !term.hidden && tbody.contains(document.activeElement)) return; // you're typing in it: leave it be
+    termId = id; mirror(r); term.hidden = false;
   }, 0));
   $("term-x").onclick = () => { term.hidden = true; closed = termId; put("theta:termClosed", termId); };
 })();
