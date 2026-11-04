@@ -3086,7 +3086,33 @@ def ui_icon(name):
             f'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{UI_ICONS[name]}</svg>')
 
 
-_UI_CSS = theme_css() + "\n" + _BASE_CSS + "\n" + _hdr_css() + "\n" + _frames_css() + "\n" + _fonts_css() + "\nhtml.veiled .app,html.veiled .tabbar{visibility:hidden}"
+_MOVE_CSS = r'''
+/* ---- Moving between pages (2026-11-04). Where the browser can (Safari 18.2+, Chrome 126+), each page change is a
+   view transition: the old page fades back, the new one rises in, the tab bar stays put, and Theta morphs
+   between the middle of the Theta page and the corner of the others. Elsewhere pages still ease in. */
+@view-transition{navigation:auto}
+.tabbar{view-transition-name:tabbar}
+.theta-mini{view-transition-name:theta}
+::view-transition-old(root){animation:vt-out .18s ease-in both}
+::view-transition-new(root){animation:vt-in .32s cubic-bezier(.2,.8,.2,1) both}
+::view-transition-group(theta){animation-duration:.5s;animation-timing-function:cubic-bezier(.22,.9,.24,1)}
+@keyframes vt-out{to{opacity:0;transform:scale(.985)}}
+@keyframes vt-in{from{opacity:0;transform:translateY(14px)}}
+/* the page's cards come in one after another */
+.main > .top,.main > .stack > *,.main > .grid2 > *,.main > .wins > *,.main > section{animation:pagein .42s cubic-bezier(.2,.8,.2,1) both}
+.main > .stack > :nth-child(2),.main > .grid2 > :nth-child(2),.main > .wins > :nth-child(2){animation-delay:.05s}
+.main > .stack > :nth-child(3),.main > .grid2 > :nth-child(3),.main > .wins > :nth-child(3){animation-delay:.1s}
+.main > .stack > :nth-child(4),.main > .wins > :nth-child(4){animation-delay:.15s}
+.main > .stack > :nth-child(5),.main > .wins > :nth-child(5){animation-delay:.2s}
+.main > .stack > :nth-child(n+6),.main > .wins > :nth-child(n+6){animation-delay:.24s}
+@keyframes pagein{from{opacity:0;transform:translateY(12px)}}
+/* while the next page loads, Theta in the corner thinks */
+.nav-wait .theta-mini{animation:minithink .9s ease-in-out infinite}
+@keyframes minithink{50%{transform:scale(.86);filter:brightness(1.5)}}
+@media (prefers-reduced-motion:reduce){@view-transition{navigation:none}
+ .main > *,.main > .stack > *,.main > .grid2 > *,.main > .wins > *{animation:none!important}.nav-wait .theta-mini{animation:none}}
+'''
+_UI_CSS = theme_css() + "\n" + _BASE_CSS + "\n" + _hdr_css() + "\n" + _frames_css() + "\n" + _fonts_css() + _MOVE_CSS + "\nhtml.veiled .app,html.veiled .tabbar{visibility:hidden}"
 _UI_JS = _UI_JS_SRC.replace("__THEMES__", json.dumps(
     {n: {"glass": bool(t.get("glass")), "mono": bool(t.get("mono")), "light": t["light"]["bg"],
          "dark": t["dark"]["bg"], "accent2": t["dark"]["accent2"]} for n, t in THEMES.items()}))
@@ -3187,10 +3213,12 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
         'new URLSearchParams(location.search).get("key") || ""};'
         # The app opens on Theta: opened from its Home Screen icon, a launch onto Home goes to the Theta page
         # (an icon added before start_url changed still opens "/"). After that, Home is just a tab.
-        'try{if(location.pathname==="/"&&(navigator.standalone||matchMedia("(display-mode: standalone)").matches)'
+        'try{window.thetaVT=("onpagereveal" in window)&&CSS.supports("view-transition-name:a")&&!matchMedia("(prefers-reduced-motion: reduce)").matches}catch(e){}try{if(location.pathname==="/"&&(navigator.standalone||matchMedia("(display-mode: standalone)").matches)'
         '&&!sessionStorage.getItem("theta:launched")){sessionStorage.setItem("theta:launched","1");location.replace("/head"+location.search)}'
         'sessionStorage.setItem("theta:launched","1")}catch(e){}'
-        + ('window.THETA_LOCK = true;' if (current_session(headers) or {}).get("lock") else '') + '</script></head>'
+        + ('window.THETA_LOCK = true;' if (current_session(headers) or {}).get("lock") else '') + '</script>'
+        # browsers that support it (Chrome) start loading a page as your finger lands on its link
+        + '<script type="speculationrules">{"prefetch":[{"where":{"and":[{"href_matches":"/*"},{"not":{"href_matches":"/api/*"}},{"not":{"href_matches":"/*\\\\?*key=*"}}]},"eagerness":"moderate"}]}</script></head>'
         f'<body class="{body_cls}"><div class="app"><aside class="rail glass" aria-label="Sidebar">'
         f'<a class="brand" href="/">{avatar_img("theta", 32)}{APP_NAME}</a><nav aria-label="Main">{nav}</nav>'
         f'<div class="label">Sections</div><nav aria-label="Sections">{more}</nav>'
