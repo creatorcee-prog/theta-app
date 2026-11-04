@@ -112,3 +112,13 @@ check("off, or reduced motion, keeps it quiet", '"theta:sfx", "on") === "on" && 
 sett = h.handle("GET", "/settings", {}, {"x-dashboard-key": "dk"}, b"")[2].decode()
 check("Settings: sounds on or off, volume, and a Hear it button", 'data-sfx="on"' in sett and 'id="sfx-vol"' in sett and 'id="sfx-test"' in sett)
 print("sounds done")
+
+# ---- the bottom bar in each frame (2026-11-04, later)
+css = h._UI_CSS
+for f in ("edge", "breach", "hud", "console", "holo"):
+    check(f"{f}: chips, message box, send and tab bar take its shape", all(f':root[data-glassstyle="{f}"] {sel}' in css
+          for sel in (".minichips a{", ".minibox,", ".minibox .btn.send,", ".tabbar a")))
+check("Glass+ and Liquid Glass keep their round pills", ':root[data-glassstyle="plus"] .minibox' not in css and ".minibox{display:flex;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:999px" in css)
+home = h.handle("GET", "/", {}, {"x-dashboard-key": "dk"}, b"")[2].decode()
+check("the bar says who answers", ('placeholder="Message Theta\u2026"' in home) == h.head_on() and "Message the crew" in h.minibar_html("/") or h.head_on())
+print("bar done")
