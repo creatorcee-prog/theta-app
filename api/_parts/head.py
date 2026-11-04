@@ -1500,14 +1500,16 @@ _STAGE_JS = r"""
     cv.getBoundingClientRect();
     requestAnimationFrame(() => { cv.style.transition = `transform ${ms || 650}ms cubic-bezier(.22,.9,.24,1)`; cv.style.transform = "none"; });
   }
-  function dock() { if (docked) return; docked = true; flip(() => body.classList.add("docked")); }
-  function undock() { if (!docked) return; docked = false; flip(() => body.classList.remove("docked")); }
+  let dockBy = "";
+  function dock(why) { dockBy = why || dockBy || "panels"; if (docked) return; docked = true; flip(() => body.classList.add("docked")); document.dispatchEvent(new CustomEvent("theta:docked", {detail: true})); }
+  function undock() { if (!docked) return; docked = false; dockBy = ""; flip(() => body.classList.remove("docked")); document.dispatchEvent(new CustomEvent("theta:docked", {detail: false})); }
+  window.thetaStage = {dock, undock, docked: () => docked}; // the board (widgets) minimizes Theta too
   document.addEventListener("theta:thread", e => {
     const yous = (e.detail || []).filter(x => x.from === "you").map(x => Number(x.id) || 0);
     const top = yous.length ? Math.max(...yous) : 0;
     if (youMax === null) youMax = top; else if (top > youMax) { youMax = top; talked = true; }
   });
-  document.addEventListener("theta:panels", e => { if (e.detail.count && talked) dock(); else if (!e.detail.count) undock(); });
+  document.addEventListener("theta:panels", e => { if (e.detail.count && talked) dock("panels"); else if (!e.detail.count && dockBy === "panels") undock(); });
   cv.addEventListener("click", e => { if (docked) { e.stopImmediatePropagation(); e.preventDefault(); undock(); } }, true);
   // Theta opening a page (the open tool): once it has said its line, it flies to the corner and the page comes up
   const navSeen = new Set(); let navFirst = true;
@@ -1677,7 +1679,7 @@ def head_hud(headers=None):
             f'<div class="tr" role="group" aria-label="Translate"><span>Translate</span><select id="head-lang" aria-label="Their language">{langs}</select>'
             '<button type="button" id="head-tr-me">I speak</button><button type="button" id="head-tr-them">They speak</button></div></div>'
             + ("" if head_on() else '<p class="note">The crew is on (HEAD_MODE=crew), so whoever answers in chat answers here.</p>')
-            + '</details></section>')
+            + '</details></section>' + board_markup())
 
 
 def head_script(headers=None):
@@ -1686,7 +1688,8 @@ def head_script(headers=None):
             + _HEAD_JS.replace("__ORPHEUS__", json.dumps(list(ORPHEUS_VOICES))).replace("__GEMINI__", json.dumps(list(GEMINI_VOICES)))
             .replace("__THEME__", json.dumps(th))
             .replace("__FISH__", json.dumps({"on": bool(fish_key()), "voice": fish_cfg()["voice"], "name": fish_cfg()["name"]}).replace("</", "<\\/"))
-            + "</script><script>" + _DECK_JS + "</script><script>" + _STAGE_JS + "</script>")
+            + "</script><script>" + _DECK_JS + "</script><script>" + _STAGE_JS + "</script>"
+            + f"<style>{BOARD_CSS}</style><script>{BOARD_JS}</script>")
 
 
 def head_page(headers, query=None):

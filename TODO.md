@@ -797,6 +797,14 @@ the hub must work without.
 - [ ] Next for driving the app: press buttons and fill fields on a page, each one asked first (needs a list of safe actions per page).
 - [ ] Real computer use (other apps on the phone) isn't possible from a web app; revisit if there's a native app or the desktop comes back.
 
+### One page: the Theta page (2026-11-04)
+- [x] Other pages open inside the Theta page in a sheet (embedded: no bars); a direct visit goes to /head?open=...; Full page escapes the frame (?full=1).
+- [x] Widget board when Theta is minimized: 1 small, 2 wide, 3 tall, 4 big; important first, then new since you looked; apps always there.
+- [x] Theta's cards (tables, quizzes, docs, code, buttons) in a terminal above everything.
+- [x] The type bar searches every widget; send still asks Theta.
+- [ ] Condense more pages into widgets (Settings cards as small switches, Mail inbox counts, Lenz library).
+- [ ] Rearrange or pin widgets by hand.
+
 ### Theta's voice on Fish Audio (2026-11-04)
 - [x] Fish Audio S2.1 Pro: free model first, paid only within a monthly cap ($0 by default), Piper when neither can speak.
 - [x] Settings: browse top English voices, play samples, Use; the cap; this month's characters and cost.

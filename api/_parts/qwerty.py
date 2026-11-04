@@ -21,8 +21,10 @@ _PUBLIC_PATHS = ("/ui.css", "/ui.js", "/chat.js", "/sw.js", "/manifest.webmanife
 SECURITY_HEADERS = [
     ("X-Content-Type-Options", "nosniff"),
     ("Referrer-Policy", "strict-origin-when-cross-origin"),
-    ("X-Frame-Options", "DENY"),
-    ("Content-Security-Policy", "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"),
+    # Only the hub's own pages may frame it: the Theta page opens the others in a sheet (2026-11-04). Other
+    # sites still can't (no clickjacking).
+    ("X-Frame-Options", "SAMEORIGIN"),
+    ("Content-Security-Policy", "frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"),
     ("Permissions-Policy", "camera=(), geolocation=(), payment=(), usb=()"),
 ]
 

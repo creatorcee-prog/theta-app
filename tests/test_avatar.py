@@ -95,7 +95,7 @@ check("cinematic: a spark, streams spiraling in, a shockwave, the name", "the sp
 check("reduced motion skips the cinematic", "!booted && !reduce" in stage)
 check("the stage is the Settings background: no fill of its own", "transparent 70%)!important" in h._STAGE_CSS)
 check("on a light background the dots draw darker instead of adding light", "lightBg" in js and 'lightBg ? "source-over" : "lighter"' in js)
-check("docks to the corner once you've talked and Theta pulls something up", "theta:panels" in stage and "if (e.detail.count && talked) dock()" in stage
+check("docks to the corner once you've talked and Theta pulls something up", "theta:panels" in stage and "if (e.detail.count && talked) dock(\"panels\")" in stage
       and "panelsEvent(m.panels.length)" in h._DECK_JS)
 check("a smooth move both ways (FLIP)", "function flip(change, ms)" in stage and "cubic-bezier" in stage)
 check("leaving for another page: it shrinks into the corner, with no hold before the next page loads", "location.href = u.href; // no waiting" in stage and "docked ? 500" not in stage)
