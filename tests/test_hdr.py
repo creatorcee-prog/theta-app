@@ -75,8 +75,8 @@ check("SDR theta light accent precedes its P3 override",
 # --- P3 accents for every theme ---
 p3vals = re.findall(r"color\(display-p3 ([0-9.]+) ([0-9.]+) ([0-9.]+)\)", css)
 check("every P3 channel is in [0,1]", all(0 <= float(c) <= 1 for v in p3vals for c in v))
-check("P3 accent count is 12 themes x (light + dark + auto-dark) x 2 accents + 4 Gemini stops",
-      css.count("color(display-p3") == 76)
+check("P3 accent count is every theme x (light + dark + auto-dark) x 2 accents + 4 Gemini stops",
+      css.count("color(display-p3") == len(h.THEMES) * 6 + 4)
 for name, t in h.THEMES.items():
     sel = ':root[data-theme="' + name + '"]'
     li = "--accent:" + h._p3(t["light"]["accent"]) + ";--accent2:" + h._p3(t["light"]["accent2"])

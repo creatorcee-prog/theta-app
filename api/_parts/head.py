@@ -743,7 +743,7 @@ _HEAD_JS = r"""
   const pts = [];
   function drawUrchin(t, lv) {
     const c = S / 2, sp = cur.speed * AV.energy, R = S * 0.42, D = 3.2;
-    const yaw = t * 0.18 * sp, pitch = 0.3 + 0.06 * Math.sin(t * 0.37), cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), spn = Math.sin(pitch);
+    const yaw = t * 0.18 * sp + look[0] * 0.75, pitch = 0.3 + 0.06 * Math.sin(t * 0.37) + look[1] * 0.55, cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), spn = Math.sin(pitch);
     const k = 0.07 + 0.04 * cur.bounce, damp = 0.8 + 0.08 * cur.bounce;
     pts.length = 0;
     for (const q of dots) {
@@ -783,9 +783,16 @@ _HEAD_JS = r"""
     });
     core(c, 0.07 + 0.06 * level);
   }
-  let clock = 0, lastMs = 0;
+  let clock = 0, lastMs = 0, lookFrame = 0;
+  const look = [0, 0], lookC = [innerWidth / 2, innerHeight / 3];
   function draw(ms) {
     const dt = Math.min(0.05, (ms - (lastMs || ms)) / 1000); lastMs = ms; clock += dt * (reduce ? 0.35 : 1);
+    // it turns toward your cursor or finger, or the way you tilt the phone; a quick flick wakes it up a little
+    if (!(lookFrame++ % 10)) { const r = cv.getBoundingClientRect(); lookC[0] = r.left + r.width / 2; lookC[1] = r.top + r.height / 2; }
+    const want = window.thetaLook ? thetaLook.at(lookC[0], lookC[1]) : [0, 0];
+    const jump = Math.hypot(want[0] - look[0], want[1] - look[1]);
+    look[0] += (want[0] - look[0]) * 0.07; look[1] += (want[1] - look[1]) * 0.07;
+    if (jump > 0.25 && state === "idle") burst = Math.min(0.6, burst + jump * 0.15);
     const t = clock, m = MOODS[mood] || MOODS.calm, [mh, msat, ml] = hexHsl((AV.colors || {})[mood] || m[0]);
     const dh = ((mh - cur.hue + 540) % 360) - 180; cur.hue = (cur.hue + dh * 0.06 + 360) % 360;
     cur.sat += (msat - cur.sat) * 0.06; cur.light += (Math.max(45, Math.min(72, ml)) - cur.light) * 0.06;
@@ -796,6 +803,7 @@ _HEAD_JS = r"""
       const env = voiceEnv && !player.paused ? voiceEnv[Math.floor(player.currentTime * 30)] : null;
       target = env != null ? env : 0.25 + 0.5 * Math.max(0, 0.5 + 0.5 * Math.sin(t * 13) * Math.sin(t * 5.3 + 1.2)) + 0.35 * burst;
     } else if (state === "listening") target = 0.15 + 0.3 * Math.max(0, Math.sin(t * 9.1) * Math.sin(t * 2.3));
+    else if (state === "idle") target = 0.5 * burst;
     burst *= 0.86; level += (Math.min(1, target) - level) * 0.3;
     g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, S, S);
     g.translate(0, -S * cur.bounce * 0.012 * Math.abs(Math.sin(t * 3)));
@@ -1218,7 +1226,7 @@ _HEAD_JS = r"""
   }).catch(() => {});
   // hooks for the page's opening (the stage script): assemble, greet, mood
   window.thetaHead = {
-    speak: t => speak(t), unlock: () => unlock(), setMood: m => setMood(m),
+    speak: t => speak(t), unlock: () => unlock(), setMood: m => setMood(m), talking: () => state === "speaking",
     scatter(near) { for (const q of dots) { const a = Math.random() * TAU, b = Math.acos(2 * Math.random() - 1), r = near ? 1.1 + Math.random() * 0.9 : 2.4 + Math.random() * 2;
       q.w = [Math.cos(a) * Math.sin(b) * r, Math.cos(b) * r, Math.sin(a) * Math.sin(b) * r]; q.v = [0, 0, 0]; } },
   };
@@ -1465,6 +1473,21 @@ _STAGE_JS = r"""
   });
   document.addEventListener("theta:panels", e => { if (e.detail.count && talked) dock(); else if (!e.detail.count) undock(); });
   cv.addEventListener("click", e => { if (docked) { e.stopImmediatePropagation(); e.preventDefault(); undock(); } }, true);
+  // Theta opening a page (the open tool): once it has said its line, it flies to the corner and the page comes up
+  const navSeen = new Set(); let navFirst = true;
+  document.addEventListener("theta:thread", e => {
+    const ms = (e.detail || []).filter(x => x.from === "theta" && x.nav && x.nav.url);
+    if (navFirst) { navFirst = false; ms.forEach(m => navSeen.add(m.id)); return; } // what was already there never moves you
+    const m = ms[ms.length - 1]; if (!m || navSeen.has(m.id)) return;
+    navSeen.add(m.id);
+    if (!/^\/[a-z]*(#[a-z]+)?$/.test(m.nav.url)) return; // the app's own pages only
+    const started = Date.now();
+    const go = () => {
+      if (TH.talking && TH.talking() && Date.now() - started < 20000) return setTimeout(go, 250);
+      const a = document.createElement("a"); a.href = m.nav.url; a.hidden = true; body.append(a); a.click();
+    };
+    setTimeout(go, 700);
+  });
   // leaving for another page: Theta shrinks into the corner first, where the next page has it
   document.addEventListener("click", e => {
     const a = e.target.closest("a[href]");

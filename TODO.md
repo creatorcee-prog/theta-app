@@ -789,6 +789,13 @@ the hub must work without.
   for anything that has to run on the PC itself.
 
 ## Planned
+### Theta drives the app, looks at you, new frames and schemes (2026-11-04)
+- [x] `open` tool: Theta opens a page or a part of one (fixed list, never a web address). It says its line, flies to the corner, the page comes up and the part lights up.
+- [x] The avatar (Theta page and corner) turns toward your cursor or finger, else the phone's tilt; a quick flick wakes it a little.
+- [x] Frames: Edge, Breach, HUD, Console, Hologram (beside Glass+ and Liquid Glass). Schemes: Redline, Data Log, Breach, Scanner, Amber HUD, Mission Control, Hologram.
+- [ ] Next for driving the app: press buttons and fill fields on a page, each one asked first (needs a list of safe actions per page).
+- [ ] Real computer use (other apps on the phone) isn't possible from a web app; revisit if there's a native app or the desktop comes back.
+
 ### Theta's avatar (2026-11-03)
 - [x] Avatar Lab: 5 generations (docs/avatar-lab.html; live at claude.ai/artifact/A3PWLpJuTdQ5mb9X3gMV4C).
   Saved favorites: One Swarm (3.2), Jarvis Lite (3.3), Pour (4.3). Picked: Urchin Pour (5.3).
