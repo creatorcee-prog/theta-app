@@ -99,7 +99,7 @@ def _tool_hub_help(arg, agent):
 
 
 def _tool_mail(arg, agent):
-    return (remi_mail_context() or "").strip() or "Gmail isn't connected, or there's nothing new."
+    return theta_mail()
 
 
 for _n, _d, _f in (("reminders", "reminders | all   (every reminder that's set, with times)", _tool_reminders),
@@ -108,7 +108,7 @@ for _n, _d, _f in (("reminders", "reminders | all   (every reminder that's set, 
                    ("crew_reports", "crew_reports | latest   (what the crew's last round found: news, releases, mail, ...)", _tool_crew_reports),
                    ("settings", "settings | all   (the hub settings that can be changed on approval, with their values)", _tool_settings),
                    ("hub_help", "hub_help | <topic>   (the hub's pages, sections and settings: check before describing any of them)", _tool_hub_help),
-                   ("mail", "mail | new   (Remi's sorted Gmail: what's new and what needs a reply)", _tool_mail)):
+                   ("mail", "mail | new   (the user's Gmail inbox: what's new and what needs a reply; if it isn't connected, it says why)", _tool_mail)):
     TOOLS[_n] = (_d, _f, {"theta"})
 
 
@@ -1372,7 +1372,7 @@ _DECK_JS = r"""
   // The panel deck: when Theta looks something up or changes something, what it pulled up shows here,
   // newest reply only, until you close it (the X, or say "close the panels").
   const deck = document.getElementById("deck"); if (!deck) return;
-  const panelsEvent = n => document.dispatchEvent(new CustomEvent("theta:panels", {detail: {count: n}}));
+  const panelsEvent = n => { document.body.classList.toggle("has-panels", n > 0); document.dispatchEvent(new CustomEvent("theta:panels", {detail: {count: n}})); };
   let shown = null, tick = 0;
   const gone = new Set();
   const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };

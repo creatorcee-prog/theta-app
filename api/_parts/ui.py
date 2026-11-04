@@ -1010,15 +1010,16 @@ body.has-mini header.top{padding-right:60px} /* room for Theta in the corner */
 #bg-layer .bgpic.on{opacity:1;transform:scale(1.1)}
 #bg-layer.bg-image::after,#bg-layer.bg-spotlight::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.55),rgba(0,0,0,.25) 35%,rgba(0,0,0,.65))}
 #bg-layer.bg-spotlight .bgpic{filter:saturate(1.1)}
-.spot-cap{position:fixed;left:max(14px,env(safe-area-inset-left,0px));bottom:calc(var(--formh,96px) + 58px);z-index:3;max-width:min(78vw,420px);display:flex;flex-direction:column;gap:2px;
- padding:9px 13px;border-radius:12px;background:rgba(0,0,0,.45);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);color:#fff;border:1px solid rgba(255,255,255,.18);opacity:0}
+.spot-cap{position:fixed;left:max(12px,env(safe-area-inset-left,0px));top:calc(env(safe-area-inset-top,0px) + 10px);z-index:3;
+ max-width:min(62vw,340px);display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:999px;background:rgba(0,0,0,.42);
+ -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);color:#fff;border:1px solid rgba(255,255,255,.14);opacity:0;font-size:12px;line-height:1.3}
 .spot-cap.in{animation:spotin .7s ease forwards}
-@keyframes spotin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-.spot-cap .sp-why{font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.8}
-.spot-cap .sp-title{font-size:16px;line-height:1.25}
-.spot-cap .sp-src{font-size:12.5px;color:#cfe8ff;text-decoration:underline;text-underline-offset:2px}
-body:not(.headchat) .spot-cap{bottom:calc(var(--tabh) + 150px)}
-body.docked .spot-cap{display:none}
+@keyframes spotin{from{opacity:0;transform:translateY(-6px)}to{opacity:.92;transform:none}}
+.spot-cap .sp-why{display:none}
+.spot-cap .sp-title{font-weight:650;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.spot-cap .sp-src{flex:none;font-size:11.5px;color:#cfe8ff;text-decoration:none;opacity:.9}
+body:not(.headchat) .spot-cap{top:auto;bottom:calc(var(--tabh) + 150px)}
+body.docked .spot-cap,body.has-panels .spot-cap,body.sheet-open .spot-cap{display:none}
 @media (prefers-reduced-motion:reduce){#bg-layer .bgpic{transition:none;transform:none}}
 :root[data-bg]:not([data-bg="theme"]) body{background:transparent}
 #bg-layer canvas{width:100%;height:100%;display:block}
@@ -1997,8 +1998,9 @@ _UI_JS_SRC = r'''
         if (spot.cap) {
           var when = it.date ? (it.days <= 0 ? "Out now" : it.days === 1 ? "Out tomorrow" : it.days < 45 ? "In " + it.days + " days" : new Date(it.date + "T12:00").toLocaleDateString(undefined, {month: "short", day: "numeric", year: "numeric"})) : "";
           spot.cap.querySelector(".sp-why").textContent = it.why + (when ? " \u00b7 " + when : "");
-          spot.cap.querySelector(".sp-title").textContent = it.title;
-          var a = spot.cap.querySelector(".sp-src"); a.href = it.url; a.textContent = "Found on " + it.site + " \u2197";
+          var ti = spot.cap.querySelector(".sp-title"); ti.textContent = it.title + (when ? " \u00b7 " + when : ""); ti.title = it.why;
+          var a = spot.cap.querySelector(".sp-src"); a.href = it.url; a.textContent = it.site.replace(/^(themoviedb\.org)$/, "TMDB") + " \u2197";
+          a.setAttribute("aria-label", "Found on " + it.site);
           spot.cap.classList.remove("in"); void spot.cap.offsetWidth; spot.cap.classList.add("in");
         }
       };

@@ -1442,9 +1442,12 @@ def handle(method, path, query, headers, body):
             if q("error"):
                 raise ValueError("You didn't allow access, so nothing changed.")
             who = gmail_finish_connect(q("code"), q("state"), headers)
-            msg = f"Connected {who}. Remi will sort your inbox on her next round."
+            msg = f"Connected {who}. Theta can read your inbox now."
+            store().set_meta("gmail:last_error", "")
         except (ValueError, LLMError) as e:
             msg = str(e)
+            print(f"gmail connect failed: {msg[:300]}")  # in Vercel's logs, so a failed connect can be looked into
+            store().set_meta("gmail:last_error", json.dumps({"at": time.time(), "why": msg[:300]}))
         store().set_meta("gmail:flash", msg[:200])
         return 302, "text/plain", b"", [("Location", "/settings#gmail")]
 
