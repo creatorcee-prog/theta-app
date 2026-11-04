@@ -187,6 +187,41 @@ def fish_voices(q="", page=1):
     return items
 
 
+FISH_SAMPLE_MAX = 4_000_000  # bytes: a sample is a few seconds
+
+
+def fish_sample_ok(url):
+    """Only Fish Audio's own https addresses are fetched for a sample (so this can't be used to reach anything else)."""
+    try:
+        u = urlparse(url)
+    except ValueError:
+        return False
+    host = (u.hostname or "").lower()
+    return u.scheme == "https" and not u.port and (host == "fish.audio" or host.endswith(".fish.audio"))
+
+
+def fish_sample(url):
+    """A voice sample's audio bytes, fetched on the server when the browser can't read it directly (for effects)."""
+    if not fish_sample_ok(url):
+        raise ValueError("not a Fish Audio sample address")
+    req = urllib.request.Request(url, headers={"User-Agent": "bot-hub/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            if not fish_sample_ok(resp.geturl()):  # followed a redirect somewhere else
+                raise ValueError("the sample moved off Fish Audio")
+            kind = (resp.headers.get("Content-Type") or "audio/mpeg").split(";")[0]
+            data = resp.read(FISH_SAMPLE_MAX + 1)
+    except urllib.error.HTTPError as e:
+        raise LLMError(f"Fish Audio's sample said {e.code}")
+    except (urllib.error.URLError, TimeoutError) as e:
+        raise LLMError(f"Fish Audio's sample didn't answer: {type(e).__name__}")
+    if len(data) > FISH_SAMPLE_MAX:
+        raise ValueError("that sample is too big")
+    if not kind.startswith("audio/"):
+        kind = "audio/mpeg"
+    return kind, data
+
+
 def fish_card():
     """Settings: pick Theta's Fish Audio voice (listen first), and the paid voice's monthly cap."""
     on, cfg, u = bool(fish_key()), fish_cfg(), fish_usage()
@@ -203,6 +238,10 @@ def fish_card():
             'one can step in up to your monthly cap. If neither can, Theta uses Piper on your phone.</p>'
             '<div class="brow" style="gap:8px;flex-wrap:wrap"><input class="field" id="fish-q" placeholder="Search voices (like: british, calm, deep)" '
             'style="flex:1;min-width:180px"><button class="btn" type="button" id="fish-go">Search</button></div>'
+            '<div class="brow" style="gap:8px;align-items:center;flex-wrap:wrap"><label class="small">Effect <select class="field" id="fish-fx" '
+            'style="width:auto">' + "".join(f'<option value="{k}">{html.escape(v)}</option>' for k, v in VOICE_FX.items()) + '</select></label>'
+            '<label class="small">Strength <input type="range" id="fish-fx-amt" min="10" max="100" value="60"></label>'
+            '<span class="muted small">Samples play with it, and so does Theta.</span></div>'
             '<div id="fish-list" class="stack" style="gap:8px"><p class="muted small">Loading the top voices…</p></div>'
             '<p class="brow" style="gap:8px;margin:0"><button class="btn" type="button" id="fish-swap" hidden>Swap the rest for new voices</button>'
             '<button class="btn" type="button" id="fish-more" hidden>More voices</button></p>'
@@ -224,6 +263,32 @@ _FISH_JS = r"""
   const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
   const post = body => fetch("/api/voice/fish/config", {method: "POST", headers: window.THETA_H, body: JSON.stringify(body)}).then(r => r.json());
   const kept = id => keep.some(k => k.id === id);
+  // the effect: the same one Theta speaks with (saved on this device; the Theta page has it too)
+  const fxSel = document.getElementById("fish-fx"), fxAmt = document.getElementById("fish-fx-amt");
+  const fxInit = () => { const F = window.thetaFx; if (!F) return; // the page script (ui.js) loads after this one
+    fxSel.value = F.kind(); if (!fxSel.value) fxSel.value = "off"; fxAmt.value = F.amount();
+    fxSel.onchange = () => F.set(fxSel.value); fxAmt.onchange = () => F.set(null, fxAmt.value); };
+  if (window.thetaFx) fxInit(); else addEventListener("DOMContentLoaded", fxInit);
+  const sampleCache = new Map();
+  async function sampleBlob(url) { // straight from Fish Audio if it allows it, else through the hub
+    if (sampleCache.has(url)) return sampleCache.get(url);
+    let blob = null;
+    try { const r = await fetch(url, {mode: "cors"}); if (r.ok) blob = await r.blob(); } catch (e) {}
+    if (!blob) { const r = await fetch("/api/voice/fish/sample?url=" + encodeURIComponent(url), {headers: window.THETA_H}); if (!r.ok) throw new Error("sample " + r.status); blob = await r.blob(); }
+    sampleCache.set(url, blob); return blob;
+  }
+  async function playSample(url, btn) {
+    if (playing) { playing.pause(); playing = null; }
+    const plain = () => { playing = new Audio(url); playing.play().catch(() => {}); };
+    const FXN = window.thetaFx;
+    if (!FXN || fxSel.value === "off") return plain();
+    const was = btn.textContent; btn.textContent = "\u2026"; btn.disabled = true;
+    try {
+      const out = await FXN.render(await sampleBlob(url), fxSel.value, fxAmt.value), u = URL.createObjectURL(out);
+      playing = new Audio(u); playing.onended = () => URL.revokeObjectURL(u); await playing.play();
+    } catch (e) { note.textContent = "Played without the effect (" + e.message + ")."; plain(); }
+    finally { btn.textContent = was; btn.disabled = false; }
+  }
   async function fetchPage(p) {
     const d = await (await fetch("/api/voice/fish/voices?q=" + encodeURIComponent(q.value) + "&page=" + p, {headers: window.THETA_H})).json();
     if (!d.ok) throw new Error(d.error); return d.voices;
@@ -233,7 +298,7 @@ _FISH_JS = r"""
     const txt = el("div"); txt.style.cssText = "flex:1;min-width:0";
     txt.append(el("b", null, (kept(v.id) ? "\u2605 " : "") + v.name), el("div", "muted small", v.about || (v.uses.toLocaleString() + " uses")));
     const play = el("button", "btn", "\u25B6"); play.type = "button"; play.disabled = !v.sample; play.title = "Play a sample";
-    play.onclick = () => { if (playing) playing.pause(); playing = new Audio(v.sample); playing.play().catch(() => {}); };
+    play.onclick = () => playSample(v.sample, play);
     const pin = el("button", "btn", kept(v.id) ? "Kept" : "Keep"); pin.type = "button";
     pin.onclick = async () => {
       keep = kept(v.id) ? keep.filter(k => k.id !== v.id) : keep.concat([v]).slice(-12);

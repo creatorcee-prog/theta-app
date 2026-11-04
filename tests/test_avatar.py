@@ -116,8 +116,10 @@ check("while hidden, only a tap where the text box sits brings the controls back
 check("tapping Theta isn't typing: focus only counts in a text field", "/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) reveal()" in stage)
 check("voice effects: a picker and a strength, in Voice and tools", 'id="head-fx"' in page and 'id="head-fx-amt"' in page
       and all(f'value="{k}"' in page for k in h.VOICE_FX))
-check("effects are rendered offline into a new clip, so playback isn't rerouted", "async function voiceFx(blob)" in js
-      and "startRendering()" in js and "createMediaElementSource" not in js and ".then(voiceFx)" in js)
-check("an effect that fails plays the plain voice", "catch (e) { return blob; }" in js)
-check("never clips", "0.98 / peak" in js)
+ui = h._UI_JS
+check("effects are rendered offline into a new clip, so playback isn't rerouted", "window.thetaFx" in ui
+      and "startRendering()" in ui and "createMediaElementSource" not in ui + js and ".then(voiceFx)" in js and "thetaFx.render(" in js)
+check("an effect that fails plays the plain voice", "catch (e) { return blob; }" in ui)
+check("never clips", "0.98 / peak" in ui)
+check("the effect waits for the page script, which loads after", 'addEventListener("DOMContentLoaded", fxInit)' in js)
 print("done")
