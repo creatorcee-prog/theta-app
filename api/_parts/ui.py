@@ -1061,6 +1061,62 @@ _UI_JS_SRC = r'''
     });
   })();
 
+
+  // ---- Frame sounds (picked 2026-11-04 in the Frame Sounds page): each frame's entrance has a short sound,
+  // made live with Web Audio (no files). iPhone only plays sound from a tap, and a new page starts without
+  // one, so the sound plays from the tap that opens the page, while it loads and the transition runs.
+  // Settings, Look: on or off, and volume (saved on this device).
+  window.thetaSfx = (() => {
+    let ctx = null, NOISE = null;
+    const get = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch (e) { return d; } };
+    const on = () => get("theta:sfx", "on") === "on" && !matchMedia("(prefers-reduced-motion: reduce)").matches;
+    function ac() {
+      const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null;
+      if (!ctx) ctx = new AC(); if (ctx.state === "suspended") ctx.resume().catch(() => {});
+      return ctx;
+    }
+    function noise(c) { if (NOISE && NOISE.sampleRate === c.sampleRate) return NOISE; const n = c.sampleRate, b = c.createBuffer(1, n, n), d = b.getChannelData(0); for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1; return (NOISE = b); }
+    function env(c, peak, t, a, d) { const g = c.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + a); g.gain.exponentialRampToValueAtTime(0.0001, t + a + d); return g; }
+    function tone(c, out, type, f0, f1, t, a, d, peak, filt) {
+      const o = c.createOscillator(), g = env(c, peak, t, a, d); o.type = type; o.frequency.setValueAtTime(f0, t);
+      if (f1 && f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t + a + d * .8);
+      let n = o; if (filt) { const f = c.createBiquadFilter(); f.type = filt[0]; f.frequency.value = filt[1]; o.connect(f); n = f; }
+      n.connect(g); g.connect(out); o.start(t); o.stop(t + a + d + .05); return o;
+    }
+    function click(c, out, t, hz, peak, len) {
+      const s = c.createBufferSource(), f = c.createBiquadFilter(), g = env(c, peak, t, .001, len || .012);
+      s.buffer = noise(c); f.type = "bandpass"; f.frequency.value = hz; f.Q.value = 1.2; s.connect(f); f.connect(g); g.connect(out);
+      s.start(t, Math.random() * .5); s.stop(t + (len || .012) + .02);
+    }
+    const SOUND = { // the picks: frame -> (ctx, out, t)
+      plus(c, o, t) { for (let i = 0; i < 7; i++) { const s = t + Math.random() * .32, f = 600 + Math.random() * 1000; tone(c, o, "sine", f, f * 1.8, s, .003, .035, .12 + Math.random() * .1); } }, // Fizz
+      liquid(c, o, t) { const x = tone(c, o, "sine", 180, 420, t, .02, .34, .4, ["lowpass", 900]); const l = c.createOscillator(), d = c.createGain(); l.frequency.value = 17; d.gain.value = 45; l.connect(d); d.connect(x.frequency); l.start(t); l.stop(t + .4); }, // Gloop
+      edge(c, o, t) { const h = c.createBiquadFilter(); h.type = "highpass"; h.frequency.value = 500; h.connect(o); for (let i = 0; i < 14; i++) { const f = Math.random() < .5 ? 880 : 1320; tone(c, h, "square", f, f, t + i * .02, .002, .014, .12); } }, // Binary chirp
+      breach(c, o, t) { for (let i = 0; i < 7; i++) click(c, o, t + i * .07, 3500, .4, .008); tone(c, o, "sine", 1046, 1046, t + .5, .004, .12, .14); }, // Hex print
+      hud(c, o, t) { tone(c, o, "sine", 1200, 1200, t, .003, .04, .2); tone(c, o, "sine", 1200, 1200, t + .12, .003, .04, .2); tone(c, o, "sine", 1600, 1600, t + .26, .004, .14, .24); }, // Target lock
+      console(c, o, t) { let s = t; for (let i = 0; i < 9; i++) { click(c, o, s, 4200, .32, .006); click(c, o, s, 300, .18, .01); s += .035 + Math.random() * .03; } }, // Typewriter
+      holo(c, o, t) { const g = c.createGain(); g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.22, t + .3); g.gain.exponentialRampToValueAtTime(.0001, t + .5); const tr = c.createGain(), l = c.createOscillator(), ld = c.createGain(); l.frequency.value = 12; ld.gain.value = .5; tr.gain.value = .5; l.connect(ld); ld.connect(tr.gain); tr.connect(g); g.connect(o); [110, 220].forEach(f => { const x = c.createOscillator(); x.type = "triangle"; x.frequency.value = f; x.connect(tr); x.start(t); x.stop(t + .55); }); l.start(t); l.stop(t + .55); click(c, o, t + .5, 1500, .3, .015); }, // Projector hum
+    };
+    function play(frame, force) {
+      if (!force && !on()) return false;
+      const f = SOUND[frame || document.documentElement.dataset.glassstyle || "plus"]; if (!f) return false;
+      try { const c = ac(); if (!c) return false; const out = c.createGain(); out.gain.value = Math.max(0, Math.min(1, +get("theta:sfxVol", "60") / 100)) * 1.2; out.connect(c.destination); f(c, out, c.currentTime + .01); return true; }
+      catch (e) { return false; }
+    }
+    // the first touch anywhere wakes the audio up, so the first sound isn't late
+    addEventListener("pointerdown", () => { if (on()) ac(); }, {once: true, capture: true, passive: true});
+    // a tap that opens another page of the app plays the frame's sound (before anything can stop the click)
+    document.addEventListener("click", e => {
+      const a = e.target.closest && e.target.closest("a[href]");
+      if (!a || e.metaKey || e.ctrlKey || e.shiftKey || (a.target && a.target !== "_self") || a.hasAttribute("download")) return;
+      const u = new URL(a.href, location.href);
+      if (u.origin !== location.origin || u.pathname.startsWith("/api/") || (u.pathname === location.pathname && u.search === location.search)) return;
+      play();
+    }, true);
+    return {play, on, set(k, v) { try { localStorage.setItem(k === "vol" ? "theta:sfxVol" : "theta:sfx", String(v)); } catch (e) {} },
+      volume: () => +get("theta:sfxVol", "60"), sounds: Object.keys(SOUND)};
+  })();
+
   // Where Theta looks: at your cursor (or finger) when it's moving, otherwise where you tilt the phone.
   // Each avatar reads window.thetaLook.at(its center) and gets -1..1 for x and y. The tilt is measured
   // from how you're holding the phone (that drifts back to neutral), so any angle you hold it at is "ahead".
@@ -1196,6 +1252,7 @@ _UI_JS_SRC = r'''
       if (t.mono) root.dataset.font = "mono"; else delete root.dataset.font;
     } else {
       root.dataset[k] = v;
+      if (k === "glassstyle" && window.thetaSfx) thetaSfx.play(v); // picking a frame plays its sound
     }
     metaColors(); save(); mark();
   }

@@ -98,3 +98,17 @@ check("headings decode: Edge from binary, Breach from hex, Console types", 'edge
 check("reduced motion: headings stay still", "if (still || !(fr in SETS" in ui)
 check("the CSS braces still balance (entrances)", css.count("{") == css.count("}"))
 print("entrances done")
+
+# ---- frame sounds (picked 2026-11-04 in the Frame Sounds page)
+ui = h._UI_JS
+picks = {"plus": "Fizz", "liquid": "Gloop", "edge": "Binary chirp", "breach": "Hex print", "hud": "Target lock",
+         "console": "Typewriter", "holo": "Projector hum"}
+check("a sound for every frame, the ones picked", all(f"// {name}" in ui for name in picks.values()) and set(picks) == set(h.FRAMES))
+check("made live with Web Audio, no sound files", "window.thetaSfx" in ui and "createOscillator" in ui and ".mp3" not in ui)
+check("plays from the tap that opens a page (iPhone needs a tap)", "a tap that opens another page of the app plays the frame's sound" in ui
+      and 'u.pathname.startsWith("/api/")' in ui)
+check("picking a frame plays its sound", 'if (k === "glassstyle" && window.thetaSfx) thetaSfx.play(v)' in ui)
+check("off, or reduced motion, keeps it quiet", '"theta:sfx", "on") === "on" && !matchMedia("(prefers-reduced-motion: reduce)")' in ui)
+sett = h.handle("GET", "/settings", {}, {"x-dashboard-key": "dk"}, b"")[2].decode()
+check("Settings: sounds on or off, volume, and a Hear it button", 'data-sfx="on"' in sett and 'id="sfx-vol"' in sett and 'id="sfx-test"' in sett)
+print("sounds done")
