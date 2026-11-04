@@ -1006,6 +1006,20 @@ body.has-mini header.top{padding-right:60px} /* room for Theta in the corner */
 .theta-mini:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 #bg-layer{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden;background:#000}
 #bg-layer.off{display:none}
+#bg-layer .bgpic{position:absolute;inset:0;background:center/cover no-repeat;opacity:0;transition:opacity 1.6s ease,transform 16s linear;transform:scale(1.04)}
+#bg-layer .bgpic.on{opacity:1;transform:scale(1.1)}
+#bg-layer.bg-image::after,#bg-layer.bg-spotlight::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.55),rgba(0,0,0,.25) 35%,rgba(0,0,0,.65))}
+#bg-layer.bg-spotlight .bgpic{filter:saturate(1.1)}
+.spot-cap{position:fixed;left:max(14px,env(safe-area-inset-left,0px));bottom:calc(var(--formh,96px) + 58px);z-index:3;max-width:min(78vw,420px);display:flex;flex-direction:column;gap:2px;
+ padding:9px 13px;border-radius:12px;background:rgba(0,0,0,.45);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);color:#fff;border:1px solid rgba(255,255,255,.18);opacity:0}
+.spot-cap.in{animation:spotin .7s ease forwards}
+@keyframes spotin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.spot-cap .sp-why{font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.8}
+.spot-cap .sp-title{font-size:16px;line-height:1.25}
+.spot-cap .sp-src{font-size:12.5px;color:#cfe8ff;text-decoration:underline;text-underline-offset:2px}
+body:not(.headchat) .spot-cap{bottom:calc(var(--tabh) + 150px)}
+body.docked .spot-cap{display:none}
+@media (prefers-reduced-motion:reduce){#bg-layer .bgpic{transition:none;transform:none}}
 :root[data-bg]:not([data-bg="theme"]) body{background:transparent}
 #bg-layer canvas{width:100%;height:100%;display:block}
 #bg-layer.bg-gemini{background-color:#0A080B;animation:geminiPulse 8s ease-in-out infinite alternate;animation-delay:var(--gdelay,0s)}
@@ -1964,14 +1978,55 @@ _UI_JS_SRC = r'''
       if (mode === "stars") drawStars(t / 1000); else if (mode === "shards") { if (webglOn) drawShards3D(dt); else drawShards(dt); }
       if (mode === "stars" || mode === "shards") raf = requestAnimationFrame(function (nt) { frame(nt, t); });
     }
+    // Your picture (Settings, Background): kept on this device, shown behind everything, dimmed a little.
+    function pics() { var a = layer.querySelectorAll(".bgpic"); if (a.length) return a;
+      for (var i = 0; i < 2; i++) { var d = document.createElement("div"); d.className = "bgpic"; layer.appendChild(d); } return layer.querySelectorAll(".bgpic"); }
+    function showPicture() {
+      var src = ""; try { src = localStorage.getItem("theta:bgimg") || ""; } catch (e) {}
+      var p = pics(); p[0].style.backgroundImage = src ? 'url("' + src + '")' : ""; p[0].classList.add("on"); p[1].classList.remove("on");
+    }
+    // Spotlight: upcoming movies, shows and games you'd care about, one picture at a time, with where it was found.
+    var spot = {items: [], i: 0, timer: 0, cap: null, front: 0};
+    function stopSpot() { clearInterval(spot.timer); spot.timer = 0; if (spot.cap) { spot.cap.remove(); spot.cap = null; }
+      if (layer) layer.querySelectorAll(".bgpic").forEach(function (d) { d.style.backgroundImage = ""; d.classList.remove("on"); }); }
+    function spotShow() {
+      var it = spot.items[spot.i % spot.items.length]; if (!it) return;
+      var img = new Image(); img.onload = function () {
+        var p = pics(), next = 1 - spot.front;
+        p[next].style.backgroundImage = 'url("' + it.image + '")'; p[next].classList.add("on"); p[spot.front].classList.remove("on"); spot.front = next;
+        if (spot.cap) {
+          var when = it.date ? (it.days <= 0 ? "Out now" : it.days === 1 ? "Out tomorrow" : it.days < 45 ? "In " + it.days + " days" : new Date(it.date + "T12:00").toLocaleDateString(undefined, {month: "short", day: "numeric", year: "numeric"})) : "";
+          spot.cap.querySelector(".sp-why").textContent = it.why + (when ? " \u00b7 " + when : "");
+          spot.cap.querySelector(".sp-title").textContent = it.title;
+          var a = spot.cap.querySelector(".sp-src"); a.href = it.url; a.textContent = "Found on " + it.site + " \u2197";
+          spot.cap.classList.remove("in"); void spot.cap.offsetWidth; spot.cap.classList.add("in");
+        }
+      };
+      img.src = it.image; spot.i++;
+    }
+    function startSpot() {
+      showPicture(); pics()[0].style.backgroundImage = "";
+      if (window.top !== window) return; // inside the Theta page's sheet: the page behind already shows it
+      if (!spot.cap) { spot.cap = document.createElement("div"); spot.cap.className = "spot-cap";
+        spot.cap.innerHTML = '<span class="sp-why"></span><b class="sp-title"></b><a class="sp-src" target="_blank" rel="noopener"></a>';
+        document.body.appendChild(spot.cap); }
+      fetch("/api/spotlight", {headers: window.THETA_H || {}}).then(function (r) { return r.json(); }).then(function (d) {
+        spot.items = (d && d.items) || []; spot.i = 0;
+        if (!spot.items.length) { spot.cap.querySelector(".sp-title").textContent = "Nothing coming up yet"; spot.cap.querySelector(".sp-why").textContent = "Spotlight"; spot.cap.classList.add("in"); return; }
+        spotShow(); if (!reduced) spot.timer = setInterval(function () { if (!document.hidden) spotShow(); }, 15000);
+      }).catch(function () {});
+    }
     function applyBg() {
       var v = root.dataset.bg || "theme";
       if (v === "theme") { dispose3D(); if (layer) layer.className = "off"; cancelAnimationFrame(raf); mode = ""; return; }
       ensure(); size();
       layer.className = "bg-" + v;
       cancelAnimationFrame(raf);
+      stopSpot();
       if (v === "stars") { dispose3D(); mode = "stars"; initStars(); drawStars(0); }
       else if (v === "shards") { dispose3D(); mode = "shards"; initShards(); drawShards(0); ensure3D(); }
+      else if (v === "image") { dispose3D(); mode = ""; showPicture(); return; }
+      else if (v === "spotlight") { dispose3D(); mode = ""; startSpot(); return; }
       else { mode = ""; return; }
       if (!reduced) raf = requestAnimationFrame(function (t) { frame(t, t); });
     }
@@ -3301,7 +3356,7 @@ def ui_prefs(headers):
     mode = raw[1] if len(raw) > 1 and raw[1] in MODES else "auto"
     layout = raw[2] if len(raw) > 2 and raw[2] in LAYOUTS else "grid"
     glassstyle = raw[3] if len(raw) > 3 and raw[3] in FRAMES else "plus"
-    bg = raw[4] if len(raw) > 4 and raw[4] in ("theme", "shards", "stars", "black", "gemini") else "theme"
+    bg = raw[4] if len(raw) > 4 and raw[4] in ("theme", "shards", "stars", "black", "gemini", "image", "spotlight") else "theme"
     return theme, mode, layout, glassstyle, bg
 
 
@@ -3352,7 +3407,7 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
     theme, mode, layout, glassstyle, bg = ui_prefs(headers)
     t = THEMES[theme]
     bgstyle = (' style="background:#000"' if bg == "gemini" else
-               ' style="background:#000"' if bg in ("shards", "stars", "black") else "")
+               ' style="background:#000"' if bg in ("shards", "stars", "black", "image", "spotlight") else "")
     if mode == "auto":
         metas = (f'<meta name="theme-color" content="{t["light"]["bg"]}" media="(prefers-color-scheme: light)">'
                  f'<meta name="theme-color" content="{t["dark"]["bg"]}" media="(prefers-color-scheme: dark)">')

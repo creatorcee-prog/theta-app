@@ -588,3 +588,48 @@ BOARD_JS = r"""
   $("term-x").onclick = () => { term.hidden = true; closed = termId; put("theta:termClosed", termId); };
 })();
 """
+
+
+# ---- Spotlight, the entertainment background (2026-11-04): what's coming that you'd care about, as a picture
+# that changes, with where it was found. Ranked: titles you follow (your library), then titles on topics you've
+# opened on the board, then what's popular and soon. Release data is the hub's own (TMDB, RAWG, Jikan, the
+# entertainment feeds); nothing is fetched here.
+def spotlight(now=None, limit=12):
+    now = now or datetime.now(hub_tz())
+    likes = board_topics()
+    items = []
+    try:
+        for x in releases(now.date()):
+            if not x.get("image") or not str(x.get("url") or "").startswith("https://"):
+                continue
+            img = x["image"].replace("/t/p/w342/", "/t/p/w780/")
+            days = (date.fromisoformat(x["date"]) - now.date()).days
+            hit = sorted(w for w in topic_words(x["title"]) if likes.get(w, 0) >= .5)
+            score = (100 if x.get("followed") else 0) + min(60, 25 * sum(likes.get(w, 0) for w in hit)) \
+                + 4 * math.log10((x.get("pop") or 0) + 1) + (10 if days <= 30 else 0)
+            why = ("In your library" if x.get("followed") else f"You've been reading about {hit[0]}" if hit else
+                   "Coming soon" if days <= 30 else "Popular")
+            items.append({"title": x["title"], "image": img, "kind": x["kind"], "date": x["date"], "days": days,
+                          "url": x["url"], "site": urlparse(x["url"]).hostname.removeprefix("www."), "why": why, "score": score})
+    except Exception as e:
+        print(f"spotlight releases failed: {e!r}")
+    try:
+        for w in trending_windows()[:10]:
+            img, url = str(w.get("image") or ""), str(w.get("href") or "")
+            if not img.startswith("https://") or not url.startswith("https://"):
+                continue
+            title = (w.get("raw") or w.get("title") or "")[:120]
+            hit = sorted(x for x in topic_words(title) if likes.get(x, 0) >= .5)
+            items.append({"title": title, "image": img, "kind": "news", "date": "", "days": None, "url": url,
+                          "site": urlparse(url).hostname.removeprefix("www."), "why": f"You've been reading about {hit[0]}" if hit else "Trending",
+                          "score": 12 + min(60, 25 * sum(likes.get(x, 0) for x in hit))})
+    except Exception as e:
+        print(f"spotlight trending failed: {e!r}")
+    items.sort(key=lambda x: -x["score"])
+    seen, out = set(), []
+    for x in items:
+        k = x["title"].lower()
+        if k not in seen:
+            seen.add(k)
+            out.append(x)
+    return out[:limit]
