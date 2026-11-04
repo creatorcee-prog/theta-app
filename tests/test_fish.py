@@ -107,3 +107,17 @@ sett = h.handle("GET", "/settings", {}, K, b"")[2].decode()
 check("Settings: the picker, the cap and this month's use", 'id="fish-list"' in sett and 'id="fish-cap"' in sett
       and "Calm British Man" in sett and "characters free" in sett)
 print("done")
+
+# ---- keep some voices, swap the rest (2026-11-04, later)
+r = json.loads(h.handle("POST", "/api/voice/fish/config", {}, K, json.dumps({"keep": [
+    {"id": VID, "name": "Ethan", "sample": "https://cdn.fish.audio/a.mp3"},
+    {"id": "f" * 32, "name": "Egirl", "sample": "javascript:alert(1)"}], "seeded": True, "page": 3}).encode())[2])
+check("kept voices are saved, with only https samples", r["ok"] and [k["name"] for k in h.fish_cfg()["keep"]] == ["Ethan", "Egirl"]
+      and h.fish_cfg()["keep"][1]["sample"] == "" and h.fish_cfg()["seeded"] and h.fish_cfg()["page"] == 3)
+check("a bad kept voice is refused", h.handle("POST", "/api/voice/fish/config", {}, K, json.dumps({"keep": [{"id": "../x"}]}).encode())[0] == 400)
+check("at most 12 kept", h.handle("POST", "/api/voice/fish/config", {}, K, json.dumps({"keep": [{"id": f"{i:032d}"} for i in range(13)]}).encode())[0] == 400)
+sett = h.handle("GET", "/settings", {}, K, b"")[2].decode()
+check("Settings: Keep and Swap, kept voices first, and the list picks up where Swap left it", 'id="fish-swap"' in sett
+      and '"page": 3' in sett and "Ethan" in sett and "...keep.map(row), ...rest.map(row)" in h._FISH_JS)
+check("once: Ethan and Egirl kept, the rest swapped", "(ethan|e[\\s-]?girl)" in h._FISH_JS and "seeded: true" in h._FISH_JS)
+print("keep done")

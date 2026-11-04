@@ -556,7 +556,10 @@ def handle(method, path, query, headers, body):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
             try:
                 cfg = fish_set(voice=data.get("voice") if "voice" in data else None,
-                               name=data.get("name"), cap=data.get("cap") if "cap" in data else None)
+                               name=data.get("name"), cap=data.get("cap") if "cap" in data else None,
+                               keep=data.get("keep") if "keep" in data else None,
+                               seeded=data.get("seeded") if "seeded" in data else None,
+                               page=data.get("page") if "page" in data else None)
             except ValueError as e:
                 return _json(400, {"ok": False, "error": str(e)})
             return _json(200, {"ok": True, **cfg})

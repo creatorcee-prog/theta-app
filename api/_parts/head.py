@@ -1449,7 +1449,21 @@ _STAGE_JS = r"""
   function hideSoon() { clearTimeout(timer); if (imm) timer = setTimeout(() => busy() ? hideSoon() : body.classList.add("ui-hidden"), 1500); }
   function reveal() { if (!imm) return; body.classList.remove("ui-hidden"); hideSoon(); }
   function apply() { body.classList.toggle("immersive", imm); if (imm) body.classList.add("ui-hidden"); else { clearTimeout(timer); body.classList.remove("ui-hidden"); } }
-  ["pointerdown", "keydown", "input", "focusin", "wheel", "touchmove"].forEach(ev => document.addEventListener(ev, reveal, {passive: true, capture: true}));
+  // While hidden, only a tap where the text box sits brings the controls back (the band across the bottom, full
+  // width); taps anywhere else (Theta, the panels) don't. While they're showing, any touch keeps them up.
+  function inBoxZone(e) {
+    const f = document.getElementById("chat-form"); if (!f) return true;
+    const r = f.getBoundingClientRect(); if (!r.height) return true;
+    return e.clientY >= r.top - 28 && e.clientY <= r.bottom + 4; // the box rides 24px lower while hidden
+  }
+  document.addEventListener("pointerdown", e => {
+    if (!imm) return;
+    if (!body.classList.contains("ui-hidden") || inBoxZone(e)) reveal();
+  }, {passive: true, capture: true});
+  ["keydown", "input"].forEach(ev => document.addEventListener(ev, reveal, {passive: true, capture: true}));
+  // focus only counts when it lands in a text field (tapping Theta focuses its button; that isn't typing)
+  document.addEventListener("focusin", e => { if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) reveal(); }, {capture: true});
+  ["wheel", "touchmove"].forEach(ev => document.addEventListener(ev, () => { if (!body.classList.contains("ui-hidden")) reveal(); }, {passive: true, capture: true}));
   if (immBox) { immBox.checked = imm; immBox.onchange = () => { imm = immBox.checked; put("theta:immersive", imm ? "on" : "off"); apply(); reveal(); }; }
   apply();
 

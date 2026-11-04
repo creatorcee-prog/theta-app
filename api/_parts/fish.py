@@ -24,11 +24,36 @@ def fish_key():
 def fish_cfg():
     """{"voice": id, "name": title, "cap": dollars a month for the paid model}."""
     c = _meta_json("fish:cfg", {})
-    return {"voice": c.get("voice") or "", "name": c.get("name") or "", "cap": float(c.get("cap") or 0)}
+    return {"voice": c.get("voice") or "", "name": c.get("name") or "", "cap": float(c.get("cap") or 0),
+            "keep": c.get("keep") or [], "seeded": bool(c.get("seeded")), "page": int(c.get("page") or 1)}
 
 
-def fish_set(voice=None, name=None, cap=None):
+FISH_KEEP_MAX = 12
+
+
+def _keep_item(v):
+    """One kept voice as the list shows it, checked (the page sends these back)."""
+    if not isinstance(v, dict) or not _FISH_ID.match(str(v.get("id") or "")):
+        raise ValueError("that isn't a Fish Audio voice id")
+    sample = str(v.get("sample") or "")
+    return {"id": v["id"], "name": " ".join(str(v.get("name") or "Untitled").split())[:60],
+            "about": " ".join(str(v.get("about") or "").split())[:140],
+            "sample": sample if sample.startswith("https://") else "", "uses": int(v.get("uses") or 0)}
+
+
+def fish_set(voice=None, name=None, cap=None, keep=None, seeded=None, page=None):
     c = fish_cfg()
+    if page is not None:  # where the list of new voices starts (Swap moves it on), so a reload doesn't bring old ones back
+        try:
+            c["page"] = max(1, min(int(page), 20))
+        except (TypeError, ValueError):
+            raise ValueError("page must be a number")
+    if keep is not None:
+        if not isinstance(keep, list) or len(keep) > FISH_KEEP_MAX:
+            raise ValueError(f"keep at most {FISH_KEEP_MAX} voices")
+        c["keep"] = list({k["id"]: k for k in map(_keep_item, keep)}.values())
+    if seeded is not None:
+        c["seeded"] = bool(seeded)
     if voice is not None:
         if voice and not _FISH_ID.match(voice):
             raise ValueError("that isn't a Fish Audio voice id")
@@ -173,60 +198,100 @@ def fish_card():
            else 'No voice picked yet: Theta speaks with Piper until you pick one below.')
     return ('<section class="card stack" id="voice"><h2>Theta’s voice (Fish Audio)</h2>'
             f'<p class="small" id="fish-now">{now}</p>'
-            '<p class="muted small">Play a sample, then tap <b>Use</b>. The free model speaks first; if it’s busy, the paid '
+            '<p class="muted small">Play a sample, then tap <b>Use</b>. <b>Keep</b> pins a voice to the top; <b>Swap the rest</b> '
+            'replaces the others with voices you haven\u2019t heard. The free model speaks first; if it’s busy, the paid '
             'one can step in up to your monthly cap. If neither can, Theta uses Piper on your phone.</p>'
             '<div class="brow" style="gap:8px;flex-wrap:wrap"><input class="field" id="fish-q" placeholder="Search voices (like: british, calm, deep)" '
             'style="flex:1;min-width:180px"><button class="btn" type="button" id="fish-go">Search</button></div>'
             '<div id="fish-list" class="stack" style="gap:8px"><p class="muted small">Loading the top voices…</p></div>'
-            '<button class="btn" type="button" id="fish-more" hidden>More voices</button>'
+            '<p class="brow" style="gap:8px;margin:0"><button class="btn" type="button" id="fish-swap" hidden>Swap the rest for new voices</button>'
+            '<button class="btn" type="button" id="fish-more" hidden>More voices</button></p>'
             '<div class="brow" style="gap:8px;align-items:center;flex-wrap:wrap"><label class="small" for="fish-cap">Paid voice cap, per month: $</label>'
             f'<input class="field" id="fish-cap" type="number" min="0" max="{FISH_CAP_MAX:.0f}" step="0.5" value="{cfg["cap"]:g}" style="width:90px">'
             '<button class="btn" type="button" id="fish-save">Save</button><span class="note small" id="fish-note"></span></div>'
             f'<p class="muted small">This month: {u.get("free", 0):,} characters free, {u.get("paid", 0):,} paid '
             f'(${u["cost"]:.2f}). $1 is about 66,000 characters, around 440 spoken replies.</p>'
-            "<script>" + _FISH_JS + "</script></section>")
+            f"<script>window.FISH_CFG={json.dumps({'keep': cfg['keep'], 'seeded': cfg['seeded'], 'voice': cfg['voice'], 'page': cfg['page']}).replace('</', '<\\/')};"
+            + _FISH_JS + "</script></section>")
 
 
 _FISH_JS = r"""
 (() => {
   const list = document.getElementById("fish-list"), q = document.getElementById("fish-q"), more = document.getElementById("fish-more");
-  const note = document.getElementById("fish-note"), nowEl = document.getElementById("fish-now");
-  let page = 1, playing = null;
+  const swap = document.getElementById("fish-swap"), note = document.getElementById("fish-note"), nowEl = document.getElementById("fish-now");
+  const CFG = window.FISH_CFG || {keep: [], seeded: false};
+  let keep = CFG.keep.slice(), shown = [], seen = new Set(keep.map(v => v.id)), page = 1, playing = null;
   const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
-  async function load(reset) {
-    if (reset) { page = 1; list.replaceChildren(el("p", "muted small", "Loading…")); }
-    try {
-      const d = await (await fetch("/api/voice/fish/voices?q=" + encodeURIComponent(q.value) + "&page=" + page, {headers: window.THETA_H})).json();
-      if (!d.ok) throw new Error(d.error);
-      if (reset) list.replaceChildren();
-      if (!d.voices.length && reset) list.append(el("p", "muted small", "No voices found. Try another word."));
-      d.voices.forEach(v => {
-        const row = el("div", "brow"); row.style.cssText = "gap:10px;align-items:center;border-top:1px solid var(--border);padding-top:8px";
-        const txt = el("div"); txt.style.cssText = "flex:1;min-width:0";
-        txt.append(el("b", null, v.name), el("div", "muted small", v.about || (v.uses.toLocaleString() + " uses")));
-        const play = el("button", "btn", "▶"); play.type = "button"; play.disabled = !v.sample; play.title = "Play a sample";
-        play.onclick = () => { if (playing) playing.pause(); playing = new Audio(v.sample); playing.play().catch(() => {}); };
-        const use = el("button", "btn", "Use"); use.type = "button";
-        use.onclick = async () => {
-          const r = await (await fetch("/api/voice/fish/config", {method: "POST", headers: window.THETA_H, body: JSON.stringify({voice: v.id, name: v.name})})).json();
-          if (!r.ok) { note.textContent = r.error; return; }
-          try { localStorage.setItem("theta:voice", "fish:" + v.id); localStorage.setItem("theta:fishName", v.name); } catch (e) {}
-          nowEl.innerHTML = ""; nowEl.append("Theta speaks as ", el("b", null, v.name), ".");
-          note.textContent = "Saved. Theta uses " + v.name + " from now on.";
-        };
-        row.append(txt, play, use); list.append(row);
-      });
-      more.hidden = d.voices.length < 12;
-    } catch (e) { list.replaceChildren(el("p", "muted small", "Couldn’t load voices: " + e.message)); }
+  const post = body => fetch("/api/voice/fish/config", {method: "POST", headers: window.THETA_H, body: JSON.stringify(body)}).then(r => r.json());
+  const kept = id => keep.some(k => k.id === id);
+  async function fetchPage(p) {
+    const d = await (await fetch("/api/voice/fish/voices?q=" + encodeURIComponent(q.value) + "&page=" + p, {headers: window.THETA_H})).json();
+    if (!d.ok) throw new Error(d.error); return d.voices;
   }
-  document.getElementById("fish-go").onclick = () => load(true);
-  q.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); load(true); } });
-  more.onclick = () => { page++; load(false); };
-  document.getElementById("fish-save").onclick = async () => {
-    const r = await (await fetch("/api/voice/fish/config", {method: "POST", headers: window.THETA_H,
-      body: JSON.stringify({cap: Number(document.getElementById("fish-cap").value || 0)})})).json();
-    note.textContent = r.ok ? "Cap saved." : r.error;
+  function row(v) {
+    const r = el("div", "brow"); r.style.cssText = "gap:8px;align-items:center;border-top:1px solid var(--border);padding-top:8px";
+    const txt = el("div"); txt.style.cssText = "flex:1;min-width:0";
+    txt.append(el("b", null, (kept(v.id) ? "\u2605 " : "") + v.name), el("div", "muted small", v.about || (v.uses.toLocaleString() + " uses")));
+    const play = el("button", "btn", "\u25B6"); play.type = "button"; play.disabled = !v.sample; play.title = "Play a sample";
+    play.onclick = () => { if (playing) playing.pause(); playing = new Audio(v.sample); playing.play().catch(() => {}); };
+    const pin = el("button", "btn", kept(v.id) ? "Kept" : "Keep"); pin.type = "button";
+    pin.onclick = async () => {
+      keep = kept(v.id) ? keep.filter(k => k.id !== v.id) : keep.concat([v]).slice(-12);
+      const d = await post({keep}); if (!d.ok) { note.textContent = d.error; return; } draw();
+    };
+    const use = el("button", "btn", CFG.voice === v.id ? "In use" : "Use"); use.type = "button";
+    use.onclick = async () => {
+      const d = await post({voice: v.id, name: v.name}); if (!d.ok) { note.textContent = d.error; return; }
+      CFG.voice = v.id;
+      try { localStorage.setItem("theta:voice", "fish:" + v.id); localStorage.setItem("theta:fishName", v.name); } catch (e) {}
+      nowEl.replaceChildren("Theta speaks as ", el("b", null, v.name), "."); note.textContent = "Saved. Theta uses " + v.name + " from now on."; draw();
+    };
+    r.append(txt, play, pin, use); return r;
+  }
+  function draw() {
+    const rest = shown.filter(v => !kept(v.id));
+    list.replaceChildren(...keep.map(row), ...rest.map(row));
+    if (!keep.length && !rest.length) list.append(el("p", "muted small", "No voices found. Try another word."));
+    swap.hidden = !rest.length; more.hidden = !shown.length;
+  }
+  async function fresh(n, save = true) { // n voices not heard yet, from the next pages
+    const out = [], from = page;
+    for (let tries = 0; out.length < n && tries < 4; tries++) {
+      const vs = await fetchPage(page++);
+      vs.forEach(v => { if (!seen.has(v.id) && out.length < n) { seen.add(v.id); out.push(v); } });
+      if (vs.length < 12) break;
+    }
+    if (save && !q.value) post({page: from}); // a reload shows these, not the ones swapped away
+    return out;
+  }
+  async function load() {
+    page = !q.value && CFG.seeded ? (CFG.page || 1) : 1; seen = new Set(keep.map(v => v.id));
+    list.replaceChildren(el("p", "muted small", "Loading\u2026"));
+    try {
+      const first = await fetchPage(page++);
+      if (!CFG.seeded && !q.value) { // once: keep Ethan and Egirl, swap the rest (asked for 2026-11-04)
+        CFG.seeded = true;
+        const pick = first.filter(v => /^\s*(ethan|e[\s-]?girl)\b/i.test(v.name) && !kept(v.id));
+        keep = keep.concat(pick).slice(-12); first.forEach(v => seen.add(v.id));
+        await post({keep, seeded: true});
+        shown = pick.length ? await fresh(12 - keep.length) : first;
+      } else {
+        shown = first.filter(v => !kept(v.id)); shown.forEach(v => seen.add(v.id));
+      }
+      draw();
+    } catch (e) { list.replaceChildren(el("p", "muted small", "Couldn\u2019t load voices: " + e.message)); }
+  }
+  swap.onclick = async () => {
+    swap.disabled = true;
+    try { shown = await fresh(Math.max(1, 12 - keep.length)); draw(); note.textContent = shown.length ? "" : "No more new voices for that search."; }
+    catch (e) { note.textContent = e.message; } finally { swap.disabled = false; }
   };
-  load(true);
+  more.onclick = async () => { try { shown = shown.concat(await fresh(12, false)); draw(); } catch (e) { note.textContent = e.message; } };
+  document.getElementById("fish-go").onclick = load;
+  q.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); load(); } });
+  document.getElementById("fish-save").onclick = async () => {
+    const d = await post({cap: Number(document.getElementById("fish-cap").value || 0)}); note.textContent = d.ok ? "Cap saved." : d.error;
+  };
+  load();
 })();
 """
