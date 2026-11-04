@@ -97,7 +97,7 @@ check("prefs: junk falls back piece by piece", h.ui_prefs({"cookie": "theta_ui=n
       and h.ui_prefs({"cookie": "theta_ui=<script>"}) == ("theta", "auto", "grid", "plus", "theme"))
 s, page, _ = call("GET", "/", headers={**K, "cookie": "theta_ui=aurora.light.compact"})
 page = page.decode()
-check("page renders the saved theme, mode, layout and glass flag", '<html lang="en" data-theme="aurora" data-mode="light" data-layout="compact" data-glassstyle="plus" data-bg="theme" data-glass>' in page)
+check("page renders the saved theme, mode, layout and glass flag", '<html lang="en" data-theme="aurora" data-mode="light" data-layout="compact" data-glassstyle="plus" data-bg="theme" data-type="frame" data-glass>' in page)
 check("forced mode: one theme-color meta", page.count('name="theme-color"') == 1)
 s, page, _ = call("GET", "/", headers=K)
 check("auto mode: light and dark theme-color metas", page.decode().count('name="theme-color"') == 2)

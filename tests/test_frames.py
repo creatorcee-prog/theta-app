@@ -62,3 +62,24 @@ for n in new:
     check(f"{n}: Theta wears the scheme's light", st["calm"] == h.THEMES[n]["dark"]["accent2"])
 check("the CSS braces balance", h._UI_CSS.count("{") == h._UI_CSS.count("}"))
 print("done")
+
+# ---- fonts (2026-11-04, later)
+import os as _os
+check("eleven open-licensed fonts, each weight on disk", len(h.FONTS) == 11 and all(
+    _os.path.isfile(_os.path.join(h._PARTS_DIR, "fonts", f"{k}-{w}.woff2")) for k, v in h.FONTS.items() for w in v[2]))
+code, kind, data = h.handle("GET", "/fonts/rajdhani-700.woff2", {}, {}, b"")[:3]
+check("a font is served, as a real woff2", code == 200 and kind == "font/woff2" and data[:4] == b"wOF2")
+check("nothing else is served from /fonts/", h.handle("GET", "/fonts/..%2Findex-400.woff2", {}, {}, b"")[0] != 200
+      and h.handle("GET", "/fonts/nope-400.woff2", {}, {}, b"")[0] != 200)
+check("every face the CSS asks for exists", all(_os.path.isfile(_os.path.join(h._PARTS_DIR, "fonts", f + ".woff2"))
+      for f in re.findall(r"url\(/fonts/([a-z0-9-]+)\.woff2\)", h._UI_CSS)))
+check("each frame brings its fonts; Edge is Rajdhani with Orbitron labels",
+      ':root[data-glassstyle="edge"]{--f-body:"Rajdhani"' in h._UI_CSS and '--f-label:"Orbitron"' in h._UI_CSS)
+check("a picked font beats the frame's", ':root:root[data-type="michroma"]{--f-body:"Michroma"' in h._UI_CSS)
+check("the font is kept in the cookie, frame's own by default", h.ui_type({"cookie": "theta_ui=theta.dark.grid.edge.theme.oxanium"}) == "oxanium"
+      and h.ui_type({"cookie": "theta_ui=theta.dark.grid.edge.theme"}) == "frame" and h.ui_type({"cookie": "theta_ui=a.b.c.d.e.evil"}) == "frame")
+sett = h.handle("GET", "/settings", {}, {"x-dashboard-key": "dk"}, b"")[2].decode()
+check("every font in Settings, shown in itself", all(f'data-pref="type" data-val="{k}"' in sett for k in h.FONT_PICKS)
+      and 'style="font-family:&quot;Rajdhani&quot;' in sett and 'data-type="frame"' in sett)
+check("the CSS braces still balance", h._UI_CSS.count("{") == h._UI_CSS.count("}"))
+print("fonts done")

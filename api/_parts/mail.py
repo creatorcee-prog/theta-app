@@ -727,6 +727,12 @@ def settings_page(headers):
         '<div class="seg" role="group" aria-label="Frame">' + "".join(
             f'<button type="button" data-pref="glassstyle" data-val="{k}" title="{html.escape(about)}">{html.escape(label)}</button>'
             for k, (label, about) in FRAMES.items()) + '</div></div>'
+        '<div><h3>Font</h3><p class="muted small">Frame\u2019s own uses the font each frame was made with (Edge and Breach use '
+        'Rajdhani, the font of the game menus they come from). Pick one to use it everywhere. Saved on this device.</p>'
+        '<div class="seg fonts" role="group" aria-label="Font">' + "".join(
+            f'<button type="button" data-pref="type" data-val="{k}"'
+            + (f' style="font-family:{html.escape(_fstack(k))}" title="{html.escape(FONTS[k][1])}"' if k in FONTS else "")
+            + f'>{html.escape(label)}</button>' for k, label in FONT_PICKS.items()) + '</div></div>'
         '<div><h3>Background</h3><p class="muted small">What sits behind everything. Separate from the color scheme, so any scheme works with any background. Saved on this device.</p>'
         '<div class="seg" role="group" aria-label="Background"><button type="button" data-pref="bg" data-val="theme">Theme</button>'
         '<button type="button" data-pref="bg" data-val="shards">Shards</button>'

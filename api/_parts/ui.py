@@ -106,7 +106,7 @@ def _frames_css():
     panel = ".card,.win,.kpi"
     cut = lambda n: (f"clip-path:polygon(0 0,calc(100% - {n}) 0,100% {n},100% 100%,{n} 100%,0 calc(100% - {n}))")
     caps = "text-transform:uppercase;letter-spacing:.09em"
-    mono = 'font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace'
+    mono = "font-family:var(--f-mono)"; head = "font-family:var(--f-head)"; label = "font-family:var(--f-label)"
     out = [F("edge", [
         (panel, "border-radius:0;border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);" + cut("14px")
          + ";background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 9%,transparent),transparent 46px),var(--surface);"
@@ -122,10 +122,10 @@ def _frames_css():
         (panel, "border-radius:0;border:1px solid color-mix(in srgb,var(--accent) 55%,transparent);"
          "background:color-mix(in srgb,var(--surface) 70%,transparent);box-shadow:inset 0 3px 0 var(--accent)"),
         (".card h2,.win h2", "display:inline-block;background:var(--accent);color:var(--on);padding:2px 10px;font-size:15px;"
-         + caps + ";" + mono + ";font-weight:700"),
-        (".card h3,.eyebrow,.small,.muted.small,code", mono),
-        (".top h1", caps + ";" + mono + ";font-size:24px;color:var(--accent)"),
-        (".btn", "border-radius:0;" + caps + ";" + mono + ";font-size:13px"),
+         + caps + ";" + head + ";font-weight:700"),
+        (".card h3,.eyebrow,.small,.muted.small", label), ("code", mono),
+        (".top h1", caps + ";" + head + ";font-size:24px;color:var(--accent)"),
+        (".btn", "border-radius:0;" + caps + ";" + head + ";font-size:13px"),
         (".seg,.seg button,.field,.box,.chip,.sw,.lo,.lrow,.msg.mine .mbody", "border-radius:0"),
         (".msg.mine .mbody", "border:1px solid color-mix(in srgb,var(--accent) 50%,transparent)"),
         (".tabbar", "border-top:1px solid var(--accent)"),
@@ -140,11 +140,11 @@ def _frames_css():
         (".msg.mine .mbody", "border-radius:4px;background:" + _brackets("var(--accent)", "10px", "2px") + ",var(--surface)"),
     ]), F("console", [
         (panel, "border-radius:2px;border:1px solid var(--border);box-shadow:none;background:var(--surface)"),
-        (".card h2,.win h2,.card h3", caps + ";" + mono + ";font-size:12.5px;font-weight:700;color:var(--muted)"),
-        (".top h1", mono + ";font-size:22px;letter-spacing:.02em"),
-        (".eyebrow,.small,code,.chip", mono),
+        (".card h2,.win h2,.card h3", caps + ";" + head + ";font-size:12.5px;font-weight:700;color:var(--muted)"),
+        (".top h1", head + ";font-size:22px;letter-spacing:.02em"),
+        (".eyebrow,.small,.chip", label), ("code", mono),
         (".btn,.seg,.seg button,.field,.box,.chip,.sw,.lo,.lrow,.msg.mine .mbody", "border-radius:2px"),
-        (".btn", caps + ";" + mono + ";font-size:12.5px"),
+        (".btn", caps + ";" + head + ";font-size:12.5px"),
         ("body::before", "background:linear-gradient(color-mix(in srgb,var(--text) 5%,transparent) 1px,transparent 1px) 0 0/100% 32px,"
          "linear-gradient(90deg,color-mix(in srgb,var(--text) 5%,transparent) 1px,transparent 1px) 0 0/32px 100%,var(--glowbg)"),
     ]), F("holo", [
@@ -156,6 +156,7 @@ def _frames_css():
          "transform:perspective(900px) rotateY(calc(var(--shine-x,0) * 4deg)) rotateX(calc(var(--shine-y,0) * -3deg));transition:transform .25s ease-out"),
         (".card h2,.win h2,.top h1", "text-shadow:0 0 12px color-mix(in srgb,var(--text) 45%,transparent);" + caps),
         (".card h2,.win h2", "font-size:16px"),
+        (".top h1", "font-size:22px"),
         (".btn", "border-radius:4px;" + caps + ";font-size:13px;box-shadow:0 0 14px color-mix(in srgb,var(--accent) 45%,transparent)"),
         (".seg,.field,.box,.chip,.sw,.lo,.lrow", "border-radius:4px"),
         (".msg.mine .mbody", "border-radius:6px;border:1px solid color-mix(in srgb,var(--text) 28%,transparent);background:"
@@ -165,6 +166,54 @@ def _frames_css():
     # Where a section was opened (Theta's open tool, or a link to #part), it lights up for a moment.
     out.append(".card:target,section:target{scroll-margin-top:calc(env(safe-area-inset-top) + 70px);animation:targetflash 1.8s ease-out}"
                "@keyframes targetflash{0%,30%{outline:2px solid var(--accent);outline-offset:4px}100%{outline:2px solid transparent;outline-offset:10px}}")
+    return "\n".join(out)
+
+
+# ---- Fonts (2026-11-04). All SIL Open Font License, shipped in api/_parts/fonts (served at /fonts/, cached
+# for good); a page downloads only the ones it uses. Rajdhani is the UI font of the game whose menus the
+# Edge and Breach frames come from, and Orbitron its small-label font (per Fonts In Use). The rest are free
+# look-alikes for the other screens. size-adjust evens out how big each one reads next to the system font.
+_SYS = '-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Inter,Roboto,system-ui,sans-serif'
+_MONO = 'ui-monospace,"SF Mono",Menlo,Consolas,monospace'
+FONTS = {  # id: (label, about, weights, size-adjust %, fallback)
+    "rajdhani": ("Rajdhani", "Narrow and technical: the red game menus", (400, 500, 600, 700), 112, _SYS),
+    "orbitron": ("Orbitron", "Wide and geometric: small sci-fi labels", (500, 700), 86, _SYS),
+    "chakra-petch": ("Chakra Petch", "Square with clipped corners: control panels", (400, 600, 700), 100, _SYS),
+    "oxanium": ("Oxanium", "Squared-off and clean", (400, 600, 700), 100, _SYS),
+    "exo-2": ("Exo 2", "Soft futuristic, easy to read", (400, 600, 700), 100, _SYS),
+    "michroma": ("Michroma", "Extended capitals: hologram labels", (400,), 80, _SYS),
+    "audiowide": ("Audiowide", "Racing-style rounded wide", (400,), 88, _SYS),
+    "saira-condensed": ("Saira Condensed", "Tall and condensed: HUD readouts", (500, 700), 112, _SYS),
+    "space-grotesk": ("Space Grotesk", "Quirky modern grotesk", (400, 700), 100, _SYS),
+    "share-tech-mono": ("Share Tech Mono", "Terminal mono: the hacking screen", (400,), 100, _MONO),
+    "jetbrains-mono": ("JetBrains Mono", "Coder's mono: dashboards", (400, 700), 96, _MONO),
+}
+# Each frame's own fonts: (body, headings, small labels, mono).
+FRAME_FONTS = {"edge": ("rajdhani", "rajdhani", "orbitron", "share-tech-mono"),
+               "breach": ("rajdhani", "share-tech-mono", "share-tech-mono", "share-tech-mono"),
+               "hud": ("chakra-petch", "chakra-petch", "saira-condensed", "jetbrains-mono"),
+               "console": ("space-grotesk", "jetbrains-mono", "jetbrains-mono", "jetbrains-mono"),
+               "holo": ("exo-2", "michroma", "michroma", "share-tech-mono")}
+FONT_PICKS = {"frame": "Frame's own", "system": "System"} | {k: v[0] for k, v in FONTS.items()}
+
+
+def _fstack(fid):
+    return f'"{FONTS[fid][0]}",{FONTS[fid][4]}'
+
+
+def _fonts_css():
+    out = [f'@font-face{{font-family:"{label}";src:url(/fonts/{fid}-{w}.woff2) format("woff2");font-weight:{w};'
+           f'font-style:normal;font-display:swap;size-adjust:{adj}%}}'
+           for fid, (label, _, weights, adj, _) in FONTS.items() for w in weights]
+    out.append(f':root{{--f-body:{_SYS};--f-head:var(--f-body);--f-label:var(--f-head);--f-mono:{_MONO}}}'
+               "body{font-family:var(--f-body)}h1,h2,h3,.btn,.seg button{font-family:var(--f-head)}.eyebrow{font-family:var(--f-label)}")
+    for fr, (b, h_, l, m) in FRAME_FONTS.items():
+        out.append(f':root[data-glassstyle="{fr}"]{{--f-body:{_fstack(b)};--f-head:{_fstack(h_)};--f-label:{_fstack(l)};--f-mono:{_fstack(m)}}}')
+    for fid in FONTS:  # a font you pick wins over the frame's (:root twice outranks the frame rule)
+        mono = FONTS[fid][4] == _MONO
+        out.append(f':root:root[data-type="{fid}"]{{--f-body:{_fstack(fid)};--f-head:{_fstack(fid)};--f-label:{_fstack(fid)}'
+                   + (f';--f-mono:{_fstack(fid)}' if mono else "") + "}")
+    out.append(f':root:root[data-type="system"]{{--f-body:{_SYS};--f-head:{_SYS};--f-label:{_SYS};--f-mono:{_MONO}}}')
     return "\n".join(out)
 
 
@@ -1044,7 +1093,7 @@ _UI_JS_SRC = r'''
     else mk(m === "dark" ? t.dark : t.light);
   }
   function save() {
-    document.cookie = "theta_ui=" + [root.dataset.theme, root.dataset.mode, root.dataset.layout, (root.dataset.glassstyle || "plus"), (root.dataset.bg || "theme")].join(".")
+    document.cookie = "theta_ui=" + [root.dataset.theme, root.dataset.mode, root.dataset.layout, (root.dataset.glassstyle || "plus"), (root.dataset.bg || "theme"), (root.dataset.type || "frame")].join(".")
       + ";path=/;max-age=31536000;samesite=lax";
   }
   function mark() {
@@ -2975,7 +3024,7 @@ def ui_icon(name):
             f'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{UI_ICONS[name]}</svg>')
 
 
-_UI_CSS = theme_css() + "\n" + _BASE_CSS + "\n" + _hdr_css() + "\n" + _frames_css() + "\nhtml.veiled .app,html.veiled .tabbar{visibility:hidden}"
+_UI_CSS = theme_css() + "\n" + _BASE_CSS + "\n" + _hdr_css() + "\n" + _frames_css() + "\n" + _fonts_css() + "\nhtml.veiled .app,html.veiled .tabbar{visibility:hidden}"
 _UI_JS = _UI_JS_SRC.replace("__THEMES__", json.dumps(
     {n: {"glass": bool(t.get("glass")), "mono": bool(t.get("mono")), "light": t["light"]["bg"],
          "dark": t["dark"]["bg"], "accent2": t["dark"]["accent2"]} for n, t in THEMES.items()}))
@@ -2991,6 +3040,12 @@ def ui_prefs(headers):
     glassstyle = raw[3] if len(raw) > 3 and raw[3] in FRAMES else "plus"
     bg = raw[4] if len(raw) > 4 and raw[4] in ("theme", "shards", "stars", "black", "gemini") else "theme"
     return theme, mode, layout, glassstyle, bg
+
+
+def ui_type(headers):
+    """The font picked in Settings (frame = the frame's own), the 6th part of the theta_ui cookie."""
+    raw = (_cookie(headers, "theta_ui") or "").split(".")
+    return raw[5] if len(raw) > 5 and raw[5] in FONT_PICKS else "frame"
 
 
 def avatar_img(agent, size=40):
@@ -3057,7 +3112,7 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
         body_class = (body_class + " has-mini").strip()  # Theta sits in the top-right corner of this page
     body_cls = ("hasminibar " + body_class).strip() if show_minibar else body_class
     return (
-        f'<!doctype html><html lang="en" data-theme="{theme}" data-mode="{mode}" data-layout="{layout}" data-glassstyle="{glassstyle}" data-bg="{bg}"{flags}{bgstyle}>'
+        f'<!doctype html><html lang="en" data-theme="{theme}" data-mode="{mode}" data-layout="{layout}" data-glassstyle="{glassstyle}" data-bg="{bg}" data-type="{ui_type(headers)}"{flags}{bgstyle}>'
         '<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
         f'<title>{html.escape(title)} · {APP_NAME}</title>'
         '<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">'

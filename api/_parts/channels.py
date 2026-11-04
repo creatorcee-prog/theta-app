@@ -1218,6 +1218,10 @@ def handle(method, path, query, headers, body):
     if path in assets:  # versioned URLs (?v=), so they can be cached for good
         kind, text = assets[path]
         return 200, kind, text.encode(), [("Cache-Control", "public, max-age=31536000, immutable")]
+    m = re.fullmatch(r"/fonts/([a-z0-9-]+-\d00)\.woff2", path)
+    if m and os.path.isfile(os.path.join(_PARTS_DIR, "fonts", m.group(1) + ".woff2")):  # fixed names only
+        with open(os.path.join(_PARTS_DIR, "fonts", m.group(1) + ".woff2"), "rb") as fh:
+            return 200, "font/woff2", fh.read(), [("Cache-Control", "public, max-age=31536000, immutable")]
     if path.startswith("/avatar/") and path.endswith(".svg"):
         who = path[len("/avatar/"):-len(".svg")]
         return (200, "image/svg+xml", avatar_svg(who if who in AGENT_LOOKS else "hub").encode(),
