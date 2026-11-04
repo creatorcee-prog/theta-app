@@ -20,6 +20,71 @@ BOARD_APPS = [  # always findable, never "new": the full pages, opened in a shee
 ]
 
 
+# The board's goal (2026-11-04): clear every widget that isn't the world (news, entertainment, weather).
+# A "task" widget leaves when it's dealt with (or seen, unless it's important); what's left is the world.
+BOARD_WORLD = {"breaking", "news", "trending", "releases", "weather"}
+BOARD_PURPOSE = ("The board (the user's widgets when you're minimized) has one goal: clear every widget that isn't the "
+                 "world. News, entertainment, releases and weather are meant to stay; everything else (reminders, "
+                 "money, calendar, diagnostics, jobs, the daily check) is something to deal with and clear. When a "
+                 "widget is waiting to be cleared, help the user clear it: do it with your tools, or say the one "
+                 "step that clears it. A clear board is the user caught up.")
+
+# What you tap first on the board counts most: a widget's reward is 1 for a first tap, 1/2 for a second,
+# 1/3 for a third (in one look at the board), fading by half every two weeks. News keeps its own order
+# except for stories on topics you've opened before.
+REWARD_HALF_LIFE = 14 * 86400
+_STOP = set("the a an and or of to in on for with at by from as is are was were be been has have had it its this that "
+            "after over into about new says say said will would could more most than but not no yes how why what who "
+            "when where which their they them his her he she you your our we us i up out off just after before amid "
+            "near finds find gets get makes make take takes back first last year years week day days today while still".split())
+
+
+def _decay(v, at, now):
+    return v * 0.5 ** (max(0, now - at) / REWARD_HALF_LIFE)
+
+
+def board_rewards(now=None):
+    now = now or time.time()
+    r = _meta_json("board:reward", {})
+    return {k: _decay(v.get("v", 0), v.get("at", now), now) for k, v in r.items()}
+
+
+def topic_words(title):
+    return {w for w in re.findall(r"[a-z][a-z'-]{3,}", (title or "").lower()) if w not in _STOP}
+
+
+def board_topics(now=None):
+    now = now or time.time()
+    t = _meta_json("board:topics", {})
+    return {k: _decay(v.get("v", 0), v.get("at", now), now) for k, v in t.items()}
+
+
+def board_click(wid, order=1, title="", kind="widget", now=None):
+    """A tap on the board. Widgets: the first tap in a look at the board earns the most. News: the
+    story's topics get a little more interesting (news order is otherwise untouched)."""
+    now = now or time.time()
+    wid = re.sub(r"[^a-z0-9-]", "", str(wid or "").lower())[:40]
+    if kind == "news":
+        t = _meta_json("board:topics", {})
+        for w in topic_words(title):
+            old = _decay(t.get(w, {}).get("v", 0), t.get(w, {}).get("at", now), now)
+            t[w] = {"v": round(old + 1, 3), "at": now}
+        t = dict(sorted(t.items(), key=lambda kv: -kv[1]["v"])[:200])
+        store().set_meta("board:topics", json.dumps(t))
+        return {"topics": len(t)}
+    if not wid or wid in ("news", "breaking"):
+        return {}
+    try:
+        order = max(1, min(int(order), 20))
+    except (TypeError, ValueError):
+        order = 1
+    r = _meta_json("board:reward", {})
+    old = _decay(r.get(wid, {}).get("v", 0), r.get(wid, {}).get("at", now), now)
+    r[wid] = {"v": round(old + 1 / order, 3), "at": now}
+    store().set_meta("board:reward", json.dumps(dict(sorted(r.items(), key=lambda kv: -kv[1]["v"])[:100])))
+    return {"reward": r[wid]["v"]}
+
+
 def _sig(*parts):
     return hashlib.sha1(json.dumps(parts, default=str, sort_keys=True).encode()).hexdigest()[:12]
 
@@ -28,7 +93,7 @@ def _w(wid, size, title, score, *, eyebrow="", big="", sub="", rows=None, items=
        tone="", search="", sig_parts=None):
     rows = [r for r in (rows or []) if r and r[0]]
     items = [i for i in (items or []) if i and i.get("t")]
-    return {"id": wid, "size": size, "title": title, "eyebrow": eyebrow, "big": big, "sub": sub,
+    return {"id": wid, "cat": "world" if wid in BOARD_WORLD else "task", "size": size, "title": title, "eyebrow": eyebrow, "big": big, "sub": sub,
             "rows": [[str(a)[:80], str(b)[:80]] for a, b in rows][:6], "items": items[:5], "open": open_,
             "important": bool(important), "tone": tone, "score": score,
             "search": " ".join([title, eyebrow, big, sub, search] + [f"{a} {b}" for a, b in rows]
@@ -36,7 +101,7 @@ def _w(wid, size, title, score, *, eyebrow="", big="", sub="", rows=None, items=
             "sig": _sig(sig_parts if sig_parts is not None else [big, sub, rows, [i.get("t") for i in items]])}
 
 
-def board(now=None):
+def board(now=None, world=True):
     """Every widget the board can show, most important first. Each part is guarded: one failing never
     blanks the board."""
     now = now or datetime.now(hub_tz())
@@ -128,10 +193,15 @@ def board(now=None):
                            items=[{"t": (x.get("raw") or x.get("title") or "")[:90], "u": x.get("href"), "s": x.get("source")} for x in breaking[1:3]],
                            open_=b.get("href") or "/#news", important=True, tone="bad", search="news breaking",
                            sig_parts=[b.get("raw") or b.get("title")]))
-        top = [n for n in news if not n.get("tag")][:4]
+        likes = board_topics()
+        pool = [n for n in news if not n.get("tag")][:12]
+        interest = lambda n: sum(likes.get(w, 0) for w in topic_words(n.get("raw") or n.get("title") or ""))
+        ranked = sorted(pool, key=lambda n: -interest(n)) if likes else pool  # stable: the outlets' order otherwise
+        top = ranked[:4]
         if top:
             out_.append(_w("news", 4, "Top stories", 30, eyebrow=f"{len(news)} from your outlets",
-                           items=[{"t": (x.get("raw") or x.get("title") or "")[:100], "u": x.get("href"), "s": x.get("source"),
+                           items=[{"t": (x.get("raw") or x.get("title") or "")[:100], "u": x.get("href"),
+                                   "s": ("For you \u00b7 " if likes and interest(x) >= 1 else "") + (x.get("source") or ""),
                                    "img": x.get("image") if str(x.get("image") or "").startswith("https://") else ""} for x in top],
                            open_="/#news", search="news headlines"))
         return out_
@@ -202,13 +272,38 @@ def board(now=None):
                    open_=w.get("href") or "", search="crew agent")
                 for w in wins[:4] if w.get("agent")]
 
-    for fn in (w_reminders, w_calendar, w_money, w_diag, w_news, w_trending, w_releases, w_daily, w_focus,
-               w_weather, w_jobs, w_dreams, w_crew):
+    fns = (w_reminders, w_calendar, w_money, w_diag, w_news, w_trending, w_releases, w_daily, w_focus,
+           w_weather, w_jobs, w_dreams, w_crew)
+    for fn in fns if world else [f for f in fns if f not in (w_news, w_trending, w_releases, w_weather)]:
         part(fn)
+    rw = board_rewards()
+    for w in out:
+        if w["id"] not in ("news", "breaking"):
+            w["score"] += min(30, rw.get(w["id"], 0) * 8)
     out.sort(key=lambda w: (not w["important"], -w["score"]))
     apps = [{"id": "app-" + k, "size": 1, "title": label, "app": True, "open": href, "search": f"{label} {words}".lower(),
              "sig": "app", "important": False, "score": 0} for k, label, href, words in BOARD_APPS]
-    return {"widgets": out, "apps": apps, "at": now.isoformat(timespec="seconds")}
+    return {"widgets": out, "apps": apps, "at": now.isoformat(timespec="seconds"),
+            "to_clear": sum(1 for w in out if w["cat"] == "task" and w["id"] != "diagnostics-ok")}
+
+
+def board_to_clear(now=None):
+    """The task widgets on the board right now (what Theta is helping clear)."""
+    return [w for w in board(now, world=False)["widgets"] if w["cat"] == "task" and w["id"] != "diagnostics-ok"]
+
+
+def _tool_board(arg, agent):
+    left = board_to_clear()
+    if not left:
+        return "The board is clear: only the world (news, entertainment, weather) is left."
+    return "Widgets to clear: " + "; ".join(
+        f"{w['title']} ({'important' if w['important'] else 'new'}): " + ", ".join(
+            x for x in [w.get('big'), w.get('sub')] + [f"{a} {b}" for a, b in w.get('rows', [])[:3]] if x)[:160] for w in left)
+
+
+TOOLS["board"] = ("board | now   (what's on the user's widget board waiting to be cleared; the goal is a board with only "
+                  "news and entertainment left)", _tool_board, {"theta"})
+HEAD_LOOKUPS.add("board")
 
 
 def board_markup():
@@ -329,7 +424,7 @@ BOARD_JS = r"""
       if (w.items && w.items.length) {
         const l = el("div", "items");
         w.items.slice(0, w.size === 4 ? 4 : 2).forEach(x => { const a = el("a"); a.href = x.u || "#"; if (x.s) a.append(el("small", null, x.s)); a.append(x.t);
-          if (/^https?:/.test(x.u || "")) { a.target = "_blank"; a.rel = "noopener"; } a.onclick = e => { e.stopPropagation(); if (!/^https?:/.test(x.u || "")) { e.preventDefault(); openW({open: x.u, title: w.title}); } }; l.append(a); });
+          if (/^https?:/.test(x.u || "")) { a.target = "_blank"; a.rel = "noopener"; } a.onclick = e => { e.stopPropagation(); if (w.id === "news" || w.id === "breaking") tap({kind: "news", title: x.t}); if (!/^https?:/.test(x.u || "")) { e.preventDefault(); openW({open: x.u, title: w.title}); } }; l.append(a); });
         c.append(l);
       }
     }
@@ -344,9 +439,9 @@ BOARD_JS = r"""
       list = data.widgets.concat(data.apps).filter(w => words.every(x => (w.search || "").includes(x)));
       label = list.length ? `${list.length} on the board for “${q}” · send to ask Theta` : `Nothing on the board for “${q}” · send to ask Theta`;
     } else {
-      const v = visible(), imp = v.filter(w => w.important).length;
-      list = v.concat(data.apps);
-      label = !v.length ? "All caught up · type to search everything" : imp ? `${imp} important · ${v.length - imp} new` : `${v.length} new since you looked`;
+      const v = visible(), imp = v.filter(w => w.important).length, left = v.filter(w => w.cat === "task" && w.id !== "diagnostics-ok").length;
+      list = v.concat(data.apps); taps = 0; // a new look at the board
+      label = !left ? "All clear · just the world now" : `${left} to clear` + (imp ? ` · ${imp} important` : "") + (v.length > left ? ` · ${v.length - left} from the world` : "");
     }
     grid.replaceChildren(...list.map(card)); title.textContent = label;
     allBtn.hidden = !!q; allBtn.textContent = showAll ? "Only new" : "Show all";
@@ -378,7 +473,12 @@ BOARD_JS = r"""
     u.searchParams.set("full", "1"); location.href = u.pathname + u.search + u.hash;
   };
   addEventListener("keydown", e => { if (e.key === "Escape" && !sheet.hidden) closeSheet(); });
+  // what you open first in a look at the board counts most (the board learns your order; news only learns topics)
+  let taps = 0;
+  const tap = body_ => fetch("/api/board/click", {method: "POST", headers: H, body: JSON.stringify(body_)}).catch(() => {});
   function openW(w) {
+    if (w.id === "breaking") tap({kind: "news", title: w.big || ""});
+    else if (w.id && !w.app) tap({id: w.id, order: ++taps});
     const u = w.open || "";
     if (/^https?:/.test(u)) { window.open(u, "_blank", "noopener"); return; }
     if (u === "#chat") { body.classList.toggle("showchat"); return; }

@@ -71,3 +71,40 @@ check("only the hub frames the hub (other sites still can't)", sec["X-Frame-Opti
 check("the sheet only opens the app's own paths", "/^\\/[A-Za-z0-9\\/#?=&._-]*$/.test(want)" in js and '!want.startsWith("//")' in js)
 check("a look changed in the sheet shows on the Theta page", "look() !== lookAt" in js)
 print("done")
+
+# ---- the board's goal, learning your order, news interests (2026-11-04, later)
+d = h.board()
+check("every widget is a task to clear or the world", all(w["cat"] in ("task", "world") for w in d["widgets"])
+      and all(w["cat"] == "world" for w in d["widgets"] if w["id"] in h.BOARD_WORLD))
+check("Theta knows the goal: in its prompt, its glance, and a board lookup", h.BOARD_PURPOSE in h.head_system(native=True)
+      and h.BOARD_PURPOSE in h.head_system() and "Board:" in h.head_glance() and "board" in h.head_tools() and "board" in h.HEAD_LOOKUPS)
+check("the board lookup lists what's left to clear", "Widgets to clear:" in h._tool_board("now", "theta"))
+check("the glance never fetches the news (tasks only)", "world=False" in open(h._PARTS_DIR + "/board.py").read())
+h.store().set_meta("board:reward", "{}")
+before = {w["id"]: w["score"] for w in h.board()["widgets"]}
+r = json.loads(h.handle("POST", "/api/board/click", {}, K, json.dumps({"id": "daily", "order": 1}).encode())[2])
+r2 = json.loads(h.handle("POST", "/api/board/click", {}, K, json.dumps({"id": "reminders", "order": 3}).encode())[2])
+check("a first tap earns more than a third", r["reward"] == 1 and abs(r2["reward"] - 1 / 3) < .01)
+after = {w["id"]: w["score"] for w in h.board()["widgets"]}
+check("...and lifts the widget on the board", after["daily"] > before["daily"] and after["daily"] - before["daily"] > after["reminders"] - before["reminders"])
+check("news earns no order reward", h.board_click("news", 1) == {} and h.board_click("breaking", 1) == {})
+check("rewards fade by half in two weeks", abs(h._decay(1, 0, h.REWARD_HALF_LIFE) - .5) < 1e-9)
+h.board_click("", 1, "Mars rover finds water ice near the equator", kind="news")
+t = h.board_topics()
+check("opening a story makes its topics more interesting (common words aren't topics)", t.get("mars", 0) > 0 and t.get("rover", 0) > 0 and "the" not in t and "near" not in t)
+_nw = h.news_windows
+h.news_windows = lambda: [{"raw": "Stocks slip on rates", "href": "https://a", "source": "A"},
+                          {"raw": "City council meets", "href": "https://b", "source": "B"},
+                          {"raw": "Mars rover drills deeper", "href": "https://c", "source": "C"}]
+news = {w["id"]: w for w in h.board()["widgets"]}["news"]
+h.news_windows = _nw
+check("news order is the outlets' except stories on topics you like, which come first and say so",
+      news["items"][0]["t"].startswith("Mars") and news["items"][0]["s"].startswith("For you") and news["items"][1]["t"].startswith("Stocks"))
+js = h.BOARD_JS
+check("the page sends taps in order, and counts a new look from 1", "tap({id: w.id, order: ++taps})" in js and "taps = 0; // a new look" in js)
+check("the header counts what's left to clear", "to clear" in js and "just the world now" in js)
+css = h._UI_CSS
+check("Hologram: faint scan lines over its cards, still with reduced motion", "repeating-linear-gradient(0deg,color-mix(in srgb,var(--text) 5%,transparent) 0 1px,transparent 1px 3px)" in css
+      and ':root[data-glassstyle="holo"] .card::before{animation:none}' in css)
+check("Hologram: the gyro tilts it 85% less (4deg -> 0.6deg, 3deg -> 0.45deg)", "* 0.6deg" in css and "* -0.45deg" in css and "* 4deg" not in css)
+print("goal done")

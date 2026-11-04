@@ -153,8 +153,13 @@ def _frames_css():
          + ",linear-gradient(160deg,color-mix(in srgb,var(--text) 11%,transparent),color-mix(in srgb,var(--text) 2%,transparent) 60%);"
          "-webkit-backdrop-filter:blur(10px) saturate(130%);backdrop-filter:blur(10px) saturate(130%);"
          "box-shadow:0 0 22px color-mix(in srgb,var(--text) 10%,transparent),inset 0 0 18px color-mix(in srgb,var(--text) 6%,transparent);"
-         "transform:perspective(900px) rotateY(calc(var(--shine-x,0) * 4deg)) rotateX(calc(var(--shine-y,0) * -3deg));transition:transform .25s ease-out"),
+         "transform:perspective(900px) rotateY(calc(var(--shine-x,0) * 0.6deg)) rotateX(calc(var(--shine-y,0) * -0.45deg));transition:transform .25s ease-out"),
         (".card h2,.win h2,.top h1", "text-shadow:0 0 12px color-mix(in srgb,var(--text) 45%,transparent);" + caps),
+        # faint scan lines, like a projected image (2026-11-04)
+        (".card::before,.win::before,.kpi::before", 'content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;'
+         "background:repeating-linear-gradient(0deg,color-mix(in srgb,var(--text) 5%,transparent) 0 1px,transparent 1px 3px);"
+         "animation:holoscan 8s linear infinite"),
+        (".card,.win,.kpi", "position:relative"),
         (".card h2,.win h2", "font-size:16px"),
         (".top h1", "font-size:22px"),
         (".btn", "border-radius:4px;" + caps + ";font-size:13px;box-shadow:0 0 14px color-mix(in srgb,var(--accent) 45%,transparent)"),
@@ -163,6 +168,8 @@ def _frames_css():
          + _brackets("color-mix(in srgb,var(--text) 85%,transparent)", "9px", "1.5px") + ",color-mix(in srgb,var(--text) 6%,transparent)"),
     ])]
     out.append(':root[data-glassstyle="console"]{--pad:14px;--gap:10px}')
+    out.append("@keyframes holoscan{to{background-position:0 24px}}"
+               '@media (prefers-reduced-motion:reduce){:root[data-glassstyle="holo"] .card::before{animation:none}}')
     # Where a section was opened (Theta's open tool, or a link to #part), it lights up for a moment.
     out.append(".card:target,section:target{scroll-margin-top:calc(env(safe-area-inset-top) + 70px);animation:targetflash 1.8s ease-out}"
                "@keyframes targetflash{0%,30%{outline:2px solid var(--accent);outline-offset:4px}100%{outline:2px solid transparent;outline-offset:10px}}")

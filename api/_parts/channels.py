@@ -551,6 +551,12 @@ def handle(method, path, query, headers, body):
             kind = "audio/wav" if audio[:4] == b"RIFF" else "audio/mpeg"  # Fish Audio sends MP3
             return 200, kind, audio, [("Cache-Control", "no-store")]
 
+        if path == "/api/board/click":  # a tap on the board: what you open first counts most (board.py)
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            return _json(200, {"ok": True, **board_click(data.get("id"), data.get("order"), str(data.get("title") or "")[:200],
+                                                        "news" if data.get("kind") == "news" else "widget")})
+
         if path == "/api/voice/fish/config":  # Settings: Theta's Fish Audio voice and the paid voice's monthly cap
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
