@@ -98,7 +98,7 @@ check("on a light background the dots draw darker instead of adding light", "lig
 check("docks to the corner once you've talked and Theta pulls something up", "theta:panels" in stage and "if (e.detail.count && talked) dock()" in stage
       and "panelsEvent(m.panels.length)" in h._DECK_JS)
 check("a smooth move both ways (FLIP)", "function flip(change, ms)" in stage and "cubic-bezier" in stage)
-check("leaving for another page: it shrinks into the corner first", "location.href = u.href" in stage)
+check("leaving for another page: it shrinks into the corner, with no hold before the next page loads", "location.href = u.href; // no waiting" in stage and "docked ? 500" not in stage)
 check("the corner is the same spot as on other pages", "top:calc(env(safe-area-inset-top,0px) + 10px);right:calc(env(safe-area-inset-right,0px) + 12px)"
       in h._STAGE_CSS and "top:calc(env(safe-area-inset-top,0px) + 10px);right:calc(env(safe-area-inset-right,0px) + 12px)" in h._UI_CSS)
 other = h.handle("GET", "/settings", {}, {"x-dashboard-key": "dk"}, b"")[2].decode()
@@ -122,4 +122,14 @@ check("effects are rendered offline into a new clip, so playback isn't rerouted"
 check("an effect that fails plays the plain voice", "catch (e) { return blob; }" in ui)
 check("never clips", "0.98 / peak" in ui)
 check("the effect waits for the page script, which loads after", 'addEventListener("DOMContentLoaded", fxInit)' in js)
+css = h._UI_CSS
+check("page changes are view transitions: the tab bar stays, Theta morphs between the corner and the middle",
+      "@view-transition{navigation:auto}" in css and ".theta-mini{view-transition-name:theta}" in css
+      and "#head-av{view-transition-name:theta}" in h._STAGE_CSS and ".tabbar{view-transition-name:tabbar}" in css)
+check("where the browser morphs Theta, the page doesn't move it a second time", "if (window.thetaVT) return;" in stage
+      and "window.thetaVT && (fromCorner || (booted && fromApp))" in stage and "window.thetaVT=" in home)
+check("cards ease in one after another; Theta in the corner thinks while the next page loads", "@keyframes pagein" in css
+      and ".nav-wait .theta-mini{animation:minithink" in css)
+check("reduced motion: no transitions", "@media (prefers-reduced-motion:reduce){@view-transition{navigation:none}" in css)
+check("Chrome starts loading a page as a finger lands on its link (never the API)", 'type="speculationrules"' in home and '"/api/*"' in home)
 print("done")

@@ -1391,6 +1391,7 @@ _DECK_JS = r"""
 # ---- The stage (the Theta page, immersive): Theta alone on its theme's dark "space", the controls and
 # chat appearing when you tap and fading 1.5 s after you stop; the opening assembles Theta and greets.
 _STAGE_CSS = """
+#head-av{view-transition-name:theta} /* the browser morphs it to and from the corner of other pages */
 .hud{background:radial-gradient(60% 45% at 50% 40%,color-mix(in srgb,var(--mood,#4fd3ff) 13%,transparent),transparent 72%),var(--stage,#070b10);color:#e6f2fa}
 .hud .hstate{color:var(--mood,#4fd3ff)}.hud .said,.hud .note{color:#9fb3c2}
 .hud .talk{background:var(--mood,#4fd3ff)}.hud .hear{border-color:var(--mood,#4fd3ff)}
@@ -1529,9 +1530,10 @@ _STAGE_JS = r"""
     if (!a || e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || a.target === "_blank") return;
     const u = new URL(a.href, location.href);
     if (u.origin !== location.origin || u.pathname === "/head" || u.pathname === location.pathname) return;
+    if (window.thetaVT) return; // the browser morphs Theta into the next page's corner itself (view transitions)
     e.preventDefault();
     if (!docked) { docked = true; flip(() => body.classList.add("docked"), 480); }
-    setTimeout(() => { location.href = u.href; }, docked ? 500 : 60);
+    location.href = u.href; // no waiting: the shrink plays while the next page loads
   });
 
   // ---- the opening. The first open of a session is cinematic: a spark in the dark, streams of light
@@ -1546,7 +1548,11 @@ _STAGE_JS = r"""
         booted = sessionStorage.getItem("theta:booted") === "1"; sessionStorage.setItem("theta:booted", "1"); } catch (e) { booted = true; }
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
   let greetAt = 1400;
-  if (fromCorner) {
+  let fromApp = false;
+  try { fromApp = !!document.referrer && new URL(document.referrer).origin === location.origin && new URL(document.referrer).pathname !== "/head"; } catch (e) {}
+  if (window.thetaVT && (fromCorner || (booted && fromApp))) {
+    greetAt = 700; // the browser already morphed Theta here from the page before: no second move
+  } else if (fromCorner) {
     body.classList.add("docked"); docked = true; greetAt = 800;
     requestAnimationFrame(() => requestAnimationFrame(undock));
   } else if (!booted && !reduce) {
