@@ -736,7 +736,7 @@ select.field{width:auto;flex:1;min-width:120px}
 /* Home quick actions + attention */
 .quickactions{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}
 .quickactions a{font-weight:650;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:9px 14px;text-decoration:none}
-.attention{border-color:color-mix(in srgb,var(--warn) 55%,var(--border))}
+.attention{border-color:color-mix(in srgb,var(--warn) 55%,var(--border));margin:0 0 16px}
 .attention li{margin:4px 0}
 .attention a{font-weight:650}
 /* Spending donut */
@@ -792,6 +792,7 @@ input:disabled,select:disabled,textarea:disabled{opacity:.55;cursor:default}
 .theta-mini{position:fixed;top:calc(env(safe-area-inset-top,0px) + 10px);right:calc(env(safe-area-inset-right,0px) + 12px);z-index:60;
  width:48px;height:48px;border-radius:50%;display:block}
 .theta-mini canvas{width:100%;height:100%;display:block;transform-origin:0 0}
+body.has-mini header.top{padding-right:60px} /* room for Theta in the corner */
 .theta-mini:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 #bg-layer{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden;background:#000}
 #bg-layer.off{display:none}
@@ -2903,6 +2904,8 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
                    f'{" aria-current=page" if href == active else ""}>{ui_icon(icon)}<span>{label}</span></a>'
                    for href, label, icon in NAV_MORE)
     show_minibar = "chatpage" not in body_class.split()  # the chat page (and the Head page, which is the chat) has the full composer
+    if active != "/head":
+        body_class = (body_class + " has-mini").strip()  # Theta sits in the top-right corner of this page
     body_cls = ("hasminibar " + body_class).strip() if show_minibar else body_class
     return (
         f'<!doctype html><html lang="en" data-theme="{theme}" data-mode="{mode}" data-layout="{layout}" data-glassstyle="{glassstyle}" data-bg="{bg}"{flags}{bgstyle}>'
@@ -2916,6 +2919,11 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
         # Request headers for page scripts, defined before any of them runs.
         '<script>window.THETA_H = {"Content-Type": "application/json", "x-dashboard-key": '
         'new URLSearchParams(location.search).get("key") || ""};'
+        # The app opens on Theta: opened from its Home Screen icon, a launch onto Home goes to the Theta page
+        # (an icon added before start_url changed still opens "/"). After that, Home is just a tab.
+        'try{if(location.pathname==="/"&&(navigator.standalone||matchMedia("(display-mode: standalone)").matches)'
+        '&&!sessionStorage.getItem("theta:launched")){sessionStorage.setItem("theta:launched","1");location.replace("/head"+location.search)}'
+        'sessionStorage.setItem("theta:launched","1")}catch(e){}'
         + ('window.THETA_LOCK = true;' if (current_session(headers) or {}).get("lock") else '') + '</script></head>'
         f'<body class="{body_cls}"><div class="app"><aside class="rail glass" aria-label="Sidebar">'
         f'<a class="brand" href="/">{avatar_img("theta", 32)}{APP_NAME}</a><nav aria-label="Main">{nav}</nav>'

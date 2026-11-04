@@ -105,4 +105,10 @@ other = h.handle("GET", "/settings", {}, {"x-dashboard-key": "dk"}, b"")[2].deco
 check("Theta sits in the corner of every other page, and taps back to the Theta page", 'class="theta-mini" href="/head"' in other
       and 'class="theta-mini"' not in h.head_page({"host": "x", "x-dashboard-key": "dk"}) and "theta:fromCorner" in h._UI_JS)
 check("the corner Theta wears its last mood", "theta:moodColor" in h._UI_JS and 'store("theta:moodColor"' in js)
+# ---- fixes from the phone (2026-11-04)
+home = h.handle("GET", "/", {}, {"x-dashboard-key": "dk"}, b"")[2].decode()
+check("opened from the Home Screen icon onto Home, the app goes to Theta (an icon added before still opens /)",
+      'location.pathname==="/"&&(navigator.standalone' in home and 'location.replace("/head"' in home and "theta:launched" in home)
+check("pages with Theta in the corner leave room in their header", 'has-mini' in home and "body.has-mini header.top{padding-right:60px}" in h._UI_CSS)
+check("the Needs attention card keeps its distance from the cards below", ".attention{border-color:color-mix(in srgb,var(--warn) 55%,var(--border));margin:0 0 16px}" in h._UI_CSS)
 print("done")
