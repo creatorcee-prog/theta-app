@@ -121,3 +121,15 @@ check("Settings: Keep and Swap, kept voices first, and the list picks up where S
       and '"page": 3' in sett and "Ethan" in sett and "...keep.map(row), ...rest.map(row)" in h._FISH_JS)
 check("once: Ethan and Egirl kept, the rest swapped", "(ethan|e[\\s-]?girl)" in h._FISH_JS and "seeded: true" in h._FISH_JS)
 print("keep done")
+
+# ---- samples with the effect (2026-11-04, later)
+check("only Fish Audio's own https addresses are fetched for a sample", h.fish_sample_ok("https://cdn.fish.audio/a.mp3")
+      and h.fish_sample_ok("https://fish.audio/x") and not h.fish_sample_ok("http://cdn.fish.audio/a.mp3")
+      and not h.fish_sample_ok("https://evil.example/fish.audio") and not h.fish_sample_ok("https://fish.audio.evil.example/a")
+      and not h.fish_sample_ok("https://cdn.fish.audio:8443/a") and not h.fish_sample_ok("https://169.254.169.254/"))
+check("the sample route refuses anything else", h.handle("GET", "/api/voice/fish/sample", {"url": ["https://evil.example/a.mp3"]}, K, b"")[0] == 400
+      and h.handle("GET", "/api/voice/fish/sample", {"url": ["https://cdn.fish.audio/a.mp3"]}, {}, b"")[0] == 401)
+sett = h.handle("GET", "/settings", {}, K, b"")[2].decode()
+check("Settings: the effect picker next to the voices, samples play through it", 'id="fish-fx"' in sett and 'id="fish-fx-amt"' in sett
+      and "FXN.render(await sampleBlob(url)" in h._FISH_JS and "/api/voice/fish/sample?url=" in h._FISH_JS)
+print("samples done")

@@ -1305,6 +1305,17 @@ def handle(method, path, query, headers, body):
         except LLMError as e:
             return _json(502, {"ok": False, "error": str(e)})
 
+    if path == "/api/voice/fish/sample":  # Settings: a voice sample through the hub, so the effect can be heard on it
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        try:
+            kind, audio = fish_sample(query.get("url", [""])[0])
+        except ValueError as e:
+            return _json(400, {"ok": False, "error": str(e)})
+        except LLMError as e:
+            return _json(502, {"ok": False, "error": str(e)})
+        return 200, kind, audio, [("Cache-Control", "private, max-age=86400")]
+
     if path == "/api/feed":
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})
