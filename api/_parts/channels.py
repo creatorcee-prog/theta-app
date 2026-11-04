@@ -1301,6 +1301,11 @@ def handle(method, path, query, headers, body):
         out = agent_page(headers, path[len("/agent/"):]) if agent_path else pages[path]()
         return 200, "text/html; charset=utf-8", out.encode(), _login_cookie(query)
 
+    if path == "/api/spotlight":  # the Spotlight background: upcoming entertainment you'd care about (board.py)
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        return _json(200, {"ok": True, "items": spotlight()})
+
     if path == "/api/board":  # the Theta page's widgets (board.py)
         if not _auth_dashboard(query, headers):
             return _json(401, {"ok": False, "error": "dashboard key required"})

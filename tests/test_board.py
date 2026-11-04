@@ -108,3 +108,55 @@ check("Hologram: faint scan lines over its cards, still with reduced motion", "r
       and ':root[data-glassstyle="holo"] .card::before{animation:none}' in css)
 check("Hologram: the gyro tilts it 85% less (4deg -> 0.6deg, 3deg -> 0.45deg)", "* 0.6deg" in css and "* -0.45deg" in css and "* 4deg" not in css)
 print("goal done")
+
+# ---- the ticker, Theta hidden under the board, new schemes and frame, pictures as Theta (2026-11-04, later)
+page = h.head_page(K)
+js, css = h.BOARD_JS, h.BOARD_CSS
+check("a ticker across the top while Theta is minimized", 'id="ticker"' in page and "body.docked .ticker:not([hidden]){display:flex}" in css
+      and "@keyframes tkcrawl" in css)
+check("the ticker: Theta's last reply first, then weather, what's next, breaking, headlines, releases", all(k in js for k in
+      ('k: "Theta", t: lastReply', 'k: "Weather"', "W.calendar.eyebrow", 'k: "Breaking"', "W.news && W.news.items", "W.releases")))
+check("it loops without a gap and pauses on a tap", "track.replaceChildren(...make(), ...make())" in js and 'classList.toggle("held")' in js)
+check("reduced motion: the ticker holds still", "@media (prefers-reduced-motion:reduce){.tk-track{animation:none}" in css)
+check("minimized: Tap to talk, the caption and Talk are hidden outright (not just faded)",
+      "body.docked #head-state,body.docked #head-said{visibility:hidden}" in css and "body.docked .hud .talk" in css)
+new = ["gilded", "lattice", "bloom", "neonrift", "verdant", "lunar", "bloodsign", "nightfiligree", "dusk"]
+check("nine schemes from game menus", all(n in h.THEMES for n in new) and len(h.THEMES) == 28)
+check("the Filigree frame: double lines, engraved capitals, unveils, chimes", "ornate" in h.FRAMES and h.FRAME_FONTS["ornate"][1] == "cinzel"
+      and ':root[data-glassstyle="ornate"] .card' in h._UI_CSS and "@keyframes in-unveil" in h._UI_CSS and "ornate(c, o, t)" in h._UI_JS)
+check("Cinzel is shipped", os.path.isfile(os.path.join(h._PARTS_DIR, "fonts", "cinzel-700.woff2")))
+hj = h._HEAD_JS
+check("your pictures as Theta: up to four, one per state", '<option value="image">Your pictures</option>' in page and 'id="av-img"' in page
+      and "const STATE_IX = {idle: 0, listening: 1, thinking: 2, speaking: 3}" in hj)
+check("a GIF keeps moving (it's the canvas's own background) and goes to the corner with Theta", "cv.style.backgroundImage = `url(" in hj)
+check("pictures are shrunk, GIFs kept up to 2.5 MB, and too big says so", "600 / Math.max" in hj and "2.5e6" in hj and "too big to keep on this device" in hj)
+check("the ring breathes with the voice in the mood's color", "function drawPicture(t, lv)" in hj and "col(0, 8, 0.35 + 0.6 * lv)" in hj)
+print("ticker done")
+# ---- backgrounds: your picture, and Spotlight (2026-11-04, later)
+import datetime as _d
+_t = _d.datetime.now(h.hub_tz()).date()
+h.store().set_meta("releases", json.dumps({"at": 0, "day": _t.isoformat(), "by": {
+    "tmdb": [{"title": "Avengers: Doomsday", "kind": "movie", "date": (_t + _d.timedelta(days=44)).isoformat(),
+              "image": "https://image.tmdb.org/t/p/w342/x.jpg", "pop": 900, "url": "https://www.themoviedb.org/movie/1"},
+             {"title": "Quiet Garden Show", "kind": "tv", "date": (_t + _d.timedelta(days=60)).isoformat(),
+              "image": "https://image.tmdb.org/t/p/w342/y.jpg", "pop": 50, "url": "https://www.themoviedb.org/tv/2"}],
+    "games": [{"title": "Grand Theft Auto VI", "kind": "game", "date": (_t + _d.timedelta(days=15)).isoformat(),
+               "image": "https://media.rawg.io/g.jpg", "pop": 5000, "url": "https://rawg.io/games/gta-vi"},
+              {"title": "No Picture Game", "kind": "game", "date": _t.isoformat(), "image": "", "pop": 1, "url": "https://rawg.io/games/x"}]}}))
+h.store().set_meta("board:topics", json.dumps({"avengers": {"v": 3, "at": __import__("time").time()}}))
+sp = h.spotlight()
+titles = [x["title"] for x in sp]
+check("Spotlight: what's coming, with a picture and where it was found", sp and all(x["image"].startswith("https://") and x["url"].startswith("https://") and x["site"] for x in sp)
+      and "No Picture Game" not in titles)
+check("Spotlight: topics you read about come first, and say why", titles[0] == "Avengers: Doomsday" and "avengers" in sp[0]["why"])
+check("Spotlight: big posters, not thumbnails", "/t/p/w780/" in sp[0]["image"])
+check("Spotlight: answers signed in only", h.handle("GET", "/api/spotlight", {}, {}, b"")[0] == 401
+      and json.loads(h.handle("GET", "/api/spotlight", {}, K, b"")[2])["items"])
+ui = h._UI_JS
+check("the page rotates it, crossfading, with a caption that links to the source", "function startSpot()" in ui and 'a.textContent = "Found on " + it.site' in ui
+      and 'target="_blank" rel="noopener"' in ui and "15000" in ui)
+check("your picture as the background, kept on this device", 'localStorage.getItem("theta:bgimg")' in ui
+      and h.ui_prefs({"cookie": "theta_ui=theta.dark.grid.plus.image"})[4] == "image" and h.ui_prefs({"cookie": "theta_ui=theta.dark.grid.plus.spotlight"})[4] == "spotlight")
+sett = h.handle("GET", "/settings", {}, K, b"")[2].decode()
+check("Settings: Spotlight, Your picture, and a picker", 'data-val="spotlight"' in sett and 'data-val="image"' in sett and 'id="bg-pick"' in sett)
+print("backgrounds done")

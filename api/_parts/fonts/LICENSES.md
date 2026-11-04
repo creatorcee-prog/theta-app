@@ -17,3 +17,4 @@ bundling and serving them with this app. Files are the Latin subsets from Fontso
 | Space Grotesk | Florian Karsten |
 | Share Tech Mono | Carrois Apostrophe |
 | JetBrains Mono | JetBrains |
+| Cinzel | Natanael Gama |

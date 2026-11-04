@@ -76,6 +76,34 @@ THEMES = {
     "hologram": {"label": "Hologram", "about": "White light in the dark, red for warnings", "glow": 0.2,
                  "light": _pal("#eef1f3", "#ffffff", "#f2f5f6", "#cfd6da", "#101416", "#4f5a5f", "#d23c1e", "#2a5f7a", "#ffffff"),
                  "dark": _pal("#0b0d0e", "#14181a", "#1b2023", "#3a4448", "#eef3f5", "#9aa6ab", "#ff5a3c", "#e6f4ff", "#0b0d0e")},
+    # Nine from sci-fi game menus (2026-11-04): ornate lines and glowing frames on deep, rich grounds.
+    "gilded": {"label": "Gilded Void", "about": "Gold lines on smoky dusk", "glow": 0.35,
+               "light": _pal("#f7f3e8", "#fffdf7", "#f0e9d6", "#e2d6b6", "#2a2312", "#6d5f3f", "#8a6a1c", "#6b5a2c", "#ffffff"),
+               "dark": _pal("#15130f", "#1d1a14", "#262219", "#3d3524", "#efe6d0", "#b0a284", "#d9b768", "#f1e2b4", "#15130f")},
+    "lattice": {"label": "Cyan Lattice", "about": "Glowing cyan frames on deep blue", "glow": 0.6,
+                "light": _pal("#eef7fd", "#ffffff", "#e0f0fa", "#c6e2f3", "#06203a", "#3f6684", "#0a7aa8", "#0b5f86", "#ffffff"),
+                "dark": _pal("#06142a", "#0b1d38", "#102748", "#1b3d66", "#dcefff", "#8fb0cf", "#3cc8f4", "#9fe9ff", "#06142a")},
+    "bloom": {"label": "Violet Bloom", "about": "Silver petals on royal violet", "glow": 0.7,
+              "light": _pal("#f6f1ff", "#ffffff", "#ece3ff", "#dccdfb", "#24113f", "#6b5591", "#6d3ad6", "#4b2a9a", "#ffffff"),
+              "dark": _pal("#170a36", "#211048", "#2b1659", "#43277e", "#efe8ff", "#b6a5dd", "#b98cff", "#e4d8ff", "#170a36")},
+    "neonrift": {"label": "Neon Rift", "about": "Magenta and teal circuits", "glow": 0.8,
+                 "light": _pal("#f9f2ff", "#ffffff", "#f1e4fb", "#e2cdf3", "#22103a", "#6a5385", "#a3169f", "#0b8b7a", "#ffffff"),
+                 "dark": _pal("#0c0a1d", "#15112b", "#1d1838", "#34295a", "#f0eaff", "#a99bd0", "#ea4cff", "#33e6cf", "#0c0a1d")},
+    "verdant": {"label": "Verdant Ember", "about": "Amber light over dark jade", "glow": 0.45,
+                "light": _pal("#f3f7f1", "#ffffff", "#e6eee2", "#d1dfcb", "#14241a", "#55684f", "#a8620a", "#7a5410", "#ffffff"),
+                "dark": _pal("#0b1712", "#10201a", "#162a22", "#254236", "#f1ead6", "#a7b09a", "#f2a541", "#ffd58a", "#0b1712")},
+    "lunar": {"label": "Lunar Red", "about": "White ornaments on deep red", "glow": 0.3,
+              "light": _pal("#fbf1ee", "#ffffff", "#f6e1db", "#ecc6bd", "#3a0d0f", "#7a3f39", "#9e1b22", "#c2410c", "#ffffff"),
+              "dark": _pal("#3a0d0f", "#4a1215", "#58171b", "#7a2a2d", "#fbeee8", "#e1b5ab", "#f7e7dc", "#ff9b8a", "#3a0d0f")},
+    "bloodsign": {"label": "Blood Sign", "about": "Red glow on near-black", "glow": 0.45,
+                  "light": _pal("#fdf3f2", "#ffffff", "#f8e3e1", "#efc9c5", "#2a0b0c", "#744440", "#b3141d", "#c2410c", "#ffffff"),
+                  "dark": _pal("#0e0506", "#170a0b", "#210d0f", "#3e1417", "#f4e4e2", "#b88d89", "#e3333d", "#ff7a6e", "#0e0506")},
+    "nightfiligree": {"label": "Night Filigree", "about": "Pale gold on midnight navy", "glow": 0.35,
+                      "light": _pal("#f6f4ee", "#ffffff", "#ecebe2", "#dad7c8", "#141a33", "#575a6e", "#8a6a12", "#3a4a8a", "#ffffff"),
+                      "dark": _pal("#0a0d1c", "#11152a", "#171c36", "#2a3152", "#ece6d6", "#a39f8e", "#cfae5c", "#f0e2b8", "#0a0d1c")},
+    "dusk": {"label": "Nebula Dusk", "about": "Pink nebula, sky-blue light", "glow": 0.9,
+             "light": _pal("#fbf3fb", "#ffffff", "#f3e5f5", "#e6cfe9", "#24143a", "#6a5584", "#b0246f", "#1d6fc2", "#ffffff"),
+             "dark": _pal("#120d2a", "#1a1438", "#221a46", "#3a2f6b", "#f2ecff", "#b1a6d6", "#ff6fb5", "#7fc4ff", "#120d2a")},
 }
 
 
@@ -89,7 +117,8 @@ THEMES = {
 FRAMES = {"plus": ("Glass+", "Frosted bars and bubbles"), "liquid": ("Liquid Glass", "Gloss, deep blur, edge light"),
           "edge": ("Edge", "Cut corners and a lit edge"), "breach": ("Breach", "Square boxes, solid title tags"),
           "hud": ("HUD", "Corner brackets on dark panels"), "console": ("Console", "Hairlines and mono data"),
-          "holo": ("Hologram", "See-through light that tilts")}
+          "holo": ("Hologram", "See-through light that tilts"),
+          "ornate": ("Filigree", "Fine double lines, engraved capitals")}
 
 
 def _brackets(color, size="16px", w="2px"):
@@ -167,6 +196,17 @@ def _frames_css():
         (".msg.mine .mbody", "border-radius:6px;border:1px solid color-mix(in srgb,var(--text) 28%,transparent);background:"
          + _brackets("color-mix(in srgb,var(--text) 85%,transparent)", "9px", "1.5px") + ",color-mix(in srgb,var(--text) 6%,transparent)"),
     ])]
+    out.append(F("ornate", [
+        (panel, "border-radius:3px;border:1px solid color-mix(in srgb,var(--accent) 50%,transparent);outline:1px solid color-mix(in srgb,var(--accent) 22%,transparent);"
+         "outline-offset:-6px;background:radial-gradient(120% 70% at 50% 0%,color-mix(in srgb,var(--accent) 8%,transparent),transparent 62%),var(--surface);"
+         "box-shadow:0 12px 30px rgba(0,0,0,.35)"),
+        (".card h2,.win h2,.top h1", caps + ";letter-spacing:.14em;" + head),
+        (".card h2::before,.win h2::before", 'content:"\\25C6";color:var(--accent);font-size:.6em;margin-right:9px;vertical-align:.25em'),
+        (".btn", "border-radius:0;background:transparent;color:var(--text);border:0;border-bottom:1px solid var(--accent);" + caps + ";letter-spacing:.12em;font-size:13px"),
+        (".field,.box,.minibox", "border-radius:0;border:0;border-bottom:1px solid color-mix(in srgb,var(--accent) 60%,transparent);background:color-mix(in srgb,var(--surface) 40%,transparent)"),
+        (".seg,.seg button,.sw,.lo,.lrow,.chip", "border-radius:3px"),
+        (".msg.mine .mbody", "border-radius:3px;border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);outline:1px solid color-mix(in srgb,var(--accent) 18%,transparent);outline-offset:-4px"),
+    ]))
     out.append(':root[data-glassstyle="console"]{--pad:14px;--gap:10px}')
     out.append("@keyframes holoscan{to{background-position:0 24px}}"
                '@media (prefers-reduced-motion:reduce){:root[data-glassstyle="holo"] .card::before{animation:none}}')
@@ -194,13 +234,15 @@ FONTS = {  # id: (label, about, weights, size-adjust %, fallback)
     "space-grotesk": ("Space Grotesk", "Quirky modern grotesk", (400, 700), 100, _SYS),
     "share-tech-mono": ("Share Tech Mono", "Terminal mono: the hacking screen", (400,), 100, _MONO),
     "jetbrains-mono": ("JetBrains Mono", "Coder's mono: dashboards", (400, 700), 96, _MONO),
+    "cinzel": ("Cinzel", "Engraved capitals: ornate game menus", (500, 700), 92, _SYS),
 }
 # Each frame's own fonts: (body, headings, small labels, mono).
 FRAME_FONTS = {"edge": ("rajdhani", "rajdhani", "orbitron", "share-tech-mono"),
                "breach": ("rajdhani", "share-tech-mono", "share-tech-mono", "share-tech-mono"),
                "hud": ("chakra-petch", "chakra-petch", "saira-condensed", "jetbrains-mono"),
                "console": ("space-grotesk", "jetbrains-mono", "jetbrains-mono", "jetbrains-mono"),
-               "holo": ("exo-2", "michroma", "michroma", "share-tech-mono")}
+               "holo": ("exo-2", "michroma", "michroma", "share-tech-mono"),
+               "ornate": ("exo-2", "cinzel", "cinzel", "jetbrains-mono")}
 FONT_PICKS = {"frame": "Frame's own", "system": "System"} | {k: v[0] for k, v in FONTS.items()}
 
 
@@ -964,6 +1006,20 @@ body.has-mini header.top{padding-right:60px} /* room for Theta in the corner */
 .theta-mini:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 #bg-layer{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden;background:#000}
 #bg-layer.off{display:none}
+#bg-layer .bgpic{position:absolute;inset:0;background:center/cover no-repeat;opacity:0;transition:opacity 1.6s ease,transform 16s linear;transform:scale(1.04)}
+#bg-layer .bgpic.on{opacity:1;transform:scale(1.1)}
+#bg-layer.bg-image::after,#bg-layer.bg-spotlight::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.55),rgba(0,0,0,.25) 35%,rgba(0,0,0,.65))}
+#bg-layer.bg-spotlight .bgpic{filter:saturate(1.1)}
+.spot-cap{position:fixed;left:max(14px,env(safe-area-inset-left,0px));bottom:calc(var(--formh,96px) + 58px);z-index:3;max-width:min(78vw,420px);display:flex;flex-direction:column;gap:2px;
+ padding:9px 13px;border-radius:12px;background:rgba(0,0,0,.45);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);color:#fff;border:1px solid rgba(255,255,255,.18);opacity:0}
+.spot-cap.in{animation:spotin .7s ease forwards}
+@keyframes spotin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.spot-cap .sp-why{font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.8}
+.spot-cap .sp-title{font-size:16px;line-height:1.25}
+.spot-cap .sp-src{font-size:12.5px;color:#cfe8ff;text-decoration:underline;text-underline-offset:2px}
+body:not(.headchat) .spot-cap{bottom:calc(var(--tabh) + 150px)}
+body.docked .spot-cap{display:none}
+@media (prefers-reduced-motion:reduce){#bg-layer .bgpic{transition:none;transform:none}}
 :root[data-bg]:not([data-bg="theme"]) body{background:transparent}
 #bg-layer canvas{width:100%;height:100%;display:block}
 #bg-layer.bg-gemini{background-color:#0A080B;animation:geminiPulse 8s ease-in-out infinite alternate;animation-delay:var(--gdelay,0s)}
@@ -1102,6 +1158,7 @@ _UI_JS_SRC = r'''
       breach(c, o, t) { for (let i = 0; i < 7; i++) click(c, o, t + i * .07, 3500, .4, .008); tone(c, o, "sine", 1046, 1046, t + .5, .004, .12, .14); }, // Hex print
       hud(c, o, t) { tone(c, o, "sine", 1200, 1200, t, .003, .04, .2); tone(c, o, "sine", 1200, 1200, t + .12, .003, .04, .2); tone(c, o, "sine", 1600, 1600, t + .26, .004, .14, .24); }, // Target lock
       console(c, o, t) { let s = t; for (let i = 0; i < 9; i++) { click(c, o, s, 4200, .32, .006); click(c, o, s, 300, .18, .01); s += .035 + Math.random() * .03; } }, // Typewriter
+      ornate(c, o, t) { [[880, .16, .7], [1320, .09, .55], [1760, .05, .4]].forEach(([f, p, d], i) => tone(c, o, "sine", f, f, t + i * .06, .004, d, p)); }, // Chime (not picked yet)
       holo(c, o, t) { const g = c.createGain(); g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.22, t + .3); g.gain.exponentialRampToValueAtTime(.0001, t + .5); const tr = c.createGain(), l = c.createOscillator(), ld = c.createGain(); l.frequency.value = 12; ld.gain.value = .5; tr.gain.value = .5; l.connect(ld); ld.connect(tr.gain); tr.connect(g); g.connect(o); [110, 220].forEach(f => { const x = c.createOscillator(); x.type = "triangle"; x.frequency.value = f; x.connect(tr); x.start(t); x.stop(t + .55); }); l.start(t); l.stop(t + .55); click(c, o, t + .5, 1500, .3, .015); }, // Projector hum
     };
     function play(frame, force) {
@@ -1921,14 +1978,55 @@ _UI_JS_SRC = r'''
       if (mode === "stars") drawStars(t / 1000); else if (mode === "shards") { if (webglOn) drawShards3D(dt); else drawShards(dt); }
       if (mode === "stars" || mode === "shards") raf = requestAnimationFrame(function (nt) { frame(nt, t); });
     }
+    // Your picture (Settings, Background): kept on this device, shown behind everything, dimmed a little.
+    function pics() { var a = layer.querySelectorAll(".bgpic"); if (a.length) return a;
+      for (var i = 0; i < 2; i++) { var d = document.createElement("div"); d.className = "bgpic"; layer.appendChild(d); } return layer.querySelectorAll(".bgpic"); }
+    function showPicture() {
+      var src = ""; try { src = localStorage.getItem("theta:bgimg") || ""; } catch (e) {}
+      var p = pics(); p[0].style.backgroundImage = src ? 'url("' + src + '")' : ""; p[0].classList.add("on"); p[1].classList.remove("on");
+    }
+    // Spotlight: upcoming movies, shows and games you'd care about, one picture at a time, with where it was found.
+    var spot = {items: [], i: 0, timer: 0, cap: null, front: 0};
+    function stopSpot() { clearInterval(spot.timer); spot.timer = 0; if (spot.cap) { spot.cap.remove(); spot.cap = null; }
+      if (layer) layer.querySelectorAll(".bgpic").forEach(function (d) { d.style.backgroundImage = ""; d.classList.remove("on"); }); }
+    function spotShow() {
+      var it = spot.items[spot.i % spot.items.length]; if (!it) return;
+      var img = new Image(); img.onload = function () {
+        var p = pics(), next = 1 - spot.front;
+        p[next].style.backgroundImage = 'url("' + it.image + '")'; p[next].classList.add("on"); p[spot.front].classList.remove("on"); spot.front = next;
+        if (spot.cap) {
+          var when = it.date ? (it.days <= 0 ? "Out now" : it.days === 1 ? "Out tomorrow" : it.days < 45 ? "In " + it.days + " days" : new Date(it.date + "T12:00").toLocaleDateString(undefined, {month: "short", day: "numeric", year: "numeric"})) : "";
+          spot.cap.querySelector(".sp-why").textContent = it.why + (when ? " \u00b7 " + when : "");
+          spot.cap.querySelector(".sp-title").textContent = it.title;
+          var a = spot.cap.querySelector(".sp-src"); a.href = it.url; a.textContent = "Found on " + it.site + " \u2197";
+          spot.cap.classList.remove("in"); void spot.cap.offsetWidth; spot.cap.classList.add("in");
+        }
+      };
+      img.src = it.image; spot.i++;
+    }
+    function startSpot() {
+      showPicture(); pics()[0].style.backgroundImage = "";
+      if (window.top !== window) return; // inside the Theta page's sheet: the page behind already shows it
+      if (!spot.cap) { spot.cap = document.createElement("div"); spot.cap.className = "spot-cap";
+        spot.cap.innerHTML = '<span class="sp-why"></span><b class="sp-title"></b><a class="sp-src" target="_blank" rel="noopener"></a>';
+        document.body.appendChild(spot.cap); }
+      fetch("/api/spotlight", {headers: window.THETA_H || {}}).then(function (r) { return r.json(); }).then(function (d) {
+        spot.items = (d && d.items) || []; spot.i = 0;
+        if (!spot.items.length) { spot.cap.querySelector(".sp-title").textContent = "Nothing coming up yet"; spot.cap.querySelector(".sp-why").textContent = "Spotlight"; spot.cap.classList.add("in"); return; }
+        spotShow(); if (!reduced) spot.timer = setInterval(function () { if (!document.hidden) spotShow(); }, 15000);
+      }).catch(function () {});
+    }
     function applyBg() {
       var v = root.dataset.bg || "theme";
       if (v === "theme") { dispose3D(); if (layer) layer.className = "off"; cancelAnimationFrame(raf); mode = ""; return; }
       ensure(); size();
       layer.className = "bg-" + v;
       cancelAnimationFrame(raf);
+      stopSpot();
       if (v === "stars") { dispose3D(); mode = "stars"; initStars(); drawStars(0); }
       else if (v === "shards") { dispose3D(); mode = "shards"; initShards(); drawShards(0); ensure3D(); }
+      else if (v === "image") { dispose3D(); mode = ""; showPicture(); return; }
+      else if (v === "spotlight") { dispose3D(); mode = ""; startSpot(); return; }
       else { mode = ""; return; }
       if (!reduced) raf = requestAnimationFrame(function (t) { frame(t, t); });
     }
@@ -3178,7 +3276,7 @@ def ui_icon(name):
             f'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{UI_ICONS[name]}</svg>')
 
 
-_BAR_CSS = '\n/* ---- The bottom bar in each frame (2026-11-04): the suggestion chips, the message box, the send button and the\n   tab bar take the frame\'s shape. Glass+ and Liquid Glass keep the round pills they were drawn for. */\n:root[data-glassstyle="edge"] .minibar{border-top:1px solid color-mix(in srgb,var(--accent) 55%,transparent)}\n:root[data-glassstyle="edge"] .minichips a{border-radius:0;clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px));border-color:color-mix(in srgb,var(--accent) 40%,transparent);font-family:var(--f-label);text-transform:uppercase;letter-spacing:.06em;font-size:11px}\n:root[data-glassstyle="edge"] .minibox,:root[data-glassstyle="edge"] .box{border-radius:0;clip-path:polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,11px 100%,0 calc(100% - 11px));border-color:color-mix(in srgb,var(--accent) 45%,transparent);box-shadow:inset 3px 0 0 var(--accent)}\n:root[data-glassstyle="edge"] .minibox .btn.send,:root[data-glassstyle="edge"] .box .btn{border-radius:0;clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px))}\n:root[data-glassstyle="edge"] .tabbar a.on{box-shadow:inset 0 2px 0 var(--accent);border-radius:0}\n:root[data-glassstyle="breach"] .minibar{border-top:1px solid var(--accent)}\n:root[data-glassstyle="breach"] .minichips a{border-radius:0;background:transparent;border-color:color-mix(in srgb,var(--accent) 55%,transparent);font-family:var(--f-mono);font-size:12px}\n:root[data-glassstyle="breach"] .minichips a::before{content:"> ";color:var(--accent)}\n:root[data-glassstyle="breach"] .minibox,:root[data-glassstyle="breach"] .box{border-radius:0;border-color:color-mix(in srgb,var(--accent) 60%,transparent);background:color-mix(in srgb,var(--surface) 70%,transparent);box-shadow:inset 0 3px 0 var(--accent)}\n:root[data-glassstyle="breach"] .minibox input,:root[data-glassstyle="breach"] .box textarea{font-family:var(--f-mono)}\n:root[data-glassstyle="breach"] .minibox .btn.send,:root[data-glassstyle="breach"] .box .btn{border-radius:0}\n:root[data-glassstyle="breach"] .tabbar a.on{background:var(--accent);color:var(--on);border-radius:0}\n:root[data-glassstyle="hud"] .minichips a{border-radius:3px;background:linear-gradient(var(--accent),var(--accent)) left top/7px 1.5px no-repeat,linear-gradient(var(--accent),var(--accent)) left top/1.5px 7px no-repeat,linear-gradient(var(--accent),var(--accent)) right top/7px 1.5px no-repeat,linear-gradient(var(--accent),var(--accent)) right top/1.5px 7px no-repeat,linear-gradient(var(--accent),var(--accent)) left bottom/7px 1.5px no-repeat,linear-gradient(var(--accent),var(--accent)) left bottom/1.5px 7px no-repeat,linear-gradient(var(--accent),var(--accent)) right bottom/7px 1.5px no-repeat,linear-gradient(var(--accent),var(--accent)) right bottom/1.5px 7px no-repeat,var(--surface2);border-color:color-mix(in srgb,var(--text) 10%,transparent);text-transform:uppercase;letter-spacing:.06em;font-size:11.5px}\n:root[data-glassstyle="hud"] .minibox,:root[data-glassstyle="hud"] .box{border-radius:4px;background:linear-gradient(var(--accent),var(--accent)) left top/12px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) left top/2px 12px no-repeat,linear-gradient(var(--accent),var(--accent)) right top/12px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) right top/2px 12px no-repeat,linear-gradient(var(--accent),var(--accent)) left bottom/12px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) left bottom/2px 12px no-repeat,linear-gradient(var(--accent),var(--accent)) right bottom/12px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) right bottom/2px 12px no-repeat,var(--surface2);border-color:color-mix(in srgb,var(--text) 10%,transparent)}\n:root[data-glassstyle="hud"] .minibox .btn.send,:root[data-glassstyle="hud"] .box .btn{border-radius:3px}\n:root[data-glassstyle="hud"] .tabbar a.on{box-shadow:inset 0 2px 0 var(--accent);border-radius:0}\n:root[data-glassstyle="console"] .minibar{border-top:1px solid var(--border);box-shadow:none}\n:root[data-glassstyle="console"] .minichips a{border-radius:2px;background:transparent;font-family:var(--f-mono);font-size:11.5px;color:var(--muted)}\n:root[data-glassstyle="console"] .minibox,:root[data-glassstyle="console"] .box{border-radius:2px}\n:root[data-glassstyle="console"] .minibox::before{content:"\\203A";font-family:var(--f-mono);color:var(--accent);margin-left:-6px}\n:root[data-glassstyle="console"] .minibox input,:root[data-glassstyle="console"] .box textarea{font-family:var(--f-mono);font-size:15px}\n:root[data-glassstyle="console"] .minibox .btn.send,:root[data-glassstyle="console"] .box .btn{border-radius:2px}\n:root[data-glassstyle="console"] .tabbar a{font-family:var(--f-mono);text-transform:uppercase;letter-spacing:.06em;font-size:9.5px}\n:root[data-glassstyle="console"] .tabbar a.on{box-shadow:inset 0 -2px 0 var(--accent);border-radius:0}\n:root[data-glassstyle="holo"] .minibar{background:color-mix(in srgb,var(--bg) 70%,transparent);border-top:1px solid color-mix(in srgb,var(--text) 22%,transparent)}\n:root[data-glassstyle="holo"] .minichips a{border-radius:4px;background:color-mix(in srgb,var(--text) 6%,transparent);border-color:color-mix(in srgb,var(--text) 30%,transparent);text-transform:uppercase;letter-spacing:.08em;font-size:11px;box-shadow:0 0 10px color-mix(in srgb,var(--text) 10%,transparent)}\n:root[data-glassstyle="holo"] .minibox,:root[data-glassstyle="holo"] .box{border-radius:6px;background:linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) left top/10px 1.5px no-repeat,linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) left top/1.5px 10px no-repeat,linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) right top/10px 1.5px no-repeat,linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) right top/1.5px 10px no-repeat,linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) left bottom/10px 1.5px no-repeat,linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) left bottom/1.5px 10px no-repeat,linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) right bottom/10px 1.5px no-repeat,linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) right bottom/1.5px 10px no-repeat,color-mix(in srgb,var(--text) 6%,transparent);border-color:color-mix(in srgb,var(--text) 28%,transparent);box-shadow:0 0 16px color-mix(in srgb,var(--text) 10%,transparent)}\n:root[data-glassstyle="holo"] .minibox .btn.send,:root[data-glassstyle="holo"] .box .btn{border-radius:4px}\n:root[data-glassstyle="holo"] .tabbar a.on{text-shadow:0 0 12px color-mix(in srgb,var(--accent) 70%,transparent)}\n'
+_BAR_CSS = '\n/* ---- The bottom bar in each frame (2026-11-04): the suggestion chips, the message box, the send button and the\n   tab bar take the frame\'s shape. Glass+ and Liquid Glass keep the round pills they were drawn for. */\n:root[data-glassstyle="edge"] .minibar{border-top:1px solid color-mix(in srgb,var(--accent) 55%,transparent)}\n:root[data-glassstyle="edge"] .minichips a{border-radius:0;clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px));border-color:color-mix(in srgb,var(--accent) 40%,transparent);font-family:var(--f-label);text-transform:uppercase;letter-spacing:.06em;font-size:11px}\n:root[data-glassstyle="edge"] .minibox,:root[data-glassstyle="edge"] .box{border-radius:0;clip-path:polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,11px 100%,0 calc(100% - 11px));border-color:color-mix(in srgb,var(--accent) 45%,transparent);box-shadow:inset 3px 0 0 var(--accent)}\n:root[data-glassstyle="edge"] .minibox .btn.send,:root[data-glassstyle="edge"] .box .btn{border-radius:0;clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px))}\n:root[data-glassstyle="edge"] .tabbar a.on{box-shadow:inset 0 2px 0 var(--accent);border-radius:0}\n:root[data-glassstyle="breach"] .minibar{border-top:1px solid var(--accent)}\n:root[data-glassstyle="breach"] .minichips a{border-radius:0;background:transparent;border-color:color-mix(in srgb,var(--accent) 55%,transparent);font-family:var(--f-mono);font-size:12px}\n:root[data-glassstyle="breach"] .minichips a::before{content:"> ";color:var(--accent)}\n:root[data-glassstyle="breach"] .minibox,:root[data-glassstyle="breach"] .box{border-radius:0;border-color:color-mix(in srgb,var(--accent) 60%,transparent);background:color-mix(in srgb,var(--surface) 70%,transparent);box-shadow:inset 0 3px 0 var(--accent)}\n:root[data-glassstyle="breach"] .minibox input,:root[data-glassstyle="breach"] .box textarea{font-family:var(--f-mono)}\n:root[data-glassstyle="breach"] .minibox .btn.send,:root[data-glassstyle="breach"] .box .btn{border-radius:0}\n:root[data-glassstyle="breach"] .tabbar a.on{background:var(--accent);color:var(--on);border-radius:0}\n:root[data-glassstyle="hud"] .minichips a{border-radius:3px;background:linear-gradient(var(--accent),var(--accent)) left top/7px 1.5px no-repeat,linear-gradient(var(--accent),var(--accent)) left top/1.5px 7px no-repeat,linear-gradient(var(--accent),var(--accent)) right top/7px 1.5px no-repeat,linear-gradient(var(--accent),var(--accent)) right top/1.5px 7px no-repeat,linear-gradient(var(--accent),var(--accent)) left bottom/7px 1.5px no-repeat,linear-gradient(var(--accent),var(--accent)) left bottom/1.5px 7px no-repeat,linear-gradient(var(--accent),var(--accent)) right bottom/7px 1.5px no-repeat,linear-gradient(var(--accent),var(--accent)) right bottom/1.5px 7px no-repeat,var(--surface2);border-color:color-mix(in srgb,var(--text) 10%,transparent);text-transform:uppercase;letter-spacing:.06em;font-size:11.5px}\n:root[data-glassstyle="hud"] .minibox,:root[data-glassstyle="hud"] .box{border-radius:4px;background:linear-gradient(var(--accent),var(--accent)) left top/12px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) left top/2px 12px no-repeat,linear-gradient(var(--accent),var(--accent)) right top/12px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) right top/2px 12px no-repeat,linear-gradient(var(--accent),var(--accent)) left bottom/12px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) left bottom/2px 12px no-repeat,linear-gradient(var(--accent),var(--accent)) right bottom/12px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) right bottom/2px 12px no-repeat,var(--surface2);border-color:color-mix(in srgb,var(--text) 10%,transparent)}\n:root[data-glassstyle="hud"] .minibox .btn.send,:root[data-glassstyle="hud"] .box .btn{border-radius:3px}\n:root[data-glassstyle="hud"] .tabbar a.on{box-shadow:inset 0 2px 0 var(--accent);border-radius:0}\n:root[data-glassstyle="console"] .minibar{border-top:1px solid var(--border);box-shadow:none}\n:root[data-glassstyle="console"] .minichips a{border-radius:2px;background:transparent;font-family:var(--f-mono);font-size:11.5px;color:var(--muted)}\n:root[data-glassstyle="console"] .minibox,:root[data-glassstyle="console"] .box{border-radius:2px}\n:root[data-glassstyle="console"] .minibox::before{content:"\\203A";font-family:var(--f-mono);color:var(--accent);margin-left:-6px}\n:root[data-glassstyle="console"] .minibox input,:root[data-glassstyle="console"] .box textarea{font-family:var(--f-mono);font-size:15px}\n:root[data-glassstyle="console"] .minibox .btn.send,:root[data-glassstyle="console"] .box .btn{border-radius:2px}\n:root[data-glassstyle="console"] .tabbar a{font-family:var(--f-mono);text-transform:uppercase;letter-spacing:.06em;font-size:9.5px}\n:root[data-glassstyle="console"] .tabbar a.on{box-shadow:inset 0 -2px 0 var(--accent);border-radius:0}\n:root[data-glassstyle="holo"] .minibar{background:color-mix(in srgb,var(--bg) 70%,transparent);border-top:1px solid color-mix(in srgb,var(--text) 22%,transparent)}\n:root[data-glassstyle="holo"] .minichips a{border-radius:4px;background:color-mix(in srgb,var(--text) 6%,transparent);border-color:color-mix(in srgb,var(--text) 30%,transparent);text-transform:uppercase;letter-spacing:.08em;font-size:11px;box-shadow:0 0 10px color-mix(in srgb,var(--text) 10%,transparent)}\n:root[data-glassstyle="holo"] .minibox,:root[data-glassstyle="holo"] .box{border-radius:6px;background:linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) left top/10px 1.5px no-repeat,linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) left top/1.5px 10px no-repeat,linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) right top/10px 1.5px no-repeat,linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) right top/1.5px 10px no-repeat,linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) left bottom/10px 1.5px no-repeat,linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) left bottom/1.5px 10px no-repeat,linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) right bottom/10px 1.5px no-repeat,linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) right bottom/1.5px 10px no-repeat,color-mix(in srgb,var(--text) 6%,transparent);border-color:color-mix(in srgb,var(--text) 28%,transparent);box-shadow:0 0 16px color-mix(in srgb,var(--text) 10%,transparent)}\n:root[data-glassstyle="holo"] .minibox .btn.send,:root[data-glassstyle="holo"] .box .btn{border-radius:4px}\n:root[data-glassstyle="holo"] .tabbar a.on{text-shadow:0 0 12px color-mix(in srgb,var(--accent) 70%,transparent)}\n:root[data-glassstyle="ornate"] .minichips a{border-radius:0;background:transparent;border:0;border-bottom:1px solid color-mix(in srgb,var(--accent) 45%,transparent);text-transform:uppercase;letter-spacing:.1em;font-size:11px;font-family:var(--f-label)}\n:root[data-glassstyle="ornate"] .minibox .btn.send,:root[data-glassstyle="ornate"] .box .btn{border-radius:0;background:transparent;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 60%,transparent)}\n:root[data-glassstyle="ornate"] .tabbar a.on{box-shadow:inset 0 -1px 0 var(--accent);border-radius:0}\n'
 _MOVE_CSS = r'''
 /* ---- Moving between pages (2026-11-04). Where the browser can (Safari 18.2+, Chrome 126+), each page change is a
    view transition: the old page fades back, the new one rises in, the tab bar stays put, and Theta morphs
@@ -3221,6 +3319,8 @@ _MOVE_CSS = r'''
 :root[data-glassstyle="holo"]{--in:in-project;--in-dur:.65s;--in-ease:cubic-bezier(.2,.8,.2,1)}
 @keyframes in-project{0%{opacity:0;transform-origin:50% 100%;transform:perspective(700px) rotateX(78deg) scaleY(.25);filter:brightness(3)}
  50%{opacity:.85;filter:brightness(1.8)}62%{opacity:.35}74%{opacity:.95}100%{opacity:1;transform-origin:50% 100%;filter:none}}
+:root[data-glassstyle="ornate"]{--in:in-unveil;--in-dur:.6s;--in-ease:cubic-bezier(.2,.8,.2,1)}
+@keyframes in-unveil{0%{opacity:0;clip-path:inset(0 50% 0 50%)}60%{opacity:1}100%{clip-path:inset(0 0 0 0)}}
 /* the whole page, per frame */
 :root[data-glassstyle="plus"]::view-transition-new(root),:root[data-glassstyle="liquid"]::view-transition-new(root){animation:vt-bubble .42s cubic-bezier(.34,1.4,.64,1) both}
 :root[data-glassstyle="plus"]::view-transition-old(root),:root[data-glassstyle="liquid"]::view-transition-old(root){animation:vt-melt .22s ease-in both}
@@ -3231,6 +3331,8 @@ _MOVE_CSS = r'''
 @keyframes vt-glitch-out{30%{transform:translateX(8px);opacity:.7}60%{transform:translateX(-6px);opacity:.4}to{opacity:0;transform:none}}
 @keyframes vt-glitch-in{from{opacity:0;transform:translateX(-10px)}40%{opacity:.6;transform:translateX(6px)}70%{opacity:.9;transform:translateX(-2px)}}
 :root[data-glassstyle="holo"]::view-transition-old(root){animation:vt-holo-off .26s ease-in both}
+:root[data-glassstyle="ornate"]::view-transition-new(root){animation:vt-unveil .45s cubic-bezier(.2,.8,.2,1) both}
+@keyframes vt-unveil{from{opacity:0;clip-path:inset(0 30% 0 30%)}}
 :root[data-glassstyle="holo"]::view-transition-new(root){animation:vt-holo-on .4s cubic-bezier(.2,.8,.2,1) both}
 @keyframes vt-holo-off{60%{transform:scaleY(.04);opacity:.9;filter:brightness(3)}to{transform:scaleY(.01) scaleX(.6);opacity:0}}
 @keyframes vt-holo-on{from{transform:scaleY(.02);opacity:0;filter:brightness(3)}50%{transform:scaleY(1.02);opacity:.9}}
@@ -3254,7 +3356,7 @@ def ui_prefs(headers):
     mode = raw[1] if len(raw) > 1 and raw[1] in MODES else "auto"
     layout = raw[2] if len(raw) > 2 and raw[2] in LAYOUTS else "grid"
     glassstyle = raw[3] if len(raw) > 3 and raw[3] in FRAMES else "plus"
-    bg = raw[4] if len(raw) > 4 and raw[4] in ("theme", "shards", "stars", "black", "gemini") else "theme"
+    bg = raw[4] if len(raw) > 4 and raw[4] in ("theme", "shards", "stars", "black", "gemini", "image", "spotlight") else "theme"
     return theme, mode, layout, glassstyle, bg
 
 
@@ -3305,7 +3407,7 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
     theme, mode, layout, glassstyle, bg = ui_prefs(headers)
     t = THEMES[theme]
     bgstyle = (' style="background:#000"' if bg == "gemini" else
-               ' style="background:#000"' if bg in ("shards", "stars", "black") else "")
+               ' style="background:#000"' if bg in ("shards", "stars", "black", "image", "spotlight") else "")
     if mode == "auto":
         metas = (f'<meta name="theme-color" content="{t["light"]["bg"]}" media="(prefers-color-scheme: light)">'
                  f'<meta name="theme-color" content="{t["dark"]["bg"]}" media="(prefers-color-scheme: dark)">')

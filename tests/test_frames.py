@@ -47,7 +47,7 @@ check("the corner avatar does too", "thetaLook.at(r.left" in h._UI_JS)
 check("reduced motion: it holds still", "if (still) return [0, 0]" in h._UI_JS)
 
 # ---- frames and schemes
-check("seven frames", list(h.FRAMES) == ["plus", "liquid", "edge", "breach", "hud", "console", "holo"])
+check("eight frames", list(h.FRAMES) == ["plus", "liquid", "edge", "breach", "hud", "console", "holo", "ornate"])
 for f in ("edge", "breach", "hud", "console", "holo"):
     check(f"{f} has its CSS", f':root[data-glassstyle="{f}"] .card' in h._UI_CSS)
 check("a frame is kept in the cookie", h.ui_prefs({"cookie": "theta_ui=redline.dark.grid.holo.black"})[:4] == ("redline", "dark", "grid", "holo"))
@@ -65,7 +65,7 @@ print("done")
 
 # ---- fonts (2026-11-04, later)
 import os as _os
-check("eleven open-licensed fonts, each weight on disk", len(h.FONTS) == 11 and all(
+check("eleven open-licensed fonts, each weight on disk", len(h.FONTS) == 12 and all(
     _os.path.isfile(_os.path.join(h._PARTS_DIR, "fonts", f"{k}-{w}.woff2")) for k, v in h.FONTS.items() for w in v[2]))
 code, kind, data = h.handle("GET", "/fonts/rajdhani-700.woff2", {}, {}, b"")[:3]
 check("a font is served, as a real woff2", code == 200 and kind == "font/woff2" and data[:4] == b"wOF2")
@@ -102,7 +102,7 @@ print("entrances done")
 # ---- frame sounds (picked 2026-11-04 in the Frame Sounds page)
 ui = h._UI_JS
 picks = {"plus": "Fizz", "liquid": "Gloop", "edge": "Binary chirp", "breach": "Hex print", "hud": "Target lock",
-         "console": "Typewriter", "holo": "Projector hum"}
+         "console": "Typewriter", "holo": "Projector hum", "ornate": "Chime (not picked yet)"}
 check("a sound for every frame, the ones picked", all(f"// {name}" in ui for name in picks.values()) and set(picks) == set(h.FRAMES))
 check("made live with Web Audio, no sound files", "window.thetaSfx" in ui and "createOscillator" in ui and ".mp3" not in ui)
 check("plays from the tap that opens a page (iPhone needs a tap)", "a tap that opens another page of the app plays the frame's sound" in ui
