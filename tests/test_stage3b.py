@@ -159,7 +159,7 @@ check("two-column message grid is gone", "grid-template-columns:40px minmax(0,1f
 # --- Scope guards ---
 check("agent set unchanged",
       set(h.AGENTS) == {"theta", "mistral", "glass", "remi", "lenz", "red", "blue", "gray", "charter", "qwerty", "james"})
-check("all 12 themes intact", len(h.THEMES) == 12)
+check("all 19 themes intact", len(h.THEMES) == 19)
 for pth in ("/", "/settings", "/diagnostics"):
     s, _b = call("GET", pth, headers=K)
     check(f"page {pth} renders", s == 200)

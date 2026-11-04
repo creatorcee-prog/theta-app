@@ -85,8 +85,8 @@ check("manifest says Theta", man["name"] == "Theta" and man["short_name"] == "Th
 # --- themes, modes, layouts
 s, css, hd = call("GET", "/ui.css")
 css = css.decode()
-check("ui.css has all 12 themes, each with light, dark and follow-device rules",
-      len(h.THEMES) == 12 and all(f':root[data-theme="{t}"]{{' in css and f':root[data-theme="{t}"][data-mode="dark"]{{' in css
+check("ui.css has all 19 themes, each with light, dark and follow-device rules",
+      len(h.THEMES) == 19 and all(f':root[data-theme="{t}"]{{' in css and f':root[data-theme="{t}"][data-mode="dark"]{{' in css
                                   and f':root[data-theme="{t}"]:not([data-mode="light"])' in css for t in h.THEMES))
 check("assets cached for good (versioned URLs)", "immutable" in hd["Cache-Control"] and "immutable" in call("GET", "/ui.js")[2]["Cache-Control"])
 s, js, _ = call("GET", "/ui.js")
