@@ -69,8 +69,8 @@ PUSHED = []
 h.notify = lambda title, body, url="/": PUSHED.append((title, body, url)) or 1
 # headers
 s, _, hd = call("GET", "/avatar/qwerty.svg")
-check("every response carries the security headers", hd["X-Frame-Options"] == "DENY" and hd["X-Content-Type-Options"] == "nosniff"
-      and "frame-ancestors 'none'" in hd["Content-Security-Policy"] and hd["Referrer-Policy"] == "strict-origin-when-cross-origin")
+check("every response carries the security headers", hd["X-Frame-Options"] == "SAMEORIGIN" and hd["X-Content-Type-Options"] == "nosniff"
+      and "frame-ancestors 'self'" in hd["Content-Security-Policy"] and hd["Referrer-Policy"] == "strict-origin-when-cross-origin")
 check("QWERTY is on the crew with his own avatar and channel", "qwerty" in h.AGENTS and "qwerty" in h.ROUND_JOBS
       and h.home_channel("qwerty") == "dev" and call("GET", "/avatar/qwerty.svg")[1] != call("GET", "/avatar/hub.svg")[1])
 # lockout

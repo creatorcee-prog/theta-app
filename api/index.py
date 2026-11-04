@@ -3412,6 +3412,7 @@ _load_part("listen")  # conversations recorded to text, translation, directions:
 _load_part("phone")  # Theta on the Home Screen (Scriptable) and in Shortcuts automations: api/_parts/phone.py
 _load_part("focus")  # help for an ADD brain: sleep and dreams, leave nudges, /focus, /break, /dump: api/_parts/focus.py
 _load_part("panels")  # Jarvis-style panels: what a reply pulls up on the Head page: api/_parts/panels.py
+_load_part("board")  # the widget board on the Theta page, the only page now: api/_parts/board.py
 
 
 _load_part("signin")  # Face ID sign-in (passkeys) and the sign-in page: api/_parts/signin.py

@@ -1117,6 +1117,11 @@ _UI_JS_SRC = r'''
       volume: () => +get("theta:sfxVol", "60"), sounds: Object.keys(SOUND)};
   })();
 
+  if (window.top !== window) document.addEventListener("click", e => {
+    const a = e.target.closest && e.target.closest("a[href]"); if (!a) return;
+    const u = new URL(a.href, location.href);
+    if (u.origin === location.origin && u.pathname === "/head") { e.preventDefault(); window.top.location.href = u.pathname + u.search + u.hash; }
+  }, true);
   // Where Theta looks: at your cursor (or finger) when it's moving, otherwise where you tilt the phone.
   // Each avatar reads window.thetaLook.at(its center) and gets -1..1 for x and y. The tilt is measured
   // from how you're holding the phone (that drifts back to neutral), so any angle you hold it at is "ahead".
@@ -2621,6 +2626,7 @@ _CHAT_JS = r'''
       const cont = prev && prev.from === m.from && d - parseAt(prev.at) < 7 * 60e3;
       const row = document.createElement("div");
       row.className = "msg" + (cont ? " cont" : "") + (fresh ? " new" : "") + (m.from === "you" ? " mine" : "");
+      row.dataset.id = m.id; // the Theta page's terminal finds a card's message by it
       const a = C.agents[m.from], th = C.agents.theta;
       // Every agent speaks as Theta; the trail icons below say who
       // really worked on it, since agent footers carry no name.
@@ -3227,7 +3233,7 @@ _MOVE_CSS = r'''
 @media (prefers-reduced-motion:reduce){@view-transition{navigation:none}
  .main > *,.main > .stack > *,.main > .grid2 > *,.main > .wins > *{animation:none!important}.nav-wait .theta-mini{animation:none}}
 '''
-_UI_CSS = theme_css() + "\n" + _BASE_CSS + "\n" + _hdr_css() + "\n" + _frames_css() + "\n" + _fonts_css() + _MOVE_CSS + _BAR_CSS + "\nhtml.veiled .app,html.veiled .tabbar{visibility:hidden}"
+_UI_CSS = theme_css() + "\n" + _BASE_CSS + "\n" + _hdr_css() + "\n" + _frames_css() + "\n" + _fonts_css() + _MOVE_CSS + _BAR_CSS + "\n/* ---- inside the Theta page's sheet (2026-11-04): the page alone, without the app's own bars */\nhtml.embedded .tabbar,html.embedded .minibar,html.embedded .theta-mini,html.embedded .rail{display:none!important}\nhtml.embedded .main{padding-top:14px;padding-bottom:calc(28px + env(safe-area-inset-bottom,0px))}\nhtml.embedded body.has-mini header.top{padding-right:0}\n" + "\nhtml.veiled .app,html.veiled .tabbar{visibility:hidden}"
 _UI_JS = _UI_JS_SRC.replace("__THEMES__", json.dumps(
     {n: {"glass": bool(t.get("glass")), "mono": bool(t.get("mono")), "light": t["light"]["bg"],
          "dark": t["dark"]["bg"], "accent2": t["dark"]["accent2"]} for n, t in THEMES.items()}))
@@ -3318,7 +3324,8 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
     return (
         f'<!doctype html><html lang="en" data-theme="{theme}" data-mode="{mode}" data-layout="{layout}" data-glassstyle="{glassstyle}" data-bg="{bg}" data-type="{ui_type(headers)}"{flags}{bgstyle}>'
         '<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
-        f'<title>{html.escape(title)} · {APP_NAME}</title>'
+        + ('<script>window.THETA_ONEPAGE=true</script>' if head_on() else '')  # one page: others open inside the Theta page
+        + f'<title>{html.escape(title)} · {APP_NAME}</title>'
         '<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">'
         '<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2"><link rel="icon" href="/avatar/theta.svg" type="image/svg+xml">'
         f'<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="{APP_NAME}">'
@@ -3329,7 +3336,7 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
         'new URLSearchParams(location.search).get("key") || ""};'
         # The app opens on Theta: opened from its Home Screen icon, a launch onto Home goes to the Theta page
         # (an icon added before start_url changed still opens "/"). After that, Home is just a tab.
-        'try{window.thetaVT=("onpagereveal" in window)&&CSS.supports("view-transition-name:a")&&!matchMedia("(prefers-reduced-motion: reduce)").matches}catch(e){}try{if(location.pathname==="/"&&(navigator.standalone||matchMedia("(display-mode: standalone)").matches)'
+        'try{var emb=window.top!==window;if(emb)document.documentElement.classList.add("embedded");if(window.THETA_ONEPAGE&&!emb&&location.pathname!=="/head"&&!/[?&]full=1/.test(location.search)){location.replace(location.pathname==="/"&&!location.hash?"/head"+location.search:"/head?open="+encodeURIComponent(location.pathname+location.search+location.hash))}}catch(e){}try{window.thetaVT=("onpagereveal" in window)&&CSS.supports("view-transition-name:a")&&!matchMedia("(prefers-reduced-motion: reduce)").matches}catch(e){}try{if(location.pathname==="/"&&(navigator.standalone||matchMedia("(display-mode: standalone)").matches)'
         '&&!sessionStorage.getItem("theta:launched")){sessionStorage.setItem("theta:launched","1");location.replace("/head"+location.search)}'
         'sessionStorage.setItem("theta:launched","1")}catch(e){}'
         + ('window.THETA_LOCK = true;' if (current_session(headers) or {}).get("lock") else '') + '</script>'
