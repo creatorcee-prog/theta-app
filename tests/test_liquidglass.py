@@ -101,7 +101,7 @@ check("settings offers Glass+ and Liquid Glass",
       'data-pref="glassstyle" data-val="plus"' in settings
       and 'data-pref="glassstyle" data-val="liquid"' in settings)
 check("the UI script saves the glass style as the fourth cookie segment",
-      '[root.dataset.theme, root.dataset.mode, root.dataset.layout, (root.dataset.glassstyle || "plus"), (root.dataset.bg || "theme")].join(".")' in js)
+      '[root.dataset.theme, root.dataset.mode, root.dataset.layout, (root.dataset.glassstyle || "plus"), (root.dataset.bg || "theme"), (root.dataset.type || "frame")].join(".")' in js)
 
 # --- The README documents the option ---
 check("README documents the glass style option",

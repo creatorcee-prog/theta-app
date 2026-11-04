@@ -164,7 +164,7 @@ check("engine animates with rAF and freezes under reduced motion",
       and 'matchMedia("(prefers-reduced-motion: reduce)")' in js
       and "if (!reduced) raf = requestAnimationFrame" in js)
 check("the UI script saves the background as the fifth cookie segment",
-      '[root.dataset.theme, root.dataset.mode, root.dataset.layout, (root.dataset.glassstyle || "plus"), (root.dataset.bg || "theme")].join(".")' in js)
+      '[root.dataset.theme, root.dataset.mode, root.dataset.layout, (root.dataset.glassstyle || "plus"), (root.dataset.bg || "theme"), (root.dataset.type || "frame")].join(".")' in js)
 
 # --- Settings offers the choice ---
 settings = h.settings_page({})

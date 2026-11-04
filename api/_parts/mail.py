@@ -718,14 +718,21 @@ def settings_page(headers):
     body = (
         '<header class="top"><div><p class="eyebrow">Settings</p><h1>Make it yours</h1></div></header>'
         '<div class="stack">'
-        '<section class="card stack"><div><h2>Color scheme</h2><p class="muted small">Every scheme has a light and a dark '
+        '<section class="card stack" id="look"><div><h2>Color scheme</h2><p class="muted small">Every scheme has a light and a dark '
         'version. Saved on this device.</p></div>'
         f'<div class="swatches">{swatches}</div>'
         f'<div><h3>Light or dark</h3><p class="muted small">Match device follows your phone\'s setting.</p><div class="seg" role="group" aria-label="Light or dark">{modes}</div></div>'
-        '<div><h3>Glass style</h3><p class="muted small">Glass+ is the frosted bar and bubble treatment. Liquid Glass '
-        'adds a specular gloss, stronger blur, and edge light to the same surfaces. Saved on this device.</p>'
-        '<div class="seg" role="group" aria-label="Glass style"><button type="button" data-pref="glassstyle" data-val="plus">Glass+</button>'
-        '<button type="button" data-pref="glassstyle" data-val="liquid">Liquid Glass</button></div></div>'
+        '<div><h3>Frame</h3><p class="muted small">The shape of every card, button and bubble, separate from the colors, so '
+        'any frame works with any scheme. Hologram tilts with your phone. Saved on this device.</p>'
+        '<div class="seg" role="group" aria-label="Frame">' + "".join(
+            f'<button type="button" data-pref="glassstyle" data-val="{k}" title="{html.escape(about)}">{html.escape(label)}</button>'
+            for k, (label, about) in FRAMES.items()) + '</div></div>'
+        '<div><h3>Font</h3><p class="muted small">Frame\u2019s own uses the font each frame was made with (Edge and Breach use '
+        'Rajdhani, the font of the game menus they come from). Pick one to use it everywhere. Saved on this device.</p>'
+        '<div class="seg fonts" role="group" aria-label="Font">' + "".join(
+            f'<button type="button" data-pref="type" data-val="{k}"'
+            + (f' style="font-family:{html.escape(_fstack(k))}" title="{html.escape(FONTS[k][1])}"' if k in FONTS else "")
+            + f'>{html.escape(label)}</button>' for k, label in FONT_PICKS.items()) + '</div></div>'
         '<div><h3>Background</h3><p class="muted small">What sits behind everything. Separate from the color scheme, so any scheme works with any background. Saved on this device.</p>'
         '<div class="seg" role="group" aria-label="Background"><button type="button" data-pref="bg" data-val="theme">Theme</button>'
         '<button type="button" data-pref="bg" data-val="shards">Shards</button>'

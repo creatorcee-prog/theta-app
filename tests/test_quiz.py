@@ -118,7 +118,7 @@ check("edge light reads the gyro and the pointer",
       "deviceorientation" in uis and "edgeSet(e.gamma / 45" in uis
       and "edgeSet(e.clientX / innerWidth * 2 - 1" in uis)
 check("edge light stays out of plus mode and reduced motion",
-      'document.documentElement.dataset.glassstyle === "liquid"' in uis
+      '/^(liquid|holo)$/.test(document.documentElement.dataset.glassstyle' in uis
       and "if (still || !edgeLiquid()) return;" in uis)
 
 # --- Larger text: body, messages, code, titles ---

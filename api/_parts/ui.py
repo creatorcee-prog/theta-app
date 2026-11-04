@@ -53,7 +53,168 @@ THEMES = {
     "terminal": {"label": "Terminal", "about": "Phosphor green, monospace", "glow": 0.25, "mono": True,
                  "light": _pal("#f4f7f2", "#ffffff", "#e8efe5", "#d2ddcd", "#0f1a0c", "#4a5b44", "#146c34", "#0b5d8f", "#ffffff"),
                  "dark": _pal("#050805", "#0b100b", "#111a11", "#1f301f", "#c8f7c5", "#86b382", "#3dff8b", "#3fd8f0", "#050805")},
+
+    # Six schemes drawn from sci-fi screens (2026-11-04). Dark is their home; the light versions keep the accents.
+    "redline": {"label": "Redline", "about": "Hot red on black, cyan highlights", "glow": 0.45,
+                "light": _pal("#fff4f2", "#ffffff", "#ffe6e2", "#f2c5bf", "#2a0a0a", "#7a4a44", "#c8231a", "#0b7f91", "#ffffff"),
+                "dark": _pal("#0d0507", "#170a0c", "#211012", "#4a1a1c", "#f3e3d9", "#c08a82", "#ff5a4f", "#5ef2ff", "#0d0507")},
+    "datalog": {"label": "Data Log", "about": "Teal readouts on deep blue", "glow": 0.4,
+                "light": _pal("#eefafa", "#ffffff", "#def3f4", "#bfe2e4", "#062026", "#3f6a70", "#087a84", "#0b6f9c", "#ffffff"),
+                "dark": _pal("#06121a", "#0a1c26", "#0f2632", "#1c4a57", "#c9f6f6", "#7fb3b8", "#4fe6ee", "#8ef9ff", "#06121a")},
+    "breach": {"label": "Breach", "about": "Acid yellow-green on black, green when it works", "glow": 0.3,
+               "light": _pal("#f7f9ec", "#ffffff", "#eef3d6", "#dbe4b4", "#1a1f08", "#5a6438", "#5b6e00", "#0e7a4a", "#ffffff"),
+               "dark": _pal("#0b0c0a", "#12140f", "#1a1d14", "#3a4220", "#e6f2b8", "#9aa874", "#d4f05a", "#5ef0a2", "#0b0c0a")},
+    "scanner": {"label": "Scanner", "about": "Warning red with yellow tags", "glow": 0.4,
+                "light": _pal("#fff8ec", "#ffffff", "#fff0d4", "#f3dcb4", "#2a1408", "#73513b", "#c42a1c", "#8a6a00", "#ffffff"),
+                "dark": _pal("#0a0808", "#141010", "#1d1716", "#4a2a22", "#fbefd4", "#c2a68a", "#ff4d3d", "#ffe14d", "#0a0808")},
+    "amber": {"label": "Amber HUD", "about": "Signal orange and amber on gunmetal", "glow": 0.3,
+              "light": _pal("#f3f2ef", "#ffffff", "#e9e7e2", "#d6d3cc", "#1a1814", "#5c5850", "#b45a00", "#8a6200", "#ffffff"),
+              "dark": _pal("#101112", "#181a1c", "#212427", "#33373b", "#e9e6df", "#9da0a3", "#ff9a1f", "#ffc23d", "#101112")},
+    "mission": {"label": "Mission Control", "about": "Gold and blue data on deep night", "glow": 0.25,
+                "light": _pal("#f4f6fa", "#ffffff", "#e8edf5", "#d3dbe8", "#0d1420", "#4a5568", "#a86800", "#1d5fd0", "#ffffff"),
+                "dark": _pal("#07090e", "#0d1118", "#131925", "#222b3b", "#dfe5ef", "#8a94a8", "#f2b544", "#5aa8ff", "#07090e")},
+    "hologram": {"label": "Hologram", "about": "White light in the dark, red for warnings", "glow": 0.2,
+                 "light": _pal("#eef1f3", "#ffffff", "#f2f5f6", "#cfd6da", "#101416", "#4f5a5f", "#d23c1e", "#2a5f7a", "#ffffff"),
+                 "dark": _pal("#0b0d0e", "#14181a", "#1b2023", "#3a4448", "#eef3f5", "#9aa6ab", "#ff5a3c", "#e6f4ff", "#0b0d0e")},
 }
+
+
+# ---- Frames (Settings -> Frame): the shape of every surface, separate from the colors. Glass+ and
+# Liquid Glass were the first two; five more (2026-11-04) are drawn from sci-fi screens:
+#   edge     cut corners, a lit edge and spaced capitals (game menus in red and cyan)
+#   breach   square boxes with solid title tags and mono type (a hacking screen)
+#   hud      dark panels held by corner brackets, warning-tick titles (a control-room HUD)
+#   console  hairlines, mono labels, dense rows over a faint grid (a mission-control dashboard)
+#   holo     see-through light panels with bright corners that tilt with the phone (a hologram)
+FRAMES = {"plus": ("Glass+", "Frosted bars and bubbles"), "liquid": ("Liquid Glass", "Gloss, deep blur, edge light"),
+          "edge": ("Edge", "Cut corners and a lit edge"), "breach": ("Breach", "Square boxes, solid title tags"),
+          "hud": ("HUD", "Corner brackets on dark panels"), "console": ("Console", "Hairlines and mono data"),
+          "holo": ("Hologram", "See-through light that tilts")}
+
+
+def _brackets(color, size="16px", w="2px"):
+    """Four L-shaped corner brackets as background layers (no pseudo-elements, so nothing else breaks)."""
+    g = f"linear-gradient({color},{color})"
+    return ",".join(f"{g} {pos}/{a} {b} no-repeat" for pos in ("left top", "right top", "left bottom", "right bottom")
+                    for a, b in ((size, w), (w, size)))
+
+
+def _frames_css():
+    F = lambda name, rules: "\n".join(
+        ",".join(f':root[data-glassstyle="{name}"] {x.strip()}' for x in sel.split(",")) + "{" + body + "}"
+        for sel, body in rules)
+    panel = ".card,.win,.kpi"
+    cut = lambda n: (f"clip-path:polygon(0 0,calc(100% - {n}) 0,100% {n},100% 100%,{n} 100%,0 calc(100% - {n}))")
+    caps = "text-transform:uppercase;letter-spacing:.09em"
+    mono = "font-family:var(--f-mono)"; head = "font-family:var(--f-head)"; label = "font-family:var(--f-label)"
+    out = [F("edge", [
+        (panel, "border-radius:0;border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);" + cut("14px")
+         + ";background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 9%,transparent),transparent 46px),var(--surface);"
+         "box-shadow:inset 3px 0 0 var(--accent)"),
+        (".card h2,.win h2,.card h3,.top h1", caps + ";font-weight:760;color:var(--accent)"),
+        (".top h1", "font-size:26px"),
+        (".btn", "border-radius:0;" + cut("8px") + ";" + caps + ";font-size:13.5px"),
+        (".seg,.seg button,.field,.box,.chip,.sw,.lo,.lrow", "border-radius:0"),
+        (".msg.mine .mbody", "border-radius:0;border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);" + cut("10px")),
+        (".tabbar", "border-top:1px solid color-mix(in srgb,var(--accent) 55%,transparent)"),
+        (".tabbar a.on", "text-shadow:0 0 10px color-mix(in srgb,var(--accent) 70%,transparent)"),
+    ]), F("breach", [
+        (panel, "border-radius:0;border:1px solid color-mix(in srgb,var(--accent) 55%,transparent);"
+         "background:color-mix(in srgb,var(--surface) 70%,transparent);box-shadow:inset 0 3px 0 var(--accent)"),
+        (".card h2,.win h2", "display:inline-block;background:var(--accent);color:var(--on);padding:2px 10px;font-size:15px;"
+         + caps + ";" + head + ";font-weight:700"),
+        (".card h3,.eyebrow,.small,.muted.small", label), ("code", mono),
+        (".top h1", caps + ";" + head + ";font-size:24px;color:var(--accent)"),
+        (".btn", "border-radius:0;" + caps + ";" + head + ";font-size:13px"),
+        (".seg,.seg button,.field,.box,.chip,.sw,.lo,.lrow,.msg.mine .mbody", "border-radius:0"),
+        (".msg.mine .mbody", "border:1px solid color-mix(in srgb,var(--accent) 50%,transparent)"),
+        (".tabbar", "border-top:1px solid var(--accent)"),
+    ]), F("hud", [
+        (panel, "border-radius:4px;border:1px solid color-mix(in srgb,var(--text) 10%,transparent);background:"
+         + _brackets("var(--accent)") + ",linear-gradient(180deg,color-mix(in srgb,var(--text) 4%,transparent),transparent),var(--surface)"),
+        (".card h2,.win h2", caps + ";font-size:16px;font-weight:760"),
+        (".card h2::before,.win h2::before", 'content:"";display:inline-block;width:0;height:0;margin-right:8px;vertical-align:1px;'
+         "border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:10px solid var(--accent)"),
+        (".btn", "border-radius:3px;" + caps + ";font-size:13px;box-shadow:inset 0 -2px 0 rgba(0,0,0,.25)"),
+        (".seg,.field,.box,.chip,.sw,.lo,.lrow", "border-radius:4px"),
+        (".msg.mine .mbody", "border-radius:4px;background:" + _brackets("var(--accent)", "10px", "2px") + ",var(--surface)"),
+    ]), F("console", [
+        (panel, "border-radius:2px;border:1px solid var(--border);box-shadow:none;background:var(--surface)"),
+        (".card h2,.win h2,.card h3", caps + ";" + head + ";font-size:12.5px;font-weight:700;color:var(--muted)"),
+        (".top h1", head + ";font-size:22px;letter-spacing:.02em"),
+        (".eyebrow,.small,.chip", label), ("code", mono),
+        (".btn,.seg,.seg button,.field,.box,.chip,.sw,.lo,.lrow,.msg.mine .mbody", "border-radius:2px"),
+        (".btn", caps + ";" + head + ";font-size:12.5px"),
+        ("body::before", "background:linear-gradient(color-mix(in srgb,var(--text) 5%,transparent) 1px,transparent 1px) 0 0/100% 32px,"
+         "linear-gradient(90deg,color-mix(in srgb,var(--text) 5%,transparent) 1px,transparent 1px) 0 0/32px 100%,var(--glowbg)"),
+    ]), F("holo", [
+        (panel, "border-radius:6px;border:1px solid color-mix(in srgb,var(--text) 30%,transparent);background:"
+         + _brackets("color-mix(in srgb,var(--text) 92%,transparent)", "14px", "2px")
+         + ",linear-gradient(160deg,color-mix(in srgb,var(--text) 11%,transparent),color-mix(in srgb,var(--text) 2%,transparent) 60%);"
+         "-webkit-backdrop-filter:blur(10px) saturate(130%);backdrop-filter:blur(10px) saturate(130%);"
+         "box-shadow:0 0 22px color-mix(in srgb,var(--text) 10%,transparent),inset 0 0 18px color-mix(in srgb,var(--text) 6%,transparent);"
+         "transform:perspective(900px) rotateY(calc(var(--shine-x,0) * 4deg)) rotateX(calc(var(--shine-y,0) * -3deg));transition:transform .25s ease-out"),
+        (".card h2,.win h2,.top h1", "text-shadow:0 0 12px color-mix(in srgb,var(--text) 45%,transparent);" + caps),
+        (".card h2,.win h2", "font-size:16px"),
+        (".top h1", "font-size:22px"),
+        (".btn", "border-radius:4px;" + caps + ";font-size:13px;box-shadow:0 0 14px color-mix(in srgb,var(--accent) 45%,transparent)"),
+        (".seg,.field,.box,.chip,.sw,.lo,.lrow", "border-radius:4px"),
+        (".msg.mine .mbody", "border-radius:6px;border:1px solid color-mix(in srgb,var(--text) 28%,transparent);background:"
+         + _brackets("color-mix(in srgb,var(--text) 85%,transparent)", "9px", "1.5px") + ",color-mix(in srgb,var(--text) 6%,transparent)"),
+    ])]
+    out.append(':root[data-glassstyle="console"]{--pad:14px;--gap:10px}')
+    # Where a section was opened (Theta's open tool, or a link to #part), it lights up for a moment.
+    out.append(".card:target,section:target{scroll-margin-top:calc(env(safe-area-inset-top) + 70px);animation:targetflash 1.8s ease-out}"
+               "@keyframes targetflash{0%,30%{outline:2px solid var(--accent);outline-offset:4px}100%{outline:2px solid transparent;outline-offset:10px}}")
+    return "\n".join(out)
+
+
+# ---- Fonts (2026-11-04). All SIL Open Font License, shipped in api/_parts/fonts (served at /fonts/, cached
+# for good); a page downloads only the ones it uses. Rajdhani is the UI font of the game whose menus the
+# Edge and Breach frames come from, and Orbitron its small-label font (per Fonts In Use). The rest are free
+# look-alikes for the other screens. size-adjust evens out how big each one reads next to the system font.
+_SYS = '-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Inter,Roboto,system-ui,sans-serif'
+_MONO = 'ui-monospace,"SF Mono",Menlo,Consolas,monospace'
+FONTS = {  # id: (label, about, weights, size-adjust %, fallback)
+    "rajdhani": ("Rajdhani", "Narrow and technical: the red game menus", (400, 500, 600, 700), 112, _SYS),
+    "orbitron": ("Orbitron", "Wide and geometric: small sci-fi labels", (500, 700), 86, _SYS),
+    "chakra-petch": ("Chakra Petch", "Square with clipped corners: control panels", (400, 600, 700), 100, _SYS),
+    "oxanium": ("Oxanium", "Squared-off and clean", (400, 600, 700), 100, _SYS),
+    "exo-2": ("Exo 2", "Soft futuristic, easy to read", (400, 600, 700), 100, _SYS),
+    "michroma": ("Michroma", "Extended capitals: hologram labels", (400,), 80, _SYS),
+    "audiowide": ("Audiowide", "Racing-style rounded wide", (400,), 88, _SYS),
+    "saira-condensed": ("Saira Condensed", "Tall and condensed: HUD readouts", (500, 700), 112, _SYS),
+    "space-grotesk": ("Space Grotesk", "Quirky modern grotesk", (400, 700), 100, _SYS),
+    "share-tech-mono": ("Share Tech Mono", "Terminal mono: the hacking screen", (400,), 100, _MONO),
+    "jetbrains-mono": ("JetBrains Mono", "Coder's mono: dashboards", (400, 700), 96, _MONO),
+}
+# Each frame's own fonts: (body, headings, small labels, mono).
+FRAME_FONTS = {"edge": ("rajdhani", "rajdhani", "orbitron", "share-tech-mono"),
+               "breach": ("rajdhani", "share-tech-mono", "share-tech-mono", "share-tech-mono"),
+               "hud": ("chakra-petch", "chakra-petch", "saira-condensed", "jetbrains-mono"),
+               "console": ("space-grotesk", "jetbrains-mono", "jetbrains-mono", "jetbrains-mono"),
+               "holo": ("exo-2", "michroma", "michroma", "share-tech-mono")}
+FONT_PICKS = {"frame": "Frame's own", "system": "System"} | {k: v[0] for k, v in FONTS.items()}
+
+
+def _fstack(fid):
+    return f'"{FONTS[fid][0]}",{FONTS[fid][4]}'
+
+
+def _fonts_css():
+    out = [f'@font-face{{font-family:"{label}";src:url(/fonts/{fid}-{w}.woff2) format("woff2");font-weight:{w};'
+           f'font-style:normal;font-display:swap;size-adjust:{adj}%}}'
+           for fid, (label, _, weights, adj, _) in FONTS.items() for w in weights]
+    out.append(f':root{{--f-body:{_SYS};--f-head:var(--f-body);--f-label:var(--f-head);--f-mono:{_MONO}}}'
+               "body{font-family:var(--f-body)}h1,h2,h3,.btn,.seg button{font-family:var(--f-head)}.eyebrow{font-family:var(--f-label)}")
+    for fr, (b, h_, l, m) in FRAME_FONTS.items():
+        out.append(f':root[data-glassstyle="{fr}"]{{--f-body:{_fstack(b)};--f-head:{_fstack(h_)};--f-label:{_fstack(l)};--f-mono:{_fstack(m)}}}')
+    for fid in FONTS:  # a font you pick wins over the frame's (:root twice outranks the frame rule)
+        mono = FONTS[fid][4] == _MONO
+        out.append(f':root:root[data-type="{fid}"]{{--f-body:{_fstack(fid)};--f-head:{_fstack(fid)};--f-label:{_fstack(fid)}'
+                   + (f';--f-mono:{_fstack(fid)}' if mono else "") + "}")
+    out.append(f':root:root[data-type="system"]{{--f-body:{_SYS};--f-head:{_SYS};--f-label:{_SYS};--f-mono:{_MONO}}}')
+    return "\n".join(out)
 
 
 MODES = {"auto": "Match device", "light": "Light", "dark": "Dark"}
@@ -816,6 +977,39 @@ body.has-mini header.top{padding-right:60px} /* room for Theta in the corner */
 
 _UI_JS_SRC = r'''
 (() => {
+  // Where Theta looks: at your cursor (or finger) when it's moving, otherwise where you tilt the phone.
+  // Each avatar reads window.thetaLook.at(its center) and gets -1..1 for x and y. The tilt is measured
+  // from how you're holding the phone (that drifts back to neutral), so any angle you hold it at is "ahead".
+  (() => {
+    const L = {px: 0, py: 0, pAt: 0, gx: 0, gy: 0, base: null, on: false};
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const clamp = v => Math.max(-1, Math.min(1, v));
+    addEventListener("pointermove", e => { L.px = e.clientX; L.py = e.clientY; L.pAt = performance.now(); }, {passive: true});
+    addEventListener("pointerdown", e => { L.px = e.clientX; L.py = e.clientY; L.pAt = performance.now(); }, {passive: true});
+    function onTilt(e) {
+      if (e.beta == null || e.gamma == null) return;
+      if (!L.base) L.base = [e.beta, e.gamma];
+      L.base[0] += (e.beta - L.base[0]) * 0.004; L.base[1] += (e.gamma - L.base[1]) * 0.004;
+      L.gx = clamp((e.gamma - L.base[1]) / 25); L.gy = clamp((e.beta - L.base[0]) / 25);
+    }
+    function start() {
+      if (L.on || still || !window.DeviceOrientationEvent) return; L.on = true;
+      const D = DeviceOrientationEvent;
+      if (typeof D.requestPermission === "function")
+        D.requestPermission().then(r => { if (r === "granted") addEventListener("deviceorientation", onTilt); }).catch(() => { L.on = false; });
+      else addEventListener("deviceorientation", onTilt);
+    }
+    // iPhone asks for motion once, and only from a tap
+    if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === "function") addEventListener("click", start, {once: true, capture: true});
+    else start();
+    window.thetaLook = {at(cx, cy) {
+      if (still) return [0, 0];
+      if (performance.now() - L.pAt < 2500)
+        return [clamp((L.px - cx) / (innerWidth * 0.5)), clamp((L.py - cy) / (innerHeight * 0.5))];
+      return [L.gx, L.gy];
+    }};
+  })();
+
   // Theta in the corner of every page (Urchin Pour, small): wears its last mood's color; a tap flies it
   // to the middle of the Theta page (that page plays the dock move in reverse).
   (() => {
@@ -828,9 +1022,13 @@ _UI_JS_SRC = r'''
     let light = false;
     setTimeout(() => { const m = getComputedStyle(document.body).backgroundColor.match(/\d+/g), layer = document.getElementById("bg-layer");
       light = !(layer && !layer.classList.contains("off")) && !!m && (0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2]) > 150; }, 60);
-    const pts = [];
+    const pts = [], look = [0, 0];
     function draw(ms) {
-      const t = ms / 1000 * (reduce ? 0.3 : 1), c = S / 2, R = S * 0.36, yaw = t * 0.5, cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(0.32), sp = Math.sin(0.32);
+      const r = a.getBoundingClientRect(), want = window.thetaLook ? thetaLook.at(r.left + r.width / 2, r.top + r.height / 2) : [0, 0];
+      look[0] += (want[0] - look[0]) * 0.08; look[1] += (want[1] - look[1]) * 0.08;
+      cv.style.transform = `translate(${(look[0] * 2.5).toFixed(2)}px,${(look[1] * 2.5).toFixed(2)}px)`;
+      const t = ms / 1000 * (reduce ? 0.3 : 1), c = S / 2, R = S * 0.36, yaw = t * 0.5 + look[0] * 0.8, pit = 0.32 + look[1] * 0.6,
+        cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pit), sp = Math.sin(pit);
       g.clearRect(0, 0, S, S); pts.length = 0;
       for (const [x, y, z, s] of dots) {
         const k = 1 + 0.05 * Math.sin(t * 1.4 + y * 4) + (s > 0.85 ? 0.12 * Math.abs(Math.sin(t * 2 + s * 30)) : 0);
@@ -895,7 +1093,7 @@ _UI_JS_SRC = r'''
     else mk(m === "dark" ? t.dark : t.light);
   }
   function save() {
-    document.cookie = "theta_ui=" + [root.dataset.theme, root.dataset.mode, root.dataset.layout, (root.dataset.glassstyle || "plus"), (root.dataset.bg || "theme")].join(".")
+    document.cookie = "theta_ui=" + [root.dataset.theme, root.dataset.mode, root.dataset.layout, (root.dataset.glassstyle || "plus"), (root.dataset.bg || "theme"), (root.dataset.type || "frame")].join(".")
       + ";path=/;max-age=31536000;samesite=lax";
   }
   function mark() {
@@ -1037,7 +1235,7 @@ _UI_JS_SRC = r'''
   // shine setting; iOS still needs one tap to allow motion,
   // and touch position covers a denied request.
   let edgeX = 0, edgeY = 0, edgeLast = 0, edgeFrame = 0, edgeGyroStarted = false;
-  const edgeLiquid = () => document.documentElement.dataset.glassstyle === "liquid";
+  const edgeLiquid = () => /^(liquid|holo)$/.test(document.documentElement.dataset.glassstyle || ""); // the hologram tilts with it too
   function edgeSet(x, y) {
     if (still || !edgeLiquid()) return;
     const now = performance.now();
@@ -2826,7 +3024,7 @@ def ui_icon(name):
             f'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{UI_ICONS[name]}</svg>')
 
 
-_UI_CSS = theme_css() + "\n" + _BASE_CSS + "\n" + _hdr_css() + "\nhtml.veiled .app,html.veiled .tabbar{visibility:hidden}"
+_UI_CSS = theme_css() + "\n" + _BASE_CSS + "\n" + _hdr_css() + "\n" + _frames_css() + "\n" + _fonts_css() + "\nhtml.veiled .app,html.veiled .tabbar{visibility:hidden}"
 _UI_JS = _UI_JS_SRC.replace("__THEMES__", json.dumps(
     {n: {"glass": bool(t.get("glass")), "mono": bool(t.get("mono")), "light": t["light"]["bg"],
          "dark": t["dark"]["bg"], "accent2": t["dark"]["accent2"]} for n, t in THEMES.items()}))
@@ -2839,9 +3037,15 @@ def ui_prefs(headers):
     theme = raw[0] if raw[0] in THEMES else "theta"
     mode = raw[1] if len(raw) > 1 and raw[1] in MODES else "auto"
     layout = raw[2] if len(raw) > 2 and raw[2] in LAYOUTS else "grid"
-    glassstyle = raw[3] if len(raw) > 3 and raw[3] in ("plus", "liquid") else "plus"
+    glassstyle = raw[3] if len(raw) > 3 and raw[3] in FRAMES else "plus"
     bg = raw[4] if len(raw) > 4 and raw[4] in ("theme", "shards", "stars", "black", "gemini") else "theme"
     return theme, mode, layout, glassstyle, bg
+
+
+def ui_type(headers):
+    """The font picked in Settings (frame = the frame's own), the 6th part of the theta_ui cookie."""
+    raw = (_cookie(headers, "theta_ui") or "").split(".")
+    return raw[5] if len(raw) > 5 and raw[5] in FONT_PICKS else "frame"
 
 
 def avatar_img(agent, size=40):
@@ -2908,7 +3112,7 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
         body_class = (body_class + " has-mini").strip()  # Theta sits in the top-right corner of this page
     body_cls = ("hasminibar " + body_class).strip() if show_minibar else body_class
     return (
-        f'<!doctype html><html lang="en" data-theme="{theme}" data-mode="{mode}" data-layout="{layout}" data-glassstyle="{glassstyle}" data-bg="{bg}"{flags}{bgstyle}>'
+        f'<!doctype html><html lang="en" data-theme="{theme}" data-mode="{mode}" data-layout="{layout}" data-glassstyle="{glassstyle}" data-bg="{bg}" data-type="{ui_type(headers)}"{flags}{bgstyle}>'
         '<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
         f'<title>{html.escape(title)} · {APP_NAME}</title>'
         '<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">'

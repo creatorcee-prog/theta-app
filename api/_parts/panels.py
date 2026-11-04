@@ -123,3 +123,49 @@ def _tool_weather(arg, agent):
 
 TOOLS["weather"] = ("weather | today   (today's forecast at home: high, low, chance of rain)", _tool_weather, {"theta"})
 HEAD_LOOKUPS.add("weather")
+
+
+# ---- Theta drives the app (2026-11-04). The in-app part of "computer use": Theta opens a page or a
+# section of one and points at it. A web app can't touch other apps on the phone, so this is the app
+# only. Fixed places, never a free URL: nothing Theta reads on the web can send you somewhere else.
+OPEN_PLACES = {
+    "home": ("/", "Home"), "news": ("/#news", "the news on Home"), "today": ("/#today", "Today on Home"),
+    "money": ("/money", "Money"), "budget": ("/money", "Money"), "spending": ("/money", "Money"),
+    "calendar": ("/calendar", "Calendar"), "schedule": ("/calendar", "Calendar"),
+    "mail": ("/mail", "Mail"), "email": ("/mail", "Mail"), "inbox": ("/mail", "Mail"),
+    "diagnostics": ("/diagnostics", "Diagnostics"), "checkup": ("/diagnostics#checkup", "the checkup in Diagnostics"),
+    "harness": ("/diagnostics#hbench", "the harness test in Diagnostics"),
+    "settings": ("/settings", "Settings"), "theme": ("/settings#look", "the look in Settings"),
+    "themes": ("/settings#look", "the look in Settings"), "colors": ("/settings#look", "the look in Settings"),
+    "frame": ("/settings#look", "the look in Settings"), "look": ("/settings#look", "the look in Settings"),
+    "widget": ("/settings#phone", "the widget setup in Settings"), "shortcuts": ("/settings#phone", "the Shortcuts setup in Settings"),
+    "phone": ("/settings#phone", "the phone setup in Settings"), "notifications": ("/settings#notifs", "notifications in Settings"),
+    "notifs": ("/settings#notifs", "notifications in Settings"), "memory": ("/settings#memory", "memory in Settings"),
+    "gmail": ("/settings#gmail", "Gmail in Settings"), "siri": ("/settings#siri", "Siri in Settings"),
+    "passkeys": ("/settings#faceid", "Face ID in Settings"), "faceid": ("/settings#faceid", "Face ID in Settings"),
+    "security": ("/diagnostics#security", "security in Diagnostics"),
+}
+OPEN_WORDS = sorted(OPEN_PLACES)
+
+
+def open_place(arg):
+    """(url, label) for what the user asked to open, or None."""
+    hits = [OPEN_PLACES[w if w in OPEN_PLACES else w.rstrip("s")] for w in re.findall(r"[a-z]+", (arg or "").lower())
+            if w in OPEN_PLACES or w.rstrip("s") in OPEN_PLACES]
+    exact = [h for h in hits if "#" in h[0]]  # "widget settings" -> the widget part, the more exact place
+    return (exact or hits or [None])[0]
+
+
+def _tool_open(arg, agent):
+    got = open_place(arg)
+    if not got:
+        return "No page like that. I can open: " + ", ".join(OPEN_WORDS) + "."
+    url, label = got
+    _REQ.nav = {"url": url, "label": label}
+    return f"Opening {label} once you've heard the answer."
+
+
+TOOLS["open"] = ("open | <page or section>   (opens a page of this app on the user's screen, Theta flies to the corner "
+                 "and the page comes up: home, money, calendar, mail, diagnostics, settings, or a part like widget, "
+                 "notifications, themes, checkup. Use it when the user says open, show me, take me to, go to)",
+                 _tool_open, {"theta"})

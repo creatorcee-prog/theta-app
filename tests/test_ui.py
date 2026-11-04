@@ -85,8 +85,8 @@ check("manifest says Theta", man["name"] == "Theta" and man["short_name"] == "Th
 # --- themes, modes, layouts
 s, css, hd = call("GET", "/ui.css")
 css = css.decode()
-check("ui.css has all 12 themes, each with light, dark and follow-device rules",
-      len(h.THEMES) == 12 and all(f':root[data-theme="{t}"]{{' in css and f':root[data-theme="{t}"][data-mode="dark"]{{' in css
+check("ui.css has all 19 themes, each with light, dark and follow-device rules",
+      len(h.THEMES) == 19 and all(f':root[data-theme="{t}"]{{' in css and f':root[data-theme="{t}"][data-mode="dark"]{{' in css
                                   and f':root[data-theme="{t}"]:not([data-mode="light"])' in css for t in h.THEMES))
 check("assets cached for good (versioned URLs)", "immutable" in hd["Cache-Control"] and "immutable" in call("GET", "/ui.js")[2]["Cache-Control"])
 s, js, _ = call("GET", "/ui.js")
@@ -97,7 +97,7 @@ check("prefs: junk falls back piece by piece", h.ui_prefs({"cookie": "theta_ui=n
       and h.ui_prefs({"cookie": "theta_ui=<script>"}) == ("theta", "auto", "grid", "plus", "theme"))
 s, page, _ = call("GET", "/", headers={**K, "cookie": "theta_ui=aurora.light.compact"})
 page = page.decode()
-check("page renders the saved theme, mode, layout and glass flag", '<html lang="en" data-theme="aurora" data-mode="light" data-layout="compact" data-glassstyle="plus" data-bg="theme" data-glass>' in page)
+check("page renders the saved theme, mode, layout and glass flag", '<html lang="en" data-theme="aurora" data-mode="light" data-layout="compact" data-glassstyle="plus" data-bg="theme" data-type="frame" data-glass>' in page)
 check("forced mode: one theme-color meta", page.count('name="theme-color"') == 1)
 s, page, _ = call("GET", "/", headers=K)
 check("auto mode: light and dark theme-color metas", page.decode().count('name="theme-color"') == 2)
