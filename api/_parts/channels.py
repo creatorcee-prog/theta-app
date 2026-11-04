@@ -548,7 +548,18 @@ def handle(method, path, query, headers, body):
                 return _json(400, {"ok": False, "error": str(e)})
             except LLMError as e:
                 return _json(429 if getattr(e, "status", None) == 429 else 502, {"ok": False, "error": str(e)})
-            return 200, "audio/wav", audio, [("Cache-Control", "no-store")]
+            kind = "audio/wav" if audio[:4] == b"RIFF" else "audio/mpeg"  # Fish Audio sends MP3
+            return 200, kind, audio, [("Cache-Control", "no-store")]
+
+        if path == "/api/voice/fish/config":  # Settings: Theta's Fish Audio voice and the paid voice's monthly cap
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            try:
+                cfg = fish_set(voice=data.get("voice") if "voice" in data else None,
+                               name=data.get("name"), cap=data.get("cap") if "cap" in data else None)
+            except ValueError as e:
+                return _json(400, {"ok": False, "error": str(e)})
+            return _json(200, {"ok": True, **cfg})
 
         if path == "/api/voice/hear":  # Glasses mode: a recorded clip -> text (Groq Whisper)
             if not _auth_dashboard(query, headers):
@@ -1280,6 +1291,16 @@ def handle(method, path, query, headers, body):
             return 401, "text/html; charset=utf-8", signin_page(headers).encode()
         out = agent_page(headers, path[len("/agent/"):]) if agent_path else pages[path]()
         return 200, "text/html; charset=utf-8", out.encode(), _login_cookie(query)
+
+    if path == "/api/voice/fish/voices":  # Settings: Fish Audio's top English voices, to listen to and pick
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        try:
+            return _json(200, {"ok": True, "voices": fish_voices(query.get("q", [""])[0], query.get("page", ["1"])[0])})
+        except ValueError:
+            return _json(400, {"ok": False, "error": "page must be a number"})
+        except LLMError as e:
+            return _json(502, {"ok": False, "error": str(e)})
 
     if path == "/api/feed":
         if not _auth_dashboard(query, headers):
