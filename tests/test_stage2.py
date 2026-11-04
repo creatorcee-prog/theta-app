@@ -103,27 +103,21 @@ s, home = call("GET", "/", headers=K)
 check("home serves", s == 200)
 home = home.decode() if isinstance(home, bytes) else home
 check("home has Agents section", "<h2>Agents</h2>" in home and "Expand an agent for its controls." in home)
-for pid, label in [("agent-lenz", "Lenz"), ("agent-qwerty", "QWERTY"), ("agent-mistral", "Mistral")]:
+for pid, label in [("agent-lenz", "Lenz"), ("agent-qwerty", "QWERTY")]:
     check(f"home has collapsed {label} panel",
           f'<details class="card stack" id="{pid}"' in home)
-check("home has exactly three agent panels", home.count("<details") == 3)
+check("home has exactly two agent panels", home.count("<details") == 2)
 check("agents section sits after the crew windows and before quick actions",
       home.index('aria-label="Agent windows"') < home.index('id="agent-lenz"') < home.index('class="quickactions"'))
 
-# --- Mistral: notification sending moved, not duplicated, not under Lenz ---
-check("mistral panel holds the notification controls",
-      'id="agent-mistral"' in home and 'id="push-on"' in home and 'id="push-test"' in home and 'id="push-status"' in home)
-check("no duplicate notification control ids on Home",
-      home.count('id="push-on"') == 1 and home.count('id="push-test"') == 1 and home.count('id="push-status"') == 1)
-check("push handler script travels with the panel",
-      home.index('id="push-test"') < home.index("push-status") and "Notifications are on for this device." in home)
-check("notification controls sit inside the Mistral panel, not the Lenz panel",
-      home.index('id="agent-mistral"') < home.index('id="push-on"') < home.index("</details>", home.index('id="agent-mistral"')))
+# --- Phone notifications: since 2026-11-04 in Settings, Notifications (Theta sends them now), once ---
 s, settings = call("GET", "/settings", headers=K)
 settings = settings.decode() if isinstance(settings, bytes) else settings
-check("settings no longer holds the notification controls",
-      'id="push-on"' not in settings and 'id="push-test"' not in settings and 'id="push-status"' not in settings)
-check("settings points to the moved controls", "Phone notifications now live under Mistral on" in settings)
+check("settings holds the notification controls, once, in the Notifications card",
+      settings.count('id="push-on"') == 1 and settings.count('id="push-test"') == 1 and settings.count('id="push-status"') == 1
+      and settings.index('id="notifs"') < settings.index('id="push-on"'))
+check("push handler script travels with the controls", "Notifications are on for this device." in settings)
+check("home has no controls, and points to Settings", 'id="push-on"' not in home and 'href="/settings#notifs"' in home)
 
 # --- Lenz: channel status + links (channels are env-only; no control invented) ---
 check("lenz panel reports channel status",

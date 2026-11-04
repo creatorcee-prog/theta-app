@@ -83,3 +83,32 @@ check("every font in Settings, shown in itself", all(f'data-pref="type" data-val
       and 'style="font-family:&quot;Rajdhani&quot;' in sett and 'data-type="frame"' in sett)
 check("the CSS braces still balance", h._UI_CSS.count("{") == h._UI_CSS.count("}"))
 print("fonts done")
+
+# ---- each frame arrives its own way (2026-11-04, later)
+css = h._UI_CSS
+for f, name in {"plus": "in-bubble", "liquid": "in-liquid", "edge": "in-glitch", "breach": "in-print",
+                "hud": "in-lock", "console": "in-type", "holo": "in-project"}.items():
+    check(f"{f}: its own entrance ({name})", f':root[data-glassstyle="{f}"]{{--in:{name};' in css and f"@keyframes {name}" in css)
+check("nothing an entrance sets outlasts it (fill backwards only)", "var(--in,pagein) var(--in-dur,.42s) var(--in-ease,cubic-bezier(.2,.8,.2,1)) backwards" in css)
+check("the whole page moves per frame too", ':root[data-glassstyle="holo"]::view-transition-old(root)' in css
+      and ':root[data-glassstyle="edge"]::view-transition-new(root)' in css and ':root[data-glassstyle="liquid"]::view-transition-new(root)' in css)
+ui = h._UI_JS
+check("headings decode: Edge from binary, Breach from hex, Console types", 'edge: "01"' in ui and '"BD", "55", "1C", "E9"' in ui
+      and 'fr === "console"' in ui and "!h.children.length" in ui and 'h.setAttribute("aria-label", text)' in ui)
+check("reduced motion: headings stay still", "if (still || !(fr in SETS" in ui)
+check("the CSS braces still balance (entrances)", css.count("{") == css.count("}"))
+print("entrances done")
+
+# ---- frame sounds (picked 2026-11-04 in the Frame Sounds page)
+ui = h._UI_JS
+picks = {"plus": "Fizz", "liquid": "Gloop", "edge": "Binary chirp", "breach": "Hex print", "hud": "Target lock",
+         "console": "Typewriter", "holo": "Projector hum"}
+check("a sound for every frame, the ones picked", all(f"// {name}" in ui for name in picks.values()) and set(picks) == set(h.FRAMES))
+check("made live with Web Audio, no sound files", "window.thetaSfx" in ui and "createOscillator" in ui and ".mp3" not in ui)
+check("plays from the tap that opens a page (iPhone needs a tap)", "a tap that opens another page of the app plays the frame's sound" in ui
+      and 'u.pathname.startsWith("/api/")' in ui)
+check("picking a frame plays its sound", 'if (k === "glassstyle" && window.thetaSfx) thetaSfx.play(v)' in ui)
+check("off, or reduced motion, keeps it quiet", '"theta:sfx", "on") === "on" && !matchMedia("(prefers-reduced-motion: reduce)")' in ui)
+sett = h.handle("GET", "/settings", {}, {"x-dashboard-key": "dk"}, b"")[2].decode()
+check("Settings: sounds on or off, volume, and a Hear it button", 'data-sfx="on"' in sett and 'id="sfx-vol"' in sett and 'id="sfx-test"' in sett)
+print("sounds done")

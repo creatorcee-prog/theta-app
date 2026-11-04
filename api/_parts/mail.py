@@ -727,6 +727,18 @@ def settings_page(headers):
         '<div class="seg" role="group" aria-label="Frame">' + "".join(
             f'<button type="button" data-pref="glassstyle" data-val="{k}" title="{html.escape(about)}">{html.escape(label)}</button>'
             for k, (label, about) in FRAMES.items()) + '</div></div>'
+        '<div><h3>Sounds</h3><p class="muted small">Each frame has its own short sound as a page comes in (Glass+ fizz, '
+        'Liquid gloop, Edge binary chirp, Breach hex print, HUD target lock, Console typewriter, Hologram projector hum). '
+        'They play from the tap that opens a page. Saved on this device.</p>'
+        '<div class="brow" style="gap:10px;align-items:center;flex-wrap:wrap"><div class="seg" role="group" aria-label="Sounds">'
+        '<button type="button" data-sfx="on">On</button><button type="button" data-sfx="off">Off</button></div>'
+        '<label class="small">Volume <input type="range" id="sfx-vol" min="0" max="100" value="60"></label>'
+        '<button type="button" class="btn ghost" id="sfx-test">Hear it</button></div>'
+        '<script>addEventListener("DOMContentLoaded",()=>{const S=window.thetaSfx;if(!S)return;'
+        'const mark=()=>document.querySelectorAll("[data-sfx]").forEach(b=>b.classList.toggle("on",(b.dataset.sfx==="on")===S.on()));'
+        'document.querySelectorAll("[data-sfx]").forEach(b=>b.onclick=()=>{S.set("on",b.dataset.sfx);mark();if(b.dataset.sfx==="on")S.play();});'
+        'const v=document.getElementById("sfx-vol");v.value=S.volume();v.onchange=()=>{S.set("vol",v.value);S.play();};'
+        'document.getElementById("sfx-test").onclick=()=>S.play(null,true);mark();});</script></div>'
         '<div><h3>Font</h3><p class="muted small">Frame\u2019s own uses the font each frame was made with (Edge and Breach use '
         'Rajdhani, the font of the game menus they come from). Pick one to use it everywhere. Saved on this device.</p>'
         '<div class="seg fonts" role="group" aria-label="Font">' + "".join(
@@ -744,7 +756,6 @@ def settings_page(headers):
         '<div class="seg" role="group" aria-label="Shine follows tilt"><button type="button" data-tilt="on">Follow tilt</button>'
         '<button type="button" data-tilt="off">Off</button></div><p class="note small" id="tilt-note"></p></div>'
         f'<div><h3>Home layout</h3><p class="muted small">How the windows on Home are arranged.</p><div class="layouts">{layouts}</div></div></section>'
-        '<p class="muted small">Phone notifications now live under Mistral on <a href="/">Home</a>.</p>'
         + passkeys_card(headers) + devices_card(headers) + gmail_card(headers) + memory_card() + siri_card(headers) + fish_card() + phone_card(headers) + notifs_card() +
         '<section class="card stack"><div class="brow"><h2>Rounds</h2></div><p class="muted small">Every agent does its '
         'job three times a day (Supabase Cron). Run one now to refresh the windows.</p>'

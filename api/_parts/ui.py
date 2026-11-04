@@ -1039,6 +1039,84 @@ _UI_JS_SRC = r'''
       apply: blob => render(blob, get("theta:fx", "off"), get("theta:fxAmt", "60"))};
   })();
 
+
+  // Headings that write themselves, per frame: Edge decodes out of binary, Breach out of the breach screen's hex
+  // codes, Console types. Plain-text headings only (nothing with markup inside), and never with reduced motion.
+  (() => {
+    const fr = document.documentElement.dataset.glassstyle, still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const SETS = {edge: "01", breach: ["BD", "55", "1C", "E9", "7A", "FF"]};
+    if (still || !(fr in SETS || fr === "console")) return;
+    const hs = [...document.querySelectorAll(".main h1, .main h2")].filter(h => !h.children.length && h.textContent.trim()).slice(0, 12);
+    hs.forEach((h, i) => {
+      const text = h.textContent, n = text.length, start = performance.now() + i * 50, dur = Math.min(700, 260 + n * 22);
+      h.setAttribute("aria-label", text); h.style.minHeight = h.offsetHeight + "px";
+      const pick = () => { const s = SETS[fr]; return Array.isArray(s) ? s[Math.random() * s.length | 0] : s[Math.random() * s.length | 0]; };
+      function step(now) {
+        const k = Math.max(0, Math.min(1, (now - start) / dur)), done = Math.floor(k * n);
+        if (fr === "console") h.textContent = text.slice(0, done) + (k < 1 ? "█" : "");
+        else { let out = text.slice(0, done), j = done; while (j < n) { if (text[j] === " ") { out += " "; j++; continue; } const c = pick(); out += c; j += c.length; } h.textContent = out.slice(0, n); }
+        if (k < 1) requestAnimationFrame(step); else { h.textContent = text; h.removeAttribute("aria-label"); h.style.minHeight = ""; }
+      }
+      step(performance.now()); // scrambled from the first paint, never a flash of the real text first
+    });
+  })();
+
+
+  // ---- Frame sounds (picked 2026-11-04 in the Frame Sounds page): each frame's entrance has a short sound,
+  // made live with Web Audio (no files). iPhone only plays sound from a tap, and a new page starts without
+  // one, so the sound plays from the tap that opens the page, while it loads and the transition runs.
+  // Settings, Look: on or off, and volume (saved on this device).
+  window.thetaSfx = (() => {
+    let ctx = null, NOISE = null;
+    const get = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch (e) { return d; } };
+    const on = () => get("theta:sfx", "on") === "on" && !matchMedia("(prefers-reduced-motion: reduce)").matches;
+    function ac() {
+      const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null;
+      if (!ctx) ctx = new AC(); if (ctx.state === "suspended") ctx.resume().catch(() => {});
+      return ctx;
+    }
+    function noise(c) { if (NOISE && NOISE.sampleRate === c.sampleRate) return NOISE; const n = c.sampleRate, b = c.createBuffer(1, n, n), d = b.getChannelData(0); for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1; return (NOISE = b); }
+    function env(c, peak, t, a, d) { const g = c.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + a); g.gain.exponentialRampToValueAtTime(0.0001, t + a + d); return g; }
+    function tone(c, out, type, f0, f1, t, a, d, peak, filt) {
+      const o = c.createOscillator(), g = env(c, peak, t, a, d); o.type = type; o.frequency.setValueAtTime(f0, t);
+      if (f1 && f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t + a + d * .8);
+      let n = o; if (filt) { const f = c.createBiquadFilter(); f.type = filt[0]; f.frequency.value = filt[1]; o.connect(f); n = f; }
+      n.connect(g); g.connect(out); o.start(t); o.stop(t + a + d + .05); return o;
+    }
+    function click(c, out, t, hz, peak, len) {
+      const s = c.createBufferSource(), f = c.createBiquadFilter(), g = env(c, peak, t, .001, len || .012);
+      s.buffer = noise(c); f.type = "bandpass"; f.frequency.value = hz; f.Q.value = 1.2; s.connect(f); f.connect(g); g.connect(out);
+      s.start(t, Math.random() * .5); s.stop(t + (len || .012) + .02);
+    }
+    const SOUND = { // the picks: frame -> (ctx, out, t)
+      plus(c, o, t) { for (let i = 0; i < 7; i++) { const s = t + Math.random() * .32, f = 600 + Math.random() * 1000; tone(c, o, "sine", f, f * 1.8, s, .003, .035, .12 + Math.random() * .1); } }, // Fizz
+      liquid(c, o, t) { const x = tone(c, o, "sine", 180, 420, t, .02, .34, .4, ["lowpass", 900]); const l = c.createOscillator(), d = c.createGain(); l.frequency.value = 17; d.gain.value = 45; l.connect(d); d.connect(x.frequency); l.start(t); l.stop(t + .4); }, // Gloop
+      edge(c, o, t) { const h = c.createBiquadFilter(); h.type = "highpass"; h.frequency.value = 500; h.connect(o); for (let i = 0; i < 14; i++) { const f = Math.random() < .5 ? 880 : 1320; tone(c, h, "square", f, f, t + i * .02, .002, .014, .12); } }, // Binary chirp
+      breach(c, o, t) { for (let i = 0; i < 7; i++) click(c, o, t + i * .07, 3500, .4, .008); tone(c, o, "sine", 1046, 1046, t + .5, .004, .12, .14); }, // Hex print
+      hud(c, o, t) { tone(c, o, "sine", 1200, 1200, t, .003, .04, .2); tone(c, o, "sine", 1200, 1200, t + .12, .003, .04, .2); tone(c, o, "sine", 1600, 1600, t + .26, .004, .14, .24); }, // Target lock
+      console(c, o, t) { let s = t; for (let i = 0; i < 9; i++) { click(c, o, s, 4200, .32, .006); click(c, o, s, 300, .18, .01); s += .035 + Math.random() * .03; } }, // Typewriter
+      holo(c, o, t) { const g = c.createGain(); g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.22, t + .3); g.gain.exponentialRampToValueAtTime(.0001, t + .5); const tr = c.createGain(), l = c.createOscillator(), ld = c.createGain(); l.frequency.value = 12; ld.gain.value = .5; tr.gain.value = .5; l.connect(ld); ld.connect(tr.gain); tr.connect(g); g.connect(o); [110, 220].forEach(f => { const x = c.createOscillator(); x.type = "triangle"; x.frequency.value = f; x.connect(tr); x.start(t); x.stop(t + .55); }); l.start(t); l.stop(t + .55); click(c, o, t + .5, 1500, .3, .015); }, // Projector hum
+    };
+    function play(frame, force) {
+      if (!force && !on()) return false;
+      const f = SOUND[frame || document.documentElement.dataset.glassstyle || "plus"]; if (!f) return false;
+      try { const c = ac(); if (!c) return false; const out = c.createGain(); out.gain.value = Math.max(0, Math.min(1, +get("theta:sfxVol", "60") / 100)) * 1.2; out.connect(c.destination); f(c, out, c.currentTime + .01); return true; }
+      catch (e) { return false; }
+    }
+    // the first touch anywhere wakes the audio up, so the first sound isn't late
+    addEventListener("pointerdown", () => { if (on()) ac(); }, {once: true, capture: true, passive: true});
+    // a tap that opens another page of the app plays the frame's sound (before anything can stop the click)
+    document.addEventListener("click", e => {
+      const a = e.target.closest && e.target.closest("a[href]");
+      if (!a || e.metaKey || e.ctrlKey || e.shiftKey || (a.target && a.target !== "_self") || a.hasAttribute("download")) return;
+      const u = new URL(a.href, location.href);
+      if (u.origin !== location.origin || u.pathname.startsWith("/api/") || (u.pathname === location.pathname && u.search === location.search)) return;
+      play();
+    }, true);
+    return {play, on, set(k, v) { try { localStorage.setItem(k === "vol" ? "theta:sfxVol" : "theta:sfx", String(v)); } catch (e) {} },
+      volume: () => +get("theta:sfxVol", "60"), sounds: Object.keys(SOUND)};
+  })();
+
   // Where Theta looks: at your cursor (or finger) when it's moving, otherwise where you tilt the phone.
   // Each avatar reads window.thetaLook.at(its center) and gets -1..1 for x and y. The tilt is measured
   // from how you're holding the phone (that drifts back to neutral), so any angle you hold it at is "ahead".
@@ -1174,6 +1252,7 @@ _UI_JS_SRC = r'''
       if (t.mono) root.dataset.font = "mono"; else delete root.dataset.font;
     } else {
       root.dataset[k] = v;
+      if (k === "glassstyle" && window.thetaSfx) thetaSfx.play(v); // picking a frame plays its sound
     }
     metaColors(); save(); mark();
   }
@@ -3099,13 +3178,48 @@ _MOVE_CSS = r'''
 @keyframes vt-out{to{opacity:0;transform:scale(.985)}}
 @keyframes vt-in{from{opacity:0;transform:translateY(14px)}}
 /* the page's cards come in one after another */
-.main > .top,.main > .stack > *,.main > .grid2 > *,.main > .wins > *,.main > section{animation:pagein .42s cubic-bezier(.2,.8,.2,1) both}
+.main > .top,.main > .stack > *,.main > .grid2 > *,.main > .wins > *,.main > section{animation:var(--in,pagein) var(--in-dur,.42s) var(--in-ease,cubic-bezier(.2,.8,.2,1)) backwards}
 .main > .stack > :nth-child(2),.main > .grid2 > :nth-child(2),.main > .wins > :nth-child(2){animation-delay:.05s}
 .main > .stack > :nth-child(3),.main > .grid2 > :nth-child(3),.main > .wins > :nth-child(3){animation-delay:.1s}
 .main > .stack > :nth-child(4),.main > .wins > :nth-child(4){animation-delay:.15s}
 .main > .stack > :nth-child(5),.main > .wins > :nth-child(5){animation-delay:.2s}
 .main > .stack > :nth-child(n+6),.main > .wins > :nth-child(n+6){animation-delay:.24s}
 @keyframes pagein{from{opacity:0;transform:translateY(12px)}}
+/* Each frame arrives its own way (2026-11-04): the cards above, and the whole page in a view transition.
+   Fill is "backwards" only, so nothing an animation sets (a clip, a transform) outlasts it. */
+:root[data-glassstyle="plus"]{--in:in-bubble;--in-dur:.55s;--in-ease:cubic-bezier(.34,1.56,.64,1)}
+@keyframes in-bubble{0%{opacity:0;transform:scale(.86);filter:blur(6px)}55%{opacity:1;filter:blur(0)}}
+:root[data-glassstyle="liquid"]{--in:in-liquid;--in-dur:.7s;--in-ease:ease-out}
+@keyframes in-liquid{0%{opacity:0;transform:scale(.72,.6);filter:blur(10px)}40%{opacity:1;transform:scale(1.05,.95);filter:blur(1px)}
+ 60%{transform:scale(.97,1.03)}80%{transform:scale(1.01,.99)}100%{transform:none;filter:none}}
+:root[data-glassstyle="edge"]{--in:in-glitch;--in-dur:.5s;--in-ease:linear}
+@keyframes in-glitch{0%{opacity:0;transform:translateX(-14px) skewX(-10deg);filter:hue-rotate(90deg) saturate(3)}
+ 15%{opacity:1;transform:translateX(6px) skewX(6deg)}25%{opacity:.25;transform:translateX(-3px)}35%{opacity:1;transform:translateX(2px);filter:hue-rotate(-40deg)}
+ 50%{opacity:.6;transform:none}62%{opacity:1;filter:none}75%{opacity:.85}100%{opacity:1;transform:none}}
+:root[data-glassstyle="breach"]{--in:in-print;--in-dur:.5s;--in-ease:steps(7,end)}
+@keyframes in-print{0%{clip-path:inset(0 0 100% 0)}100%{clip-path:inset(0 0 0 0)}}
+:root[data-glassstyle="hud"]{--in:in-lock;--in-dur:.55s;--in-ease:ease-out}
+@keyframes in-lock{0%{opacity:0;transform:scale(1.09);outline:2px solid var(--accent);outline-offset:10px}
+ 35%{opacity:1;transform:scale(.985);outline:2px solid var(--accent);outline-offset:2px}48%{opacity:.45}58%{opacity:1}
+ 100%{transform:none;outline:2px solid transparent;outline-offset:0}}
+:root[data-glassstyle="console"]{--in:in-type;--in-dur:.45s;--in-ease:steps(14,end)}
+@keyframes in-type{0%{clip-path:inset(0 100% 0 0)}100%{clip-path:inset(0 0 0 0)}}
+:root[data-glassstyle="holo"]{--in:in-project;--in-dur:.65s;--in-ease:cubic-bezier(.2,.8,.2,1)}
+@keyframes in-project{0%{opacity:0;transform-origin:50% 100%;transform:perspective(700px) rotateX(78deg) scaleY(.25);filter:brightness(3)}
+ 50%{opacity:.85;filter:brightness(1.8)}62%{opacity:.35}74%{opacity:.95}100%{opacity:1;transform-origin:50% 100%;filter:none}}
+/* the whole page, per frame */
+:root[data-glassstyle="plus"]::view-transition-new(root),:root[data-glassstyle="liquid"]::view-transition-new(root){animation:vt-bubble .42s cubic-bezier(.34,1.4,.64,1) both}
+:root[data-glassstyle="plus"]::view-transition-old(root),:root[data-glassstyle="liquid"]::view-transition-old(root){animation:vt-melt .22s ease-in both}
+@keyframes vt-bubble{from{opacity:0;transform:scale(.94);filter:blur(8px)}}
+@keyframes vt-melt{to{opacity:0;transform:scale(1.03);filter:blur(8px)}}
+:root[data-glassstyle="edge"]::view-transition-old(root),:root[data-glassstyle="breach"]::view-transition-old(root){animation:vt-glitch-out .22s steps(4,end) both}
+:root[data-glassstyle="edge"]::view-transition-new(root),:root[data-glassstyle="breach"]::view-transition-new(root){animation:vt-glitch-in .3s steps(5,end) both}
+@keyframes vt-glitch-out{30%{transform:translateX(8px);opacity:.7}60%{transform:translateX(-6px);opacity:.4}to{opacity:0;transform:none}}
+@keyframes vt-glitch-in{from{opacity:0;transform:translateX(-10px)}40%{opacity:.6;transform:translateX(6px)}70%{opacity:.9;transform:translateX(-2px)}}
+:root[data-glassstyle="holo"]::view-transition-old(root){animation:vt-holo-off .26s ease-in both}
+:root[data-glassstyle="holo"]::view-transition-new(root){animation:vt-holo-on .4s cubic-bezier(.2,.8,.2,1) both}
+@keyframes vt-holo-off{60%{transform:scaleY(.04);opacity:.9;filter:brightness(3)}to{transform:scaleY(.01) scaleX(.6);opacity:0}}
+@keyframes vt-holo-on{from{transform:scaleY(.02);opacity:0;filter:brightness(3)}50%{transform:scaleY(1.02);opacity:.9}}
 /* while the next page loads, Theta in the corner thinks */
 .nav-wait .theta-mini{animation:minithink .9s ease-in-out infinite}
 @keyframes minithink{50%{transform:scale(.86);filter:brightness(1.5)}}
