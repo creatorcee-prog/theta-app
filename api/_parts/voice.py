@@ -152,6 +152,8 @@ def server_say(text, voice):
     engine, _, name = voice.partition(":") if ":" in voice else ("orpheus", "", voice)
     if engine == "gemini":
         return gemini_say(text, name)
+    if engine == "fish":
+        return fish_say(text, name or None)
     if engine == "orpheus":
         return orpheus_say(text, name)
     raise ValueError(f"unknown voice {voice!r}")

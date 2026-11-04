@@ -797,6 +797,11 @@ the hub must work without.
 - [ ] Next for driving the app: press buttons and fill fields on a page, each one asked first (needs a list of safe actions per page).
 - [ ] Real computer use (other apps on the phone) isn't possible from a web app; revisit if there's a native app or the desktop comes back.
 
+### Theta's voice on Fish Audio (2026-11-04)
+- [x] Fish Audio S2.1 Pro: free model first, paid only within a monthly cap ($0 by default), Piper when neither can speak.
+- [x] Settings: browse top English voices, play samples, Use; the cap; this month's characters and cost.
+- [ ] Theta's mood could set the voice's speed (Fish Audio prosody), e.g. slower when sleepy.
+
 ### Theta's avatar (2026-11-03)
 - [x] Avatar Lab: 5 generations (docs/avatar-lab.html; live at claude.ai/artifact/A3PWLpJuTdQ5mb9X3gMV4C).
   Saved favorites: One Swarm (3.2), Jarvis Lite (3.3), Pour (4.3). Picked: Urchin Pour (5.3).

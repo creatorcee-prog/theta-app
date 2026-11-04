@@ -237,8 +237,9 @@ check("...and 'orpheus:troy' works like 'troy'", say({"text": "hi", "voice": "or
 s_, page = get("/head", "key=dk")
 check("the picker offers Gemini, Piper and Kokoro too, the on-phone ones loaded from jsdelivr",
       '"Charon"' in page and "piper:" in page and "kokoro:" in page and "vits-web@1.0.3" in page and "kokoro-js@1.2.1" in page)
-check("Theta's voice is Piper's Northern English man by default; Gemini, Kokoro and the phone's stay to pick from",
-      'id="head-test"' in page and 'DEFAULT_VOICE = "piper:en_GB-northern_english_male-medium"' in page
+check("Theta's voice is Piper's Northern English man until a Fish Audio voice is picked; Gemini, Kokoro and the phone's stay to pick from",
+      'id="head-test"' in page and 'PIPER_VOICE = "piper:en_GB-northern_english_male-medium"' in page
+      and 'DEFAULT_VOICE = FISH.on && FISH.voice ? "fish:" + FISH.voice : PIPER_VOICE' in page
       and 'group("Orpheus' not in page and "Using your phone's voice for now" in page and 'fetch("/api/voice/say"' in page)
 
 # ---- the switch back

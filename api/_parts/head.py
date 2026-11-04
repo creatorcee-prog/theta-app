@@ -847,10 +847,12 @@ _HEAD_JS = r"""
 
   // ---- the voice: Theta's Orpheus voices (free, on Groq) or the phone's own speech
   const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
-  const ORPHEUS = __ORPHEUS__, GEMINI = __GEMINI__, CLIP_MAX = {orpheus: 200, gemini: 600};
+  const ORPHEUS = __ORPHEUS__, GEMINI = __GEMINI__, FISH = __FISH__, CLIP_MAX = {orpheus: 200, gemini: 600, fish: 300};
   // Voices that run on the phone itself: open source, free, no limit. Downloaded once, then kept.
   // Theta's voice: Piper's Northern English man, picked by ear on 2026-11-02 (runs on the phone, free, no limit).
-  const DEFAULT_VOICE = "piper:en_GB-northern_english_male-medium";
+  // Since 2026-11-04 Theta's voice is the Fish Audio one picked in Settings, when there is one; Piper is the fallback.
+  const PIPER_VOICE = "piper:en_GB-northern_english_male-medium";
+  const DEFAULT_VOICE = FISH.on && FISH.voice ? "fish:" + FISH.voice : PIPER_VOICE;
   const PIPER = [["en_GB-northern_english_male-medium", "Northern English man (Theta's voice)"]];
   const KOKORO = [["bm_george", "George (British)"], ["bm_fable", "Fable (British)"], ["am_michael", "Michael (US)"],
     ["am_fenrir", "Fenrir (US)"], ["af_heart", "Heart (US)"], ["bf_emma", "Emma (British)"]];
@@ -864,7 +866,12 @@ _HEAD_JS = r"""
   function group(label, items) { const g = document.createElement("optgroup"); g.label = label; g.append(...items); return g; }
   function fillVoices() {
     const cap = n => n[0].toUpperCase() + n.slice(1);
+    const fishOpts = [];
+    if (FISH.on && FISH.voice) fishOpts.push(opt("fish:" + FISH.voice, (FISH.name || "Your Fish Audio voice") + " (Theta's voice)"));
+    const mine = store("theta:voice") || "";
+    if (FISH.on && mine.startsWith("fish:") && mine !== "fish:" + FISH.voice) fishOpts.push(opt(mine, store("theta:fishName") || "Fish Audio voice"));
     const groups = [
+      ...(fishOpts.length ? [group("Fish Audio (pick voices in Settings)", fishOpts)] : []),
       group("Piper (on your phone, open source)", PIPER.map(([id, l]) => opt("piper:" + id, l))),
       group("Gemini (free tier, Google)", GEMINI.map(n => opt("gemini:" + n, n))),
       group("Kokoro (on your phone, best quality, big download, may not work on iPhone)", KOKORO.map(([id, l]) => opt("kokoro:" + id, l))),
@@ -950,10 +957,11 @@ _HEAD_JS = r"""
   }
   async function speakClips(said, choice) {
     const [engine, id] = [choice.split(":")[0], choice.slice(choice.indexOf(":") + 1)];
-    const local = engine === "piper" || engine === "kokoro";
-    // On the phone, one sentence at a time: long text can crash an iPhone tab.
-    const parts = local ? (said.match(/[^.!?]+[.!?]*\s*/g) || [said]).map(p => p.trim()).filter(Boolean) : clips(said, CLIP_MAX[engine]);
-    if (local && parts[0].length > 40) { // start on the first few words (to the first comma) while the rest is made
+    const local = engine === "piper" || engine === "kokoro", bySentence = local || engine === "fish";
+    // On the phone, one sentence at a time: long text can crash an iPhone tab. Fish Audio too: the first
+    // sentence comes back sooner, and the next is made while it plays.
+    const parts = bySentence ? (said.match(/[^.!?]+[.!?]*\s*/g) || [said]).map(p => p.trim()).filter(Boolean) : clips(said, CLIP_MAX[engine]);
+    if (bySentence && parts[0].length > 40) { // start on the first few words (to the first comma) while the rest is made
       const cut = parts[0].indexOf(", ");
       if (cut >= 12 && cut < parts[0].length - 12) parts.splice(0, 1, parts[0].slice(0, cut + 1), parts[0].slice(cut + 2));
     }
@@ -983,13 +991,18 @@ _HEAD_JS = r"""
     if (!voiceOn.checked || !said) { setState("idle"); return; }
     hush();
     const choice = voiceSel.value || DEFAULT_VOICE;
+    // when the chosen voice can't speak (Fish Audio out, offline...), Piper on the phone for the next hour, then the phone's own voice
+    const piper = () => speakClips(said, PIPER_VOICE).then(() => setState("idle")).catch(() => speakPhone(said));
     if (!choice.startsWith("sys:") && Date.now() - voiceOut > 3600e3) {
       speakClips(said, choice).then(() => setState("idle")).catch(e => {
-        voiceOut = Date.now(); note.textContent = (e.message || String(e)) + ". Using your phone's voice for now.";
+        voiceOut = Date.now();
+        if (choice !== PIPER_VOICE) { note.textContent = (e.message || String(e)) + ". Using Piper for now."; piper(); return; }
+        note.textContent = (e.message || String(e)) + ". Using your phone's voice for now.";
         speakPhone(said);
       });
       return;
     }
+    if (!choice.startsWith("sys:") && choice !== PIPER_VOICE) { piper(); return; }
     speakPhone(said);
   }
   document.getElementById("head-test").addEventListener("click", () => {
@@ -1637,6 +1650,7 @@ def head_script(headers=None):
     return (f'<style>{_HEAD_CSS.replace(".headpage", ".hud")}{_DECK_CSS}{_STAGE_CSS}</style><script>'
             + _HEAD_JS.replace("__ORPHEUS__", json.dumps(list(ORPHEUS_VOICES))).replace("__GEMINI__", json.dumps(list(GEMINI_VOICES)))
             .replace("__THEME__", json.dumps(th))
+            .replace("__FISH__", json.dumps({"on": bool(fish_key()), "voice": fish_cfg()["voice"], "name": fish_cfg()["name"]}).replace("</", "<\\/"))
             + "</script><script>" + _DECK_JS + "</script><script>" + _STAGE_JS + "</script>")
 
 
