@@ -191,3 +191,19 @@ check("ADD: the full pages are small chips, not big tiles", "function chips(apps
 check("ADD: the ticker holds still while you type", '$("ticker").classList.add("held")' in js)
 check("ADD: tap targets are big enough on a phone", "@media (pointer:coarse){.w .rdone{width:40px;height:40px}.bchip{min-height:38px}}" in css)
 print("live done")
+
+# ---- the calendar: today only, with the day as a scored ring (2026-11-04, later)
+import datetime as _dd
+_n = _dd.datetime.now(h.hub_tz()).replace(hour=12, minute=0, second=0, microsecond=0)
+_ev = lambda t, a, b: {"title": t, "location": "", "start": _n + _dd.timedelta(minutes=a), "end": _n + _dd.timedelta(minutes=b), "all_day": False, "birthday": False}
+h.REMI_CALENDAR_URLS = ["https://cal.example/x.ics"]
+h.calendar_events = lambda a, b: [_ev("Standup", -120, -60), _ev("Gym", -30, 30), _ev("Dentist", 60, 120),
+                                  _ev("Tomorrow thing", 24 * 60 + 30, 24 * 60 + 60)]
+cal = {w["id"]: w for w in h.board(_n)["widgets"]}["calendar"]
+check("the calendar shows today only", "Tomorrow" not in json.dumps(cal) and cal["title"] == "Today")
+rg = cal["ring"]
+check("the day as a ring: each of today's events an arc, a hand at now", len(rg["arcs"]) == 3 and rg["now"] == 720 and rg["arcs"][0]["s"] == 600)
+check("the ring scores the day: how much of today's scheduled time is behind you, and what's left", rg["score"] == 50 and rg["left"] == 2 and rg["total"] == 3)
+check("the page draws it (done arcs dim, a now hand, the score in the middle)", "function dayRing(r)" in h.BOARD_JS and '"dr-done"' in h.BOARD_JS
+      and '"dr-now"' in h.BOARD_JS and ".dayring .dr-score" in h.BOARD_CSS)
+print("calendar done")

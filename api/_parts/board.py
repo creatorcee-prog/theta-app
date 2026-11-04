@@ -136,20 +136,38 @@ def board(now=None, world=True):
                   tone="warn" if late else "", cat=None if due else "later")
 
     def w_calendar():
+        """Today only, with the day as a ring: 24 hours round, each event an arc, a hand at now; the middle
+        scores the day's schedule (how much of today's scheduled time is behind you, and what's left)."""
         if not calendar_linked():
             return None
-        evs = calendar_events(now.date(), now.date() + timedelta(days=1))
-        timed = [e for e in evs if not e["all_day"] and isinstance(e["start"], datetime) and e["end"] > now]
+        today = now.date()
+        evs = [e for e in calendar_events(today, today + timedelta(days=1))
+               if (e["start"] if e["all_day"] else e["start"].date()) == today and not e.get("birthday")]
         if not evs:
             return None
-        nxt = timed[0] if timed else None
+        timed = sorted((e for e in evs if not e["all_day"] and isinstance(e["start"], datetime)), key=lambda e: e["start"])
+        day0 = datetime.combine(today, datetime.min.time(), hub_tz())
+        m = lambda d: max(0, min(1440, round((d - day0).total_seconds() / 60)))
+        nowm = m(now)
+        arcs = [{"s": m(e["start"]), "e": max(m(e["start"]) + 10, m(e["end"])), "t": e["title"][:40]} for e in timed]
+        total = sum(x["e"] - x["s"] for x in arcs)
+        behind = sum(max(0, min(x["e"], nowm) - x["s"]) for x in arcs)
+        left = [e for e in timed if e["end"] > now]
+        nxt = left[0] if left else None
         mins = (nxt["start"] - now).total_seconds() / 60 if nxt else None
-        return _w("calendar", 2, "Up next" if nxt else "Today", 90 if mins is not None and mins <= 120 else 50,
-                  eyebrow=("Happening now" if mins is not None and mins <= 0 else f"In {int(mins)} min" if mins is not None and mins < 120
-                           else f"{len(evs)} on the calendar"),
-                  big=(nxt or evs[0])["title"][:60], sub=(_clock(nxt["start"]) + (f" · {nxt['location']}" if nxt.get("location") else "")) if nxt else "",
-                  rows=[(_clock(e["start"]) if not e["all_day"] else "all day", e["title"]) for e in (timed or evs)[1:3]],
-                  open_="/calendar", important=mins is not None and mins <= 60, cat="later")
+        allday = [e for e in evs if e["all_day"]]
+        w = _w("calendar", 2, "Today", 90 if mins is not None and mins <= 120 else 50,
+               eyebrow=("Happening now" if mins is not None and mins <= 0 else f"Next in {int(mins)} min" if mins is not None and mins < 120
+                        else f"Next at {_clock(nxt['start'])}" if nxt else "Nothing left today"),
+               big=nxt["title"][:60] if nxt else ("All done for today" if timed else allday[0]["title"][:60]),
+               sub=((_clock(nxt["start"]) + (f" \u00b7 {nxt['location']}" if nxt.get("location") else "")) if nxt else
+                    (f"all day \u00b7 {len(allday)} event{'s' if len(allday) != 1 else ''}" if allday and not timed else "")),
+               rows=[(_clock(e["start"]), e["title"]) for e in left[1:3]] + [("all day", e["title"]) for e in allday[:1] if timed],
+               open_="/calendar", important=mins is not None and mins <= 60, cat="later",
+               sig_parts=[today.isoformat(), [x["t"] for x in arcs], len(left), bool(nxt and mins is not None and mins <= 0)])
+        w["ring"] = {"now": nowm, "arcs": arcs, "score": round(100 * behind / total) if total else None,
+                     "left": len(left), "total": len(timed)}
+        return w
 
     def w_money():
         st = month_status(now.strftime("%Y-%m"))
@@ -435,6 +453,17 @@ body.showchat .msgs{opacity:1!important;pointer-events:auto!important;transform:
  color:var(--text);font-weight:700;font-size:14px;transition:opacity .25s,transform .25s;max-width:86vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .btoast.in{opacity:1;transform:translate(-50%,0)}
 @media (prefers-reduced-motion:reduce){.w.leaving{animation:none;display:none}}
+
+/* the calendar's day ring */
+.w.hasring{display:grid;grid-template-columns:112px minmax(0,1fr);column-gap:12px;align-items:start}
+.w.hasring > *{grid-column:2}.w.hasring > .dayring{grid-column:1;grid-row:1 / span 6;width:112px;height:112px;align-self:center}
+.dayring .dr-track{fill:none;stroke:color-mix(in srgb,var(--text) 12%,transparent);stroke-width:8}
+.dayring .dr-tick{stroke:color-mix(in srgb,var(--text) 35%,transparent);stroke-width:1.5}
+.dayring .dr-left{fill:none;stroke:var(--accent);stroke-width:8;stroke-linecap:butt}
+.dayring .dr-done{fill:none;stroke:color-mix(in srgb,var(--accent) 35%,transparent);stroke-width:8}
+.dayring .dr-now{stroke:var(--text);stroke-width:2.5;stroke-linecap:round}
+.dayring .dr-score{fill:var(--text);font:800 19px var(--f-head);text-anchor:middle}
+.dayring .dr-sub{fill:var(--muted);font:600 10.5px var(--f-body);text-anchor:middle}
 """
 
 BOARD_JS = r"""
@@ -487,6 +516,7 @@ BOARD_JS = r"""
     c.append(el("h3", null, w.title));
     const img = (w.items || []).find(x => x.img);
     if (w.size === 4 && img) { const im = el("img", "thumb"); im.src = img.img; im.alt = ""; im.loading = "lazy"; c.append(im); }
+    if (w.ring) { c.classList.add("hasring"); c.append(dayRing(w.ring)); }
     if (w.big) c.append(el("div", "big", w.big));
     if (w.sub) c.append(el("div", "sub", w.sub));
     if (w.rows && w.rows.length) {
@@ -507,6 +537,22 @@ BOARD_JS = r"""
     }
     c.onclick = () => openW(w); c.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openW(w); } };
     return c;
+  }
+  function dayRing(r) { // the day as a ring: midnight at the top, each event an arc (done ones dim), a hand at now
+    const NS = "http://www.w3.org/2000/svg", S = 112, C = S / 2, R = 44, svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("viewBox", `0 0 ${S} ${S}`); svg.setAttribute("class", "dayring"); svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", r.total ? `${r.score}% of today's schedule is behind you, ${r.left} left` : "Nothing timed today");
+    const pt = (min, rad) => { const a = min / 1440 * 2 * Math.PI - Math.PI / 2; return [C + Math.cos(a) * rad, C + Math.sin(a) * rad]; };
+    const mk = (tag, at) => { const e = document.createElementNS(NS, tag); for (const k in at) e.setAttribute(k, at[k]); svg.append(e); return e; };
+    mk("circle", {cx: C, cy: C, r: R, class: "dr-track"});
+    [0, 360, 720, 1080].forEach(h => { const [x1, y1] = pt(h, R - 7), [x2, y2] = pt(h, R - 3); mk("line", {x1, y1, x2, y2, class: "dr-tick"}); });
+    const arc = (s, e, cls) => { if (e - s < 1) return; const [x1, y1] = pt(s, R), [x2, y2] = pt(Math.min(e, 1439.9), R);
+      mk("path", {d: `M${x1} ${y1} A${R} ${R} 0 ${e - s > 720 ? 1 : 0} 1 ${x2} ${y2}`, class: cls}); };
+    r.arcs.forEach(a => { arc(a.s, Math.min(a.e, r.now), "dr-done"); arc(Math.max(a.s, r.now), a.e, "dr-left"); });
+    const [hx, hy] = pt(r.now, R + 6), [ix, iy] = pt(r.now, R - 12); mk("line", {x1: ix, y1: iy, x2: hx, y2: hy, class: "dr-now"});
+    const t1 = mk("text", {x: C, y: C - 2, class: "dr-score"}); t1.textContent = r.total ? r.score + "%" : "Free";
+    const t2 = mk("text", {x: C, y: C + 14, class: "dr-sub"}); t2.textContent = r.total ? (r.left ? r.left + " left" : "all done") : "day";
+    return svg;
   }
   function chips(apps) { // the full pages, as small chips at the end: always there, never in the way
     const row = el("div", "approw"); row.setAttribute("aria-label", "Pages");
