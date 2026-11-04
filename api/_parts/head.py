@@ -796,6 +796,41 @@ _HEAD_JS = r"""
     });
     core(c, 0.07 + 0.06 * level);
   }
+  // ---- your pictures as Theta (2026-11-04): one picture, or up to four (idle, listening, thinking, speaking).
+  // The picture is the canvas's own background (so a GIF animates, and it moves to the corner with Theta);
+  // the canvas draws a ring in the mood's color that breathes with the voice, and sparks circling it.
+  // Kept on this device only (pictures shrunk to 600 px; a GIF kept as it is, up to 2.5 MB).
+  let avImgs = []; try { avImgs = JSON.parse(store("theta:avimg") || "[]"); } catch (e) {}
+  let curBg = "";
+  const STATE_IX = {idle: 0, listening: 1, thinking: 2, speaking: 3};
+  function drawPicture(t, lv) {
+    const src = avImgs[STATE_IX[state] || 0] || avImgs[0], circle = AV.shape !== "full";
+    if (src !== curBg) { curBg = src; cv.style.backgroundImage = `url("${src}")`; cv.style.backgroundSize = circle ? "cover" : "contain";
+      cv.style.backgroundPosition = "center"; cv.style.backgroundRepeat = "no-repeat"; cv.style.borderRadius = circle ? "50%" : "18px"; }
+    const c = S / 2, R = S * (circle ? 0.485 : 0.49), sp = cur.speed * AV.energy;
+    g.save();
+    g.shadowColor = col(0, 20, .9); g.shadowBlur = S * 0.03 * (0.6 + lv * 1.6);
+    g.lineWidth = S * (0.008 + 0.012 * lv); g.strokeStyle = col(0, 8, 0.35 + 0.6 * lv);
+    g.beginPath(); if (circle) g.arc(c, c, R, 0, TAU); else g.roundRect ? g.roundRect(S * .01, S * .01, S * .98, S * .98, S * .045) : g.rect(S * .01, S * .01, S * .98, S * .98); g.stroke();
+    g.restore();
+    for (let i = 0; i < 12; i++) {
+      const a = t * 0.5 * sp + i * TAU / 12, rr = R + S * (0.012 + 0.02 * lv) * Math.sin(t * 3 + i * 1.7);
+      g.fillStyle = col(i * 4, 28, 0.25 + 0.65 * lv); g.beginPath(); g.arc(c + Math.cos(a) * rr, c + Math.sin(a) * rr, S * 0.006 * (1 + 1.5 * lv), 0, TAU); g.fill();
+    }
+  }
+  async function readPic(file) {
+    if (/gif$/i.test(file.type)) {
+      if (file.size > 2.5e6) throw new Error(file.name + " is over 2.5 MB; pick a smaller GIF");
+      return await new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = no; r.readAsDataURL(file); });
+    }
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => no(new Error("couldn't read " + file.name)); i.src = url; });
+      const k = Math.min(1, 600 / Math.max(img.naturalWidth, img.naturalHeight)), w = Math.round(img.naturalWidth * k), h = Math.round(img.naturalHeight * k);
+      const c2 = document.createElement("canvas"); c2.width = w; c2.height = h; c2.getContext("2d").drawImage(img, 0, 0, w, h);
+      return /png|webp/i.test(file.type) ? c2.toDataURL("image/png") : c2.toDataURL("image/jpeg", 0.86);
+    } finally { URL.revokeObjectURL(url); }
+  }
   let clock = 0, lastMs = 0, lookFrame = 0;
   const look = [0, 0], lookC = [innerWidth / 2, innerHeight / 3];
   function draw(ms) {
@@ -820,7 +855,8 @@ _HEAD_JS = r"""
     burst *= 0.86; level += (Math.min(1, target) - level) * 0.3;
     g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, S, S);
     g.translate(0, -S * cur.bounce * 0.012 * Math.abs(Math.sin(t * 3)));
-    if (AV.style === "rings") drawRings(t); else drawUrchin(t, level);
+    if (AV.style === "rings") drawRings(t); else if (AV.style === "image" && avImgs.length) drawPicture(t, level); else drawUrchin(t, level);
+    if (AV.style !== "image" && curBg) { curBg = ""; cv.style.backgroundImage = ""; cv.style.borderRadius = ""; }
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);
@@ -852,6 +888,24 @@ _HEAD_JS = r"""
       const k = inp.dataset.avmood; inp.value = (AV.colors || {})[k] || MOODS[k][0];
       inp.oninput = () => { AV.colors = Object.assign({}, AV.colors, {[k]: inp.value}); saveAV(); setMood(k); };
     });
+    const pick = document.getElementById("av-img"), shape = document.getElementById("av-shape"), imgNote = document.getElementById("av-img-note");
+    shape.value = AV.shape || "circle"; shape.onchange = () => { AV.shape = shape.value; curBg = ""; saveAV(); };
+    pick.onchange = async () => {
+      const files = [...pick.files].slice(0, 4); if (!files.length) return;
+      imgNote.textContent = "Reading\u2026";
+      try {
+        const out = []; for (const f of files) out.push(await readPic(f));
+        try { store("theta:avimg", JSON.stringify(out)); } catch (e) { throw new Error("those are too big to keep on this device; try smaller ones"); }
+        if (store("theta:avimg") !== JSON.stringify(out)) throw new Error("those are too big to keep on this device; try smaller ones");
+        avImgs = out; curBg = ""; AV.style = "image"; avStyle.value = "image"; saveAV();
+        imgNote.textContent = out.length === 1 ? "Theta is your picture now." : `Theta uses ${out.length} pictures: ` + ["idle", "listening", "thinking", "speaking"].slice(0, out.length).join(", ") + ".";
+      } catch (e) { imgNote.textContent = e.message || String(e); }
+      pick.value = "";
+    };
+    document.getElementById("av-img-clear").onclick = () => {
+      avImgs = []; try { localStorage.removeItem("theta:avimg"); } catch (e) {}
+      if (AV.style === "image") { AV.style = "urchin"; avStyle.value = "urchin"; } curBg = "x"; saveAV(); imgNote.textContent = "Removed.";
+    };
     document.getElementById("av-reset").onclick = () => {
       AV = Object.assign({}, AV_DEFAULT, {colors: {}}); avStyle.value = AV.style; avSize.value = AV.size; avEnergy.value = 100;
       document.querySelectorAll("[data-avmood]").forEach(inp => { inp.value = MOODS[inp.dataset.avmood][0]; }); saveAV();
@@ -1673,9 +1727,14 @@ def head_hud(headers=None):
             '<button type="button" id="head-test" class="test">Test</button>'
             '<label title="Tap your Bluetooth glasses or earbuds to talk"><input type="checkbox" id="head-glasses"> Glasses mode</label></div>'
             '<div class="av-set" aria-label="Avatar"><div class="row"><b>Avatar</b>'
-            '<label>Style <select id="av-style"><option value="urchin">Urchin Pour</option><option value="rings">Classic rings</option></select></label>'
+            '<label>Style <select id="av-style"><option value="urchin">Urchin Pour</option><option value="rings">Classic rings</option>'
+            '<option value="image">Your pictures</option></select></label>'
             '<label>Size <select id="av-size"><option value="small">Small</option><option value="large">Large</option></select></label>'
             '<label>Energy <input type="range" id="av-energy" min="20" max="160" value="100" aria-label="How much the avatar moves"></label></div>'
+            '<div class="row" id="av-img-row"><span>Pictures</span><label class="test">Pick pictures or a GIF<input type="file" id="av-img" '
+            'accept="image/*,.gif" multiple hidden></label><label>Shape <select id="av-shape"><option value="circle">Circle</option>'
+            '<option value="full">Whole picture</option></select></label><button type="button" id="av-img-clear">Remove</button>'
+            '<span class="note" id="av-img-note">One picture, or up to four for idle, listening, thinking and speaking. GIFs move.</span></div>'
             '<div class="row"><span>Mood colors</span>'
             + "".join(f'<label class="mc"><input type="color" data-avmood="{k}" aria-label="{n} color">{n}</label>'
                       for k, n in (("calm", "Calm"), ("focused", "Focused"), ("happy", "Happy"), ("concerned", "Concerned"), ("sleepy", "Sleepy"), ("proud", "Proud")))

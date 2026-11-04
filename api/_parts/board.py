@@ -308,7 +308,8 @@ HEAD_LOOKUPS.add("board")
 
 def board_markup():
     """The board, the card terminal and the full-page sheet, added to the Theta page."""
-    return ('<button type="button" id="board-open" class="board-open" hidden><span class="bo-grid" aria-hidden="true"></span>'
+    return ('<div id="ticker" class="ticker" aria-label="What\u2019s going on" hidden><div class="tk-track" id="tk-track"></div></div>'
+            '<button type="button" id="board-open" class="board-open" hidden><span class="bo-grid" aria-hidden="true"></span>'
             '<span id="board-count">Widgets</span></button>'
             '<section id="board" aria-label="Widgets"><div class="bhead"><span id="board-title" aria-live="polite"></span>'
             '<button type="button" id="board-all" class="bchip">Show all</button></div><div class="bgrid" id="bgrid"></div></section>'
@@ -321,6 +322,27 @@ def board_markup():
 
 
 BOARD_CSS = r"""
+/* the ticker: a crawl across the top while Theta is minimized, like a sports or news channel */
+.ticker{position:fixed;top:calc(env(safe-area-inset-top,0px) + 14px);left:max(12px,env(safe-area-inset-left,0px));
+ right:calc(env(safe-area-inset-right,0px) + 72px);height:38px;z-index:7;overflow:hidden;display:none;align-items:center;
+ border:1px solid color-mix(in srgb,var(--mood,var(--accent)) 35%,var(--border));border-radius:10px;
+ background:color-mix(in srgb,var(--surface) 78%,transparent);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
+ -webkit-mask-image:linear-gradient(90deg,transparent,#000 14px,#000 calc(100% - 22px),transparent);mask-image:linear-gradient(90deg,transparent,#000 14px,#000 calc(100% - 22px),transparent)}
+body.docked .ticker:not([hidden]){display:flex}
+.tk-track{display:flex;gap:0;white-space:nowrap;will-change:transform;animation:tkcrawl var(--tkdur,40s) linear infinite}
+.ticker:hover .tk-track,.ticker.held .tk-track{animation-play-state:paused}
+.tk-item{display:inline-flex;align-items:center;gap:7px;padding:0 16px;font-size:13.5px;color:var(--text);text-decoration:none;border-right:1px solid var(--border)}
+.tk-item b{font-family:var(--f-label);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--mood,var(--accent))}
+.tk-item.bad b{color:var(--bad)}
+@keyframes tkcrawl{to{transform:translateX(-50%)}}
+@media (prefers-reduced-motion:reduce){.tk-track{animation:none}.ticker{overflow-x:auto}}
+:root[data-glassstyle="edge"] .ticker,:root[data-glassstyle="breach"] .ticker{border-radius:0}
+:root[data-glassstyle="breach"] .tk-item b{background:var(--accent);color:var(--on);padding:1px 6px}
+:root[data-glassstyle="console"] .ticker{border-radius:2px;font-family:var(--f-mono)}
+/* minimized: nothing of Theta's middle shows under the widgets (hidden outright, not just faded) */
+body.docked .hud-mid,body.docked .caption,body.docked #head-hint,body.docked .wordmark,body.docked .hud .talk,
+body.docked #head-state,body.docked #head-said{visibility:hidden}
+
 body.headchat .tabbar{display:none}
 body.headchat{--tabh:env(safe-area-inset-bottom,0px)}
 #board{position:fixed;left:0;right:0;top:max(calc(env(safe-area-inset-top,0px) + 66px),var(--deckb,0px));bottom:var(--formh,96px);z-index:2;display:none;
@@ -499,11 +521,45 @@ BOARD_JS = r"""
   addEventListener("touchend", e => { if (y0 == null) return; const dy = y0 - e.changedTouches[0].clientY; y0 = null;
     if (dy > 80 && ST() && !ST().docked() && sheet.hidden && !e.target.closest("#msgs,.term,.hud-more")) ST().dock("board"); }, {passive: true});
 
+
+  // ---- the ticker: Theta's last reply, then the weather, what's next, breaking news and headlines, crawling
+  // across the top while Theta is minimized. Tap holds it still; tap an item to open it.
+  const ticker = $("ticker"), track = $("tk-track");
+  let lastReply = "";
+  const clean = t => (t || "").replace(/```[\s\S]*?```/g, " ").replace(/https?:\/\/\S+/g, "").replace(/[*_#`>|]/g, "").replace(/\s+/g, " ").trim();
+  document.addEventListener("theta:thread", e => {
+    const ms = (e.detail || []).filter(x => x.from === "theta" && x.kind !== "event"), m = ms[ms.length - 1];
+    if (m) { lastReply = clean(m.text); if (lastReply.length > 160) lastReply = lastReply.slice(0, 157) + "…"; tick(); }
+  });
+  function tick() {
+    const it = [], W = Object.fromEntries((data.widgets || []).map(w => [w.id, w]));
+    if (lastReply) it.push({k: "Theta", t: lastReply, u: "#chat"});
+    if (W.weather) it.push({k: "Weather", t: `${W.weather.big} · ${W.weather.sub}${W.weather.eyebrow ? " · " + W.weather.eyebrow : ""}`});
+    if (W.calendar) it.push({k: W.calendar.eyebrow || "Next", t: W.calendar.big + (W.calendar.sub ? " · " + W.calendar.sub : ""), u: "/calendar"});
+    if (W.breaking) it.push({k: "Breaking", t: W.breaking.big, u: W.breaking.open, bad: true});
+    (W.news && W.news.items || []).forEach(x => it.push({k: (x.s || "News").replace(/^For you · /, "For you"), t: x.t, u: x.u}));
+    if (W.releases) W.releases.rows.forEach(([d, t]) => it.push({k: W.releases.eyebrow, t: `${t} (${d})`, u: "/lenz"}));
+    (W.trending && W.trending.items || []).slice(0, 2).forEach(x => it.push({k: "Trending", t: x.t, u: x.u}));
+    if (W.money) it.push({k: "Money", t: `${W.money.big} · ${W.money.sub}`, u: "/money", bad: W.money.tone === "bad"});
+    if (!it.length) { ticker.hidden = true; return; }
+    const make = () => it.map(x => {
+      const a = el(x.u ? "a" : "span", "tk-item" + (x.bad ? " bad" : ""));
+      a.append(el("b", null, x.k), el("span", null, x.t));
+      if (x.u) { a.href = x.u; if (/^https?:/.test(x.u)) { a.target = "_blank"; a.rel = "noopener"; }
+        a.onclick = e => { if (/^https?:/.test(x.u)) { if (x.k !== "Theta") tap({kind: "news", title: x.t}); return; } e.preventDefault(); openW({open: x.u, title: x.k}); }; }
+      return a;
+    });
+    track.replaceChildren(...make(), ...make()); // twice, so the crawl loops without a gap
+    const chars = it.reduce((n, x) => n + x.t.length + x.k.length, 0);
+    track.style.setProperty("--tkdur", Math.max(18, Math.round(chars / 7)) + "s");
+    ticker.hidden = false;
+  }
+  ticker.addEventListener("pointerdown", e => { if (!e.target.closest("a")) ticker.classList.toggle("held"); });
   async function load() {
     try {
       const d = await (await fetch("/api/board", {headers: H})).json();
       if (!d.ok) return;
-      data = d; seen = get("theta:seen", {}); if (!(ST() && ST().docked())) shown = null; render();
+      data = d; seen = get("theta:seen", {}); if (!(ST() && ST().docked())) shown = null; render(); tick();
     } catch (e) {}
   }
   load(); setInterval(() => { if (!document.hidden) load(); }, 120000);

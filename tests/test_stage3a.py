@@ -160,7 +160,7 @@ check("agent looks (colors) untouched", all(h.AGENT_LOOKS[a][0] for a in h.AGENT
 check("agent names and routing unchanged",
       set(h.AGENTS) == {"theta", "mistral", "glass", "remi", "lenz", "red", "blue", "gray", "charter", "qwerty", "james"})
 check("avatar_img still points at the avatar route", "/avatar/lenz.svg" in h.avatar_img("lenz"))
-check("all 19 themes intact", len(h.THEMES) == 19)
+check("all 28 themes intact", len(h.THEMES) == 28)
 for pth in ("/", "/settings", "/diagnostics", "/agent/glass"):
     s, _b = call("GET", pth, headers=K)
     check(f"page {pth} renders", s == 200)

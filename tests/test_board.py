@@ -108,3 +108,27 @@ check("Hologram: faint scan lines over its cards, still with reduced motion", "r
       and ':root[data-glassstyle="holo"] .card::before{animation:none}' in css)
 check("Hologram: the gyro tilts it 85% less (4deg -> 0.6deg, 3deg -> 0.45deg)", "* 0.6deg" in css and "* -0.45deg" in css and "* 4deg" not in css)
 print("goal done")
+
+# ---- the ticker, Theta hidden under the board, new schemes and frame, pictures as Theta (2026-11-04, later)
+page = h.head_page(K)
+js, css = h.BOARD_JS, h.BOARD_CSS
+check("a ticker across the top while Theta is minimized", 'id="ticker"' in page and "body.docked .ticker:not([hidden]){display:flex}" in css
+      and "@keyframes tkcrawl" in css)
+check("the ticker: Theta's last reply first, then weather, what's next, breaking, headlines, releases", all(k in js for k in
+      ('k: "Theta", t: lastReply', 'k: "Weather"', "W.calendar.eyebrow", 'k: "Breaking"', "W.news && W.news.items", "W.releases")))
+check("it loops without a gap and pauses on a tap", "track.replaceChildren(...make(), ...make())" in js and 'classList.toggle("held")' in js)
+check("reduced motion: the ticker holds still", "@media (prefers-reduced-motion:reduce){.tk-track{animation:none}" in css)
+check("minimized: Tap to talk, the caption and Talk are hidden outright (not just faded)",
+      "body.docked #head-state,body.docked #head-said{visibility:hidden}" in css and "body.docked .hud .talk" in css)
+new = ["gilded", "lattice", "bloom", "neonrift", "verdant", "lunar", "bloodsign", "nightfiligree", "dusk"]
+check("nine schemes from game menus", all(n in h.THEMES for n in new) and len(h.THEMES) == 28)
+check("the Filigree frame: double lines, engraved capitals, unveils, chimes", "ornate" in h.FRAMES and h.FRAME_FONTS["ornate"][1] == "cinzel"
+      and ':root[data-glassstyle="ornate"] .card' in h._UI_CSS and "@keyframes in-unveil" in h._UI_CSS and "ornate(c, o, t)" in h._UI_JS)
+check("Cinzel is shipped", os.path.isfile(os.path.join(h._PARTS_DIR, "fonts", "cinzel-700.woff2")))
+hj = h._HEAD_JS
+check("your pictures as Theta: up to four, one per state", '<option value="image">Your pictures</option>' in page and 'id="av-img"' in page
+      and "const STATE_IX = {idle: 0, listening: 1, thinking: 2, speaking: 3}" in hj)
+check("a GIF keeps moving (it's the canvas's own background) and goes to the corner with Theta", "cv.style.backgroundImage = `url(" in hj)
+check("pictures are shrunk, GIFs kept up to 2.5 MB, and too big says so", "600 / Math.max" in hj and "2.5e6" in hj and "too big to keep on this device" in hj)
+check("the ring breathes with the voice in the mood's color", "function drawPicture(t, lv)" in hj and "col(0, 8, 0.35 + 0.6 * lv)" in hj)
+print("ticker done")

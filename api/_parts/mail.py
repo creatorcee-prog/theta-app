@@ -728,7 +728,7 @@ def settings_page(headers):
             f'<button type="button" data-pref="glassstyle" data-val="{k}" title="{html.escape(about)}">{html.escape(label)}</button>'
             for k, (label, about) in FRAMES.items()) + '</div></div>'
         '<div><h3>Sounds</h3><p class="muted small">Each frame has its own short sound as a page comes in (Glass+ fizz, '
-        'Liquid gloop, Edge binary chirp, Breach hex print, HUD target lock, Console typewriter, Hologram projector hum). '
+        'Liquid gloop, Edge binary chirp, Breach hex print, HUD target lock, Console typewriter, Hologram projector hum, Filigree chime). '
         'They play from the tap that opens a page. Saved on this device.</p>'
         '<div class="brow" style="gap:10px;align-items:center;flex-wrap:wrap"><div class="seg" role="group" aria-label="Sounds">'
         '<button type="button" data-sfx="on">On</button><button type="button" data-sfx="off">Off</button></div>'
