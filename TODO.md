@@ -802,6 +802,10 @@ the hub must work without.
   working on?". The controls hide until a tap and fade 1.5 s after (not while typing; can be switched off). Themes
   are built around Theta: its calm color and space come from the theme, the page's glow follows its mood, and each
   theme swatch shows Theta in its colors.
+- [x] The app opens on Theta (manifest start_url /head; re-add to the Home Screen to pick it up). First open of a
+  session: a cinematic opening (a spark, streams of light spiraling in, a flash and shockwave, the name); later
+  opens: the quick assembly. The stage is the Settings background. Once you've talked and Theta pulls something
+  up, it shrinks into the top-right corner, where it sits on every page; tapping it there flies it back.
 - [ ] Maybe: Theta's small mark (chat avatars, app icon) as a dot globe too; the code says that mark never changes,
   so ask first.
 

@@ -84,4 +84,25 @@ check("each theme's swatch shows Theta in its colors", 'class="globe"' in h.them
 w = h.widget_script("https://x.example")
 check("the widget draws Urchin Pour, in the mood's color", "function urchin(size, hex)" in w and "rings(" not in w and "d.color" in w)
 check("the widget data carries the mood and its color", {"mood", "color"} <= set(h.phone_widget().keys()))
+# ---- the app opens on Theta; the cinematic first open; docking to the corner on every page
+s_, ct, out = h.handle("GET", "/manifest.webmanifest", {}, {}, b"")[:3]
+check("the app opens on Theta", _j.loads(out)["start_url"].startswith("/head"))
+stage = h._STAGE_JS
+check("the first open of a session is cinematic, later ones the quick assembly, from the corner the reverse move",
+      "theta:booted" in stage and "cinematic()" in stage and "TH.scatter()" in stage and "theta:fromCorner" in stage and "undock" in stage)
+check("cinematic: a spark, streams spiraling in, a shockwave, the name", "the spark" in stage and "the streams" in stage
+      and "the shockwave" in stage and 'id="head-word"' in page)
+check("reduced motion skips the cinematic", "!booted && !reduce" in stage)
+check("the stage is the Settings background: no fill of its own", "transparent 70%)!important" in h._STAGE_CSS)
+check("on a light background the dots draw darker instead of adding light", "lightBg" in js and 'lightBg ? "source-over" : "lighter"' in js)
+check("docks to the corner once you've talked and Theta pulls something up", "theta:panels" in stage and "if (e.detail.count && talked) dock()" in stage
+      and "panelsEvent(m.panels.length)" in h._DECK_JS)
+check("a smooth move both ways (FLIP)", "function flip(change, ms)" in stage and "cubic-bezier" in stage)
+check("leaving for another page: it shrinks into the corner first", "location.href = u.href" in stage)
+check("the corner is the same spot as on other pages", "top:calc(env(safe-area-inset-top,0px) + 10px);right:calc(env(safe-area-inset-right,0px) + 12px)"
+      in h._STAGE_CSS and "top:calc(env(safe-area-inset-top,0px) + 10px);right:calc(env(safe-area-inset-right,0px) + 12px)" in h._UI_CSS)
+other = h.handle("GET", "/settings", {}, {"x-dashboard-key": "dk"}, b"")[2].decode()
+check("Theta sits in the corner of every other page, and taps back to the Theta page", 'class="theta-mini" href="/head"' in other
+      and 'class="theta-mini"' not in h.head_page({"host": "x", "x-dashboard-key": "dk"}) and "theta:fromCorner" in h._UI_JS)
+check("the corner Theta wears its last mood", "theta:moodColor" in h._UI_JS and 'store("theta:moodColor"' in js)
 print("done")

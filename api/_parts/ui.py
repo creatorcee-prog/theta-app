@@ -789,6 +789,10 @@ input:disabled,select:disabled,textarea:disabled{opacity:.55;cursor:default}
 /* Animated backgrounds (Settings -> Background). Independent of themes: the
    layer sits behind all content (z-index -1) and is opaque, so the theme's
    own background never shows through it. Theme (the default) hides it. */
+.theta-mini{position:fixed;top:calc(env(safe-area-inset-top,0px) + 10px);right:calc(env(safe-area-inset-right,0px) + 12px);z-index:60;
+ width:48px;height:48px;border-radius:50%;display:block}
+.theta-mini canvas{width:100%;height:100%;display:block;transform-origin:0 0}
+.theta-mini:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 #bg-layer{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden;background:#000}
 #bg-layer.off{display:none}
 :root[data-bg]:not([data-bg="theme"]) body{background:transparent}
@@ -811,6 +815,39 @@ input:disabled,select:disabled,textarea:disabled{opacity:.55;cursor:default}
 
 _UI_JS_SRC = r'''
 (() => {
+  // Theta in the corner of every page (Urchin Pour, small): wears its last mood's color; a tap flies it
+  // to the middle of the Theta page (that page plays the dock move in reverse).
+  (() => {
+    const a = document.querySelector(".theta-mini"); if (!a) return;
+    const cv = a.querySelector("canvas"), g = cv.getContext("2d"), S = cv.width, N = 150, dots = [];
+    for (let i = 0; i < N; i++) { const y = 1 - (i / (N - 1)) * 2, r = Math.sqrt(1 - y * y), th = i * 2.39996; dots.push([Math.cos(th) * r, y, Math.sin(th) * r, Math.random()]); }
+    let hex = "#4fd3ff";
+    try { hex = localStorage.getItem("theta:moodColor") || (T[root.dataset.theme] || T.theta || {}).accent2 || hex; } catch (e) {}
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let light = false;
+    setTimeout(() => { const m = getComputedStyle(document.body).backgroundColor.match(/\d+/g), layer = document.getElementById("bg-layer");
+      light = !(layer && !layer.classList.contains("off")) && !!m && (0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2]) > 150; }, 60);
+    const pts = [];
+    function draw(ms) {
+      const t = ms / 1000 * (reduce ? 0.3 : 1), c = S / 2, R = S * 0.36, yaw = t * 0.5, cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(0.32), sp = Math.sin(0.32);
+      g.clearRect(0, 0, S, S); pts.length = 0;
+      for (const [x, y, z, s] of dots) {
+        const k = 1 + 0.05 * Math.sin(t * 1.4 + y * 4) + (s > 0.85 ? 0.12 * Math.abs(Math.sin(t * 2 + s * 30)) : 0);
+        const x1 = x * cy - z * sy, z1 = x * sy + z * cy, y2 = y * cp - z1 * sp, z2 = y * sp + z1 * cp, pr = 3.2 / (3.2 + z2);
+        pts.push([c + x1 * k * R * pr, c + y2 * k * R * pr, z2, pr]);
+      }
+      pts.sort((p, q) => q[2] - p[2]);
+      g.globalCompositeOperation = light ? "source-over" : "lighter"; g.fillStyle = hex;
+      for (const [px, py, z, pr] of pts) { g.globalAlpha = Math.max(0.15, Math.min(1, 0.65 - z * 0.55)); g.beginPath(); g.arc(px, py, S * 0.018 * pr * pr, 0, 7); g.fill(); }
+      g.globalAlpha = 1; g.globalCompositeOperation = "source-over";
+      const gr = g.createRadialGradient(c, c, 0, c, c, S * 0.2); gr.addColorStop(0, "#fff"); gr.addColorStop(0.3, hex); gr.addColorStop(1, "rgba(0,0,0,0)");
+      g.fillStyle = gr; g.beginPath(); g.arc(c, c, S * 0.2, 0, 7); g.fill();
+      requestAnimationFrame(draw);
+    }
+    requestAnimationFrame(draw);
+    a.addEventListener("click", () => { try { sessionStorage.setItem("theta:fromCorner", "1"); } catch (e) {} });
+  })();
+
   // Theme, mode and layout live in the theta_ui cookie so pages render
   // with them from the server (no flash). __THEMES__ is filled in by the hub.
   const T = __THEMES__;
@@ -2791,7 +2828,7 @@ def ui_icon(name):
 _UI_CSS = theme_css() + "\n" + _BASE_CSS + "\n" + _hdr_css() + "\nhtml.veiled .app,html.veiled .tabbar{visibility:hidden}"
 _UI_JS = _UI_JS_SRC.replace("__THEMES__", json.dumps(
     {n: {"glass": bool(t.get("glass")), "mono": bool(t.get("mono")), "light": t["light"]["bg"],
-         "dark": t["dark"]["bg"]} for n, t in THEMES.items()}))
+         "dark": t["dark"]["bg"], "accent2": t["dark"]["accent2"]} for n, t in THEMES.items()}))
 _ASSET_V = hashlib.sha1((_UI_CSS + _UI_JS + _CHAT_JS).encode()).hexdigest()[:10]
 
 
@@ -2885,6 +2922,8 @@ def page(headers, title, active, body, body_class="", statuses=None, chat=None):
         f'<div class="label">Sections</div><nav aria-label="Sections">{more}</nav>'
         f'<div class="label">Crew</div>{crew}</aside><main class="main">{body}</main></div>'
         + (minibar_html(active) if show_minibar else "")
+        + ('' if active == "/head" else '<a class="theta-mini" href="/head" aria-label="Theta: talk to Theta">'
+           '<canvas width="112" height="112" aria-hidden="true"></canvas></a>')  # Theta in the corner of every page
         + f'<nav class="tabbar glass" aria-label="Main">{nav}</nav>'
         + _json_script("THETA_LATEST", latest_by_channel(chat))
         + f'<script src="/ui.js?v={_ASSET_V}"></script>'
