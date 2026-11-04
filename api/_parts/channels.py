@@ -1228,7 +1228,8 @@ def handle(method, path, query, headers, body):
     if path == "/manifest.webmanifest":
         # Opened signed in (Safari's "Add to Home Screen"), the app starts with the
         # key, so the Home Screen copy (which has its own cookies) is signed in too.
-        start = (f"/?key={DASHBOARD_KEY}" if DASHBOARD_KEY and _auth_dashboard(query, headers) else "/")
+        # The app opens on Theta (the Theta page is the chat too).
+        start = (f"/head?key={DASHBOARD_KEY}" if DASHBOARD_KEY and _auth_dashboard(query, headers) else "/head")
         manifest = {"name": APP_NAME, "short_name": APP_NAME, "start_url": start, "scope": "/",
                     "display": "standalone", "background_color": THEMES["theta"]["dark"]["bg"],
                     "theme_color": AGENT_LOOKS["theta"][0],

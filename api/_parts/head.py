@@ -730,6 +730,16 @@ _HEAD_JS = r"""
     if (moodW.sleepy > 0.01) y += moodW.sleepy * 0.12 * (1 - Math.abs(x));
     return [x * r, y * r, z * r, 0.4 + 0.6 * q.s];
   }
+  // the page behind Theta is the Settings background: dark (a background picture, or a dark theme) or light
+  let lightBg = false;
+  function readBg() {
+    const layer = document.getElementById("bg-layer");
+    if (layer && !layer.classList.contains("off") && getComputedStyle(layer).display !== "none") { lightBg = false; return; }
+    const m = getComputedStyle(document.body).backgroundColor.match(/\d+(\.\d+)?/g);
+    lightBg = !!m && (0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2]) > 150;
+    document.body.classList.toggle("light-stage", lightBg);
+  }
+  setTimeout(readBg, 50); matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => setTimeout(readBg, 50));
   const pts = [];
   function drawUrchin(t, lv) {
     const c = S / 2, sp = cur.speed * AV.energy, R = S * 0.42, D = 3.2;
@@ -746,12 +756,12 @@ _HEAD_JS = r"""
       pts.push([c + x1 * R * pr, c + y2 * R * pr, z2, pr, br, q.s, Math.hypot(q.v[0], q.v[1], q.v[2])]);
     }
     pts.sort((a, b) => b[2] - a[2]);
-    g.globalCompositeOperation = "lighter";
+    g.globalCompositeOperation = lightBg ? "source-over" : "lighter"; // glow adds up on dark; on a light page it would vanish
     let coreDone = false;
     for (const [px, py, z, pr, br, s, v] of pts) {
       if (!coreDone && z < 0) { core(c, 0.035 + 0.045 * lv); coreDone = true; }
       const fog = Math.max(0.12, Math.min(1, 0.62 - z * 0.55)), spark = moodW.proud > 0.3 && s > 0.97 ? 0.45 : 0;
-      g.fillStyle = col(s * 40 - 20, (pr - 0.8) * 50 + Math.min(1, v * 40) * 12 + spark * 40, (0.1 + 0.55 * br) * fog + spark);
+      g.fillStyle = col(s * 40 - 20, (pr - 0.8) * 50 + Math.min(1, v * 40) * 12 + spark * 40 - (lightBg ? 22 : 0), (0.1 + 0.55 * br) * fog + spark + (lightBg ? 0.15 : 0));
       g.beginPath(); g.arc(px, py, S * 0.0075 * pr * pr, 0, TAU); g.fill();
     }
     if (!coreDone) core(c, 0.035 + 0.045 * lv);
@@ -796,7 +806,9 @@ _HEAD_JS = r"""
   // mood: from Theta's latest reply (the server tags it), and sleepy late at night when nothing else is going on
   function setMood(m) {
     mood = MOODS[m] ? m : "calm"; cv.dataset.mood = mood;
-    document.documentElement.style.setProperty("--mood", (AV.colors || {})[mood] || MOODS[mood][0]); // the page's glow follows Theta
+    const hex = (AV.colors || {})[mood] || MOODS[mood][0];
+    document.documentElement.style.setProperty("--mood", hex); // the page's glow follows Theta
+    store("theta:moodColor", hex); // the corner Theta on other pages wears it too
   }
   setMood("calm");
   document.addEventListener("theta:thread", e => {
@@ -1207,7 +1219,7 @@ _HEAD_JS = r"""
   // hooks for the page's opening (the stage script): assemble, greet, mood
   window.thetaHead = {
     speak: t => speak(t), unlock: () => unlock(), setMood: m => setMood(m),
-    scatter() { for (const q of dots) { const a = Math.random() * TAU, b = Math.acos(2 * Math.random() - 1), r = 2.4 + Math.random() * 2;
+    scatter(near) { for (const q of dots) { const a = Math.random() * TAU, b = Math.acos(2 * Math.random() - 1), r = near ? 1.1 + Math.random() * 0.9 : 2.4 + Math.random() * 2;
       q.w = [Math.cos(a) * Math.sin(b) * r, Math.cos(b) * r, Math.sin(a) * Math.sin(b) * r]; q.v = [0, 0, 0]; } },
   };
   setState("idle");
@@ -1272,6 +1284,7 @@ _DECK_JS = r"""
   // The panel deck: when Theta looks something up or changes something, what it pulled up shows here,
   // newest reply only, until you close it (the X, or say "close the panels").
   const deck = document.getElementById("deck"); if (!deck) return;
+  const panelsEvent = n => document.dispatchEvent(new CustomEvent("theta:panels", {detail: {count: n}}));
   let shown = null, tick = 0;
   const gone = new Set();
   const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
@@ -1329,7 +1342,7 @@ _DECK_JS = r"""
     const c = el("article", "holo holo-" + p.kind); c.style.animationDelay = (i * 90) + "ms";
     const h = el("header"), x = el("button", "x", "×");
     x.type = "button"; x.setAttribute("aria-label", "Close " + p.title);
-    x.onclick = () => { c.remove(); if (!deck.children.length && shown) gone.add(shown); };
+    x.onclick = () => { c.remove(); if (!deck.children.length) { if (shown) gone.add(shown); panelsEvent(0); } };
     h.append(el("span", "ic", ICON[p.kind] || "◈"), el("h3", null, p.title), x);
     c.append(h, body(p)); return c;
   }
@@ -1339,9 +1352,9 @@ _DECK_JS = r"""
     const at = m.at ? new Date(m.at.replace(" ", "T") + "Z").getTime() : Date.now();
     if (Date.now() - at > 30 * 60e3) return; // only what was just pulled up
     shown = m.id; clearInterval(tick);
-    deck.replaceChildren(...m.panels.map(card)); deck.scrollLeft = 0;
+    deck.replaceChildren(...m.panels.map(card)); deck.scrollLeft = 0; panelsEvent(m.panels.length);
   });
-  document.addEventListener("theta:clear-panels", () => { if (shown) gone.add(shown); clearInterval(tick); deck.replaceChildren(); });
+  document.addEventListener("theta:clear-panels", () => { if (shown) gone.add(shown); clearInterval(tick); deck.replaceChildren(); panelsEvent(0); });
 })();
 """
 
@@ -1370,7 +1383,24 @@ body.immersive #chat-form{position:fixed;left:0;right:0;bottom:var(--tabh,64px);
 body.immersive .hud-more{position:fixed;top:calc(env(safe-area-inset-top,0px) + 8px);right:max(12px,env(safe-area-inset-right,0px));z-index:6;
  background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:4px 12px;max-width:min(92vw,520px);max-height:72dvh;overflow:auto}
 body.immersive .chans,body.immersive .members{display:none}
-body.opening .deck,body.opening .caption,body.opening #head-note{opacity:0;pointer-events:none}
+body.opening .deck,body.opening .caption,body.opening #head-note,body.opening .hud-mid{opacity:0;pointer-events:none}
+.hud-mid{transition:opacity .5s ease}
+/* the stage is the Settings background: no fill of its own, only Theta's glow */
+.hud{background:radial-gradient(55% 40% at 50% 42%,color-mix(in srgb,var(--mood,#4fd3ff) 12%,transparent),transparent 70%)!important}
+body.light-stage .hud{color:var(--text)}body.light-stage .caption{color:var(--text)!important}body.light-stage .hud .said,body.light-stage .hud .note{color:var(--muted)}
+/* the cinematic opening */
+.cine-layer{position:fixed;inset:0;width:100vw;height:100dvh;z-index:9;pointer-events:none}
+body.cine #head-av{opacity:0}
+#head-av{transition:opacity .7s ease}
+.wordmark{margin:0;height:0;overflow:visible;text-align:center;font:600 13px/1 ui-monospace,Menlo,monospace;letter-spacing:.9em;text-indent:.9em;
+ color:var(--mood,#4fd3ff);opacity:0;transition:opacity .9s ease,letter-spacing 1.4s cubic-bezier(.2,.8,.2,1),text-indent 1.4s cubic-bezier(.2,.8,.2,1)}
+.wordmark.show{opacity:.9;letter-spacing:.42em;text-indent:.42em}
+/* docked: Theta in the top-right corner, the same spot as on every other page */
+body.docked #head-av,body.docked #head-av.big{position:fixed;top:calc(env(safe-area-inset-top,0px) + 10px);right:calc(env(safe-area-inset-right,0px) + 12px);
+ width:48px!important;height:48px!important;z-index:8;border-radius:50%}
+body.docked .hud-mid,body.docked .caption,body.docked .hint,body.docked .wordmark{opacity:0;pointer-events:none}
+body.docked .deck{top:calc(env(safe-area-inset-top,0px) + 64px)}
+body.immersive .hud-more{right:auto;left:max(12px,env(safe-area-inset-left,0px))}
 .deck,.caption{transition:opacity .5s ease}
 body.immersive .msgs,body.immersive #chat-form,body.immersive .hud-more,body.immersive .hud .talk,body.immersive .tabbar,body.immersive .rail,
 body.immersive .hud-row,body.immersive #head-timing{transition:opacity .35s ease,transform .35s ease}
@@ -1414,20 +1444,107 @@ _STAGE_JS = r"""
     seen = m.id; const t = clean(m.text); cap.textContent = t.length > 220 ? t.slice(0, 217) + "…" : t;
   });
 
-  // the opening: Theta assembles from scattered dots, then greets (spoken on your first tap: iPhone needs one)
+  // ---- docking: once you've talked and Theta pulls something up, it shrinks into the top-right corner
+  // (where it sits on every page); tapping it there brings it back. One move, both ways (FLIP).
+  const cv = document.getElementById("head-av"), word = document.getElementById("head-word");
+  let docked = false, talked = false, youMax = null;
+  function flip(change, ms) {
+    const a = cv.getBoundingClientRect(); change(); const b = cv.getBoundingClientRect();
+    if (!a.width || !b.width) return;
+    cv.style.transition = "none"; cv.style.transformOrigin = "0 0";
+    cv.style.transform = `translate(${a.left - b.left}px,${a.top - b.top}px) scale(${a.width / b.width})`;
+    cv.getBoundingClientRect();
+    requestAnimationFrame(() => { cv.style.transition = `transform ${ms || 650}ms cubic-bezier(.22,.9,.24,1)`; cv.style.transform = "none"; });
+  }
+  function dock() { if (docked) return; docked = true; flip(() => body.classList.add("docked")); }
+  function undock() { if (!docked) return; docked = false; flip(() => body.classList.remove("docked")); }
+  document.addEventListener("theta:thread", e => {
+    const yous = (e.detail || []).filter(x => x.from === "you").map(x => Number(x.id) || 0);
+    const top = yous.length ? Math.max(...yous) : 0;
+    if (youMax === null) youMax = top; else if (top > youMax) { youMax = top; talked = true; }
+  });
+  document.addEventListener("theta:panels", e => { if (e.detail.count && talked) dock(); else if (!e.detail.count) undock(); });
+  cv.addEventListener("click", e => { if (docked) { e.stopImmediatePropagation(); e.preventDefault(); undock(); } }, true);
+  // leaving for another page: Theta shrinks into the corner first, where the next page has it
+  document.addEventListener("click", e => {
+    const a = e.target.closest("a[href]");
+    if (!a || e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || a.target === "_blank") return;
+    const u = new URL(a.href, location.href);
+    if (u.origin !== location.origin || u.pathname === "/head" || u.pathname === location.pathname) return;
+    e.preventDefault();
+    if (!docked) { docked = true; flip(() => body.classList.add("docked"), 480); }
+    setTimeout(() => { location.href = u.href; }, docked ? 500 : 60);
+  });
+
+  // ---- the opening. The first open of a session is cinematic: a spark in the dark, streams of light
+  // spiraling in from the edges, Theta assembling in a flash and a shockwave, its name. After that, a
+  // quick assembly; arriving from the corner of another page, the dock move in reverse. Then the greeting
+  // (shown at once, spoken on your first tap: iPhone plays sound only after one).
   const last = Number(get("theta:lastSeen") || 0), away = last ? Math.max(0, (Date.now() - last) / 1000) : 86400;
   const stamp = () => put("theta:lastSeen", String(Date.now()));
   stamp(); setInterval(stamp, 30000); document.addEventListener("visibilitychange", stamp);
-  TH.scatter();
-  body.classList.add("opening"); // a blank stage while Theta assembles: no panels, no caption yet
+  let fromCorner = false, booted = false;
+  try { fromCorner = sessionStorage.getItem("theta:fromCorner") === "1"; sessionStorage.removeItem("theta:fromCorner");
+        booted = sessionStorage.getItem("theta:booted") === "1"; sessionStorage.setItem("theta:booted", "1"); } catch (e) { booted = true; }
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let greetAt = 1400;
+  if (fromCorner) {
+    body.classList.add("docked"); docked = true; greetAt = 800;
+    requestAnimationFrame(() => requestAnimationFrame(undock));
+  } else if (!booted && !reduce) {
+    greetAt = 3500; cinematic();
+  } else {
+    TH.scatter(); body.classList.add("opening");
+  }
+  function cinematic() {
+    body.classList.add("opening", "cine");
+    const ov = document.createElement("canvas"); ov.className = "cine-layer"; ov.setAttribute("aria-hidden", "true"); body.append(ov);
+    const dpr = Math.min(2, window.devicePixelRatio || 1), W = innerWidth, Hh = innerHeight;
+    ov.width = W * dpr; ov.height = Hh * dpr; const x = ov.getContext("2d"); x.scale(dpr, dpr);
+    const r = cv.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2, far = Math.hypot(W, Hh) * 0.62;
+    const hex = getComputedStyle(document.documentElement).getPropertyValue("--mood").trim() || "#4fd3ff";
+    const streams = Array.from({length: 170}, () => ({a: Math.random() * Math.PI * 2, d: 0.35 + Math.random() * 0.9, len: 1.0 + Math.random() * 0.7,
+      spin: (Math.random() < 0.5 ? -1 : 1) * (1.6 + Math.random() * 1.6), w: 0.6 + Math.random() * 1.6}));
+    const ease = u => 1 - Math.pow(1 - u, 3), t0 = performance.now();
+    const pos = (s, t) => { const u = Math.max(0, Math.min(1, (t - s.d) / s.len)), e = ease(u), rad = far * Math.pow(1 - e, 1.4), ang = s.a + s.spin * e;
+      return [cx + Math.cos(ang) * rad, cy + Math.sin(ang) * rad, u]; };
+    let flashed = false;
+    function frame(now) {
+      const t = (now - t0) / 1000; x.clearRect(0, 0, W, Hh);
+      // the spark: ignites and flickers
+      const ign = Math.min(1, t / 0.7) * (0.85 + 0.15 * Math.sin(t * 40));
+      const sr = 4 + 26 * ign + (t > 2.25 ? 60 * Math.max(0, 1 - (t - 2.25) / 0.5) : 0);
+      const gr = x.createRadialGradient(cx, cy, 0, cx, cy, sr * 3);
+      gr.addColorStop(0, "rgba(255,255,255," + Math.min(1, ign) + ")"); gr.addColorStop(0.3, hex); gr.addColorStop(1, "rgba(0,0,0,0)");
+      x.globalCompositeOperation = "lighter"; x.globalAlpha = t < 2.9 ? 1 : Math.max(0, 1 - (t - 2.9) / 0.5);
+      x.fillStyle = gr; x.beginPath(); x.arc(cx, cy, sr * 3, 0, 7); x.fill();
+      // the streams: spiral in from the edges, with light trails
+      x.strokeStyle = hex; x.lineCap = "round";
+      for (const s of streams) {
+        const [x1, y1, u] = pos(s, t), [x0, y0] = pos(s, t - 0.07);
+        if (u <= 0 || u >= 1) continue;
+        x.globalAlpha = 0.25 + 0.75 * u; x.lineWidth = s.w * (0.6 + u); x.beginPath(); x.moveTo(x0, y0); x.lineTo(x1, y1); x.stroke();
+      }
+      // the shockwave
+      if (t > 2.25) {
+        const u = Math.min(1, (t - 2.25) / 0.8); x.globalAlpha = (1 - u) * 0.8; x.lineWidth = 2 + 6 * (1 - u);
+        x.beginPath(); x.arc(cx, cy, 20 + far * 0.9 * ease(u), 0, 7); x.stroke();
+        if (!flashed) { flashed = true; TH.scatter(true); body.classList.remove("cine"); if (word) word.classList.add("show"); }
+      }
+      x.globalAlpha = 1; x.globalCompositeOperation = "source-over";
+      if (t < 3.4) requestAnimationFrame(frame); else ov.remove();
+    }
+    requestAnimationFrame(frame);
+    setTimeout(() => word && word.classList.remove("show"), 4600);
+  }
   let greeting = "", pending = false, swallow = false;
-  const hello = fetch("/api/head/hello?away=" + Math.round(away), {headers: H}).then(r => r.json()).catch(() => null);
+  const hello = fetch("/api/head/hello?away=" + Math.round(fromCorner ? 0 : away), {headers: H}).then(r => r.json()).catch(() => null);
   setTimeout(async () => {
     const d = await hello;
     greeting = d && d.ok && d.text ? d.text : "What are we working on?";
     if (d && d.mood) TH.setMood(d.mood);
-    cap.textContent = greeting; pending = true; hint.hidden = false; body.classList.remove("opening");
-  }, 1400);
+    cap.textContent = greeting; pending = !fromCorner; hint.hidden = fromCorner; body.classList.remove("opening");
+  }, greetAt);
   document.addEventListener("pointerdown", e => {
     if (!pending) return;
     pending = false; hint.hidden = true; swallow = !!e.target.closest("#head-av");
@@ -1463,6 +1580,7 @@ def head_hud(headers=None):
             '<div class="hud-mid"><p class="hstate" id="head-state" aria-live="polite"></p><p class="said" id="head-said"></p>'
             '<p class="note" id="head-timing" aria-live="off"></p></div>'
             '<button type="button" class="talk" id="head-talk" aria-pressed="false">Talk</button></div>'
+            '<p class="wordmark" id="head-word" aria-hidden="true">THETA</p>'
             '<p class="caption" id="head-caption" aria-live="polite"></p>'
             '<p class="note hint" id="head-hint" hidden>Tap anywhere to hear Theta</p>'
             '<p class="reply" id="head-reply" aria-live="polite"></p>'
