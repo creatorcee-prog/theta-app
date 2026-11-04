@@ -111,4 +111,7 @@ check("opened from the Home Screen icon onto Home, the app goes to Theta (an ico
       'location.pathname==="/"&&(navigator.standalone' in home and 'location.replace("/head"' in home and "theta:launched" in home)
 check("pages with Theta in the corner leave room in their header", 'has-mini' in home and "body.has-mini header.top{padding-right:60px}" in h._UI_CSS)
 check("the Needs attention card keeps its distance from the cards below", ".attention{border-color:color-mix(in srgb,var(--warn) 55%,var(--border));margin:0 0 16px}" in h._UI_CSS)
+check("while hidden, only a tap where the text box sits brings the controls back", "function inBoxZone(e)" in stage
+      and "inBoxZone(e)) reveal()" in stage and '["keydown", "input"].forEach' in stage)
+check("tapping Theta isn't typing: focus only counts in a text field", "/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) reveal()" in stage)
 print("done")
