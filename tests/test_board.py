@@ -61,6 +61,11 @@ check("terminal: a copy, so the message stays in the chat; taps and typing go to
       and "o.click()" in js and 'o.dispatchEvent(new Event("input"' in js and "tbody.replaceChildren(r)" not in js)
 check("terminal: an old card doesn't pop up on open, and a closed one stays closed", "30 * 60e3" in js and '"theta:termClosed"' in js)
 check("chat rows carry their id", "row.dataset.id = m.id" in h._CHAT_JS)
+check("terminal: only real cards, not the copy/share footer every reply has", '.msg-acts:not(.macts)' in js and '"msg-acts macts"' in h._CHAT_JS)
+check("terminal: never copies a reply while it's still typing", 'r.querySelector(".caret")' in js)
+check("open chat covers the board instead of sitting on it", "body.showchat #board,body.showchat .board-open{visibility:hidden}" in h.BOARD_CSS)
+check("Theta never promises to do something after its reply", "nothing happens after it" in h._HEAD_ALONE and "background tool" in h._HEAD_ALONE
+      and "nothing happens after it" in h.head_system() and "nothing happens after it" in h.head_system(native=True))
 
 # ---- one page
 home = h.handle("GET", "/money", {}, K, b"")[2].decode()

@@ -407,7 +407,9 @@ body.docked .board-open{display:none}
  linear-gradient(currentColor,currentColor) 0 7px/5px 5px no-repeat,linear-gradient(currentColor,currentColor) 7px 7px/5px 5px no-repeat}
 body.docked:not(.showchat) .msgs{display:none}
 body.docked #head-note,body.docked #head-taps,body.docked .hud-row,body.docked .hud .reply{opacity:0;pointer-events:none}
-body.showchat .msgs{opacity:1!important;pointer-events:auto!important;transform:none!important;z-index:6}
+body.showchat .msgs{opacity:1!important;pointer-events:auto!important;transform:none!important;z-index:6;top:calc(env(safe-area-inset-top,0px) + 56px);bottom:calc(var(--formh,96px) + 8px);max-height:none;background:color-mix(in srgb,var(--bg) 92%,transparent);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);border:1px solid var(--border);border-radius:14px;padding:10px 12px;overflow-y:auto;overscroll-behavior:contain}
+/* the chat replaces the board while it's open, so the two never sit on top of each other */
+body.showchat #board,body.showchat .board-open{visibility:hidden}
 /* the terminal: Theta's cards (tables, quizzes, docs, code) above everything */
 .term{position:fixed;left:max(10px,env(safe-area-inset-left,0px));right:max(10px,env(safe-area-inset-right,0px));top:calc(env(safe-area-inset-top,0px) + 64px);
  z-index:9;max-height:62dvh;display:flex;flex-direction:column;background:color-mix(in srgb,var(--bg) 94%,transparent);
@@ -724,10 +726,11 @@ BOARD_JS = r"""
   // passed to the real card (found by the message's id, since the chat re-draws), and the copy refreshes after.
   const term = $("term"), tbody = $("term-body");
   let termId = null, closed = get("theta:termClosed", null), firstThread = true;
-  const CARD = ".quizcard,.doccard,.cfgcard,.codeblock,table,.msg-acts";
+  const CARD = ".quizcard,.doccard,.cfgcard,.codeblock,table,.msg-acts:not(.macts)"; // .macts is the copy/share footer every reply has
   const CTRL = "button,input,label,select,textarea,a";
   const realRow = () => document.querySelector(`#msgs .msg[data-id="${CSS.escape(String(termId))}"]`);
-  function mirror(r) { const c = r.cloneNode(true); c.removeAttribute("id"); c.querySelectorAll("[id]").forEach(n => n.removeAttribute("id")); tbody.replaceChildren(c); }
+  function mirror(r) { if (r.querySelector(".caret")) return void setTimeout(() => { const x = realRow(); if (x) mirror(x); }, 300); // still typing: copy it once it's whole
+    const c = r.cloneNode(true); c.removeAttribute("id"); c.querySelectorAll("[id]").forEach(n => n.removeAttribute("id")); tbody.replaceChildren(c); }
   function twin(e) { // the real control matching the one touched in the copy
     const copy = tbody.firstElementChild, real = realRow(); if (!copy || !real) return null;
     const t = e.target.closest(CTRL); if (!t || !copy.contains(t)) return null;

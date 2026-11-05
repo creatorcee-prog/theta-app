@@ -110,8 +110,8 @@ print("mode:", mode)
 # PWA files
 s, body, hd = call("GET", "/manifest.webmanifest", headers={"cookie": "hub_key=dk"})
 m = body
-check("manifest: standalone, icons, signed-in start_url", s == 200 and hd["Content-Type"] == "application/manifest+json" and m["display"] == "standalone" and m["start_url"] == "/?key=dk")
-check("manifest without login doesn't leak the key", call("GET", "/manifest.webmanifest")[1]["start_url"] == "/")
+check("manifest: standalone, icons, signed-in start_url", s == 200 and hd["Content-Type"] == "application/manifest+json" and m["display"] == "standalone" and m["start_url"] == "/head?key=dk")  # the app opens on Theta
+check("manifest without login doesn't leak the key", call("GET", "/manifest.webmanifest")[1]["start_url"] == "/head")
 s, png, hd = call("GET", "/icon-192.png")
 check("icons are real PNGs of the right size", png[:8] == b"\x89PNG\r\n\x1a\n" and int.from_bytes(png[16:20], "big") == 192 and int.from_bytes(call("GET", "/apple-touch-icon.png")[1][16:20], "big") == 180)
 check("service worker served", b"showNotification" in call("GET", "/sw.js")[1])

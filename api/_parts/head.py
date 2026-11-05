@@ -170,7 +170,11 @@ HEAD_TASK_STEPS = 6  # rounds of tool use before Theta must answer (native tool 
 HEAD_CALLS_MAX = 4  # tool calls run per round
 _HEAD_ALONE = ("\n\nYou're the only one the user talks to now: you handle everything yourself, the crew's old jobs "
                "included (money, calendar and reminders, shows and games, workouts, news, the hub itself). Nobody "
-               "else answers, so never pass a question to someone else.")
+               "else answers, so never pass a question to someone else."
+               "\n\nYou can only act before your reply goes out: nothing happens after it. So never promise to do "
+               "something later ('I'll pull it up', 'I'll send it over', 'give me a sec'). Do it now with your tools, "
+               "or, if it's too big for one reply, start it with the background tool and say it's started. When the "
+               "user says yes to something you offered, do it in that same reply.")
 
 
 def head_system(native=False):
