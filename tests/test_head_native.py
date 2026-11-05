@@ -133,6 +133,28 @@ check("refused tools: falls back", last_reply()["text"] == "Still here, the old 
       and any(not b.get("tools") for _, b in BODIES) and "ACTION:" in [b for _, b in BODIES if not b.get("tools")][0]["messages"][0]["content"])
 STATE["refuse_tools"] = False
 
+# ---- DeepSeek writes its tool calls as text (its DSML markup): they run, and the user never sees the markup
+DSML = ('Let me look.\n<\uff5cDSML\uff5cfunction_calls>\n<\uff5cDSML\uff5cinvoke name="budget">\n'
+        '<\uff5cDSML\uff5cparameter name="input" string="true">this month</\uff5cDSML\uff5cparameter>\n'
+        '</\uff5cDSML\uff5cinvoke>\n</\uff5cDSML\uff5cfunction_calls>')
+BODIES.clear(); SCRIPT[:] = [DSML, "Money's fine this month."]
+post("how's my money")
+r = last_reply()["text"]
+check("text-form tool calls run as real ones", len(BODIES) == 2 and any(m["role"] == "tool" and "Budgets this month" in m["content"]
+                                                                       for m in BODIES[1][1]["messages"]))
+check("the markup never reaches the chat", "DSML" not in r and r.startswith("Money's fine"))
+check("markup with plain bars and spaces is caught too", h.dsml_calls(DSML.replace("\uff5c", "| ").replace("</", "< /"))[0][0]["function"]["name"] == "budget")
+check("ordinary text with pipes is left alone", h.dsml_calls("a | b")[1] == "a | b" and not h.dsml_calls("a | b")[0])
+# out of rounds: it's told so outright, and markup in that last answer is stripped
+steps = h.HEAD_TASK_STEPS
+BODIES.clear(); SCRIPT[:] = [{"text": "", "calls": [call("budget", f"month {i}", f"z{i}")]} for i in range(steps)] + ["Here's what I have." + DSML]
+post("dig through every month")
+r = last_reply()["text"]
+last_msgs = BODIES[-1][1]["messages"]
+check("the last round says no more tools", BODIES[-1][1].get("tool_choice") == "none" and last_msgs[-1]["role"] == "user"
+      and last_msgs[-1]["content"] == h.HEAD_LAST_ROUND)
+check("and its stray markup is stripped", "DSML" not in r and r.startswith("Here's what I have."))
+
 # ---- every head_chat call carries the writing rule
 BODIES.clear(); SCRIPT[:] = ["fine"]
 h.head_chat([{"role": "user", "content": "summarize this"}], 100)
