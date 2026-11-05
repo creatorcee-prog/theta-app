@@ -2260,6 +2260,29 @@ def local_status(fresh=False):
     return ok, why
 
 
+# DeepSeek's own tool-call markup ("<｜DSML｜function_calls> <｜DSML｜invoke name=..> <｜DSML｜parameter ..>"). Now
+# and then it lands in the reply text instead of tool_calls (most often when told to answer with no tools), and
+# the user saw the raw markup. The bars may be the full-width ｜ or plain |, with spaces.
+_DSML_TAG = r"<\s*/?\s*[|\uff5c][|\uff5c\s]*DSML\s*[|\uff5c][|\uff5c\s]*"
+_DSML_RE = re.compile(_DSML_TAG, re.I)
+_DSML_BLOCK = re.compile(_DSML_TAG + r"function_calls\s*>.*?(?:" + _DSML_TAG + r"function_calls\s*>|\Z)", re.I | re.S)
+_DSML_INVOKE = re.compile(_DSML_TAG + r'invoke\s+name\s*=\s*"([^"]+)"\s*>(.*?)(?=' + _DSML_TAG + r"/?\s*invoke|\Z)", re.I | re.S)
+_DSML_PARAM = re.compile(_DSML_TAG + r'parameter\s+name\s*=\s*"([^"]+)"[^>]*>(.*?)(?=' + _DSML_TAG + r"|\Z)", re.I | re.S)
+
+
+def dsml_calls(text):
+    """(calls, text without the markup): DeepSeek's text-form tool calls as
+    OpenAI-style tool calls, so they run like real ones."""
+    calls = []
+    for m in _DSML_INVOKE.finditer(text):
+        args = {k: v.strip() for k, v in _DSML_PARAM.findall(m.group(2))}
+        calls.append({"id": f"dsml{len(calls)}", "type": "function",
+                      "function": {"name": m.group(1).strip(), "arguments": json.dumps(args)}})
+    clean = _DSML_BLOCK.sub("", text)
+    clean = re.sub(_DSML_TAG + r"[^>]*>", "", clean)  # any stray tag left over
+    return calls, clean.strip()
+
+
 def _llm_call(provider, model, messages, max_tokens, tools=None, tool_choice=None):
     """The reply text; with `tools` (native tool calling, OpenAI-style), a dict
     {"text", "calls", "message"} instead, where calls are the model's tool calls."""
@@ -2328,6 +2351,10 @@ def _llm_call(provider, model, messages, max_tokens, tools=None, tool_choice=Non
         _diag("model.call", provider=provider, model=model,
               elapsed_ms=int((time.perf_counter() - t0) * 1000), outcome="error", error_class="LLMError")
         raise LLMError(f"{provider} call failed: {e!r}")
+    if _DSML_RE.search(text):  # DeepSeek wrote its tool calls as text: run them as calls, never show them
+        got, text = dsml_calls(text)
+        if tools and tool_choice != "none" and not calls:
+            calls = got
     if not text.strip() and not calls:  # the fallback may still answer; the same model again likely won't
         raise LLMError(f"{model} returned an empty reply (it may have spent its "
                        "token budget thinking)", retryable=True, timed_out=True)

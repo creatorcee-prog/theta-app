@@ -344,6 +344,10 @@ def head_transcript(thread):
     return "\n".join(out)
 
 
+HEAD_LAST_ROUND = ("No more tools this reply. Answer now from what you found. If something is still missing, say "
+                   "exactly what, and offer to finish it as a background job.")
+
+
 def tool_rounds(msgs, tools, allowed, budget, steps, st, must_finish=True, reserve=20):
     """Native tool calling, round by round, on `msgs` (appended to in place):
     the model calls tools, sees every result, and goes on until it answers.
@@ -357,6 +361,8 @@ def tool_rounds(msgs, tools, allowed, budget, steps, st, must_finish=True, reser
         if low and not must_finish:
             return None
         final = step == steps or low
+        if final and step:  # said outright, or the model tries one more tool anyway (DeepSeek writes it as text)
+            msgs.append({"role": "user", "content": HEAD_LAST_ROUND})
         out = head_chat_tools(msgs, tools, budget, "none" if final else "auto")
         calls = [] if final else out["calls"]
         if not calls:
