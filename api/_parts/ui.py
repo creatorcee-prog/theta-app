@@ -1002,6 +1002,9 @@ html,body{overflow-x:clip;max-width:100%}
 .rategrid .btn{font-size:18px;padding:12px 0}
 .field{width:100%;border:1px solid var(--border);background:var(--surface2);color:var(--text);border-radius:var(--r-sm);padding:10px 12px;font:inherit}
 select.field{width:auto;flex:1;min-width:120px}
+/* nothing inside a card is wider than the card: long selects truncate, inputs shrink */
+select,input:not([type=checkbox]):not([type=radio]),textarea{max-width:100%;min-width:0}select{text-overflow:ellipsis}
+.card > *,.stack > *{min-width:0}
 
 /* Agent profile */
 .hero{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
@@ -3438,6 +3441,8 @@ _MOVE_CSS = r'''
 @keyframes vt-in{from{opacity:0;transform:translateY(14px)}}
 /* the page's cards come in one after another */
 .main > .top,.main > .stack > *,.main > .grid2 > *,.main > .wins > *,.main > section{animation:var(--in,pagein) var(--in-dur,.42s) var(--in-ease,cubic-bezier(.2,.8,.2,1)) backwards}
+/* a folded card's contents are hidden when the page comes in, so their entrance never finishes; they just show when opened */
+.main > details.stack > *{animation:none}
 .main > .stack > :nth-child(2),.main > .grid2 > :nth-child(2),.main > .wins > :nth-child(2){animation-delay:.05s}
 .main > .stack > :nth-child(3),.main > .grid2 > :nth-child(3),.main > .wins > :nth-child(3){animation-delay:.1s}
 .main > .stack > :nth-child(4),.main > .wins > :nth-child(4){animation-delay:.15s}
@@ -3699,24 +3704,43 @@ _DOTFRAME_JS = r'''(() => {
     g = cv.getContext("2d"); size(); addEventListener("resize", size); last = performance.now(); requestAnimationFrame(frame);
   }
   function stop() { running = false; cards.clear(); homing = []; if (cv) cv.remove(); cv = null; removeEventListener("resize", size); }
-  function spawn(el, R, fromTheta) {
-    const v = variant(), kind = KINDS[v], area = R.w * R.h, s0 = source(), list = [];
-    const budget = Math.max(60, Math.min(520, (MAXDOTS - [...cards.values()].reduce((n, c) => n + c.dots.length, 0)) / 2));
-    const mk = (gx, gy, i, n) => ({gx, gy, i, n, u: i / n, ph: Math.random() * TAU, pace: .6 + Math.random() * .8, s: Math.random(),
+  // A tall card (taller than most of the screen, like Settings' Color scheme) gets its dots in bands of BAND px, and only
+  // the bands near the screen exist, so the dots stay as dense on a long card as on a short one.
+  const BAND = 240, tall = R => R.h > H * .9;
+  function fill(R, v, fromTheta, y0, y1, budget, band) {
+    const kind = KINDS[v], s0 = source(), list = [], bh = (y1 - y0) * R.h, area = R.w * bh, top = y0 === 0, bot = y1 === 1;
+    const mk = (gx, gy, i, n) => ({gx, gy, i, n, u: i / n, ph: Math.random() * TAU, pace: .6 + Math.random() * .8, s: Math.random(), band,
       x: fromTheta ? s0.x + (Math.random() - .5) * 8 : R.x + gx * R.w, y: fromTheta ? s0.y + (Math.random() - .5) * 8 : R.y + gy * R.h, vx: 0, vy: 0,
       delay: fromTheta ? Math.random() * .3 : 0, cx: gx, cy: gy});
     if (kind === "print" || v === "settle") {
       const base = v === "grain" ? 7 : v === "press" ? 8 : 10, sp = Math.max(base, Math.sqrt(area / budget));
-      const cols = Math.max(2, Math.floor(R.w / sp)), rows = Math.max(2, Math.floor(R.h / sp));
-      for (let a = 0; a < cols; a++) for (let b = 0; b < rows; b++) list.push(mk((a + .5) / cols, (b + .5) / rows, a * rows + b, cols * rows));
-      if (v === "settle") list.forEach(d => { d.cx = d.gx; d.cy = d.gy; d.gx = Math.random(); d.gy = Math.random(); });
+      const cols = Math.max(2, Math.floor(R.w / sp)), rows = Math.max(2, Math.round(bh / sp));
+      for (let a = 0; a < cols; a++) for (let b = 0; b < rows; b++) list.push(mk((a + .5) / cols, y0 + (b + .5) / rows * (y1 - y0), a * rows + b, cols * rows));
+      if (v === "settle") list.forEach(d => { d.cx = d.gx; d.cy = d.gy; d.gx = Math.random(); d.gy = y0 + Math.random() * (y1 - y0); });
     } else {
       const n = Math.round(Math.min(budget, area / (v === "lines" ? 150 : 70)));
-      for (let i = 0; i < n; i++) { const d = mk(Math.random(), Math.random(), i, n);
-        if (v === "nebula" && Math.random() < .8) { const e = .015 + Math.random() * .06 * (Math.random() < .6 ? 1 : 1.8); if (Math.random() < R.h / (R.w + R.h)) d.gx = Math.random() < .5 ? e : 1 - e; else d.gy = Math.random() < .5 ? e : 1 - e; }
+      for (let i = 0; i < n; i++) { const d = mk(Math.random(), y0 + Math.random() * (y1 - y0), i, n);
+        if (v === "nebula" && Math.random() < .8) { const px = (.015 + Math.random() * .06 * (Math.random() < .6 ? 1 : 1.8)) * Math.min(R.w, 260), sides = [0, 1];
+          if (top) sides.push(2); if (bot) sides.push(3); const sd = sides[Math.floor(Math.random() * sides.length)];
+          if (sd < 2) d.gx = sd ? 1 - px / R.w : px / R.w; else d.gy = sd === 2 ? px / R.h : 1 - px / R.h; d.cx = d.gx; d.cy = d.gy; }
         list.push(d); }
     }
-    return {el, dots: list, born: clock, v};
+    return list;
+  }
+  const used = () => [...cards.values()].reduce((n, c) => n + c.dots.length, 0);
+  function bandsNear(R) { const a = Math.max(0, Math.floor((-R.y - 120) / BAND)), b = Math.min(Math.ceil(R.h / BAND) - 1, Math.floor((H + 120 - R.y) / BAND)), out = [];
+    for (let i = a; i <= b; i++) out.push(i); return out; }
+  function fillBands(c, R, fromTheta) { // add the bands coming on screen, drop the ones far off it
+    const want = new Set(bandsNear(R)), have = new Set(c.dots.map(d => d.band));
+    if ([...have].some(b => !want.has(b))) c.dots = c.dots.filter(d => want.has(d.band));
+    for (const b of want) if (!have.has(b)) { const y0 = b * BAND / R.h, y1 = Math.min(1, (b + 1) * BAND / R.h);
+      c.dots.push(...fill(R, c.v, fromTheta, y0, y1, Math.max(60, Math.min(420, (MAXDOTS - used()) / 3)), b)); }
+  }
+  function spawn(el, R, fromTheta) {
+    const v = variant(), c = {el, dots: [], born: clock, v, tall: tall(R)};
+    if (c.tall) fillBands(c, R, fromTheta);
+    else c.dots = fill(R, v, fromTheta, 0, 1, Math.max(60, Math.min(520, (MAXDOTS - used()) / 2)), 0);
+    return c;
   }
   function scan() { // which cards are on screen now: new ones form from Theta (or in place, if seen before), gone ones go home
     const v = variant(), now = new Set();
@@ -3726,7 +3750,9 @@ _DOTFRAME_JS = r'''(() => {
       if (el.parentElement && el.parentElement.closest(SEL)) return; // a card inside a card: the outer one has the dots
       now.add(el);
       const c = cards.get(el);
-      if (!c || c.v !== v) { cards.set(el, spawn(el, {x: r.left, y: r.top, w: r.width, h: r.height}, !seen.has(el))); seen.add(el); }
+      const R = {x: r.left, y: r.top, w: r.width, h: r.height};
+      if (!c || c.v !== v || c.tall !== tall(R) || (!c.tall && Math.abs(c.h - R.h) > 40)) { const n = spawn(el, R, !seen.has(el)); n.h = R.h; cards.set(el, n); seen.add(el); }
+      else if (c.tall) fillBands(c, R, false);
     });
     for (const [el, c] of cards) if (!now.has(el)) { cards.delete(el); if (el.isConnected === false || !el.getBoundingClientRect().width) homing.push(...c.dots.map(d => (d.home = 1, d))); }
   }
