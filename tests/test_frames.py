@@ -47,12 +47,15 @@ check("the corner avatar does too", "thetaLook.at(r.left" in h._UI_JS)
 check("reduced motion: it holds still", "if (still) return [0, 0]" in h._UI_JS)
 
 # ---- frames and schemes
-check("eight frames", list(h.FRAMES) == ["plus", "liquid", "edge", "breach", "hud", "console", "holo", "ornate"])
+check("eight frames, then the five Theta frames (made of Theta's dots)", list(h.FRAMES) == ["plus", "liquid", "edge", "breach", "hud", "console", "holo", "ornate",
+                                                                                     "grain", "press", "lines", "nebula", "settle"] and h.THETA_FRAMES == ("grain", "press", "lines", "nebula", "settle"))
 for f in ("edge", "breach", "hud", "console", "holo"):
     check(f"{f} has its CSS", f':root[data-glassstyle="{f}"] .card' in h._UI_CSS)
 check("a frame is kept in the cookie", h.ui_prefs({"cookie": "theta_ui=redline.dark.grid.holo.black"})[:4] == ("redline", "dark", "grid", "holo"))
 check("an unknown frame falls back", h.ui_prefs({"cookie": "theta_ui=theta.dark.grid.nope.theme"})[3] == "plus")
-check("every frame is in Settings", all(f'data-pref="glassstyle" data-val="{f}"' in sett for f in h.FRAMES))
+check("every frame is in Settings: its own button, or (the Theta frames) under one Theta button with a picker",
+      all(f'data-pref="glassstyle" data-val="{f}"' in sett for f in h.FRAMES if f not in h.THETA_FRAMES)
+      and 'id="theta-frame-btn"' in sett and all(f'<option value="{f}"' in sett for f in h.THETA_FRAMES))
 check("the hologram stays still: no gyro tilt (2026-11-06)", "liquid|holo" not in h._UI_JS and "rotateY(calc(var(--shine-x" not in h._UI_CSS
       and "holoscan" in h._UI_CSS)
 new = ["redline", "datalog", "breach", "scanner", "amber", "mission", "hologram"]
@@ -103,7 +106,8 @@ print("entrances done")
 # ---- frame sounds (picked 2026-11-04 in the Frame Sounds page)
 ui = h._UI_JS
 picks = {"plus": "Fizz", "liquid": "Gloop", "edge": "Binary chirp", "breach": "Hex print", "hud": "Target lock",
-         "console": "Typewriter", "holo": "Projector hum", "ornate": "Chime (not picked yet)"}
+         "console": "Typewriter", "holo": "Projector hum", "ornate": "Chime (not picked yet)",
+         "grain": "Dot swarm", "press": "Dot press", "lines": "Dot constellation", "nebula": "Dot nebula", "settle": "Dot settle"}
 check("a sound for every frame, the ones picked", all(f"// {name}" in ui for name in picks.values()) and set(picks) == set(h.FRAMES))
 check("made live with Web Audio, no sound files", "window.thetaSfx" in ui and "createOscillator" in ui and ".mp3" not in ui)
 check("plays from the tap that opens a page (iPhone needs a tap)", "a tap that opens another page of the app plays the frame's sound" in ui

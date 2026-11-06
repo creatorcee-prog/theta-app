@@ -128,7 +128,15 @@ FRAMES = {"plus": ("Glass+", "Frosted bars and bubbles"), "liquid": ("Liquid Gla
           "edge": ("Edge", "Cut corners and a lit edge"), "breach": ("Breach", "Square boxes, solid title tags"),
           "hud": ("HUD", "Corner brackets on dark panels"), "console": ("Console", "Hairlines and mono data"),
           "holo": ("Hologram", "See-through light with scan lines"),
-          "ornate": ("Filigree", "Fine double lines, engraved capitals")}
+          "ornate": ("Filigree", "Fine double lines, engraved capitals"),
+          # Theta frames (2026-11-06): every card made of Theta's own dots (the Dot UI Lab's Generation 2). Grouped under
+          # one "Theta" button in Settings, with a picker for which.
+          "grain": ("Theta \u00b7 Grain", "A halftone that prints in, then keeps a grain at the edges"),
+          "press": ("Theta \u00b7 Press", "A halftone printed row by row, dense where the light lands"),
+          "lines": ("Theta \u00b7 Lines", "A constellation: dots and the lines between them"),
+          "nebula": ("Theta \u00b7 Nebula", "A swarm crowding the edges, calm inside"),
+          "settle": ("Theta \u00b7 Settle", "A neat grid at rest that comes alive when Theta does")}
+THETA_FRAMES = ("grain", "press", "lines", "nebula", "settle")
 
 
 def _brackets(color, size="16px", w="2px"):
@@ -1248,6 +1256,9 @@ _UI_JS_SRC = r'''
       s.buffer = noise(c); f.type = "bandpass"; f.frequency.value = hz; f.Q.value = 1.2; s.connect(f); f.connect(g); g.connect(out);
       s.start(t, Math.random() * .5); s.stop(t + (len || .012) + .02);
     }
+    // the Theta frames: tiny pips rising as the dots stream in, gathering into a soft chord (each variant its own flavor)
+    const swarm = (c, o, t, n, lo, chord) => { for (let i = 0; i < n; i++) { const s = t + i * (.22 / n) + Math.random() * .02, f = lo * (1 + i / n) * (1 + Math.random() * .08); tone(c, o, "sine", f, f * 1.06, s, .002, .03, .05 + .04 * Math.random()); }
+      chord.forEach((f, i) => tone(c, o, "sine", f, f, t + .24 + i * .015, .03, .5, .07)); };
     const SOUND = { // the picks: frame -> (ctx, out, t)
       plus(c, o, t) { for (let i = 0; i < 7; i++) { const s = t + Math.random() * .32, f = 600 + Math.random() * 1000; tone(c, o, "sine", f, f * 1.8, s, .003, .035, .12 + Math.random() * .1); } }, // Fizz
       liquid(c, o, t) { const x = tone(c, o, "sine", 180, 420, t, .02, .34, .4, ["lowpass", 900]); const l = c.createOscillator(), d = c.createGain(); l.frequency.value = 17; d.gain.value = 45; l.connect(d); d.connect(x.frequency); l.start(t); l.stop(t + .4); }, // Gloop
@@ -1255,6 +1266,11 @@ _UI_JS_SRC = r'''
       breach(c, o, t) { for (let i = 0; i < 7; i++) click(c, o, t + i * .07, 3500, .4, .008); tone(c, o, "sine", 1046, 1046, t + .5, .004, .12, .14); }, // Hex print
       hud(c, o, t) { tone(c, o, "sine", 1200, 1200, t, .003, .04, .2); tone(c, o, "sine", 1200, 1200, t + .12, .003, .04, .2); tone(c, o, "sine", 1600, 1600, t + .26, .004, .14, .24); }, // Target lock
       console(c, o, t) { let s = t; for (let i = 0; i < 9; i++) { click(c, o, s, 4200, .32, .006); click(c, o, s, 300, .18, .01); s += .035 + Math.random() * .03; } }, // Typewriter
+      grain(c, o, t) { swarm(c, o, t, 16, 1400, [523, 659, 784]); }, // Dot swarm
+      press(c, o, t) { for (let i = 0; i < 6; i++) click(c, o, t + i * .04, 2600, .18, .006); swarm(c, o, t + .1, 10, 1100, [440, 554, 659]); }, // Dot press
+      lines(c, o, t) { swarm(c, o, t, 12, 1700, [587, 740, 880, 1175]); }, // Dot constellation
+      nebula(c, o, t) { swarm(c, o, t, 22, 900, [392, 494, 587]); }, // Dot nebula
+      settle(c, o, t) { swarm(c, o, t, 14, 1200, [523, 784]); tone(c, o, "sine", 1046, 1046, t + .62, .003, .08, .08); }, // Dot settle
       ornate(c, o, t) { [[880, .16, .7], [1320, .09, .55], [1760, .05, .4]].forEach(([f, p, d], i) => tone(c, o, "sine", f, f, t + i * .06, .004, d, p)); }, // Chime (not picked yet)
       holo(c, o, t) { const g = c.createGain(); g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.22, t + .3); g.gain.exponentialRampToValueAtTime(.0001, t + .5); const tr = c.createGain(), l = c.createOscillator(), ld = c.createGain(); l.frequency.value = 12; ld.gain.value = .5; tr.gain.value = .5; l.connect(ld); ld.connect(tr.gain); tr.connect(g); g.connect(o); [110, 220].forEach(f => { const x = c.createOscillator(); x.type = "triangle"; x.frequency.value = f; x.connect(tr); x.start(t); x.stop(t + .55); }); l.start(t); l.stop(t + .55); click(c, o, t + .5, 1500, .3, .015); }, // Projector hum
     };
@@ -3460,6 +3476,15 @@ CHEERS = {"theta": ("orbit", ""), "midnight": ("star", ""), "nebula": ("star", "
           "hologram": ("check", ""), "gilded": ("glint", ""), "lattice": ("ripple", ""), "bloom": ("petal", ""), "neonrift": ("neon", ""),
           "verdant": ("leaf", ""), "lunar": ("glint", ""), "bloodsign": ("spark", ""), "nightfiligree": ("glint", ""), "dusk": ("star", "")}
 _CHARM_CSS = r'''.card,.win,.kpi,.w{background-image:var(--lit,none)}
+/* ---- The Theta frames: the cards are Theta's dots (drawn on .dotframe), so their own fill steps back */
+.dotframe{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:8;mix-blend-mode:screen}
+:root[data-mode="light"] .dotframe{mix-blend-mode:multiply}
+@media (prefers-color-scheme:light){:root:not([data-mode="dark"]) .dotframe{mix-blend-mode:multiply}}
+:root[data-glassstyle="lines"] :is(.card,.win,.kpi,.w,.holo),:root[data-glassstyle="nebula"] :is(.card,.win,.kpi,.w,.holo){background:transparent!important;border-color:transparent!important;box-shadow:none!important;-webkit-backdrop-filter:none;backdrop-filter:none}
+:root[data-glassstyle="settle"] :is(.card,.win,.kpi,.w,.holo){background:color-mix(in srgb,var(--surface) 22%,transparent)!important;border-color:transparent!important;box-shadow:none!important}
+:root[data-glassstyle="grain"] :is(.card,.win,.kpi,.w,.holo),:root[data-glassstyle="press"] :is(.card,.win,.kpi,.w,.holo){background:color-mix(in srgb,var(--surface) 38%,transparent)!important;border-color:color-mix(in srgb,var(--accent) 14%,transparent)!important;box-shadow:none!important}
+@media (prefers-reduced-motion:reduce){:root:is([data-glassstyle="lines"],[data-glassstyle="nebula"],[data-glassstyle="settle"]) :is(.card,.win,.kpi,.w,.holo){background:var(--surface)!important;border-color:var(--border)!important}}
+
 /* ---- Each frame's charm (2026-11-06): how it answers a touch. The pressed thing gets .tap for a moment and a
    .tapfx layer (inset, its own corners, never in the layout); --tx/--ty is where the finger landed. */
 .tapfx{position:absolute;inset:0;border-radius:inherit;pointer-events:none;overflow:hidden;opacity:0;z-index:0}
@@ -3506,6 +3531,139 @@ _CHARM_CSS = r'''.card,.win,.kpi,.w{background-image:var(--lit,none)}
 :root[data-glassstyle="ornate"] .tap > .tapfx{animation:tap-engrave .7s cubic-bezier(.2,.8,.2,1)}
 @keyframes tap-engrave{0%{opacity:1;background-size:0 1px}55%{opacity:1;background-size:100% 1px}100%{opacity:0;background-size:100% 1px}}
 @media (prefers-reduced-motion:reduce){.tap,.tap > .tapfx{animation:none!important}}
+'''
+_DOTFRAME_JS = r'''(() => {
+  // ---- The Theta frames (2026-11-06, from the Dot UI Lab): every card is made of Theta's own dots. Grain and Press
+  // print the card in a halftone; Lines, Nebula and Settle make it a constellation (Settle sits in a neat grid while
+  // Theta is at rest and comes alive when it listens, thinks or speaks). Dots stream out of Theta when a card appears
+  // and fly home when it goes; they follow Theta's state, voice and mood, and scatter from your finger. One canvas
+  // over the page that only adds light (screen), so words stay readable. Off with reduced motion.
+  const KINDS = {grain: "print", press: "print", lines: "swarm", nebula: "swarm", settle: "swarm"};
+  const SEL = ".card,.win,.kpi,.w,.holo,.term:not([hidden]),.dialog-card";
+  const root = document.documentElement, TAU = Math.PI * 2, MAXDOTS = 2600;
+  let cv = null, g = null, W = 0, H = 0, dpr = 1, running = false, clock = 0, last = 0, level = 0, hue = 195, hueAt = 0;
+  const cards = new Map(), seen = new WeakSet(), SW = {idle: 1, listening: 0, thinking: 0, speaking: 0};
+  let touch = {x: -999, y: -999, t: -9}, homing = [];
+  const still = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const variant = () => root.dataset.glassstyle;
+  const hsla = (h, s, l, a) => `hsla(${(h % 360 + 360) % 360},${s}%,${Math.min(97, l)}%,${Math.max(0, Math.min(1, a))})`;
+  function source() { const e = document.getElementById("head-av") || document.querySelector(".theta-mini");
+    if (e) { const r = e.getBoundingClientRect(); if (r.width) return {x: r.left + r.width / 2, y: r.top + r.height / 2}; } return {x: innerWidth - 30, y: 30}; }
+  function moodHue() { // Theta's mood color (or the theme's), as a hue
+    const c = getComputedStyle(root).getPropertyValue("--mood").trim() || getComputedStyle(root).getPropertyValue("--accent2").trim();
+    const m = c.match(/^#([0-9a-f]{6})$/i); if (!m) return hue;
+    const n = parseInt(m[1], 16), r = (n >> 16 & 255) / 255, gg = (n >> 8 & 255) / 255, b = (n & 255) / 255, mx = Math.max(r, gg, b), mn = Math.min(r, gg, b), d = mx - mn;
+    if (!d) return hue; let h = mx === r ? ((gg - b) / d) % 6 : mx === gg ? (b - r) / d + 2 : (r - gg) / d + 4; return (h * 60 + 360) % 360;
+  }
+  function size() { dpr = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight; cv.width = W * dpr; cv.height = H * dpr; g.setTransform(dpr, 0, 0, dpr, 0, 0); }
+  function start() {
+    if (running) return; running = true;
+    cv = document.createElement("canvas"); cv.className = "dotframe"; cv.setAttribute("aria-hidden", "true"); document.body.append(cv);
+    g = cv.getContext("2d"); size(); addEventListener("resize", size); last = performance.now(); requestAnimationFrame(frame);
+  }
+  function stop() { running = false; cards.clear(); homing = []; if (cv) cv.remove(); cv = null; removeEventListener("resize", size); }
+  function spawn(el, R, fromTheta) {
+    const v = variant(), kind = KINDS[v], area = R.w * R.h, s0 = source(), list = [];
+    const budget = Math.max(60, Math.min(520, (MAXDOTS - [...cards.values()].reduce((n, c) => n + c.dots.length, 0)) / 2));
+    const mk = (gx, gy, i, n) => ({gx, gy, i, n, u: i / n, ph: Math.random() * TAU, pace: .6 + Math.random() * .8, s: Math.random(),
+      x: fromTheta ? s0.x + (Math.random() - .5) * 8 : R.x + gx * R.w, y: fromTheta ? s0.y + (Math.random() - .5) * 8 : R.y + gy * R.h, vx: 0, vy: 0,
+      delay: fromTheta ? Math.random() * .3 : 0, cx: gx, cy: gy});
+    if (kind === "print" || v === "settle") {
+      const base = v === "grain" ? 7 : v === "press" ? 8 : 10, sp = Math.max(base, Math.sqrt(area / budget));
+      const cols = Math.max(2, Math.floor(R.w / sp)), rows = Math.max(2, Math.floor(R.h / sp));
+      for (let a = 0; a < cols; a++) for (let b = 0; b < rows; b++) list.push(mk((a + .5) / cols, (b + .5) / rows, a * rows + b, cols * rows));
+      if (v === "settle") list.forEach(d => { d.cx = d.gx; d.cy = d.gy; d.gx = Math.random(); d.gy = Math.random(); });
+    } else {
+      const n = Math.round(Math.min(budget, area / (v === "lines" ? 150 : 70)));
+      for (let i = 0; i < n; i++) { const d = mk(Math.random(), Math.random(), i, n);
+        if (v === "nebula" && Math.random() < .8) { const e = .015 + Math.random() * .06 * (Math.random() < .6 ? 1 : 1.8); if (Math.random() < R.h / (R.w + R.h)) d.gx = Math.random() < .5 ? e : 1 - e; else d.gy = Math.random() < .5 ? e : 1 - e; }
+        list.push(d); }
+    }
+    return {el, dots: list, born: clock, v};
+  }
+  function scan() { // which cards are on screen now: new ones form from Theta (or in place, if seen before), gone ones go home
+    const v = variant(), now = new Set();
+    document.querySelectorAll(SEL).forEach(el => {
+      const r = el.getBoundingClientRect(); if (r.width < 40 || r.height < 30 || r.bottom < -60 || r.top > H + 60) return;
+      const cs = getComputedStyle(el); if (cs.visibility === "hidden" || +cs.opacity < .05) return;
+      if (el.parentElement && el.parentElement.closest(SEL)) return; // a card inside a card: the outer one has the dots
+      now.add(el);
+      const c = cards.get(el);
+      if (!c || c.v !== v) { cards.set(el, spawn(el, {x: r.left, y: r.top, w: r.width, h: r.height}, !seen.has(el))); seen.add(el); }
+    });
+    for (const [el, c] of cards) if (!now.has(el)) { cards.delete(el); if (el.isConnected === false || !el.getBoundingClientRect().width) homing.push(...c.dots.map(d => (d.home = 1, d))); }
+  }
+  let scanAt = 0;
+  function frame(nowMs) {
+    if (!running) return;
+    const v = variant(); if (!KINDS[v] || still()) { stop(); return; }
+    const dt = Math.min(.05, (nowMs - last) / 1000); last = nowMs; clock += dt;
+    const TH = window.thetaHead, state = TH && TH.state ? TH.state() : "idle", lv = TH && TH.level ? TH.level() : 0;
+    for (const k in SW) SW[k] += ((state === k ? 1 : 0) - SW[k]) * Math.min(1, dt * 3.2);
+    level += (lv - level) * .3;
+    if (clock - hueAt > 1) { hue = moodHue(); hueAt = clock; }
+    if (clock - scanAt > .25) { scan(); scanAt = clock; }
+    g.clearRect(0, 0, W, H);
+    const t = clock, th = source(), lineSets = [];
+    g.globalCompositeOperation = "lighter";
+    const draw = (d, tx, ty, rad, a, h) => {
+      const k = .05 + .04 * d.pace; d.vx = (d.vx + (tx - d.x) * k) * .8; d.vy = (d.vy + (ty - d.y) * k) * .8; d.x += d.vx; d.y += d.vy;
+      if (a <= .01 || rad <= .2) return; const sp = Math.hypot(d.vx, d.vy);
+      g.fillStyle = hsla(h, 70 + 20 * Math.min(1, sp / 6), 62 + Math.min(18, sp * 2), a); g.beginPath(); g.arc(d.x, d.y, rad, 0, TAU); g.fill(); };
+    for (const [el, c] of cards) {
+      const r = el.getBoundingClientRect(), R = {x: r.left, y: r.top, w: r.width, h: r.height}, age = t - c.born, set = [];
+      for (const d of c.dots) {
+        if (age < d.delay) { draw(d, th.x, th.y, 0, 0, hue); continue; }
+        let hh = hue + 7 * Math.sin(t * d.pace * 1.7 + d.ph) * SW.idle, tx, ty, rad, a;
+        const touched = Math.max(0, 1 - Math.hypot(d.x - touch.x, d.y - touch.y) / 60) * Math.max(0, 1 - (t - touch.t) * .8);
+        if (c.v === "grain" || c.v === "press") {
+          tx = R.x + d.gx * R.w; ty = R.y + d.gy * R.h;
+          const edge = Math.min(d.gx, 1 - d.gx, d.gy * R.h / R.w, (1 - d.gy) * R.h / R.w) * 2, settled = Math.min(1, Math.max(0, age - 1.2) * 1.2);
+          if (c.v === "grain") {
+            const grow = Math.max(0, Math.min(1, (age - .15 - Math.hypot(tx - th.x, ty - th.y) / H * 1.1) / .45));
+            const keep = Math.max(0, 1 - edge * 5) ** 1.5 + (Math.min(d.gx, 1 - d.gx) < .06 && Math.min(d.gy, 1 - d.gy) < .2 ? .5 : 0);
+            const ring = Math.max(0, Math.sin(Math.hypot(tx - th.x, ty - th.y) * .09 - t * 6)) ** 3 * level * SW.speaking;
+            rad = 2.3 * grow * ((1 - settled) + settled * (keep * (.6 + .4 * Math.sin(t * d.pace + d.ph)) + 1.1 * ring + 1.4 * touched + .5 * SW.thinking * Math.max(0, Math.sin((d.gx - d.gy) * 9 - t * 4)) * keep));
+            a = .5 * grow; hh += 28 * ring - 26 * SW.listening * (1 - d.gy) + 40 * Math.sin(d.gx * 6 + t * 3) * SW.thinking;
+          } else {
+            const grow = Math.max(0, Math.min(1, (age - .15 - d.gy * .6) / .25)), lit = (1 - d.gy) ** 1.4, shimmer = Math.max(0, Math.sin((d.gx + d.gy) * 7 - t * 4)) ** 4 * SW.thinking;
+            rad = 2.4 * grow * ((1 - settled) + settled * (lit * (.75 + .25 * Math.sin(t * d.pace + d.ph)) * (1 + .5 * level * SW.speaking) + .45 * SW.listening * (d.gy < .35 ? 1 : 0) + .8 * shimmer + 1.2 * touched));
+            a = .4 * grow; hh += 30 * level * SW.speaking - 26 * SW.listening * (1 - d.gy) + 40 * shimmer;
+          }
+        } else {
+          const swirl = SW.thinking * t * .8 * (d.s - .5), ang = d.ph + swirl, rr = (c.v === "lines" ? .05 : .04) * Math.sin(t * d.pace + d.ph);
+          let fx = d.gx + rr * Math.cos(ang), fy = d.gy + rr * Math.sin(ang) * 1.6;
+          if (SW.thinking > .01) { const dx = fx - .5, dy = fy - .5, a2 = Math.atan2(dy, dx) + t * .9 * SW.thinking * (.5 + d.s), r2 = Math.hypot(dx, dy); fx = .5 + Math.cos(a2) * r2; fy = .5 + Math.sin(a2) * r2; }
+          if (c.v === "settle") { const calm = SW.idle * Math.min(1, Math.max(0, age - .8) * 1.5); fx += (d.cx - fx) * calm; fy += (d.cy - fy) * calm; }
+          const swell = 1 + .08 * level * SW.speaking * Math.sin(d.gx * 9 - t * 7) + .02 * Math.sin(t * 1.3);
+          tx = R.x + R.w / 2 + (fx - .5) * R.w * swell; ty = R.y + R.h / 2 + (fy - .5) * R.h * swell;
+          if (touched > .05) { const dx = tx - touch.x, dy = ty - touch.y, dd = Math.hypot(dx, dy) || 1; tx += dx / dd * 26 * touched; ty += dy / dd * 26 * touched; }
+          const edgeFade = Math.min(1, Math.min(fx, 1 - fx, fy, 1 - fy) * 9 + .15);
+          rad = c.v === "nebula" ? (d.s > .85 ? 2.4 : 1 + .6 * d.s) + level * SW.speaking : c.v === "settle" ? 1.1 + 1.1 * SW.idle * (1 - fy) + level * SW.speaking : 1.4 + .5 * d.s;
+          a = (c.v === "nebula" ? (d.s > .85 ? .2 : .26 + .4 * d.s) : c.v === "settle" ? .22 + .36 * d.s * (1 - SW.idle) + .2 * SW.idle : .38 + .4 * d.s) * edgeFade;
+          hh += -30 * SW.listening * (1 - fy) + 40 * Math.sin(Math.atan2(fy - .5, fx - .5) * 2 + t * 3) * SW.thinking + 26 * level * SW.speaking;
+          if (c.v === "lines") set.push(d);
+        }
+        draw(d, tx, ty, rad, a, hh);
+      }
+      if (set.length) lineSets.push(set);
+    }
+    for (let i = homing.length - 1; i >= 0; i--) { const d = homing[i]; draw(d, th.x, th.y, 1.2, .6 * Math.min(1, Math.hypot(d.x - th.x, d.y - th.y) / 80), hue);
+      if (Math.hypot(d.x - th.x, d.y - th.y) < 6 || homing.length > 1500) homing.splice(i, 1); }
+    g.lineWidth = .7;
+    for (const L of lineSets) for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) { const p = L[i], q = L[j], dx = p.x - q.x, dy = p.y - q.y;
+      if (Math.abs(dx) > 26 || Math.abs(dy) > 26) continue; const dd = Math.hypot(dx, dy); if (dd > 26) continue;
+      g.strokeStyle = hsla(hue + 40 * SW.thinking * Math.sin(p.u * 9 + t * 3), 70, 66, (1 - dd / 26) * (.26 + .3 * SW.thinking + .2 * level * SW.speaking));
+      g.beginPath(); g.moveTo(p.x, p.y); g.lineTo(q.x, q.y); g.stroke(); }
+    g.globalCompositeOperation = "source-over";
+    requestAnimationFrame(frame);
+  }
+  document.addEventListener("pointerdown", e => { if (!running) return; touch = {x: e.clientX, y: e.clientY, t: clock};
+    for (const c of cards.values()) for (const d of c.dots) { const dx = d.x - e.clientX, dy = d.y - e.clientY, r = Math.hypot(dx, dy); if (r < 70) { const k = (1 - r / 70) * 9; d.vx += dx / (r || 1) * k; d.vy += dy / (r || 1) * k; } } }, {passive: true});
+  const check = () => { if (KINDS[variant()] && !still() && document.body) start(); };
+  new MutationObserver(check).observe(root, {attributes: true, attributeFilter: ["data-glassstyle"]});
+  if (document.readyState === "loading") addEventListener("DOMContentLoaded", check); else check();
+})();
 '''
 _CHARM_JS_SRC = r'''(() => {
   // ---- The charm of each theme (2026-11-06): how it celebrates when you finish something (a reminder done, a
@@ -3611,7 +3769,7 @@ def _cheers_json():
 _UI_CSS = theme_css() + "\n" + _BASE_CSS + "\n" + _hdr_css() + "\n" + _frames_css() + "\n" + _fonts_css() + _MOVE_CSS + _BAR_CSS + "\n/* ---- inside the Theta page's sheet (2026-11-04): the page alone, without the app's own bars */\nhtml.embedded .tabbar,html.embedded .minibar,html.embedded .theta-mini,html.embedded .rail{display:none!important}\nhtml.embedded .main{padding-top:14px;padding-bottom:calc(28px + env(safe-area-inset-bottom,0px))}\nhtml.embedded body.has-mini header.top{padding-right:0}\n" + "\nhtml.veiled .app,html.veiled .tabbar{visibility:hidden}" + "\n:root[data-glassstyle=\"liquid\"] .tabbar,:root[data-glassstyle=\"holo\"] .tabbar,:root[data-glassstyle=\"liquid\"] .minibar,:root[data-glassstyle=\"holo\"] .minibar{background:color-mix(in srgb,var(--bg) 88%,transparent);-webkit-backdrop-filter:blur(26px) saturate(160%);backdrop-filter:blur(26px) saturate(160%)}" + "\n" + _CHARM_CSS
 _UI_JS = _UI_JS_SRC.replace("__THEMES__", json.dumps(
     {n: {"glass": bool(t.get("glass")), "mono": bool(t.get("mono")), "light": t["light"]["bg"],
-         "dark": t["dark"]["bg"], "accent2": t["dark"]["accent2"]} for n, t in THEMES.items()})) + "\n" + _CHARM_JS_SRC.replace("__CHEERS__", _cheers_json())
+         "dark": t["dark"]["bg"], "accent2": t["dark"]["accent2"]} for n, t in THEMES.items()})) + "\n" + _CHARM_JS_SRC.replace("__CHEERS__", _cheers_json()) + "\n" + _DOTFRAME_JS
 _ASSET_V = hashlib.sha1((_UI_CSS + _UI_JS + _CHAT_JS).encode()).hexdigest()[:10]
 
 

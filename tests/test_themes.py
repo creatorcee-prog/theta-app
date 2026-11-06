@@ -45,7 +45,10 @@ check("...and the celebrations differ (petals, sparks, ripples, stamps, a shooti
 check("...from the board's Done and cleared widgets, and the calendar's Done", "thetaCheer(b.left" in h.BOARD_JS and "thetaCheer(innerWidth / 2" in h.BOARD_JS
       and "thetaCheer(r.left" in h._UI_JS)
 for f in h.FRAMES:
-    check(f"the {f} frame answers a touch its own way", f':root[data-glassstyle="{f}"] .tap' in h._UI_CSS)
+    if f in h.THETA_FRAMES:  # Theta frames answer a touch with their dots (they scatter from your finger)
+        check(f"the {f} frame answers a touch with its dots", "touch = {x: e.clientX, y: e.clientY, t: clock}" in h._UI_JS)
+    else:
+        check(f"the {f} frame answers a touch its own way", f':root[data-glassstyle="{f}"] .tap' in h._UI_CSS)
 check("charm stays out of the layout and off with reduced motion", ".tapfx{position:absolute;inset:0" in h._UI_CSS
       and "@media (prefers-reduced-motion:reduce){.tap,.tap > .tapfx{animation:none!important}}" in h._UI_CSS and "if (still()) return;" in h._UI_JS)
 # frames, phase 2: calm page titles, readable paragraphs, each frame its own signature
@@ -72,4 +75,8 @@ check("cards are lit from above and shade toward black", "--lit:linear-gradient(
 hc = h.head_assets()["css"]
 check("Theta lights the room from where it is, and the room falls off to black", "var(--avx,50%) var(--avy,34%)" in hc and "__HUD_LIGHT__" not in hc
       and 'hud.style.setProperty("--avy"' in h._HEAD_JS)
+# the Theta frames: cards made of Theta's dots
+check("the Theta frames draw every card from Theta's dots, follow its state and voice, and stay readable", "const KINDS = {grain: \"print\"" in h._UI_JS
+      and "TH.state()" in h._UI_JS and ".dotframe{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:8;mix-blend-mode:screen}" in h._UI_CSS)
+check("...and step back with reduced motion", "if (!KINDS[v] || still()) { stop(); return; }" in h._UI_JS)
 print("done")
