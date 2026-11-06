@@ -3486,7 +3486,9 @@ _CHARM_JS_SRC = r'''(() => {
   const CHEER = __CHEERS__, root = document.documentElement;
   const still = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
   const dark = () => root.dataset.mode === "dark" || (root.dataset.mode !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+  window.thetaCheerKind = () => (CHEER[root.dataset.theme] || CHEER.theta).kind;
   window.thetaCheer = (x, y) => {
+    document.dispatchEvent(new CustomEvent("theta:cheer")); // Theta takes it in too (proud for a moment)
     if (still()) return;
     const c = CHEER[root.dataset.theme] || CHEER.theta, [A, B, T] = dark() ? c.dark : c.light, kind = c.kind;
     if (x == null) { x = innerWidth / 2; y = innerHeight / 2; }

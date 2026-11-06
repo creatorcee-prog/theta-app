@@ -692,7 +692,7 @@ _HEAD_JS = r"""
   let AV = Object.assign({}, AV_DEFAULT);
   try { Object.assign(AV, JSON.parse(store("theta:avatar") || "{}")); } catch (e) {}
   const MOODS = {
-    calm: [__THEME__.calm, 1.0, 0, 0], focused: ["#7d8bff", 1.25, 0, 0], happy: ["#ffc04d", 1.15, 0, 1],
+    calm: [__THEME__.calm, 1.0, 0, 0], focused: [__THEME__.focus || "#7d8bff", 1.25, 0, 0], happy: ["#ffc04d", 1.15, 0, 1],
     concerned: ["#ff6a5c", 1.35, 1, 0], sleepy: ["#b58cff", 0.45, 0, 0], proud: ["#5ef0a2", 1.1, 0, 0.6]};
   function hexHsl(hex) {
     const n = parseInt((hex || "#4fd3ff").slice(1), 16), r = (n >> 16 & 255) / 255, gg = (n >> 8 & 255) / 255, b = (n & 255) / 255;
@@ -784,12 +784,50 @@ _HEAD_JS = r"""
     for (const [px, py, z, pr, br, s, v] of pts) {
       if (!coreDone && z < 0) { core(c, 0.035 + 0.045 * lv); coreDone = true; }
       const fog = Math.max(0.12, Math.min(1, 0.62 - z * 0.55)), spark = moodW.proud > 0.3 && s > 0.97 ? 0.45 : 0;
-      g.fillStyle = col(s * 40 - 20, (pr - 0.8) * 50 + Math.min(1, v * 40) * 12 + spark * 40 - (lightBg ? 22 : 0), (0.1 + 0.55 * br) * fog + spark + (lightBg ? 0.15 : 0));
+      g.fillStyle = col(s * 18 - 9, (pr - 0.8) * 50 + Math.min(1, v * 40) * 12 + spark * 40 - (lightBg ? 22 : 0), (0.1 + 0.55 * br) * fog + spark + (lightBg ? 0.15 : 0));
       g.beginPath(); g.arc(px, py, S * 0.0075 * pr * pr, 0, TAU); g.fill();
     }
     if (!coreDone) core(c, 0.035 + 0.045 * lv);
     g.globalCompositeOperation = "source-over";
   }
+  // ---- the theme's character in Theta itself (2026-11-06): a small idle behavior that matches how the theme
+  // celebrates (window.thetaCheerKind): Theta's moons go round, a petal or a leaf drifts off, a spark rises, a
+  // ring ripples around it, a scan line passes, a glint catches the light, Aurora's color breathes. The quiet
+  // themes stay quiet. Never with reduced motion.
+  const STILL = matchMedia("(prefers-reduced-motion: reduce)").matches, drift = [];
+  let nextDrift = 0;
+  function flourish(t) {
+    if (STILL || !window.thetaCheerKind) return;
+    const kind = thetaCheerKind(), c = S / 2, R = S * 0.42 * 0.55, now = t;
+    g.save(); g.globalCompositeOperation = lightBg ? "source-over" : "lighter";
+    if (kind === "orbit") { // two moons on a tilted orbit; the far half passes behind
+      for (let i = 0; i < 2; i++) { const a = t * (0.7 + i * 0.25) + i * 3.1, x = c + Math.cos(a) * R * 1.55, y = c + Math.sin(a) * R * 0.42 - i * S * 0.02;
+        g.globalAlpha = Math.sin(a) > 0 ? 0.95 : 0.3; g.fillStyle = col(i ? 40 : 0, 20, 1); g.beginPath(); g.arc(x, y, S * (i ? 0.009 : 0.012), 0, TAU); g.fill(); }
+    } else if (kind === "wash") { cur.hue = (cur.hue + Math.sin(t * 0.4) * 0.35 + 360) % 360; // Aurora: the color breathes
+    } else if (kind === "ripple" || kind === "neon") { // a ring opens around the equator every few seconds
+      const u = (t % 3.2) / 3.2; g.globalAlpha = (1 - u) * 0.5; g.strokeStyle = col(0, 10, 1); g.lineWidth = S * 0.004;
+      g.beginPath(); g.ellipse(c, c + R * 0.1, R * (1 + u * 0.9), R * (1 + u * 0.9) * 0.3, 0, 0, TAU); g.stroke();
+    } else if (kind === "print" || kind === "stamp") { // a scan line passes over Theta
+      const u = (t % 4) / 4, y = c - R * 1.3 + u * R * 2.6; if (u < 0.6) { const gr = g.createLinearGradient(c - R * 1.4, 0, c + R * 1.4, 0);
+        gr.addColorStop(0, "transparent"); gr.addColorStop(0.5, col(0, 25, 0.55)); gr.addColorStop(1, "transparent"); g.fillStyle = gr; g.fillRect(c - R * 1.4, y, R * 2.8, S * 0.004); }
+    } else if (kind !== "check") { // petals, leaves, sparks, stars and glints leave the edge now and then
+      if (t > nextDrift) { nextDrift = t + (kind === "spark" ? 1.2 : 2.6); const a = Math.random() * TAU;
+        drift.push({x: c + Math.cos(a) * R * 1.05, y: c + Math.sin(a) * R * 1.05, born: t, a, r: Math.random() * 6}); }
+      for (let i = drift.length - 1; i >= 0; i--) { const d = drift[i], age = t - d.born, life = kind === "spark" ? 1.3 : 2.4;
+        if (age > life) { drift.splice(i, 1); continue; } const u = age / life; g.globalAlpha = Math.min(1, Math.sin(u * Math.PI) * 1.3); g.fillStyle = col(kind === "spark" ? 15 : 0, 15, 1);
+        if (kind === "spark") { g.beginPath(); g.arc(d.x + Math.sin(age * 6) * 2, d.y - age * S * 0.08, S * 0.009, 0, TAU); g.fill(); }
+        else if (kind === "star" || kind === "glint") { const s2 = S * 0.032 * Math.sin(u * Math.PI); g.beginPath(); g.moveTo(d.x, d.y - s2); g.quadraticCurveTo(d.x, d.y, d.x + s2, d.y);
+          g.quadraticCurveTo(d.x, d.y, d.x, d.y + s2); g.quadraticCurveTo(d.x, d.y, d.x - s2, d.y); g.quadraticCurveTo(d.x, d.y, d.x, d.y - s2); g.fill(); }
+        else { g.save(); g.translate(d.x + Math.cos(d.a) * age * S * 0.03 + Math.sin(age * 2) * S * 0.01, d.y + age * S * 0.05); g.rotate(d.r + age); g.beginPath();
+          if (kind === "leaf") { const L = S * 0.022; g.moveTo(-L, 0); g.quadraticCurveTo(0, -L * 0.7, L, 0); g.quadraticCurveTo(0, L * 0.7, -L, 0); } else g.ellipse(0, 0, S * 0.019, S * 0.011, 0, 0, TAU);
+          g.fill(); g.restore(); } }
+    }
+    g.restore();
+  }
+  // when you finish something, Theta is proud of you for a moment
+  let cheerMoodT = 0;
+  document.addEventListener("theta:cheer", () => { if (mood === "concerned") return; const before = mood; setMood("proud");
+    clearTimeout(cheerMoodT); cheerMoodT = setTimeout(() => setMood(before === "proud" ? "calm" : before), 2800); });
   function core(c, r) {
     const op = g.globalCompositeOperation; g.globalCompositeOperation = "source-over";
     const cr = S * r, gr = g.createRadialGradient(c, c, 0, c, c, cr * 3.2);
@@ -865,7 +903,7 @@ _HEAD_JS = r"""
     burst *= 0.86; level += (Math.min(1, target) - level) * 0.3;
     g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, S, S);
     g.translate(0, -S * cur.bounce * 0.012 * Math.abs(Math.sin(t * 3)));
-    if (AV.style === "rings") drawRings(t); else if (AV.style === "image" && avImgs.length) drawPicture(t, level); else drawUrchin(t, level);
+    if (AV.style === "rings") drawRings(t); else if (AV.style === "image" && avImgs.length) drawPicture(t, level); else { drawUrchin(t, level); flourish(t); }
     if (AV.style !== "image" && curBg) { curBg = ""; cv.style.backgroundImage = ""; cv.style.borderRadius = ""; }
     requestAnimationFrame(draw);
   }
@@ -1738,7 +1776,8 @@ def theme_stage(headers):
     if 0.2126 * r + 0.7152 * g_ + 0.0722 * b < 110:
         calm = "#4fd3ff"
     stage = t["bg"] if re.fullmatch(r"#[0-9a-fA-F]{6}", t["bg"] or "") else "#070b10"
-    return {"calm": calm, "stage": stage}
+    focus = t["accent"] if re.fullmatch(r"#[0-9a-fA-F]{6}", t["accent"] or "") else "#7d8bff"  # focused wears the theme too
+    return {"calm": calm, "stage": stage, "focus": focus}
 
 
 def head_hud(headers=None):

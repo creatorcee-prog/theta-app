@@ -56,4 +56,11 @@ check("Breach keeps paragraphs readable: mono is for labels, code and numbers", 
 check("Hologram is all light (a bright top edge, a glow), and HUD alone has the brackets", "top/100% 1px no-repeat" in fc
       and ':root[data-glassstyle="holo"] .top h1' in fc)
 check("the see-through frames keep their bars readable", '.minibar{background:color-mix(in srgb,var(--bg) 88%,transparent)' in h._UI_CSS)
+# the avatar, phase 3: same globe, wearing the theme and its character
+hj = h._HEAD_JS
+check("Theta's focused mood wears the theme's accent, not a fixed blue", 'focused: [__THEME__.focus' in hj and "focus" in h.theme_stage({}))
+check("Theta has the theme's character: moons, drifting petals and leaves, sparks, ripples, a scan line, glints",
+      "function flourish(t)" in hj and all(k in hj for k in ('kind === "orbit"', 'kind === "ripple"', 'kind === "print"', 'kind === "spark"', 'kind === "leaf"'))
+      and "window.thetaCheerKind" in h._UI_JS)
+check("a win makes Theta proud for a moment", 'addEventListener("theta:cheer"' in hj and 'new CustomEvent("theta:cheer")' in h._UI_JS)
 print("done")

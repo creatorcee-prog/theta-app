@@ -72,7 +72,7 @@ check("the controls hide until a tap, and go 1.5 s after", "1500" in stage and '
 check("...not while typing or a menu is open", "function busy()" in stage and ".hud-more[open]" in stage)
 check("...and a scroll by the page itself doesn't count", 'addEventListener("scroll", reveal' not in stage)
 # ---- themes built around Theta
-check("the avatar's calm color and its space come from the theme", h.theme_stage({}) == {"calm": h.THEMES["theta"]["dark"]["accent2"], "stage": h.THEMES["theta"]["dark"]["bg"]})
+check("the avatar's calm color and its space come from the theme", h.theme_stage({}) == {"calm": h.THEMES["theta"]["dark"]["accent2"], "stage": h.THEMES["theta"]["dark"]["bg"], "focus": h.THEMES["theta"]["dark"]["accent"]})
 h.THEMES["_dim"] = {"label": "x", "about": "x", "dark": dict(h.THEMES["theta"]["dark"], accent2="#222222"), "light": h.THEMES["theta"]["light"]}
 h.ui_prefs = (lambda real: (lambda headers: ("_dim",) + tuple(real(headers)[1:]) if headers.get("dim") else real(headers)))(h.ui_prefs)
 check("a theme whose accent is too dark keeps Theta's cyan", h.theme_stage({"dim": "1"})["calm"] == "#4fd3ff")
