@@ -570,6 +570,11 @@ def handle(method, path, query, headers, body):
                 return _json(400, {"ok": False, "error": str(e)})
             return _json(200, {"ok": True, **cfg})
 
+        if path.startswith("/api/personas"):  # personas: save, switch, delete
+            if not _auth_dashboard(query, headers):
+                return _json(401, {"ok": False, "error": "dashboard key required"})
+            return _json(200, personas_route("POST", path, data))
+
         if path == "/api/voice/hear":  # Glasses mode: a recorded clip -> text (Groq Whisper)
             if not _auth_dashboard(query, headers):
                 return _json(401, {"ok": False, "error": "dashboard key required"})
@@ -1232,6 +1237,10 @@ def handle(method, path, query, headers, body):
         return _json(404, {"ok": False, "error": "unknown route"})
 
     # GET
+    if path.startswith("/api/personas"):
+        if not _auth_dashboard(query, headers):
+            return _json(401, {"ok": False, "error": "dashboard key required"})
+        return _json(200, personas_route("GET", path, {k: v[0] for k, v in query.items()}))
     if path == "/sw.js":
         return 200, "text/javascript; charset=utf-8", _SW_JS.encode(), [("Cache-Control", "no-cache")]
     assets = {"/ui.css": ("text/css; charset=utf-8", _UI_CSS), "/ui.js": ("text/javascript; charset=utf-8", _UI_JS),
