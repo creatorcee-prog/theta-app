@@ -1981,7 +1981,7 @@ def head_hud(headers=None):
             '<label title="Tap your Bluetooth glasses or earbuds to talk"><input type="checkbox" id="head-glasses"> Glasses mode</label></div>'
             '<div class="av-set" aria-label="Avatar"><div class="row"><b>Avatar</b>'
             '<label>Opening <select id="av-open"><option value="cinematic">Cinematic</option><option value="converge">Converge: from the stars</option><option value="signal">Signal: a broadcast comes home</option><option value="pulse">Pulse: a heartbeat becomes Theta</option></select></label>'
-            '<label>Dots <select id="av-dot"><option value="circle">Circles</option><option value="triangle">Triangles</option><option value="square">Squares</option>'
+            '<label>Motes <select id="av-dot"><option value="circle">Circles</option><option value="triangle">Triangles</option><option value="square">Squares</option>'
             '<option value="diamond">Diamonds</option><option value="pentagon">Pentagons</option><option value="hexagon">Hexagons</option><option value="star">Stars</option></select></label>'
             '<label>Style <select id="av-style"><option value="urchin">Urchin Pour</option><option value="precision">Precision</option><option value="lumen">Lumen</option>'
             '<option value="flow">Flow</option><option value="signal">Signal</option><option value="rings">Classic rings</option>'

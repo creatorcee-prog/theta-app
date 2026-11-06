@@ -133,7 +133,7 @@ FRAMES = {"plus": ("Glass+", "Frosted bars and bubbles"), "liquid": ("Liquid Gla
           # one "Theta" button in Settings, with a picker for which.
           "grain": ("Theta \u00b7 Grain", "A halftone that prints in, then keeps a grain at the edges"),
           "press": ("Theta \u00b7 Press", "A halftone printed row by row, dense where the light lands"),
-          "lines": ("Theta \u00b7 Lines", "A constellation: dots and the lines between them"),
+          "lines": ("Theta \u00b7 Lines", "A constellation: motes and the lines between them"),
           "nebula": ("Theta \u00b7 Nebula", "A swarm crowding the edges, calm inside"),
           "settle": ("Theta \u00b7 Settle", "A neat grid at rest that comes alive when Theta does")}
 THETA_FRAMES = ("grain", "press", "lines", "nebula", "settle")
@@ -3529,6 +3529,17 @@ _CHARM_CSS = r'''.card,.win,.kpi,.w{background-image:var(--lit,none)}
 @media (prefers-color-scheme:light){:root:not([data-mode="dark"]) .dotframe{mix-blend-mode:multiply}}
 :root[data-glassstyle="lines"] :is(.card,.win,.kpi,.w,.holo),:root[data-glassstyle="nebula"] :is(.card,.win,.kpi,.w,.holo){background:transparent!important;border-color:transparent!important;box-shadow:none!important;-webkit-backdrop-filter:none;backdrop-filter:none}
 :root[data-glassstyle="settle"] :is(.card,.win,.kpi,.w,.holo){background:color-mix(in srgb,var(--surface) 22%,transparent)!important;border-color:transparent!important;box-shadow:none!important}
+/* made of motes: the controls inside a card are traced in motes too (a dotted edge on a see-through ground) */
+:root:is([data-glassstyle="grain"],[data-glassstyle="press"],[data-glassstyle="lines"],[data-glassstyle="nebula"],[data-glassstyle="settle"]):not([data-motecards="styled"]) :is(.card,.win,.kpi,.w,.holo) :is(.btn,.seg,select,input:not([type=checkbox]):not([type=radio]),textarea,.field){background:color-mix(in srgb,var(--surface) 40%,transparent)!important;border:1.5px dotted color-mix(in srgb,var(--accent) 50%,transparent)!important;box-shadow:none!important}
+/* styled: a solid card drawn in the motes' style: a dotted edge, and a halftone grain thick at the edges, clear in the middle */
+:root[data-motecards="styled"] .dotframe{z-index:8}
+/* a card inside a card: only the outer one is the card */
+:root[data-motecards="styled"]:is([data-glassstyle="grain"],[data-glassstyle="press"],[data-glassstyle="lines"],[data-glassstyle="nebula"],[data-glassstyle="settle"]) :is(.card,.win,.kpi,.w,.holo) :is(.card,.win,.kpi,.w,.holo){background:transparent!important;border-color:transparent!important}
+:root[data-motecards="styled"] :is(.card,.win,.kpi,.w,.holo) :is(.card,.win,.kpi,.w,.holo)::before{content:none!important}
+:root[data-motecards="styled"]:is([data-glassstyle="grain"],[data-glassstyle="press"],[data-glassstyle="lines"],[data-glassstyle="nebula"],[data-glassstyle="settle"]) :is(.card,.win,.kpi,.w,.holo){background:color-mix(in srgb,var(--surface) 94%,transparent)!important;border:1.5px dotted color-mix(in srgb,var(--accent) 55%,transparent)!important;box-shadow:none!important;position:relative;isolation:isolate}
+:root[data-motecards="styled"]:is([data-glassstyle="grain"],[data-glassstyle="press"],[data-glassstyle="lines"],[data-glassstyle="nebula"],[data-glassstyle="settle"]) :is(.card,.win,.kpi,.w,.holo)::before{content:"";position:absolute;inset:0;z-index:-1;border-radius:inherit;pointer-events:none;
+ background:radial-gradient(circle,color-mix(in srgb,var(--accent) 34%,transparent) 1px,transparent 1.7px) 0 0/7px 7px;
+ -webkit-mask:linear-gradient(90deg,#000,transparent 14%,transparent 86%,#000),linear-gradient(#000,transparent 22%,transparent 78%,#000);mask:linear-gradient(90deg,#000,transparent 14%,transparent 86%,#000),linear-gradient(#000,transparent 22%,transparent 78%,#000)}
 :root[data-glassstyle="grain"] :is(.card,.win,.kpi,.w,.holo),:root[data-glassstyle="press"] :is(.card,.win,.kpi,.w,.holo){background:color-mix(in srgb,var(--surface) 38%,transparent)!important;border-color:transparent!important;box-shadow:none!important}
 @media (prefers-reduced-motion:reduce){:root:is([data-glassstyle="lines"],[data-glassstyle="nebula"],[data-glassstyle="settle"]) :is(.card,.win,.kpi,.w,.holo){background:var(--surface)!important;border-color:var(--border)!important}}
 
@@ -3688,6 +3699,12 @@ _DOTFRAME_JS = r'''(() => {
   let touch = {x: -999, y: -999, t: -9}, homing = [];
   const still = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
   const variant = () => root.dataset.glassstyle;
+  // Two kinds of card (Settings > Theta cards): "made" (the default), where the card IS motes, with no box of its own and
+  // its outline traced in motes; or "styled", a solid card drawn in the motes' style (dotted edge, a halftone grain), that
+  // the motes form and then hand over to, coming back while Theta listens, thinks or speaks.
+  const styled = () => root.dataset.motecards === "styled";
+  try { const m = localStorage.getItem("theta:motecards"); if (m) root.dataset.motecards = m; } catch (e) {}
+  addEventListener("storage", e => { if (e.key === "theta:motecards") root.dataset.motecards = e.newValue || "made"; }); // changed in Settings (another frame)
   const hsla = (h, s, l, a) => `hsla(${(h % 360 + 360) % 360},${s}%,${Math.min(97, l)}%,${Math.max(0, Math.min(1, a))})`;
   function source() { const e = document.getElementById("head-av") || document.querySelector(".theta-mini");
     if (e) { const r = e.getBoundingClientRect(); if (r.width) return {x: r.left + r.width / 2, y: r.top + r.height / 2}; } return {x: innerWidth - 30, y: 30}; }
@@ -3725,6 +3742,15 @@ _DOTFRAME_JS = r'''(() => {
           if (sd < 2) d.gx = sd ? 1 - px / R.w : px / R.w; else d.gy = sd === 2 ? px / R.h : 1 - px / R.h; d.cx = d.gx; d.cy = d.gy; }
         list.push(d); }
     }
+    if (!styled()) { // the card's outline, traced in motes (its rounded corners too), only the part inside this band
+      const rr = Math.min(16, R.w / 4, R.h / 4), L = 2 * (R.w + R.h - 4 * rr) + TAU * rr, n = Math.round(L / 6), at = [];
+      const seg = [[R.w - 2 * rr, d => [rr + d, 0]], [Math.PI / 2 * rr, d => { const a = -Math.PI / 2 + d / rr; return [R.w - rr + Math.cos(a) * rr, rr + Math.sin(a) * rr]; }],
+        [R.h - 2 * rr, d => [R.w, rr + d]], [Math.PI / 2 * rr, d => { const a = d / rr; return [R.w - rr + Math.cos(a) * rr, R.h - rr + Math.sin(a) * rr]; }],
+        [R.w - 2 * rr, d => [R.w - rr - d, R.h]], [Math.PI / 2 * rr, d => { const a = Math.PI / 2 + d / rr; return [rr + Math.cos(a) * rr, R.h - rr + Math.sin(a) * rr]; }],
+        [R.h - 2 * rr, d => [0, R.h - rr - d]], [Math.PI / 2 * rr, d => { const a = Math.PI + d / rr; return [rr + Math.cos(a) * rr, rr + Math.sin(a) * rr]; }]];
+      for (let i = 0; i < n; i++) { let d = i / n * L; for (const [len, f] of seg) { if (d <= len) { const [px, py] = f(d), gy = py / R.h; if (gy >= y0 && gy <= y1) at.push([px / R.w, gy, i / n]); break; } d -= len; } }
+      at.forEach(([gx, gy, u], i) => { const d = mk(gx, gy, i, at.length); d.ring = 1; d.u = u; list.push(d); });
+    }
     return list;
   }
   const used = () => [...cards.values()].reduce((n, c) => n + c.dots.length, 0);
@@ -3737,7 +3763,7 @@ _DOTFRAME_JS = r'''(() => {
       c.dots.push(...fill(R, c.v, fromTheta, y0, y1, Math.max(80, Math.min(700, (MAXDOTS - used()) / 3)), b)); }
   }
   function spawn(el, R, fromTheta) {
-    const v = variant(), c = {el, dots: [], born: clock, v, tall: tall(R)};
+    const v = variant(), c = {el, dots: [], born: clock, v, st: styled(), tall: tall(R)};
     if (c.tall) fillBands(c, R, fromTheta);
     else c.dots = fill(R, v, fromTheta, 0, 1, Math.max(80, Math.min(900, (MAXDOTS - used()) / 2)), 0);
     return c;
@@ -3751,7 +3777,7 @@ _DOTFRAME_JS = r'''(() => {
       now.add(el);
       const c = cards.get(el);
       const R = {x: r.left, y: r.top, w: r.width, h: r.height};
-      if (!c || c.v !== v || c.tall !== tall(R) || (!c.tall && Math.abs(c.h - R.h) > 40)) { const n = spawn(el, R, !seen.has(el)); n.h = R.h; cards.set(el, n); seen.add(el); }
+      if (!c || c.v !== v || c.st !== styled() || c.tall !== tall(R) || (!c.tall && Math.abs(c.h - R.h) > 40)) { const n = spawn(el, R, !seen.has(el)); n.h = R.h; cards.set(el, n); seen.add(el); }
       else if (c.tall) fillBands(c, R, false);
     });
     for (const [el, c] of cards) if (!now.has(el)) { cards.delete(el); if (el.isConnected === false || !el.getBoundingClientRect().width) homing.push(...c.dots.map(d => (d.home = 1, d))); }
@@ -3775,8 +3801,17 @@ _DOTFRAME_JS = r'''(() => {
       g.fillStyle = hsla(h, 70 + 20 * Math.min(1, sp / 6), 62 + Math.min(18, sp * 2), a); window.thetaDot ? thetaDot.path(g, d.x, d.y, rad, d.ph) : (g.beginPath(), g.arc(d.x, d.y, rad, 0, TAU)); g.fill(); };
     for (const [el, c] of cards) {
       const r = el.getBoundingClientRect(), R = {x: r.left, y: r.top, w: r.width, h: r.height}, age = t - c.born, set = [];
+      // the card moved (a scroll, a layout change): its motes move with it, exactly, this frame; the springs only shape them
+      if (c.lx != null && (R.x !== c.lx || R.y !== c.ly)) { const dx = R.x - c.lx, dy = R.y - c.ly; for (const d of c.dots) if (age >= d.delay) { d.x += dx; d.y += dy; } }
+      c.lx = R.x; c.ly = R.y;
+      const handover = c.st ? Math.max(1 - Math.min(1, Math.max(0, age - 1.1) / .7), .5 * (1 - SW.idle)) : 1; // styled: the motes form the card, then hand over to it
       for (const d of c.dots) {
         if (age < d.delay) { draw(d, th.x, th.y, 0, 0, hue); continue; }
+        if (d.ring) { // the outline: crisp, breathing a little; ripples with Theta's voice, comets run round while it thinks
+          const wave = Math.max(0, Math.sin(d.u * TAU * 7 - t * 6)) * level * SW.speaking, comet = Math.max(0, Math.sin(d.u * TAU * 3 - t * 4)) ** 6 * SW.thinking;
+          const grow = Math.min(1, Math.max(0, age - d.delay) * 2.2);
+          draw(d, R.x + d.gx * R.w, R.y + d.gy * R.h, (1.15 + .9 * wave + .9 * comet) * grow, (.5 + .35 * comet + .3 * wave + .1 * Math.sin(t * d.pace + d.ph)) * grow,
+            hue - 26 * SW.listening * (1 - d.gy) + 40 * comet + 26 * wave); continue; }
         let hh = hue + 7 * Math.sin(t * d.pace * 1.7 + d.ph) * SW.idle, tx, ty, rad, a;
         const touched = Math.max(0, 1 - Math.hypot(d.x - touch.x, d.y - touch.y) / 60) * Math.max(0, 1 - (t - touch.t) * .8);
         if (c.v === "grain" || c.v === "press") {
@@ -3807,7 +3842,7 @@ _DOTFRAME_JS = r'''(() => {
           hh += -30 * SW.listening * (1 - fy) + 40 * Math.sin(Math.atan2(fy - .5, fx - .5) * 2 + t * 3) * SW.thinking + 26 * level * SW.speaking;
           if (c.v === "lines") set.push(d);
         }
-        draw(d, tx, ty, rad, a, hh);
+        draw(d, tx, ty, rad, a * handover, hh);
       }
       if (set.length) lineSets.push(set);
     }
