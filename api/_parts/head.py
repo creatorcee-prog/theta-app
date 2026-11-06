@@ -524,7 +524,7 @@ def reply_mood(text, now=None):
 
 # The opening greeting (the Theta page): hello, a quick update only when something matters, then
 # "what are we working on?". Short, to be heard. Back within a few minutes: just the question.
-HELLO_ASK = "What are we working on?"
+HELLO_ASK = "What are we working on?"  # no longer said (2026-11-06): the greeting stands alone; kept to strip it
 
 
 def hello_facts(away, now=None):
@@ -563,7 +563,7 @@ def head_hello(away, now=None):
     """{"text", "mood"} for the Theta page's opening."""
     now = now or time.time()
     if away < 10 * 60:
-        return {"text": HELLO_ASK, "mood": reply_mood("", now)}
+        return {"text": "", "mood": reply_mood("", now)}  # back within minutes: nothing to say
     local = datetime.fromtimestamp(now, hub_tz())
     part = "morning" if 4 <= local.hour < 12 else "afternoon" if local.hour < 17 else "evening"
     facts = hello_facts(away, now)
@@ -575,14 +575,13 @@ def head_hello(away, now=None):
             {"role": "user", "content": (
                 f"The user just opened your page (gone {round(away / 3600, 1)} hours). Greet them for the {part} in a few "
                 "words, then, only if one of these facts matters right now, say the single most important one in one "
-                "short sentence, then end with exactly: \"" + HELLO_ASK + "\" Under 30 words, to be read aloud, no lists. "
+                "short sentence. Don't ask a question or offer help. Under 25 words, to be read aloud, no lists. "
                 "Use only these facts:\n" + ("\n".join(f"- {x}" for x in facts) or "- nothing pressing"))}], 200).strip()
     except LLMError:
         pass
     if not text or len(text) > 400:
-        text = f"Good {part}." + (f" {facts[0]}." if facts else "") + f" {HELLO_ASK}"
-    elif HELLO_ASK.lower() not in text.lower():
-        text = text.rstrip() + " " + HELLO_ASK
+        text = f"Good {part}." + (f" {facts[0]}." if facts else "")
+    text = re.sub(r"\s*" + re.escape(HELLO_ASK), "", text, flags=re.I).strip()
     return {"text": text, "mood": reply_mood(" ".join(facts), now)}
 
 
@@ -1752,9 +1751,9 @@ _STAGE_JS = r"""
   const hello = fetch("/api/head/hello?away=" + Math.round(fromCorner ? 0 : away), {headers: H}).then(r => r.json()).catch(() => null);
   setTimeout(async () => {
     const d = await hello;
-    greeting = d && d.ok && d.text ? d.text : "What are we working on?";
+    greeting = d && d.ok && d.text ? d.text : "";
     if (d && d.mood) TH.setMood(d.mood);
-    cap.textContent = greeting; pending = !fromCorner; hint.hidden = fromCorner; body.classList.remove("opening");
+    cap.textContent = greeting; pending = !fromCorner && !!greeting; hint.hidden = fromCorner || !greeting; body.classList.remove("opening");
   }, greetAt);
   document.addEventListener("pointerdown", e => {
     if (!pending) return;
