@@ -48,4 +48,12 @@ for f in h.FRAMES:
     check(f"the {f} frame answers a touch its own way", f':root[data-glassstyle="{f}"] .tap' in h._UI_CSS)
 check("charm stays out of the layout and off with reduced motion", ".tapfx{position:absolute;inset:0" in h._UI_CSS
       and "@media (prefers-reduced-motion:reduce){.tap,.tap > .tapfx{animation:none!important}}" in h._UI_CSS and "if (still()) return;" in h._UI_JS)
+# frames, phase 2: calm page titles, readable paragraphs, each frame its own signature
+fc = h._frames_css()
+check("page titles stay in their own case in every frame (capitals are for small labels)",
+      ':root[data-glassstyle="edge"] .top h1{font-size:28px;font-weight:700' in fc and ':root[data-glassstyle="breach"] .top h1{font-family:var(--f-head);font-size:26px' in fc)
+check("Breach keeps paragraphs readable: mono is for labels, code and numbers", ':root[data-glassstyle="breach"] .small' not in fc)
+check("Hologram is all light (a bright top edge, a glow), and HUD alone has the brackets", "top/100% 1px no-repeat" in fc
+      and ':root[data-glassstyle="holo"] .top h1' in fc)
+check("the see-through frames keep their bars readable", '.minibar{background:color-mix(in srgb,var(--bg) 88%,transparent)' in h._UI_CSS)
 print("done")
