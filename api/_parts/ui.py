@@ -1658,7 +1658,7 @@ _UI_JS_SRC = r'''
         var tw = .5 + .5 * Math.sin(t * st.s + st.p), glow = state === "speaking" ? starLv * near * (.6 + .4 * Math.sin(dist * .05 - t * 6)) : 0;
         ctx.globalAlpha = Math.min(1, (.12 + .58 * st.d) * (.45 + .55 * tw) + glow * .6);
         ctx.fillStyle = "hsl(" + ((starHue + st.hue) % 360) + "," + Math.round(25 + 30 * st.d + 30 * glow) + "%," + Math.round(82 + 10 * glow) + "%)";
-        ctx.beginPath(); ctx.arc(x, y, st.r * (1 + .6 * glow), 0, 6.283); ctx.fill();
+        if (window.thetaDot) thetaDot.path(ctx, x, y, st.r * (1 + .6 * glow), st.p); else { ctx.beginPath(); ctx.arc(x, y, st.r * (1 + .6 * glow), 0, 6.283); } ctx.fill();
       }
       ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
     }
@@ -3574,6 +3574,27 @@ _CHARM_CSS = r'''.card,.win,.kpi,.w{background-image:var(--lit,none)}
 @keyframes tap-engrave{0%{opacity:1;background-size:0 1px}55%{opacity:1;background-size:100% 1px}100%{opacity:0;background-size:100% 1px}}
 @media (prefers-reduced-motion:reduce){.tap,.tap > .tapfx{animation:none!important}}
 '''
+_DOTSHAPE_JS = r'''(() => {
+  // ---- The shape of Theta's dots (2026-11-06): circle, triangle, square, diamond, pentagon, hexagon or star, picked in
+  // Voice and tools > Dots and kept with the avatar (so a persona can have its own). Every dot Theta draws takes it:
+  // the avatar, the Theta frames, the dot moments, the star sky and the opening. thetaDot.path(g, x, y, r, rot[, shape])
+  // makes the path; the caller fills it. Polygons are a little bigger than their circle, so they weigh the same.
+  const SIDES = {triangle: 3, square: 4, diamond: 4, pentagon: 5, hexagon: 6};
+  let shape = "circle", readAt = 0;
+  function current() { const now = performance.now(); if (now - readAt > 1000) { readAt = now;
+      try { shape = (JSON.parse(localStorage.getItem("theta:avatar") || "{}") || {}).dot || "circle"; } catch (e) { shape = "circle"; } } return shape; }
+  function path(g, x, y, r, rot, sh) {
+    sh = sh || current(); g.beginPath();
+    if (sh === "circle" || r < .6) { g.arc(x, y, r, 0, 6.283); return; }
+    if (sh === "star") { const R = r * 1.5, ri = R * .45; for (let i = 0; i < 10; i++) { const a = (rot || 0) + i * Math.PI / 5 - Math.PI / 2, rr = i % 2 ? ri : R;
+        i ? g.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr) : g.moveTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); } g.closePath(); return; }
+    const n = SIDES[sh] || 4, R = r * (n === 3 ? 1.45 : n === 4 ? 1.25 : 1.12), off = (sh === "diamond" ? 0 : sh === "square" ? Math.PI / 4 : -Math.PI / 2) + (rot || 0);
+    for (let i = 0; i < n; i++) { const a = off + i * 6.283 / n; i ? g.lineTo(x + Math.cos(a) * R, y + Math.sin(a) * R) : g.moveTo(x + Math.cos(a) * R, y + Math.sin(a) * R); }
+    g.closePath();
+  }
+  window.thetaDot = {path, shape: current};
+})();
+'''
 _DOTMOMENTS_JS = r'''(() => {
   // ---- Dot moments (2026-11-06): Theta's dots carry what happens. Your message breaks into dots that fly into
   // Theta; its reply and its cards form from dots it sends out; a tapped option goes back to it as a burst; while it
@@ -3639,7 +3660,7 @@ _DOTMOMENTS_JS = r'''(() => {
       if (p.to === "land" && d < 3 && p.arr == null) p.arr = age;
       if ((p.to === "theta" && d < 8) || (p.to === "fade" && d < 6) || (p.to === "land" && p.arr != null && age - p.arr > .5) || age > 4) { P.splice(i, 1); continue; }
       g.fillStyle = `hsla(${(p.hue != null ? p.hue : hue) + 20 * (p.s - .5)},${70 + Math.min(25, sp * 3)}%,${66 + Math.min(20, sp * 2)}%,${a * (.55 + .45 * p.s)})`;
-      g.beginPath(); g.arc(p.x, p.y, p.size * (.7 + .6 * p.s), 0, TAU); g.fill();
+      window.thetaDot ? thetaDot.path(g, p.x, p.y, p.size * (.7 + .6 * p.s), p.s * 6.283) : (g.beginPath(), g.arc(p.x, p.y, p.size * (.7 + .6 * p.s), 0, TAU)); g.fill();
     }
     g.globalCompositeOperation = "source-over";
     if (P.length || streamTo) requestAnimationFrame(frame); else { running = false; g.clearRect(0, 0, W, H); }
@@ -3725,7 +3746,7 @@ _DOTFRAME_JS = r'''(() => {
     const draw = (d, tx, ty, rad, a, h) => {
       const k = .05 + .04 * d.pace; d.vx = (d.vx + (tx - d.x) * k) * .8; d.vy = (d.vy + (ty - d.y) * k) * .8; d.x += d.vx; d.y += d.vy;
       if (a <= .01 || rad <= .2) return; const sp = Math.hypot(d.vx, d.vy);
-      g.fillStyle = hsla(h, 70 + 20 * Math.min(1, sp / 6), 62 + Math.min(18, sp * 2), a); g.beginPath(); g.arc(d.x, d.y, rad, 0, TAU); g.fill(); };
+      g.fillStyle = hsla(h, 70 + 20 * Math.min(1, sp / 6), 62 + Math.min(18, sp * 2), a); window.thetaDot ? thetaDot.path(g, d.x, d.y, rad, d.ph) : (g.beginPath(), g.arc(d.x, d.y, rad, 0, TAU)); g.fill(); };
     for (const [el, c] of cards) {
       const r = el.getBoundingClientRect(), R = {x: r.left, y: r.top, w: r.width, h: r.height}, age = t - c.born, set = [];
       for (const d of c.dots) {
@@ -3885,7 +3906,7 @@ def _cheers_json():
 _UI_CSS = theme_css() + "\n" + _BASE_CSS + "\n" + _hdr_css() + "\n" + _frames_css() + "\n" + _fonts_css() + _MOVE_CSS + _BAR_CSS + "\n/* ---- inside the Theta page's sheet (2026-11-04): the page alone, without the app's own bars */\nhtml.embedded .tabbar,html.embedded .minibar,html.embedded .theta-mini,html.embedded .rail{display:none!important}\nhtml.embedded .main{padding-top:14px;padding-bottom:calc(28px + env(safe-area-inset-bottom,0px))}\nhtml.embedded body.has-mini header.top{padding-right:0}\n" + "\nhtml.veiled .app,html.veiled .tabbar{visibility:hidden}" + "\n:root[data-glassstyle=\"liquid\"] .tabbar,:root[data-glassstyle=\"holo\"] .tabbar,:root[data-glassstyle=\"liquid\"] .minibar,:root[data-glassstyle=\"holo\"] .minibar{background:color-mix(in srgb,var(--bg) 88%,transparent);-webkit-backdrop-filter:blur(26px) saturate(160%);backdrop-filter:blur(26px) saturate(160%)}" + "\n" + _CHARM_CSS
 _UI_JS = _UI_JS_SRC.replace("__THEMES__", json.dumps(
     {n: {"glass": bool(t.get("glass")), "mono": bool(t.get("mono")), "light": t["light"]["bg"],
-         "dark": t["dark"]["bg"], "accent2": t["dark"]["accent2"]} for n, t in THEMES.items()})) + "\n" + _CHARM_JS_SRC.replace("__CHEERS__", _cheers_json()) + "\n" + _DOTFRAME_JS + "\n" + _DOTMOMENTS_JS
+         "dark": t["dark"]["bg"], "accent2": t["dark"]["accent2"]} for n, t in THEMES.items()})) + "\n" + _CHARM_JS_SRC.replace("__CHEERS__", _cheers_json()) + "\n" + _DOTSHAPE_JS + "\n" + _DOTFRAME_JS + "\n" + _DOTMOMENTS_JS
 _ASSET_V = hashlib.sha1((_UI_CSS + _UI_JS + _CHAT_JS).encode()).hexdigest()[:10]
 
 
