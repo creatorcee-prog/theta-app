@@ -60,4 +60,11 @@ check("Settings has the Personas card", 'id="personas"' in page and 'id="pa-soul
 head = h.handle("GET", "/head", {}, K, b"")[2].decode()
 check("Theta's Voice and tools has a quick switch", head.count('id="pa-pick"') == 1)
 check("back to Theta puts its own look back on the phone", '"theta:originalLook"' in h.PERSONA_JS)
+# Gen 7 avatars from the Avatar Lab: styles in the app, and a persona can wear one
+hj = h._HEAD_JS
+check("the four Gen 7 styles are in the app's avatar styles", all(f'<option value="{x}">' in head for x in ("precision", "lumen", "flow", "signal"))
+      and "GEN7[AV.style]) { drawGen7(" in hj)
+check("...alive: own pace, a shape per state, color inside a state, and moments (got it, working, heads-up)",
+      "q.kick" in hj and "SW.thinking" in hj and 'moment("working")' in hj and 'moment("alert", 4000)' in hj and 'moment("success", 2600)' in hj)
+check("a persona can pick its own avatar", 'id="pa-av"' in page and '<option value="lumen">Lumen</option>' in page and "av.style = $(\"pa-av\").value" in h.PERSONA_JS)
 print("done")

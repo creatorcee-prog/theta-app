@@ -125,6 +125,10 @@ def persona_card():
         '<div class="field"><label for="pa-addr">What it calls you</label><input id="pa-addr" maxlength="40" placeholder="Like: Hunter"></div>'
         '<div class="field"><label for="pa-soul">Personality</label><textarea id="pa-soul" rows="7" maxlength="4000" '
         'placeholder="How it talks and what it cares about, in your words. Empty keeps Theta\'s own."></textarea></div>'
+        '<div class="field"><label for="pa-av">Avatar</label><select id="pa-av"><option value="">As it is now</option>'
+        '<option value="precision">Precision</option><option value="lumen">Lumen</option><option value="flow">Flow</option>'
+        '<option value="signal">Signal</option><option value="urchin">Urchin Pour</option><option value="rings">Classic rings</option>'
+        '<option value="image">My pictures</option></select></div>'
         '<label class="small"><input type="checkbox" id="pa-look" checked> Save the voice, voice effect and avatar I have on right now</label>'
         '<label class="small"><input type="checkbox" id="pa-ui"> ...and the theme, frame and background too</label>'
         '<div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn" id="pa-save">Save persona</button>'
@@ -172,8 +176,10 @@ PERSONA_JS = r"""
     const now = snapshot();
     if ($("pa-look").checked) for (const k of Object.keys(KEYS)) if (k in now) look[k] = now[k];
     if ($("pa-ui").checked) look.ui = now.ui;
+    if ($("pa-av") && $("pa-av").value) { let av = {}; try { av = JSON.parse(look.avatar || now.avatar || "{}") || {}; } catch (e) {}
+      av.style = $("pa-av").value; look.avatar = JSON.stringify(av); } // this persona's own avatar style
     const body = {id: editing, name: $("pa-name").value, address: $("pa-addr").value, soul: $("pa-soul").value};
-    if ($("pa-look").checked || $("pa-ui").checked) body.look = look;
+    if ($("pa-look").checked || $("pa-ui").checked || ($("pa-av") && $("pa-av").value)) body.look = look;
     const d = await (await fetch("/api/personas", {method: "POST", headers: H, body: JSON.stringify(body)})).json();
     if (!d.ok) return note(d.error || "Couldn't save.");
     note("Saved " + d.persona.name + (d.persona.look.includes("avimg") || !look.avimg ? "." : " (its pictures were too big to keep).")); editing = d.persona.id; load();
