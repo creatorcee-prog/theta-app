@@ -47,22 +47,22 @@ check("reduced motion slows it", "reduce ? 0.35 : 1" in js)
 with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
     f.write(js.replace("__ORPHEUS__", "[]").replace("__GEMINI__", "[]"))
 check("the script parses", subprocess.run(["node", "--check", f.name], capture_output=True).returncode == 0)
-# ---- the opening: assemble, greet, update only if it matters, then ask
+# ---- the opening: assemble, greet, update only if it matters (no closing question since 2026-11-06)
 h.head_chat = lambda *a, **k: (_ for _ in ()).throw(h.LLMError("down"))
 d = h.head_hello(60)
-check("back within minutes: just the question", d["text"] == "What are we working on?")
+check("back within minutes: nothing to say (no \"What are we working on?\")", d["text"] == "")
 h.add_reminder("in 30 min take the meds")
 d = h.head_hello(6 * 3600)
-check("away hours, model down: a greeting, the update and the question", d["text"].startswith("Good ")
-      and "Coming up: take the meds" in d["text"] and d["text"].endswith("What are we working on?"))
-h.head_chat = lambda msgs, *a, **k: (ASKED.append(msgs[-1]["content"]), "Evening! Meds in half an hour.")[1]
+check("away hours, model down: a greeting and the update, no question", d["text"].startswith("Good ")
+      and "Coming up: take the meds" in d["text"] and "working on" not in d["text"])
+h.head_chat = lambda msgs, *a, **k: (ASKED.append(msgs[-1]["content"]), "Evening! Meds in half an hour. What are we working on?")[1]
 ASKED = []
 d = h.head_hello(6 * 3600)
-check("the model writes it from the facts, and the question is always there", d["text"] == "Evening! Meds in half an hour. What are we working on?"
-      and "take the meds" in ASKED[-1] and "Under 30 words" in ASKED[-1])
+check("the model writes it from the facts; the old question is stripped if it adds it", d["text"] == "Evening! Meds in half an hour."
+      and "take the meds" in ASKED[-1] and "Don't ask a question" in ASKED[-1])
 import json as _j
 s_, ct, out = h.handle("GET", "/api/head/hello", {"away": ["60"]}, {"x-dashboard-key": "dk"}, b"")[:3]
-check("the page asks /api/head/hello", s_ == 200 and _j.loads(out)["text"] == "What are we working on?")
+check("the page asks /api/head/hello", s_ == 200 and _j.loads(out)["text"] == "")
 stage = h._STAGE_JS
 check("the opening scatters the dots so they fly in, on a blank stage", "TH.scatter()" in stage and 'body.classList.add("opening")' in stage
       and "body.opening .deck" in h._STAGE_CSS)

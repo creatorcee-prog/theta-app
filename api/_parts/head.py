@@ -524,7 +524,7 @@ def reply_mood(text, now=None):
 
 # The opening greeting (the Theta page): hello, a quick update only when something matters, then
 # "what are we working on?". Short, to be heard. Back within a few minutes: just the question.
-HELLO_ASK = "What are we working on?"
+HELLO_ASK = "What are we working on?"  # no longer said (2026-11-06): the greeting stands alone; kept to strip it
 
 
 def hello_facts(away, now=None):
@@ -563,7 +563,7 @@ def head_hello(away, now=None):
     """{"text", "mood"} for the Theta page's opening."""
     now = now or time.time()
     if away < 10 * 60:
-        return {"text": HELLO_ASK, "mood": reply_mood("", now)}
+        return {"text": "", "mood": reply_mood("", now)}  # back within minutes: nothing to say
     local = datetime.fromtimestamp(now, hub_tz())
     part = "morning" if 4 <= local.hour < 12 else "afternoon" if local.hour < 17 else "evening"
     facts = hello_facts(away, now)
@@ -575,14 +575,13 @@ def head_hello(away, now=None):
             {"role": "user", "content": (
                 f"The user just opened your page (gone {round(away / 3600, 1)} hours). Greet them for the {part} in a few "
                 "words, then, only if one of these facts matters right now, say the single most important one in one "
-                "short sentence, then end with exactly: \"" + HELLO_ASK + "\" Under 30 words, to be read aloud, no lists. "
+                "short sentence. Don't ask a question or offer help. Under 25 words, to be read aloud, no lists. "
                 "Use only these facts:\n" + ("\n".join(f"- {x}" for x in facts) or "- nothing pressing"))}], 200).strip()
     except LLMError:
         pass
     if not text or len(text) > 400:
-        text = f"Good {part}." + (f" {facts[0]}." if facts else "") + f" {HELLO_ASK}"
-    elif HELLO_ASK.lower() not in text.lower():
-        text = text.rstrip() + " " + HELLO_ASK
+        text = f"Good {part}." + (f" {facts[0]}." if facts else "")
+    text = re.sub(r"\s*" + re.escape(HELLO_ASK), "", text, flags=re.I).strip()
     return {"text": text, "mood": reply_mood(" ".join(facts), now)}
 
 
@@ -828,6 +827,96 @@ _HEAD_JS = r"""
   let cheerMoodT = 0;
   document.addEventListener("theta:cheer", () => { if (mood === "concerned") return; const before = mood; setMood("proud");
     clearTimeout(cheerMoodT); cheerMoodT = setTimeout(() => setMood(before === "proud" ? "calm" : before), 2800); });
+  // ---- Generation 7 styles (2026-11-06, from the Avatar Lab): Precision, Lumen, Flow and Signal, alive. Every dot
+  // has its own pace and wander and springs into place; each state has its own shape (listening leans toward you,
+  // thinking sends a third of the dots into orbit, speaking bulges and kicks dots out on the peaks); color moves
+  // inside a state, apart from the mood color; and moments ride on top: "got it" (a green wave when you finish
+  // something), "working" (a violet ring filling while a reply is on its way), "heads-up" (amber at the edge when
+  // something went wrong).
+  const GEN7 = {precision: {n: 1000}, lumen: {n: 1000, inner: true, rim: true}, flow: {n: 1100, flow: true, inner: true},
+                signal: {n: 900, rays: true, rim: true}};
+  const SW = {idle: 1, listening: 0, thinking: 0, speaking: 0}, SIT = {success: 0, alert: 0, working: 0};
+  let sitT = 0, sitNow = "none", sitUntil = 0, g7Last = 0, g7Dots = null, g7For = "";
+  function moment(kind, ms) { sitNow = kind; sitT = 0; sitUntil = ms ? performance.now() + ms : 0; }
+  document.addEventListener("theta:cheer", () => moment("success", 2600));
+  const g7hsla = (h, s, l, a) => `hsla(${(h % 360 + 360) % 360},${Math.max(0, Math.min(100, s))}%,${Math.max(0, Math.min(98, l))}%,${Math.max(0, Math.min(1, a))})`;
+  function g7light(x, y, r, a, k) { // a real light: white-hot core, steep falloff, a faint tail to nothing
+    const gr = g.createRadialGradient(x, y, 0, x, y, r);
+    for (const d of [0, .03, .07, .12, .2, .3, .45, .65, .85, 1]) { const f = (1 / (1 + (d / k) ** 2)) * (1 - d) ** 2;
+      gr.addColorStop(d, f > 0.5 ? g7hsla(cur.hue, cur.sat * (1 - f), 70 + 28 * f, a * f) : g7hsla(cur.hue, cur.sat, 66, a * f)); }
+    g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill();
+  }
+  function g7dots(N) { const a = []; for (let i = 0; i < N; i++) { const y = 1 - (i / (N - 1)) * 2, th = i * 2.399963;
+    a.push({s: Math.random(), lat: Math.asin(y) + (Math.random() - 0.5) * 0.035, lon: th % TAU + (Math.random() - 0.5) * 0.06,
+            ph: Math.random() * TAU, pace: 0.6 + Math.random() * 0.8, grp: Math.floor(Math.random() * 3), w: null, v: [0, 0, 0], kick: 0}); } return a; }
+  function g7moodK(lon, t) { return (1 + moodW.concerned * 0.05 * Math.sin(lon * 7 + t * 4)) * (1 + moodW.happy * 0.03 * Math.abs(Math.sin(t * 4))) * (1 - moodW.focused * 0.05); }
+  function drawGen7(t, lv, o) {
+    const dt = Math.min(0.05, Math.max(0.001, t - g7Last)); g7Last = t;
+    if (sitUntil && performance.now() > sitUntil) { sitNow = "none"; sitUntil = 0; }
+    for (const k in SW) SW[k] += ((state === k ? 1 : 0) - SW[k]) * Math.min(1, dt * 3.2);
+    for (const k in SIT) SIT[k] += ((sitNow === k ? 1 : 0) - SIT[k]) * Math.min(1, dt * 3);
+    sitT += dt;
+    if (!g7Dots || g7For !== AV.style) { g7Dots = g7dots(o.n); g7For = AV.style; }
+    const c = S / 2, R = S * 0.27, D = 3.6, sp = cur.speed * AV.energy, H = cur.hue;
+    const yaw = t * 0.16 * sp * (1 + 1.4 * SW.thinking) + look[0] * 0.75, pitch = 0.32 + 0.05 * Math.sin(t * 0.3) - 0.12 * SW.listening + look[1] * 0.55;
+    const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), spn = Math.sin(pitch);
+    const breathe = 1 + 0.02 * Math.sin(t * 1.3 * sp) + 0.05 * lv * SW.speaking, add = lightBg ? "source-over" : "lighter";
+    if (o.inner && !lightBg) g7light(c, c, R * (1.9 + 0.7 * lv + 0.3 * SW.thinking * Math.abs(Math.sin(t * 3))), 0.8 + 0.2 * lv, 0.09);
+    const blobAmp = 0.035 + 0.02 * SW.idle + 0.16 * lv * SW.speaking;
+    const rot = ([x, y, z]) => { const x1 = x * cy - z * sy, z1 = x * sy + z * cy; return [x1, y * cp - z1 * spn, y * spn + z1 * cp]; };
+    const P = [];
+    for (const q of g7Dots) {
+      let lon = q.lon + 0.05 * Math.sin(t * q.pace + q.ph), lat = q.lat + 0.04 * Math.cos(t * q.pace * 1.3 + q.ph);
+      if (o.flow) lon += t * sp * (0.25 + 0.35 * Math.cos(lat * 3)) * (1 + 1.4 * SW.thinking * (lat > 0 ? 1 : -1));
+      const blob = blobAmp * (Math.sin(lon * 2 + t * 1.3) * Math.cos(lat * 1.5 + t * 0.7) + 0.7 * Math.sin(lat * 3 - t * 0.9 + lon));
+      const rr = breathe * (1 + blob) * g7moodK(lon, t);
+      let ray = 0;
+      if (o.rays && SW.speaking > 0.05) ray = Math.pow(Math.max(0, Math.sin(lon * 6 + t * 3)), 3) * (0.55 + 0.45 * Math.cos(lat * 3 + t * 2)) * lv * SW.speaking * (0.7 + 0.6 * q.s);
+      let tx = Math.cos(lat) * Math.cos(lon) * rr, ty = Math.sin(lat) * rr, tz = Math.cos(lat) * Math.sin(lon) * rr;
+      if (q.grp === 0 && SW.thinking > 0.01) { const a = q.lon * 3 + t * (1.6 + q.pace) * sp, tilt = 0.5 + q.s * 0.5, rad = 1.32 + 0.08 * q.s;
+        const ox = Math.cos(a) * rad, oy = Math.sin(a) * rad * Math.sin(tilt) * (q.s > 0.5 ? 1 : -1), oz = Math.sin(a) * rad * Math.cos(tilt);
+        tx += (ox - tx) * SW.thinking; ty += (oy - ty) * SW.thinking; tz += (oz - tz) * SW.thinking; }
+      if (SW.speaking > 0.3 && lv > 0.55 && Math.random() < 0.004 * lv) q.kick = 0.25 + 0.35 * Math.random();
+      q.kick *= 0.9; const kk = 1 + q.kick; tx *= kk; ty *= kk; tz *= kk;
+      if (!q.w) q.w = [tx, ty, tz];
+      const k = 0.07 + 0.05 * q.pace;
+      q.v[0] = (q.v[0] + (tx - q.w[0]) * k) * 0.8; q.w[0] += q.v[0];
+      q.v[1] = (q.v[1] + (ty - q.w[1]) * k) * 0.8; q.w[1] += q.v[1];
+      q.v[2] = (q.v[2] + (tz - q.w[2]) * k) * 0.8; q.w[2] += q.v[2];
+      let [x, y, z] = rot(q.w), towardYou = 0;
+      if (SW.listening > 0.01) { const len = Math.hypot(x, y, z) || 1; towardYou = Math.max(0, -z / len); const ang = Math.acos(Math.min(1, towardYou));
+        const ripple = Math.sin(ang * 9 - t * 7) * (0.3 + lv) * SW.listening, f = 1 - SW.listening * towardYou * (0.1 + 0.08 * lv) + 0.03 * ripple * towardYou;
+        x *= f; y *= f; z *= f; }
+      const k3 = D / (D + z), px = c + x * R * k3, py = c + y * R * k3;
+      let tip = null; if (ray) { const [rx, ry, rz] = rot([q.w[0] * (1 + ray * 1.6), q.w[1] * (1 + ray * 1.6), q.w[2] * (1 + ray * 1.6)]); const kr = D / (D + rz); tip = [c + rx * R * kr, c + ry * R * kr]; }
+      const out = Math.max(0, blob / Math.max(0.001, blobAmp)) * SW.speaking + q.kick * 2;
+      let hue = H + 7 * Math.sin(t * q.pace * 1.7 + q.ph) * SW.idle - 34 * towardYou * SW.listening
+        + (q.grp === 0 ? 45 * Math.sin(q.lon * 2 + t * 3) * SW.thinking : 0) + 26 * Math.min(1, out) * (0.4 + lv);
+      let satK = o.inner ? 0.45 : 0.6, light = 0, tone = Math.max(towardYou * SW.listening, q.grp === 0 ? SW.thinking * 0.9 : 0, Math.min(1, out) * 0.8);
+      if (SIT.success > 0.01) { const wave = Math.max(0, Math.sin(Math.hypot(x, y) * 5 - sitT * 5)) ** 3 * SIT.success; hue += (145 - hue) * wave; tone = Math.max(tone, wave); }
+      if (SIT.alert > 0.01) { const edge = Math.max(0, 1 - Math.abs(z) * 2.2) * (0.55 + 0.45 * Math.sin(t * 9 + q.ph)) * SIT.alert; hue += (36 - hue) * edge; tone = Math.max(tone, edge); }
+      if (SIT.working > 0.01) { const a = (Math.atan2(q.w[2], q.w[0]) + Math.PI) / TAU, fill = (sitT * 0.25) % 1;
+        if (Math.abs(q.w[1]) < 0.18) { const on = (a < fill ? 1 : 0.2) * SIT.working; hue += (280 - hue) * on; tone = Math.max(tone, on); light += 6 * on; } }
+      satK += 0.55 * tone;
+      const front = Math.max(0, Math.min(1, 0.55 - z * 0.6)), lit = 0.06 + 0.94 * front ** 1.6;
+      const scan = SW.thinking > 0.01 && !o.flow ? (Math.max(0, Math.cos(q.lat * 2 - t * 3.2 * sp)) ** 8) * SW.thinking : 0;
+      const L0 = 60 + 28 * front + 30 * scan + light + 12 * Math.min(1, out), L = (L0 * (1 - 0.55 * tone) + 66 * 0.55 * tone) - (lightBg ? 26 : 0);
+      P.push([px, py, z, k3, q.s, tip, hue, Math.min(1, satK), L, Math.min(1, 0.04 + 0.62 * lit + scan * 0.7 + 0.35 * tone + (lightBg ? 0.2 : 0)), front]);
+    }
+    P.sort((p, q) => q[2] - p[2]);
+    g.globalCompositeOperation = add;
+    for (const [x, y, z, k, s, tip, hue, satK, L, A, front] of P) {
+      if (tip) { const gr = g.createLinearGradient(x, y, tip[0], tip[1]); gr.addColorStop(0, g7hsla(hue, cur.sat * satK, 86, 0.9 * A)); gr.addColorStop(1, g7hsla(hue, cur.sat * satK, 80, 0));
+        g.strokeStyle = gr; g.lineWidth = S * 0.005 * k; g.beginPath(); g.moveTo(x, y); g.lineTo(tip[0], tip[1]); g.stroke(); }
+      g.fillStyle = g7hsla(hue, cur.sat * satK, L, A);
+      g.beginPath(); g.arc(x, y, S * 0.0036 * k * k * (0.7 + 0.6 * s) * (0.7 + 0.5 * front), 0, TAU); g.fill();
+    }
+    g.globalCompositeOperation = "source-over";
+    if (o.rim) { const rr = R * breathe * (D / (D - 0.2)), gr = g.createRadialGradient(c, c, rr * 0.86, c, c, rr * 1.12), rh = H + (36 - H) * SIT.alert * 0.8;
+      gr.addColorStop(0, g7hsla(rh, cur.sat * 0.7, 80, 0)); gr.addColorStop(0.55, g7hsla(rh, cur.sat * 0.7, lightBg ? 55 : 86, 0.22 + 0.2 * lv + 0.2 * SIT.alert)); gr.addColorStop(1, g7hsla(rh, cur.sat * 0.7, 80, 0));
+      g.fillStyle = gr; g.beginPath(); g.arc(c, c, rr * 1.12, 0, TAU); g.fill(); }
+    if (!lightBg) g7light(c, c, S * (0.09 + 0.07 * lv + 0.03 * SW.thinking * Math.abs(Math.sin(t * 4))), 0.95, 0.1);
+  }
   function core(c, r) {
     const op = g.globalCompositeOperation; g.globalCompositeOperation = "source-over";
     const cr = S * r, gr = g.createRadialGradient(c, c, 0, c, c, cr * 3.2);
@@ -904,7 +993,7 @@ _HEAD_JS = r"""
     burst *= 0.86; level += (Math.min(1, target) - level) * 0.3;
     g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, S, S);
     g.translate(0, -S * cur.bounce * 0.012 * Math.abs(Math.sin(t * 3)));
-    if (AV.style === "rings") drawRings(t); else if (AV.style === "image" && avImgs.length) drawPicture(t, level); else { drawUrchin(t, level); flourish(t); }
+    if (AV.style === "rings") drawRings(t); else if (AV.style === "image" && avImgs.length) drawPicture(t, level); else if (GEN7[AV.style]) { drawGen7(t, level, GEN7[AV.style]); flourish(t); } else { drawUrchin(t, level); flourish(t); }
     if (AV.style !== "image" && curBg) { curBg = ""; cv.style.backgroundImage = ""; cv.style.borderRadius = ""; }
     if (!(++lightTick % 15)) { // the room's light comes from wherever Theta is
       const hud = cv.closest(".hud"), H = hud && hud.getBoundingClientRect(), a = cv.getBoundingClientRect();
@@ -1146,7 +1235,7 @@ _HEAD_JS = r"""
     if (/^(ok(ay)?\s+|theta,?\s+)?(close|clear|hide|dismiss)\s+(the\s+|all\s+|those\s+)?(panels?|screens?|that|it|everything)[.!]?$/i.test(text)) {
       document.dispatchEvent(new CustomEvent("theta:clear-panels")); saidEl.textContent = "\u201c" + text + "\u201d"; setState("idle"); return;
     }
-    busy = true; talk.disabled = true; saidEl.textContent = "“" + text + "”"; setState("thinking");
+    busy = true; talk.disabled = true; saidEl.textContent = "“" + text + "”"; setState("thinking"); moment("working"); // the Gen 7 styles fill a ring while it works
     tSent = performance.now(); tReply = 0; warmVoice();
     try {
       const rid = Math.random().toString(36).slice(2, 12);
@@ -1164,9 +1253,10 @@ _HEAD_JS = r"""
       speak(m.text);
     } catch (e) {
       if (window.thetaChat && thetaChat.failed) thetaChat.failed();
+      moment("alert", 4000); // something went wrong: a heads-up at the edge
       replyEl.textContent = ""; note.textContent = "Couldn't reach Theta: " + e.message; setState("idle");
     }
-    busy = false; talk.disabled = false;
+    busy = false; talk.disabled = false; if (sitNow === "working") moment("none");
   }
   if (form) form.addEventListener("submit", e => { e.preventDefault(); unlock(); const t = input.value; input.value = ""; send(t); });
 
@@ -1752,9 +1842,9 @@ _STAGE_JS = r"""
   const hello = fetch("/api/head/hello?away=" + Math.round(fromCorner ? 0 : away), {headers: H}).then(r => r.json()).catch(() => null);
   setTimeout(async () => {
     const d = await hello;
-    greeting = d && d.ok && d.text ? d.text : "What are we working on?";
+    greeting = d && d.ok && d.text ? d.text : "";
     if (d && d.mood) TH.setMood(d.mood);
-    cap.textContent = greeting; pending = !fromCorner; hint.hidden = fromCorner; body.classList.remove("opening");
+    cap.textContent = greeting; pending = !fromCorner && !!greeting; hint.hidden = fromCorner || !greeting; body.classList.remove("opening");
   }, greetAt);
   document.addEventListener("pointerdown", e => {
     if (!pending) return;
@@ -1805,6 +1895,9 @@ def head_hud(headers=None):
             '<p class="note" id="head-note"></p><p class="note" id="head-taps" hidden></p>'
             '<div class="deck" id="deck" aria-label="What Theta pulled up" aria-live="polite"></div>'
             '<details class="hud-more"><summary>Voice and tools</summary><div class="opts">'
+            '<label>Persona <select id="pa-pick"><option value="">Theta (original)</option></select></label>'
+            '<span class="note" id="pa-note" role="status"></span>'
+            + f"<script>{PERSONA_JS}</script>" + ''
             '<label><input type="checkbox" id="imm-on" checked> Hide the controls until I tap the text box area</label>'
             '<label><input type="checkbox" id="head-voice-on" checked> Speak replies</label>'
             '<label>Voice <select id="head-voice" aria-label="Theta\'s voice"></select></label>'
@@ -1814,7 +1907,8 @@ def head_hud(headers=None):
             '<button type="button" id="head-test" class="test">Test</button>'
             '<label title="Tap your Bluetooth glasses or earbuds to talk"><input type="checkbox" id="head-glasses"> Glasses mode</label></div>'
             '<div class="av-set" aria-label="Avatar"><div class="row"><b>Avatar</b>'
-            '<label>Style <select id="av-style"><option value="urchin">Urchin Pour</option><option value="rings">Classic rings</option>'
+            '<label>Style <select id="av-style"><option value="urchin">Urchin Pour</option><option value="precision">Precision</option><option value="lumen">Lumen</option>'
+            '<option value="flow">Flow</option><option value="signal">Signal</option><option value="rings">Classic rings</option>'
             '<option value="image">Your pictures</option></select></label>'
             '<label>Size <select id="av-size"><option value="small">Small</option><option value="large">Large</option></select></label>'
             '<label>Energy <input type="range" id="av-energy" min="20" max="160" value="100" aria-label="How much the avatar moves"></label></div>'

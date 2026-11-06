@@ -756,7 +756,7 @@ def settings_page(headers):
                       for r in st.list_reports(15)) or '<li class="empty">No reports yet.</li>'
     body = (
         '<header class="top"><div><p class="eyebrow">Settings</p><h1>Make it yours</h1></div></header>'
-        '<div class="stack">'
+        '<div class="stack">' + persona_card() + ''
         '<section class="card stack" id="look"><div><h2>Color scheme</h2><p class="muted small">Every scheme has a light and a dark '
         'version. Saved on this device.</p></div>'
         f'<div class="swatches">{swatches}</div>'

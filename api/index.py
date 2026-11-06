@@ -1131,6 +1131,7 @@ def notes():
 
 
 _load_part("vault")  # Obsidian vault reads/writes, SOUL.md, vault and seat prompts: api/_parts/vault.py
+_load_part("personas")  # personas: swappable name, address, personality, voice and look: api/_parts/personas.py
 
 
 # ---- QWERTY's changes: he proposes, you approve. A proposal is posted with
