@@ -178,6 +178,7 @@ def get(path, qs=""):
 s, page = get("/head")
 check("the Head page needs the key like every page", s == 401)
 s, page = get("/head", "key=dk")
+page += h.head_assets()["js"]  # the page's own script is a cached file now (/head.js)
 check("the Head page: the Rings avatar, a Talk button, the chat's own composer (it's the chat too), the voice options",
       s == 200 and 'id="head-av"' in page and 'id="head-talk"' in page and 'id="chat-msg"' in page and 'id="msgs"' in page
       and 'id="head-voice"' in page and "webkitSpeechRecognition" in page and "speechSynthesis" in page)
@@ -200,7 +201,7 @@ check("the morning digest is Theta's short brief, from the digest's facts", r["f
       and "Here's today" in CALLS[0][2][-1]["content"] and "2 or 3 short sentences" in CALLS[0][2][-1]["content"])
 check("...pushed, opening the Head page to hear it", PUSHES and PUSHES[-1][0] == "Theta" and PUSHES[-1][2] == "/head?play=latest")
 check("...and once a day", h.send_digest() is False)
-s_, page = get("/head", "key=dk&play=latest")
+s_, page = get("/head", "key=dk&play=latest"); page += h.head_assets()["js"]
 check("the Head page has a Hear it button for a new message or a tapped push", 'id="head-hear"' in page
       and 'get("play") === "latest"' in page and 'store("theta:heard"' in page)
 
@@ -234,7 +235,7 @@ check("Gemini's voice: tries the Interactions API, falls back to generateContent
       and GSPEECH[-1][1]["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] == "Charon")
 check("...an unknown Gemini voice is refused", say({"text": "hi", "voice": "gemini:HAL"})[0] == 400)
 check("...and 'orpheus:troy' works like 'troy'", say({"text": "hi", "voice": "orpheus:troy"})[0] == 200)
-s_, page = get("/head", "key=dk")
+s_, page = get("/head", "key=dk"); page += h.head_assets()["js"]
 check("the picker offers Gemini, Piper and Kokoro too, the on-phone ones loaded from jsdelivr",
       '"Charon"' in page and "piper:" in page and "kokoro:" in page and "vits-web@1.0.3" in page and "kokoro-js@1.2.1" in page)
 check("Theta's voice is Piper's Northern English man until a Fish Audio voice is picked; Gemini, Kokoro and the phone's stay to pick from",

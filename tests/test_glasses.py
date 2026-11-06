@@ -52,7 +52,7 @@ check("Groq out of free uses says so", s == 429 and "out of free uses" in d["err
 check("webm named as webm", b'filename="clip.webm"' in SEEN[-1][3])
 
 page = h.head_page({"host": "theta.example", "x-dashboard-key": "dk"})
-html_ = page[2].decode() if isinstance(page, tuple) else str(page)
+html_ = (page[2].decode() if isinstance(page, tuple) else str(page)) + h.head_assets()["js"]  # its script is /head.js now
 check("Glasses mode switch on the Head page", 'id="head-glasses"' in html_)
 check("taps come through the Media Session API", "navigator.mediaSession" in html_ and "setActionHandler" in html_)
 check("a tap while Theta talks stops it", 'if (state === "speaking") { hush();' in html_)

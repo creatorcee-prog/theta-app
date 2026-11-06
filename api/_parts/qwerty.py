@@ -16,7 +16,7 @@ GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "creatorcee-prog/theta-app")
 _SEC_CACHE = {"at": 0.0, "data": None}
 _SEC_LOCK = threading.Lock()
-_PUBLIC_PATHS = ("/ui.css", "/ui.js", "/chat.js", "/sw.js", "/manifest.webmanifest", "/favicon.ico",
+_PUBLIC_PATHS = ("/ui.css", "/ui.js", "/chat.js", "/head.js", "/head.css", "/sw.js", "/manifest.webmanifest", "/favicon.ico",
                  "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/api/push/health")
 SECURITY_HEADERS = [
     ("X-Content-Type-Options", "nosniff"),

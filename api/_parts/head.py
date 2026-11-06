@@ -966,7 +966,9 @@ _HEAD_JS = r"""
   if (store("theta:speak") === "off") voiceOn.checked = false;
   function hush() { if (synth) synth.cancel(); player.pause(); }
   voiceOn.addEventListener("change", () => { store("theta:speak", voiceOn.checked ? "on" : "off"); if (!voiceOn.checked) hush(); });
-  function unlock() { // iPhone plays sound only from a tap: start silent sound inside the tap
+  let unlocked = false;
+  function unlock() { // iPhone plays sound only from a tap: start silent sound inside the tap (once is enough)
+    if (unlocked) return; unlocked = true;
     if (synth) { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; synth.speak(u); }
     player.src = SILENT; player.play().catch(() => {});
   }
@@ -1104,6 +1106,7 @@ _HEAD_JS = r"""
     tSent = performance.now(); tReply = 0; warmVoice();
     try {
       const rid = Math.random().toString(36).slice(2, 12);
+      if (window.thetaChat && thetaChat.pending) thetaChat.pending(text, rid); // your words in the chat now, and Theta thinking under them
       const d = await (await fetch("/api/allchat", {method: "POST", headers: H, body: JSON.stringify({text, channel: "all", rid,
         spoken: !!voiceOn.checked})})).json();
       if (!d.ok) throw new Error(d.error || "no answer");
@@ -1115,31 +1118,50 @@ _HEAD_JS = r"""
       show(m); latest = m; store("theta:heard", String(m.id)); hear.hidden = true;
       note.textContent = m.buttons && m.buttons.length ? (MERGED ? "This one needs your tap: the buttons are on the message below." : "This one needs your Approve: open Chat to tap it.") : "";
       speak(m.text);
-    } catch (e) { replyEl.textContent = ""; note.textContent = "Couldn't reach Theta: " + e.message; setState("idle"); }
+    } catch (e) {
+      if (window.thetaChat && thetaChat.failed) thetaChat.failed();
+      replyEl.textContent = ""; note.textContent = "Couldn't reach Theta: " + e.message; setState("idle");
+    }
     busy = false; talk.disabled = false;
   }
   if (form) form.addEventListener("submit", e => { e.preventDefault(); unlock(); const t = input.value; input.value = ""; send(t); });
 
   // ---- listening: Safari's own dictation
+  // When Safari's dictation is refused (it happens on iPhone after Theta has spoken: "not-allowed"), the backup ear
+  // takes over for the rest of the visit: it records the clip and Whisper hears it on the hub.
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let rec = null, heard = "";
-  if (!SR) { talk.hidden = true; note.textContent = "Voice input isn't available in this browser; type to Theta below."; }
+  let rec = null, heard = "", srOk = false;
   function stop() { if (rec) rec.stop(); }
+  function listen() { // one tap: talk, or send what you've said
+    if (state === "speaking") hush();
+    if (busy) return;
+    if (clip) { clip.stop(); return; }
+    if (rec) { stop(); return; }
+    if (SR && !srBlocked) start(); else { unlock(); hush(); recordClip(); }
+  }
   function start() {
     if (busy) return;
     unlock(); hush();
     rec = new SR(); rec.lang = "en-US"; rec.interimResults = true; rec.continuous = false; heard = "";
     rec.onresult = e => { heard = [...e.results].map(r => r[0].transcript).join(" "); saidEl.textContent = heard; };
+    rec.onstart = () => { srOk = true; };
     rec.onerror = e => {
-      if (glassesOn() && /not-allowed|service-not-allowed|audio-capture/.test(e.error)) { srBlocked = true; heard = ""; setTimeout(recordClip, 60); return; }
+      // refused after it has worked (or with Glasses on): the backup ear, now and for the rest of the visit
+      if (/not-allowed|service-not-allowed|audio-capture/.test(e.error) && (srOk || glassesOn() || sessionStorage.getItem("theta:srWorked"))) {
+        srBlocked = true; heard = ""; setTimeout(recordClip, 60); return;
+      }
       note.textContent = e.error === "not-allowed" ? "Allow the microphone (and Siri/dictation) for this app in Settings." : "Didn't catch that (" + e.error + ").";
     };
-    rec.onend = () => { talk.setAttribute("aria-pressed", "false"); talk.textContent = "Talk"; rec = null; if (heard.trim()) send(heard); else setState("idle"); };
+    rec.onend = () => {
+      talk.setAttribute("aria-pressed", "false"); talk.textContent = "Talk"; rec = null;
+      if (srOk) try { sessionStorage.setItem("theta:srWorked", "1"); } catch (e) {}
+      if (heard.trim()) send(heard); else if (!srBlocked) setState("idle");
+    };
     talk.setAttribute("aria-pressed", "true"); talk.textContent = "Done"; note.textContent = ""; setState("listening");
     try { rec.start(); } catch (e) { rec.onend(); }
   }
-  talk.addEventListener("click", () => rec ? stop() : start());
-  cv.addEventListener("click", () => { if (SR && !busy) (rec ? stop() : start()); });
+  talk.addEventListener("click", listen);
+  cv.addEventListener("click", listen);
 
   // ---- Glasses mode: to the iPhone, a tap on Bluetooth glasses (or earbuds) is
   // a headphone play/pause button. A near-silent loop keeps this page the
@@ -1187,10 +1209,7 @@ _HEAD_JS = r"""
   }
   function tapped() {
     if (state === "speaking") { hush(); setState("idle"); return; } // interrupt Theta
-    if (busy) return;
-    if (clip) { clip.stop(); return; }
-    if (rec) { stop(); return; }
-    if (SR && !srBlocked) start(); else recordClip();
+    listen();
   }
   const ACTIONS = ["play", "pause", "nexttrack", "previoustrack", "stop"];
   function glassesMode(on) {
@@ -1364,7 +1383,7 @@ _DECK_CSS = """
 .holo header{display:flex;align-items:center;gap:8px;margin-bottom:6px}
 .holo .ic{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:12px;border:1px solid var(--mood,#4fd3ff);color:var(--mood,#4fd3ff);box-shadow:0 0 8px rgba(79,211,255,.6)}
 .holo h3{margin:0;font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--mood,#4fd3ff);flex:1;font-weight:700}
-.holo .x{background:none;border:0;color:#9fb8c8;font-size:18px;line-height:1;cursor:pointer;padding:2px 4px}
+.holo .x{background:none;border:0;color:#9fb8c8;font-size:18px;line-height:1;cursor:pointer;padding:2px 4px;min-width:36px;min-height:36px;margin:-8px -8px -8px 0}
 .holo .row{display:flex;gap:8px;font-size:14px;padding:5px 0;border-top:1px solid rgba(79,211,255,.16);align-items:baseline}
 .holo .row b{color:#bff0ff;font-weight:650;white-space:nowrap}.holo .row span{min-width:0;overflow-wrap:anywhere}
 .holo .dim{color:#8fa9b8;font-size:12.5px}
@@ -1383,8 +1402,10 @@ _DECK_JS = r"""
   // newest reply only, until you close it (the X, or say "close the panels").
   const deck = document.getElementById("deck"); if (!deck) return;
   const panelsEvent = n => { document.body.classList.toggle("has-panels", n > 0); document.dispatchEvent(new CustomEvent("theta:panels", {detail: {count: n}})); };
-  let shown = null, tick = 0;
-  const gone = new Set();
+  let shown = null, tick = 0, first = true;
+  // closed stays closed, across reloads too
+  const gone = new Set((() => { try { return JSON.parse(localStorage.getItem("theta:panelsGone") || "[]"); } catch (e) { return []; } })());
+  const forget = id => { gone.add(id); try { localStorage.setItem("theta:panelsGone", JSON.stringify([...gone].slice(-30))); } catch (e) {} };
   const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
   const money = n => "$" + Number(n).toLocaleString(undefined, {maximumFractionDigits: 0});
   const ICON = {calendar: "◷", budget: "$", reminders: "⏰", map: "➤", sources: "⌕", weather: "☁",
@@ -1440,19 +1461,21 @@ _DECK_JS = r"""
     const c = el("article", "holo holo-" + p.kind); c.style.animationDelay = (i * 90) + "ms";
     const h = el("header"), x = el("button", "x", "×");
     x.type = "button"; x.setAttribute("aria-label", "Close " + p.title);
-    x.onclick = () => { c.remove(); if (!deck.children.length) { if (shown) gone.add(shown); panelsEvent(0); } };
+    x.onclick = () => { c.remove(); if (!deck.children.length) { if (shown) forget(shown); panelsEvent(0); } };
     h.append(el("span", "ic", ICON[p.kind] || "◈"), el("h3", null, p.title), x);
     c.append(h, body(p)); return c;
   }
   document.addEventListener("theta:thread", e => {
     const m = [...(e.detail || [])].reverse().find(x => x.from === "theta" && x.kind !== "event" && x.panels && x.panels.length);
+    const opening = first; first = false;
     if (!m || m.id === shown || gone.has(m.id)) return;
     const at = m.at ? new Date(m.at.replace(" ", "T") + "Z").getTime() : Date.now();
-    if (Date.now() - at > 30 * 60e3) return; // only what was just pulled up
+    // only what was just pulled up; opening the app, only from the last couple of minutes (a reload), not the last chat's
+    if (Date.now() - at > (opening ? 2 : 30) * 60e3) return;
     shown = m.id; clearInterval(tick);
     deck.replaceChildren(...m.panels.map(card)); deck.scrollLeft = 0; panelsEvent(m.panels.length);
   });
-  document.addEventListener("theta:clear-panels", () => { if (shown) gone.add(shown); clearInterval(tick); deck.replaceChildren(); panelsEvent(0); });
+  document.addEventListener("theta:clear-panels", () => { if (shown) forget(shown); clearInterval(tick); deck.replaceChildren(); panelsEvent(0); });
 })();
 """
 
@@ -1474,13 +1497,19 @@ body.immersive #head-av,body.immersive #head-av.big{width:min(76vw,50dvh,420px);
 body.immersive .hud-mid{text-align:center;min-height:2.6em}
 body.immersive .hud .hstate,body.immersive .hud .said,body.immersive .hud .note{text-align:center;white-space:normal}
 body.immersive .caption{text-align:center;font-size:clamp(16px,4.4vw,19px);max-width:min(92vw,560px);color:#e6f2fa}
-body.immersive .deck{position:fixed;top:calc(env(safe-area-inset-top,0px) + 6px);left:0;right:0;z-index:3;padding-inline:max(16px,env(safe-area-inset-left,0px))}
+/* controls showing = the chat is showing: its last line is the caption, so the caption steps aside; the chat ends above the
+   Widgets pill; and Voice and tools belongs to Theta's own view, not the board's (where the ticker has that corner) */
+body.immersive:not(.ui-hidden):not(.docked) .caption,body.immersive:not(.ui-hidden):not(.docked) .hud-row{opacity:0;pointer-events:none}
+body.immersive:not(.docked) .msgs{bottom:calc(var(--tabh,64px) + 120px)}
+body.docked .hud-more{display:none}
+body:has(#chat-working:not([hidden])) .board-open{opacity:0;pointer-events:none} /* while Theta works on a reply, the pill would sit on your message */
+body.immersive .deck{position:fixed;top:calc(env(safe-area-inset-top,0px) + 48px);left:0;right:0;z-index:3;padding-inline:max(16px,env(safe-area-inset-left,0px))}
 body.immersive .msgs{position:fixed;left:0;right:0;bottom:calc(var(--tabh,64px) + 78px);max-height:44dvh;z-index:4;
  background:color-mix(in srgb,var(--bg) 90%,transparent);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);
  border-top:1px solid var(--border);border-radius:18px 18px 0 0}
 body.immersive #chat-form{position:fixed;left:0;right:0;bottom:var(--tabh,64px);z-index:5;background:var(--bg)}
 body.immersive .hud-more{position:fixed;top:calc(env(safe-area-inset-top,0px) + 8px);right:max(12px,env(safe-area-inset-right,0px));z-index:6;
- background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:4px 12px;max-width:min(92vw,520px);max-height:72dvh;overflow:auto}
+ background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:4px 12px;max-width:min(92vw,520px);max-height:min(72dvh,calc(100dvh - 190px));overflow:auto;overscroll-behavior:contain}
 body.immersive .chans,body.immersive .members{display:none}
 body.opening .deck,body.opening .caption,body.opening #head-note,body.opening .hud-mid{opacity:0;pointer-events:none}
 .hud-mid{transition:opacity .5s ease}
@@ -1544,6 +1573,9 @@ _STAGE_JS = r"""
   ["wheel", "touchmove"].forEach(ev => document.addEventListener(ev, () => { if (!body.classList.contains("ui-hidden")) reveal(); }, {passive: true, capture: true}));
   if (immBox) { immBox.checked = imm; immBox.onchange = () => { imm = immBox.checked; put("theta:immersive", imm ? "on" : "off"); apply(); reveal(); }; }
   apply();
+  document.addEventListener("pointerdown", e => {
+    const m = document.querySelector(".hud-more[open]"); if (m && !m.contains(e.target)) m.open = false;
+  }, {capture: true});
 
   // the caption: the greeting, then Theta's latest line (cards and receipts left out)
   const clean = t => (t || "").replace(/```[\s\S]*?```/g, " ").split("\n").filter(l => !/^\s*[✓✗]/.test(l)).join(" ")
@@ -1579,7 +1611,7 @@ _STAGE_JS = r"""
     if (youMax === null) youMax = top; else if (top > youMax) { youMax = top; talked = true; }
   });
   document.addEventListener("theta:panels", e => { if (e.detail.count && talked) dock("panels"); else if (!e.detail.count && dockBy === "panels") undock(); });
-  cv.addEventListener("click", e => { if (docked) { e.stopImmediatePropagation(); e.preventDefault(); undock(); } }, true);
+  cv.addEventListener("click", () => { if (docked) undock(); }, true); // one tap: Theta comes back AND listens
   // Theta opening a page (the open tool): once it has said its line, it flies to the corner and the page comes up
   const navSeen = new Set(); let navFirst = true;
   document.addEventListener("theta:thread", e => {
@@ -1618,16 +1650,16 @@ _STAGE_JS = r"""
   try { fromCorner = sessionStorage.getItem("theta:fromCorner") === "1"; sessionStorage.removeItem("theta:fromCorner");
         booted = sessionStorage.getItem("theta:booted") === "1"; sessionStorage.setItem("theta:booted", "1"); } catch (e) { booted = true; }
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  let greetAt = 1400;
+  let greetAt = 600;
   let fromApp = false;
   try { fromApp = !!document.referrer && new URL(document.referrer).origin === location.origin && new URL(document.referrer).pathname !== "/head"; } catch (e) {}
   if (window.thetaVT && (fromCorner || (booted && fromApp))) {
-    greetAt = 700; // the browser already morphed Theta here from the page before: no second move
+    greetAt = 400; // the browser already morphed Theta here from the page before: no second move
   } else if (fromCorner) {
-    body.classList.add("docked"); docked = true; greetAt = 800;
+    body.classList.add("docked"); docked = true; greetAt = 500;
     requestAnimationFrame(() => requestAnimationFrame(undock));
   } else if (!booted && !reduce) {
-    greetAt = 3500; cinematic();
+    greetAt = 2600; cinematic(); // right after the shockwave (2.25 s)
   } else {
     TH.scatter(); body.classList.add("opening");
   }
@@ -1672,7 +1704,7 @@ _STAGE_JS = r"""
     requestAnimationFrame(frame);
     setTimeout(() => word && word.classList.remove("show"), 4600);
   }
-  let greeting = "", pending = false, swallow = false;
+  let greeting = "", pending = false;
   const hello = fetch("/api/head/hello?away=" + Math.round(fromCorner ? 0 : away), {headers: H}).then(r => r.json()).catch(() => null);
   setTimeout(async () => {
     const d = await hello;
@@ -1682,10 +1714,10 @@ _STAGE_JS = r"""
   }, greetAt);
   document.addEventListener("pointerdown", e => {
     if (!pending) return;
-    pending = false; hint.hidden = true; swallow = !!e.target.closest("#head-av");
-    TH.unlock(); TH.speak(greeting);
+    pending = false; hint.hidden = true; TH.unlock();
+    if (e.target.closest("#head-av")) return; // "tap to talk" means talk: the greeting stays on screen, unspoken
+    TH.speak(greeting);
   }, {capture: true});
-  document.addEventListener("click", e => { if (swallow && e.target.closest("#head-av")) { e.stopPropagation(); e.preventDefault(); } swallow = false; }, true);
 })();
 """
 
@@ -1756,14 +1788,34 @@ def head_hud(headers=None):
             + '</details></section>' + board_markup())
 
 
+_HEAD_ASSETS = {}
+
+
+def head_assets():
+    """The Theta page's own scripts and styles as two files the phone keeps (/head.js, /head.css, versioned
+    like ui.js), instead of ~120 KB inline on every visit. What changes per visit (the voices, the theme's
+    colors, the Fish Audio voice) comes from a small inline window.THETA_HEADCFG. Each part runs on its own:
+    one throwing doesn't stop the rest (as when they were separate inline scripts)."""
+    if not _HEAD_ASSETS:
+        cfg = "(window.THETA_HEADCFG || {})"
+        head = (_HEAD_JS.replace("__ORPHEUS__", cfg + ".orpheus").replace("__GEMINI__", cfg + ".gemini")
+                .replace("__THEME__", cfg + ".theme").replace("__FISH__", cfg + ".fish"))
+        js = "\n".join("try {\n" + part.strip() + "\n} catch (e) { console.error(e); }"
+                       for part in (head, _DECK_JS, _STAGE_JS, BOARD_JS))
+        css = _HEAD_CSS.replace(".headpage", ".hud") + _DECK_CSS + _STAGE_CSS + BOARD_CSS
+        v = hashlib.sha1((js + css).encode()).hexdigest()[:10]
+        _HEAD_ASSETS.update(js=js, css=css, v=v)
+    return _HEAD_ASSETS
+
+
 def head_script(headers=None):
     th = theme_stage(headers or {})
-    return (f'<style>{_HEAD_CSS.replace(".headpage", ".hud")}{_DECK_CSS}{_STAGE_CSS}</style><script>'
-            + _HEAD_JS.replace("__ORPHEUS__", json.dumps(list(ORPHEUS_VOICES))).replace("__GEMINI__", json.dumps(list(GEMINI_VOICES)))
-            .replace("__THEME__", json.dumps(th))
-            .replace("__FISH__", json.dumps({"on": bool(fish_key()), "voice": fish_cfg()["voice"], "name": fish_cfg()["name"]}).replace("</", "<\\/"))
-            + "</script><script>" + _DECK_JS + "</script><script>" + _STAGE_JS + "</script>"
-            + f"<style>{BOARD_CSS}</style><script>{BOARD_JS}</script>")
+    cfg = {"orpheus": list(ORPHEUS_VOICES), "gemini": list(GEMINI_VOICES), "theme": th,
+           "fish": {"on": bool(fish_key()), "voice": fish_cfg()["voice"], "name": fish_cfg()["name"]}}
+    a = head_assets()
+    return (f'<link rel="stylesheet" href="/head.css?v={a["v"]}">'
+            "<script>window.THETA_HEADCFG = " + json.dumps(cfg).replace("</", "<\\/") + ";</script>"
+            f'<script src="/head.js?v={a["v"]}"></script>')
 
 
 def head_page(headers, query=None):

@@ -671,15 +671,18 @@ with sync_playwright() as p:
 
         # Sources footer + sheet for a web_search receipt. The first source
         # points at the fake server itself, so its favicon really loads;
-        # the public hosts cannot load headlessly, so they fall back to
-        # letter tiles. A plain message and a garbage receipt get no footer.
+        # the other two are on .invalid (reserved, never resolves), so their
+        # favicons always fail and fall back to letter tiles. (They were
+        # python.org, which loads wherever the runner has network, so the
+        # tile count depended on the machine.) A plain message and a
+        # garbage receipt get no footer.
         store = h.store()
         store.add_chat("you", "Search the web for python", channel="all")
         receipt = ("Here is what I found.\n\n✓ Web search results:\n"
                    "1. Python (programming language) — " + base + "/python\n   Python is a high-level language.\n"
-                   "2. Python.org - The official Python website — https://www.python.org/\n   Python.org - The official Python website\n"
-                   "3. Python documentation - docs.python.org — https://docs.python.org/\n   Python documentation - docs.python.org\n"
-                   "Sources: " + base + "/python, https://www.python.org/, https://docs.python.org/")
+                   "2. Python.org - The official Python website — https://www.python.invalid/\n   Python.org - The official Python website\n"
+                   "3. Python documentation - docs.python.org — https://docs.python.invalid/\n   Python documentation - docs.python.org\n"
+                   "Sources: " + base + "/python, https://www.python.invalid/, https://docs.python.invalid/")
         store.add_chat("theta", receipt, channel="all")
         store.add_chat("theta", "A plain message with no receipt.", channel="all")
         store.add_chat("theta", "✓ Web search results:\n1. Garbage line with no url\nSources: nothing here", channel="all")

@@ -359,7 +359,7 @@ BOARD_CSS = r"""
 body.docked .ticker:not([hidden]){display:flex}
 .tk-track{display:flex;gap:0;white-space:nowrap;will-change:transform;animation:tkcrawl var(--tkdur,40s) linear infinite}
 .ticker:hover .tk-track,.ticker.held .tk-track{animation-play-state:paused}
-.tk-item{display:inline-flex;align-items:center;gap:7px;padding:0 16px;font-size:13.5px;color:var(--text);text-decoration:none;border-right:1px solid var(--border)}
+.tk-item{display:inline-flex;align-items:center;gap:7px;padding:0 16px;min-height:38px;font-size:13.5px;color:var(--text);text-decoration:none;border-right:1px solid var(--border)}
 .tk-item b{font-family:var(--f-label);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--mood,var(--accent))}
 .tk-item.bad b{color:var(--bad)}
 @keyframes tkcrawl{to{transform:translateX(-50%)}}
@@ -420,7 +420,7 @@ body.showchat #board,body.showchat .board-open{visibility:hidden}
 .term-bar{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);font:600 12px var(--f-mono);color:var(--muted);letter-spacing:.04em}
 .term-bar b{flex:1;color:var(--accent);font-weight:700}
 .term-dots{display:flex;gap:5px}.term-dots i{width:8px;height:8px;border-radius:50%;background:var(--border)}.term-dots i:first-child{background:var(--bad)}
-.term-bar button{font:inherit;font-size:20px;line-height:1;border:0;background:none;color:var(--text);cursor:pointer;padding:0 4px}
+.term-bar button{font:inherit;font-size:20px;line-height:1;border:0;background:none;color:var(--text);cursor:pointer;padding:0 4px;min-width:36px;min-height:36px;margin:-8px -8px -8px 0}
 .term-body{overflow:auto;padding:8px 12px 12px}
 .term-body .msg{margin:0;animation:none}.term-body .msg .meta{display:none}
 :root[data-glassstyle="edge"] .term,:root[data-glassstyle="breach"] .term{border-radius:0}
@@ -582,7 +582,7 @@ BOARD_JS = r"""
       const n = list.length + apps.length;
       label = n ? `${n} on the board for “${q}” · send to ask Theta` : `Nothing on the board for “${q}” · send to ask Theta`;
     } else {
-      const v = visible(), tasks = v.filter(isTask), rest = v.filter(w => !isTask(w)), imp = tasks.filter(w => w.important).length;
+      const v = visible(), tasks = v.filter(isTask), rest = v.filter(w => !isTask(w)), imp = v.filter(w => w.important).length;
       const showT = moreOpen ? tasks : tasks.slice(0, TASKS_MAX);
       list = showT.map((w, i) => [w, i, i === 0]).concat(rest.map((w, i) => [w, showT.length + i, false]));
       if (tasks.length > showT.length) { const m = el("button", "bchip more", `+${tasks.length - showT.length} more to clear`); m.type = "button"; m.onclick = () => { moreOpen = true; render(); }; extra.push(m); }
@@ -594,7 +594,8 @@ BOARD_JS = r"""
     }
     place(list, extra); title.textContent = label;
     allBtn.hidden = !!q; allBtn.textContent = showAll ? "Only new" : "Show all";
-    const imp = data.widgets.filter(w => w.important).length, n = fresh().length;
+    const on = new Set([...fresh().map(w => w.id), ...(shown || [])]), n = fresh().length; // what the board shows: the title's count
+    const imp = data.widgets.filter(w => w.important && (showAll || on.has(w.id))).length;
     countEl.textContent = imp ? `${imp} important` : n ? `${n} new` : "Widgets"; openBtn.hidden = false;
     clearTimeout(seenTimer);
     if (!q && ST() && ST().docked()) seenTimer = setTimeout(() => { visible().forEach(w => { seen[w.id] = w.sig; }); put("theta:seen", seen); }, 2500);
@@ -691,7 +692,17 @@ BOARD_JS = r"""
     track.style.setProperty("--tkdur", Math.max(18, Math.round(chars / 7)) + "s");
     ticker.hidden = false;
   }
-  ticker.addEventListener("pointerdown", e => { if (!e.target.closest("a")) ticker.classList.toggle("held"); });
+  // a moving crawl is hard to hit: the first tap stops it (and opens nothing), then a link opens with a tap;
+  // a tap on no link sets it going again, and so does leaving it alone for 6 s
+  let tkStop = 0, tkSwallow = false;
+  ticker.addEventListener("pointerdown", e => {
+    const held = ticker.classList.contains("held"), link = e.target.closest("a");
+    tkSwallow = !held; clearTimeout(tkStop);
+    if (held && !link) { ticker.classList.remove("held"); return; }
+    ticker.classList.add("held");
+    tkStop = setTimeout(() => { if (document.activeElement !== msg) ticker.classList.remove("held"); }, 6000);
+  });
+  ticker.addEventListener("click", e => { if (tkSwallow) { e.preventDefault(); e.stopPropagation(); tkSwallow = false; } }, true);
   async function load() {
     try {
       const d = await (await fetch("/api/board", {headers: H})).json();

@@ -53,7 +53,8 @@ for f in ("edge", "breach", "hud", "console", "holo"):
 check("a frame is kept in the cookie", h.ui_prefs({"cookie": "theta_ui=redline.dark.grid.holo.black"})[:4] == ("redline", "dark", "grid", "holo"))
 check("an unknown frame falls back", h.ui_prefs({"cookie": "theta_ui=theta.dark.grid.nope.theme"})[3] == "plus")
 check("every frame is in Settings", all(f'data-pref="glassstyle" data-val="{f}"' in sett for f in h.FRAMES))
-check("the hologram tilts with the phone", "liquid|holo" in h._UI_JS and "rotateY(calc(var(--shine-x,0) * 0.6deg))" in h._UI_CSS)
+check("the hologram stays still: no gyro tilt (2026-11-06)", "liquid|holo" not in h._UI_JS and "rotateY(calc(var(--shine-x" not in h._UI_CSS
+      and "holoscan" in h._UI_CSS)
 new = ["redline", "datalog", "breach", "scanner", "amber", "mission", "hologram"]
 check("seven new schemes", all(n in h.THEMES for n in new))
 check("each new scheme in Settings, with Theta in its colors", all(f'data-pref="theme" data-val="{n}"' in sett for n in new))

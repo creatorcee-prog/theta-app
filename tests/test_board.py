@@ -61,6 +61,27 @@ check("terminal: a copy, so the message stays in the chat; taps and typing go to
       and "o.click()" in js and 'o.dispatchEvent(new Event("input"' in js and "tbody.replaceChildren(r)" not in js)
 check("terminal: an old card doesn't pop up on open, and a closed one stays closed", "30 * 60e3" in js and '"theta:termClosed"' in js)
 check("chat rows carry their id", "row.dataset.id = m.id" in h._CHAT_JS)
+a = h.head_assets(); page = h.handle("GET", "/head", {}, K, b"")[2].decode()
+check("the Theta page's script and styles are cached files, not inline", f'/head.js?v={a["v"]}' in page and f'/head.css?v={a["v"]}' in page
+      and "window.THETA_HEADCFG" in page and len(page) < 60000 and "thetaStage" not in page)
+st_, ct_, body_, hd_ = h.handle("GET", "/head.js", {}, {}, b"")
+check("head.js is served for good, and needs no key", st_ == 200 and "immutable" in dict(hd_).get("Cache-Control", "") and "thetaStage" in body_.decode()
+      and "__ORPHEUS__" not in body_.decode() and "/head.js" in h._PUBLIC_PATHS)
+check("a voice message shows in the chat at once, with Theta thinking under it", "thetaChat.pending(text, rid)" in h._HEAD_JS and "pending(text, rid) {" in h._CHAT_JS)
+check("old panels don't come back when the app opens; closed ones stay closed", '(opening ? 2 : 30) * 60e3' in h._DECK_JS and '"theta:panelsGone"' in h._DECK_JS)
+check("a quicker opening", "let greetAt = 600;" in h._STAGE_JS)
+check("Voice and tools closes on a tap elsewhere", 'm.open = false' in h._STAGE_JS)
+check("the ticker: first tap stops it, then links open", "tkSwallow = !held" in js)
+hj = h._HEAD_JS
+check("voice: audio unlocks once, not on every talk tap (iPhone refuses dictation while it starts audio)", "if (unlocked) return; unlocked = true;" in hj)
+check("voice: refused dictation hands over to the backup ear for the rest of the visit", "srBlocked = true; heard = \"\"; setTimeout(recordClip, 60)" in hj
+      and "if (SR && !srBlocked) start(); else { unlock(); hush(); recordClip(); }" in hj)
+check("voice: tapping Theta and the Talk button do the same thing", 'talk.addEventListener("click", listen);' in hj and 'cv.addEventListener("click", listen);' in hj)
+check("voice: a tap on Theta listens, even the first one and even minimized", 'if (e.target.closest("#head-av")) return;' in h._STAGE_JS
+      and "stopImmediatePropagation(); e.preventDefault(); undock()" not in h._STAGE_JS)
+check("the Widgets pill counts what the board's title counts", "imp = v.filter(w => w.important).length" in js and "w.important && (showAll || on.has(w.id))" in js)
+check("panels start under the top strip, Voice and tools leaves the board's corner to the ticker",
+      "body.immersive .deck{position:fixed;top:calc(env(safe-area-inset-top,0px) + 48px);" in h._STAGE_CSS and "body.docked .hud-more{display:none}" in h._STAGE_CSS)
 check("terminal: only real cards, not the copy/share footer every reply has", '.msg-acts:not(.macts)' in js and '"msg-acts macts"' in h._CHAT_JS)
 check("terminal: never copies a reply while it's still typing", 'r.querySelector(".caret")' in js)
 check("open chat covers the board instead of sitting on it", "body.showchat #board,body.showchat .board-open{visibility:hidden}" in h.BOARD_CSS)
@@ -112,7 +133,7 @@ check("the header counts what's left to clear", "to clear" in js and "just the w
 css = h._UI_CSS
 check("Hologram: faint scan lines over its cards, still with reduced motion", "repeating-linear-gradient(0deg,color-mix(in srgb,var(--text) 5%,transparent) 0 1px,transparent 1px 3px)" in css
       and ':root[data-glassstyle="holo"] .card::before{animation:none}' in css)
-check("Hologram: the gyro tilts it 85% less (4deg -> 0.6deg, 3deg -> 0.45deg)", "* 0.6deg" in css and "* -0.45deg" in css and "* 4deg" not in css)
+check("Hologram: no gyro tilt at all now (it was 85% less, then removed)", "* 0.6deg" not in css and "* -0.45deg" not in css and "* 4deg" not in css)
 print("goal done")
 
 # ---- the ticker, Theta hidden under the board, new schemes and frame, pictures as Theta (2026-11-04, later)
@@ -122,7 +143,7 @@ check("a ticker across the top while Theta is minimized", 'id="ticker"' in page 
       and "@keyframes tkcrawl" in css)
 check("the ticker: Theta's last reply first, then weather, what's next, breaking, headlines, releases", all(k in js for k in
       ('k: "Theta", t: lastReply', 'k: "Weather"', "W.calendar.eyebrow", 'k: "Breaking"', "W.news && W.news.items", "W.releases")))
-check("it loops without a gap and pauses on a tap", "track.replaceChildren(...make(), ...make())" in js and 'classList.toggle("held")' in js)
+check("it loops without a gap and pauses on a tap", "track.replaceChildren(...make(), ...make())" in js and 'ticker.classList.add("held")' in js)
 check("reduced motion: the ticker holds still", "@media (prefers-reduced-motion:reduce){.tk-track{animation:none}" in css)
 check("minimized: Tap to talk, the caption and Talk are hidden outright (not just faded)",
       "body.docked #head-state,body.docked #head-said{visibility:hidden}" in css and "body.docked .hud .talk" in css)
