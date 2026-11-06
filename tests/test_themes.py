@@ -79,4 +79,15 @@ check("Theta lights the room from where it is, and the room falls off to black",
 check("the Theta frames draw every card from Theta's dots, follow its state and voice, and stay readable", "const KINDS = {grain: \"print\"" in h._UI_JS
       and "TH.state()" in h._UI_JS and ".dotframe{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:8;mix-blend-mode:screen}" in h._UI_CSS)
 check("...and step back with reduced motion", "if (!KINDS[v] || still()) { stop(); return; }" in h._UI_JS)
+# dot moments: Theta's dots carry what happens
+check("your message flies into Theta as dots, its reply and cards form from them, a tapped option goes back as a burst",
+      "thetaDots.absorb(msg, 70)" in h._CHAT_JS and 'row.classList.add("dotin")' in h._CHAT_JS and "thetaDots.emitTo(term, 120)" in h.BOARD_JS
+      and '".msg-acts .btn,.quizcard button' in h._UI_JS and "thetaDots.absorb(saidEl, 50)" in h._HEAD_JS)
+check("while Theta works: a stream of dots instead of words (the words stay for screen readers)", "thetaDots.stream(wBox)" in h._CHAT_JS
+      and ".working .wdots.stream:not([hidden]) ~ #chat-working-text{position:absolute;width:1px" in h._UI_CSS)
+check("swipe a widget away: it crumbles into dots and stays gone until it changes", "thetaDots.crumble(c)" in h.BOARD_JS and 'swiped[w.id] !== w.sig' in h.BOARD_JS)
+check("progress as dots: the card rings, the day ring and the focus timer (one dot a minute)", 'stroke-dasharray="0 ' in h.ring_svg(.5)
+      and ".dayring .dr-left,.dayring .dr-done{stroke-linecap:round;stroke-dasharray:0 9}" in h._UI_CSS and "one dot a minute" in h._DECK_JS)
+check("the star background is Theta's dots: depth, its mood's tint, and alive with it", "window.thetaStars" in h._UI_JS and 'state === "speaking" ? starLv * near' in h._UI_JS)
+check("only Theta on: the status line doesn't say Mistral passed it on", 'C.lead !== "theta" ? "Mistral passed this to' in h._CHAT_JS)
 print("done")

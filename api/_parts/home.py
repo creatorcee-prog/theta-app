@@ -343,7 +343,7 @@ def chat_page(headers, query, head=False):
         '<div class="msgs" id="msgs" role="log" aria-live="polite"></div>'
         '<form class="composer" id="chat-form"><ul id="chat-menu" role="listbox" hidden></ul>'
         '<div class="working" id="chat-working" role="status" aria-live="polite" hidden><div class="trail" id="chat-working-done"></div>'
-        '<div class="wline"><span id="chat-working-av"></span><span class="wdots" aria-hidden="true"><i></i><i></i><i></i></span>'
+        '<div class="wline"><span id="chat-working-av"></span><span class="wdots stream" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>'
         '<span id="chat-working-text"></span><span class="elapsed" id="chat-working-elapsed" aria-hidden="true"></span></div></div>'
         '<div class="attach" id="chat-attach" hidden></div>'
         f'<div class="box"><label class="btn ghost pick" aria-label="Attach an image">{ui_icon("photo")}'

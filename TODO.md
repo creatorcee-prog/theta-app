@@ -882,6 +882,13 @@ the hub must work without.
 
 ## Ideas (not built yet)
 
+### More places for Theta's dots (saved 2026-11-06; 1-5 are built: cards, messages, the working stream, swipe-to-dismiss, dotted progress rings)
+- [ ] The ticker as a dot-matrix display, like a stadium sign.
+- [ ] A notification arrives as a small burst of dots at the top that forms the banner.
+- [ ] Moving between pages: the old page dissolves into dots that re-form as the new one.
+- [ ] Loading and empty states: Theta's dots orbit the empty space; "All clear" is a calm settled grid.
+- [ ] The type bar: a faint line of dots gathers under it as you type, brighter the more you write.
+
 - [ ] **From Hermes Agent** (Nous Research's open-source agent, looked at
       2026-10-29: https://hermes-agent.nousresearch.com/docs). Their
       execution side (terminals, code sandboxes, subagents) doesn't fit a

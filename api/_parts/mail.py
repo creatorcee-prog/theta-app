@@ -794,7 +794,7 @@ def settings_page(headers):
         '<div><h3>Background</h3><p class="muted small">What sits behind everything. Separate from the color scheme, so any scheme works with any background. Saved on this device.</p>'
         '<div class="seg" role="group" aria-label="Background"><button type="button" data-pref="bg" data-val="theme">Theme</button>'
         '<button type="button" data-pref="bg" data-val="shards">Shards</button>'
-        '<button type="button" data-pref="bg" data-val="stars">Stars</button>'
+        '<button type="button" data-pref="bg" data-val="stars" title="A sky of Theta\'s own dots, tinted by its mood, moving with it">Stars</button>'
         '<button type="button" data-pref="bg" data-val="black">Black</button>'
         '<button type="button" data-pref="bg" data-val="gemini">Gemini</button>'
         '<button type="button" data-pref="bg" data-val="spotlight">Spotlight</button>'
