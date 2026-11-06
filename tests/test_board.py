@@ -61,6 +61,16 @@ check("terminal: a copy, so the message stays in the chat; taps and typing go to
       and "o.click()" in js and 'o.dispatchEvent(new Event("input"' in js and "tbody.replaceChildren(r)" not in js)
 check("terminal: an old card doesn't pop up on open, and a closed one stays closed", "30 * 60e3" in js and '"theta:termClosed"' in js)
 check("chat rows carry their id", "row.dataset.id = m.id" in h._CHAT_JS)
+hj = h._HEAD_JS
+check("voice: audio unlocks once, not on every talk tap (iPhone refuses dictation while it starts audio)", "if (unlocked) return; unlocked = true;" in hj)
+check("voice: refused dictation hands over to the backup ear for the rest of the visit", "srBlocked = true; heard = \"\"; setTimeout(recordClip, 60)" in hj
+      and "if (SR && !srBlocked) start(); else { unlock(); hush(); recordClip(); }" in hj)
+check("voice: tapping Theta and the Talk button do the same thing", 'talk.addEventListener("click", listen);' in hj and 'cv.addEventListener("click", listen);' in hj)
+check("voice: a tap on Theta listens, even the first one and even minimized", 'if (e.target.closest("#head-av")) return;' in h._STAGE_JS
+      and "stopImmediatePropagation(); e.preventDefault(); undock()" not in h._STAGE_JS)
+check("the Widgets pill counts what the board's title counts", "imp = v.filter(w => w.important).length" in js and "w.important && (showAll || on.has(w.id))" in js)
+check("panels start under the top strip, Voice and tools leaves the board's corner to the ticker",
+      "body.immersive .deck{position:fixed;top:calc(env(safe-area-inset-top,0px) + 48px);" in h._STAGE_CSS and "body.docked .hud-more{display:none}" in h._STAGE_CSS)
 check("terminal: only real cards, not the copy/share footer every reply has", '.msg-acts:not(.macts)' in js and '"msg-acts macts"' in h._CHAT_JS)
 check("terminal: never copies a reply while it's still typing", 'r.querySelector(".caret")' in js)
 check("open chat covers the board instead of sitting on it", "body.showchat #board,body.showchat .board-open{visibility:hidden}" in h.BOARD_CSS)

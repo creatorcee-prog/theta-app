@@ -966,7 +966,9 @@ _HEAD_JS = r"""
   if (store("theta:speak") === "off") voiceOn.checked = false;
   function hush() { if (synth) synth.cancel(); player.pause(); }
   voiceOn.addEventListener("change", () => { store("theta:speak", voiceOn.checked ? "on" : "off"); if (!voiceOn.checked) hush(); });
-  function unlock() { // iPhone plays sound only from a tap: start silent sound inside the tap
+  let unlocked = false;
+  function unlock() { // iPhone plays sound only from a tap: start silent sound inside the tap (once is enough)
+    if (unlocked) return; unlocked = true;
     if (synth) { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; synth.speak(u); }
     player.src = SILENT; player.play().catch(() => {});
   }
@@ -1121,25 +1123,41 @@ _HEAD_JS = r"""
   if (form) form.addEventListener("submit", e => { e.preventDefault(); unlock(); const t = input.value; input.value = ""; send(t); });
 
   // ---- listening: Safari's own dictation
+  // When Safari's dictation is refused (it happens on iPhone after Theta has spoken: "not-allowed"), the backup ear
+  // takes over for the rest of the visit: it records the clip and Whisper hears it on the hub.
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let rec = null, heard = "";
-  if (!SR) { talk.hidden = true; note.textContent = "Voice input isn't available in this browser; type to Theta below."; }
+  let rec = null, heard = "", srOk = false;
   function stop() { if (rec) rec.stop(); }
+  function listen() { // one tap: talk, or send what you've said
+    if (state === "speaking") hush();
+    if (busy) return;
+    if (clip) { clip.stop(); return; }
+    if (rec) { stop(); return; }
+    if (SR && !srBlocked) start(); else { unlock(); hush(); recordClip(); }
+  }
   function start() {
     if (busy) return;
     unlock(); hush();
     rec = new SR(); rec.lang = "en-US"; rec.interimResults = true; rec.continuous = false; heard = "";
     rec.onresult = e => { heard = [...e.results].map(r => r[0].transcript).join(" "); saidEl.textContent = heard; };
+    rec.onstart = () => { srOk = true; };
     rec.onerror = e => {
-      if (glassesOn() && /not-allowed|service-not-allowed|audio-capture/.test(e.error)) { srBlocked = true; heard = ""; setTimeout(recordClip, 60); return; }
+      // refused after it has worked (or with Glasses on): the backup ear, now and for the rest of the visit
+      if (/not-allowed|service-not-allowed|audio-capture/.test(e.error) && (srOk || glassesOn() || sessionStorage.getItem("theta:srWorked"))) {
+        srBlocked = true; heard = ""; setTimeout(recordClip, 60); return;
+      }
       note.textContent = e.error === "not-allowed" ? "Allow the microphone (and Siri/dictation) for this app in Settings." : "Didn't catch that (" + e.error + ").";
     };
-    rec.onend = () => { talk.setAttribute("aria-pressed", "false"); talk.textContent = "Talk"; rec = null; if (heard.trim()) send(heard); else setState("idle"); };
+    rec.onend = () => {
+      talk.setAttribute("aria-pressed", "false"); talk.textContent = "Talk"; rec = null;
+      if (srOk) try { sessionStorage.setItem("theta:srWorked", "1"); } catch (e) {}
+      if (heard.trim()) send(heard); else if (!srBlocked) setState("idle");
+    };
     talk.setAttribute("aria-pressed", "true"); talk.textContent = "Done"; note.textContent = ""; setState("listening");
     try { rec.start(); } catch (e) { rec.onend(); }
   }
-  talk.addEventListener("click", () => rec ? stop() : start());
-  cv.addEventListener("click", () => { if (SR && !busy) (rec ? stop() : start()); });
+  talk.addEventListener("click", listen);
+  cv.addEventListener("click", listen);
 
   // ---- Glasses mode: to the iPhone, a tap on Bluetooth glasses (or earbuds) is
   // a headphone play/pause button. A near-silent loop keeps this page the
@@ -1187,10 +1205,7 @@ _HEAD_JS = r"""
   }
   function tapped() {
     if (state === "speaking") { hush(); setState("idle"); return; } // interrupt Theta
-    if (busy) return;
-    if (clip) { clip.stop(); return; }
-    if (rec) { stop(); return; }
-    if (SR && !srBlocked) start(); else recordClip();
+    listen();
   }
   const ACTIONS = ["play", "pause", "nexttrack", "previoustrack", "stop"];
   function glassesMode(on) {
@@ -1364,7 +1379,7 @@ _DECK_CSS = """
 .holo header{display:flex;align-items:center;gap:8px;margin-bottom:6px}
 .holo .ic{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:12px;border:1px solid var(--mood,#4fd3ff);color:var(--mood,#4fd3ff);box-shadow:0 0 8px rgba(79,211,255,.6)}
 .holo h3{margin:0;font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--mood,#4fd3ff);flex:1;font-weight:700}
-.holo .x{background:none;border:0;color:#9fb8c8;font-size:18px;line-height:1;cursor:pointer;padding:2px 4px}
+.holo .x{background:none;border:0;color:#9fb8c8;font-size:18px;line-height:1;cursor:pointer;padding:2px 4px;min-width:36px;min-height:36px;margin:-8px -8px -8px 0}
 .holo .row{display:flex;gap:8px;font-size:14px;padding:5px 0;border-top:1px solid rgba(79,211,255,.16);align-items:baseline}
 .holo .row b{color:#bff0ff;font-weight:650;white-space:nowrap}.holo .row span{min-width:0;overflow-wrap:anywhere}
 .holo .dim{color:#8fa9b8;font-size:12.5px}
@@ -1474,7 +1489,12 @@ body.immersive #head-av,body.immersive #head-av.big{width:min(76vw,50dvh,420px);
 body.immersive .hud-mid{text-align:center;min-height:2.6em}
 body.immersive .hud .hstate,body.immersive .hud .said,body.immersive .hud .note{text-align:center;white-space:normal}
 body.immersive .caption{text-align:center;font-size:clamp(16px,4.4vw,19px);max-width:min(92vw,560px);color:#e6f2fa}
-body.immersive .deck{position:fixed;top:calc(env(safe-area-inset-top,0px) + 6px);left:0;right:0;z-index:3;padding-inline:max(16px,env(safe-area-inset-left,0px))}
+/* controls showing = the chat is showing: its last line is the caption, so the caption steps aside; the chat ends above the
+   Widgets pill; and Voice and tools belongs to Theta's own view, not the board's (where the ticker has that corner) */
+body.immersive:not(.ui-hidden):not(.docked) .caption{opacity:0;pointer-events:none}
+body.immersive:not(.docked) .msgs{bottom:calc(var(--tabh,64px) + 120px)}
+body.docked .hud-more{display:none}
+body.immersive .deck{position:fixed;top:calc(env(safe-area-inset-top,0px) + 48px);left:0;right:0;z-index:3;padding-inline:max(16px,env(safe-area-inset-left,0px))}
 body.immersive .msgs{position:fixed;left:0;right:0;bottom:calc(var(--tabh,64px) + 78px);max-height:44dvh;z-index:4;
  background:color-mix(in srgb,var(--bg) 90%,transparent);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);
  border-top:1px solid var(--border);border-radius:18px 18px 0 0}
@@ -1579,7 +1599,7 @@ _STAGE_JS = r"""
     if (youMax === null) youMax = top; else if (top > youMax) { youMax = top; talked = true; }
   });
   document.addEventListener("theta:panels", e => { if (e.detail.count && talked) dock("panels"); else if (!e.detail.count && dockBy === "panels") undock(); });
-  cv.addEventListener("click", e => { if (docked) { e.stopImmediatePropagation(); e.preventDefault(); undock(); } }, true);
+  cv.addEventListener("click", () => { if (docked) undock(); }, true); // one tap: Theta comes back AND listens
   // Theta opening a page (the open tool): once it has said its line, it flies to the corner and the page comes up
   const navSeen = new Set(); let navFirst = true;
   document.addEventListener("theta:thread", e => {
@@ -1672,7 +1692,7 @@ _STAGE_JS = r"""
     requestAnimationFrame(frame);
     setTimeout(() => word && word.classList.remove("show"), 4600);
   }
-  let greeting = "", pending = false, swallow = false;
+  let greeting = "", pending = false;
   const hello = fetch("/api/head/hello?away=" + Math.round(fromCorner ? 0 : away), {headers: H}).then(r => r.json()).catch(() => null);
   setTimeout(async () => {
     const d = await hello;
@@ -1682,10 +1702,10 @@ _STAGE_JS = r"""
   }, greetAt);
   document.addEventListener("pointerdown", e => {
     if (!pending) return;
-    pending = false; hint.hidden = true; swallow = !!e.target.closest("#head-av");
-    TH.unlock(); TH.speak(greeting);
+    pending = false; hint.hidden = true; TH.unlock();
+    if (e.target.closest("#head-av")) return; // "tap to talk" means talk: the greeting stays on screen, unspoken
+    TH.speak(greeting);
   }, {capture: true});
-  document.addEventListener("click", e => { if (swallow && e.target.closest("#head-av")) { e.stopPropagation(); e.preventDefault(); } swallow = false; }, true);
 })();
 """
 
