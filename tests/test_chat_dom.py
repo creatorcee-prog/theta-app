@@ -662,7 +662,7 @@ with sync_playwright() as p:
             return {accent: accent, p3: p3c, media: media,
                     gamut: matchMedia('(color-gamut: p3)').matches}; }""")
         check("SDR: accent still renders as the sRGB hex on a non-P3 display",
-              hdr["accent"] == "rgb(85, 67, 232)")
+              hdr["accent"] == "rgb(%d, %d, %d)" % tuple(int(h.THEMES["theta"]["light"]["accent"][i:i + 2], 16) for i in (1, 3, 5)))
         check("P3 color() parses in the engine", "display-p3" in hdr["p3"])
         check("P3 media rules reach the page", hdr["media"])
         check("headless display reports sRGB, so HDR stays off here",

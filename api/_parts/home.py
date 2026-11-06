@@ -330,6 +330,7 @@ def chat_page(headers, query, head=False):
                   "tier": TIER_LABELS[v["tier"]]} for a, v in AGENTS.items()}
     agents["hub"] = {"name": "Hub", "color": AGENT_LOOKS["hub"][0], "tier": ""}
     data = {"channel": ch, "channelNames": {x["id"]: x["name"] for x in CHANNELS}, "agents": agents,
+            "lead": "theta" if head_on() else "mistral",  # who picks up a message: Theta alone when only Theta is on
             "to": query.get("to", [""])[0], "draft": (query.get("say", [""])[0] or "")[:300],
             "initial": allchat_view(80, ch)}
     body = (

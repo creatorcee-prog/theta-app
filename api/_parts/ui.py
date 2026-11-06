@@ -14,97 +14,107 @@ def _pal(bg, surface, surface2, border, text, muted, accent, accent2, on):
             "muted": muted, "accent": accent, "accent2": accent2, "on": on}
 
 
-THEMES = {
-    "theta": {"label": "Theta", "about": "Indigo and cyan, the house colors", "glow": 0.5,
-              "light": _pal("#f4f5fb", "#ffffff", "#eceefa", "#dfe2f0", "#151833", "#555b7e", "#5543e8", "#0b7f9c", "#ffffff"),
-              "dark": _pal("#0c0e1a", "#151829", "#1d2136", "#2a2f4a", "#e9ebf8", "#a3a8c8", "#958dff", "#3dd6f0", "#0c0e1a")},
-    "midnight": {"label": "Midnight", "about": "Deep royal blue, like a bank app at night", "glow": 0.8,
-                 "light": _pal("#eef3ff", "#ffffff", "#e3ebff", "#d0dcf8", "#0b1b4d", "#46578a", "#1d4ed8", "#6d28d9", "#ffffff"),
-                 "dark": _pal("#071334", "#0e2156", "#142a68", "#233c84", "#eaf0ff", "#a8b9e6", "#7cb4ff", "#c4a1ff", "#071334")},
-    "nebula": {"label": "Nebula", "about": "Purple and pink on charcoal", "glow": 0.9,
-               "light": _pal("#faf6ff", "#ffffff", "#f2eafe", "#e5d8fa", "#1f1430", "#66557f", "#7e22ce", "#be185d", "#ffffff"),
-               "dark": _pal("#12101b", "#1c1928", "#262236", "#352e4b", "#f1ecfb", "#afa2c9", "#b98bff", "#f58cc4", "#12101b")},
-    "aurora": {"label": "Aurora Glass", "about": "Frosted glass over neon light", "glow": 1.6, "glass": True,
-               "light": _pal("#eef0ff", "rgba(255,255,255,.62)", "rgba(255,255,255,.78)", "rgba(255,255,255,.95)",
-                             "#121530", "#474d70", "#6425d0", "#0b7590", "#ffffff"),
-               "dark": _pal("#070818", "rgba(255,255,255,.07)", "rgba(255,255,255,.12)", "rgba(255,255,255,.16)",
-                            "#f3f4ff", "#b9bddc", "#38dcf5", "#ee8cfb", "#070818")},
-    "graphite": {"label": "Graphite", "about": "Charcoal with coral and amber", "glow": 0.35,
-                 "light": _pal("#e8eaee", "#f6f7f9", "#e0e3e8", "#d1d5dc", "#1d2026", "#555b67", "#c52a5f", "#b8470a", "#ffffff"),
-                 "dark": _pal("#23262c", "#2c3037", "#353a42", "#41464f", "#eef0f3", "#aab0ba", "#ff7aa4", "#ffb366", "#23262c")},
-    "lobby": {"label": "Lobby", "about": "Blurple chat-app gray", "glow": 0,
-              "light": _pal("#f2f3f5", "#ffffff", "#ebedef", "#dfe1e5", "#1e1f22", "#565961", "#4752c4", "#1d7f45", "#ffffff"),
-              "dark": _pal("#1e1f22", "#2b2d31", "#313338", "#3c3f45", "#f2f3f5", "#b5bac1", "#9ba3ff", "#57d68d", "#1e1f22")},
-    "forest": {"label": "Forest", "about": "Pine green and goldenrod", "glow": 0.4,
-               "light": _pal("#f2f7f3", "#ffffff", "#e6f0e9", "#d3e3d8", "#10241a", "#47604f", "#15703a", "#8a5a00", "#ffffff"),
-               "dark": _pal("#0b1510", "#122019", "#182a21", "#24392d", "#e6f4ea", "#9dbaa8", "#5ee391", "#f2cc3d", "#0b1510")},
-    "ember": {"label": "Ember", "about": "Campfire orange and rose", "glow": 0.5,
-              "light": _pal("#fff7f1", "#ffffff", "#ffeee2", "#f3d9c6", "#2a1408", "#73513b", "#b53a09", "#b0103a", "#ffffff"),
-              "dark": _pal("#170e0a", "#221510", "#2d1c15", "#3f291f", "#fbeee6", "#c9ab9a", "#ff9d4d", "#ff8199", "#170e0a")},
-    "ocean": {"label": "Ocean", "about": "Teal and sky blue", "glow": 0.5,
-              "light": _pal("#effafb", "#ffffff", "#e0f4f6", "#cbe6ea", "#08262c", "#41626a", "#0b6680", "#1d4ed8", "#ffffff"),
-              "dark": _pal("#061a1f", "#0b252c", "#10313a", "#1a4450", "#e3f7f9", "#94bcc3", "#3ee0c8", "#60c4ff", "#061a1f")},
-    "paper": {"label": "Paper", "about": "Ink on paper, almost no color", "glow": 0,
-              "light": _pal("#f7f6f1", "#fffefa", "#efede5", "#e0ddd1", "#1a1a17", "#5a584f", "#1a1a17", "#9a4405", "#fffefa"),
-              "dark": _pal("#121211", "#1b1b19", "#242421", "#33332f", "#eeede8", "#a9a79e", "#eeede8", "#f5a524", "#121211")},
-    "sakura": {"label": "Sakura", "about": "Cherry blossom pink and violet", "glow": 0.6,
-               "light": _pal("#fff5f8", "#ffffff", "#ffe8ef", "#f8d3df", "#2b1220", "#754e61", "#b0165a", "#6d28d9", "#ffffff"),
-               "dark": _pal("#1a0f15", "#25161e", "#301d28", "#45293a", "#fbeaf1", "#cfa9bb", "#ffa6d3", "#c8b8ff", "#1a0f15")},
-    "terminal": {"label": "Terminal", "about": "Phosphor green, monospace", "glow": 0.25, "mono": True,
-                 "light": _pal("#f4f7f2", "#ffffff", "#e8efe5", "#d2ddcd", "#0f1a0c", "#4a5b44", "#146c34", "#0b5d8f", "#ffffff"),
-                 "dark": _pal("#050805", "#0b100b", "#111a11", "#1f301f", "#c8f7c5", "#86b382", "#3dff8b", "#3fd8f0", "#050805")},
+# ---- Themes, rebuilt (2026-11-06): each is a recipe, not 18 hand-picked colors. A tint hue (how much
+# of it the grounds carry), two accents (hue, chroma), a charm (a quiet texture that is the theme's own)
+# and a sigil (the small mark on its labels). The palettes are made in OKLCH, so the steps between
+# background, surfaces and borders look even in every theme, and each color is fitted until it reads:
+# text 13:1 on the background, muted text 4.8:1 on the darker surface, accents 4.6:1 (light) / 6:1 (dark),
+# and button text 4.5:1 on its accent. tests/test_themes.py holds every theme to that.
+import math as _math
+def oklch_to_srgb(L, C, h):
+    a, b = C * _math.cos(_math.radians(h)), C * _math.sin(_math.radians(h))
+    l_ = L + 0.3963377774 * a + 0.2158037573 * b
+    m_ = L - 0.1055613458 * a - 0.0638541728 * b
+    s_ = L - 0.0894841775 * a - 1.2914855480 * b
+    l, m, s = l_ ** 3, m_ ** 3, s_ ** 3
+    r = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s
+    g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s
+    bl = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
+    return r, g, bl
+def _enc(c):
+    return 12.92 * c if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055
+def hexc(L, C, h):
+    """OKLCH -> sRGB hex, chroma reduced until it fits the gamut."""
+    for _ in range(60):
+        r, g, b = oklch_to_srgb(L, C, h)
+        if all(-0.0005 <= x <= 1.0005 for x in (r, g, b)): break
+        C *= 0.94
+    return "#" + "".join(f"{round(min(1, max(0, _enc(min(1, max(0, x))))) * 255):02x}" for x in (r, g, b))
+def lum(hx):
+    v = [int(hx[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+    v = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in v]
+    return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]
+def contrast(a, b):
+    la, lb = sorted((lum(a), lum(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
 
-    # Six schemes drawn from sci-fi screens (2026-11-04). Dark is their home; the light versions keep the accents.
-    "redline": {"label": "Redline", "about": "Hot red on black, cyan highlights", "glow": 0.45,
-                "light": _pal("#fff4f2", "#ffffff", "#ffe6e2", "#f2c5bf", "#2a0a0a", "#7a4a44", "#c8231a", "#0b7f91", "#ffffff"),
-                "dark": _pal("#0d0507", "#170a0c", "#211012", "#4a1a1c", "#f3e3d9", "#c08a82", "#ff5a4f", "#5ef2ff", "#0d0507")},
-    "datalog": {"label": "Data Log", "about": "Teal readouts on deep blue", "glow": 0.4,
-                "light": _pal("#eefafa", "#ffffff", "#def3f4", "#bfe2e4", "#062026", "#3f6a70", "#087a84", "#0b6f9c", "#ffffff"),
-                "dark": _pal("#06121a", "#0a1c26", "#0f2632", "#1c4a57", "#c9f6f6", "#7fb3b8", "#4fe6ee", "#8ef9ff", "#06121a")},
-    "breach": {"label": "Breach", "about": "Acid yellow-green on black, green when it works", "glow": 0.3,
-               "light": _pal("#f7f9ec", "#ffffff", "#eef3d6", "#dbe4b4", "#1a1f08", "#5a6438", "#5b6e00", "#0e7a4a", "#ffffff"),
-               "dark": _pal("#0b0c0a", "#12140f", "#1a1d14", "#3a4220", "#e6f2b8", "#9aa874", "#d4f05a", "#5ef0a2", "#0b0c0a")},
-    "scanner": {"label": "Scanner", "about": "Warning red with yellow tags", "glow": 0.4,
-                "light": _pal("#fff8ec", "#ffffff", "#fff0d4", "#f3dcb4", "#2a1408", "#73513b", "#c42a1c", "#8a6a00", "#ffffff"),
-                "dark": _pal("#0a0808", "#141010", "#1d1716", "#4a2a22", "#fbefd4", "#c2a68a", "#ff4d3d", "#ffe14d", "#0a0808")},
-    "amber": {"label": "Amber HUD", "about": "Signal orange and amber on gunmetal", "glow": 0.3,
-              "light": _pal("#f3f2ef", "#ffffff", "#e9e7e2", "#d6d3cc", "#1a1814", "#5c5850", "#b45a00", "#8a6200", "#ffffff"),
-              "dark": _pal("#101112", "#181a1c", "#212427", "#33373b", "#e9e6df", "#9da0a3", "#ff9a1f", "#ffc23d", "#101112")},
-    "mission": {"label": "Mission Control", "about": "Gold and blue data on deep night", "glow": 0.25,
-                "light": _pal("#f4f6fa", "#ffffff", "#e8edf5", "#d3dbe8", "#0d1420", "#4a5568", "#a86800", "#1d5fd0", "#ffffff"),
-                "dark": _pal("#07090e", "#0d1118", "#131925", "#222b3b", "#dfe5ef", "#8a94a8", "#f2b544", "#5aa8ff", "#07090e")},
-    "hologram": {"label": "Hologram", "about": "White light in the dark, red for warnings", "glow": 0.2,
-                 "light": _pal("#eef1f3", "#ffffff", "#f2f5f6", "#cfd6da", "#101416", "#4f5a5f", "#d23c1e", "#2a5f7a", "#ffffff"),
-                 "dark": _pal("#0b0d0e", "#14181a", "#1b2023", "#3a4448", "#eef3f5", "#9aa6ab", "#ff5a3c", "#e6f4ff", "#0b0d0e")},
-    # Nine from sci-fi game menus (2026-11-04): ornate lines and glowing frames on deep, rich grounds.
-    "gilded": {"label": "Gilded Void", "about": "Gold lines on smoky dusk", "glow": 0.35,
-               "light": _pal("#f7f3e8", "#fffdf7", "#f0e9d6", "#e2d6b6", "#2a2312", "#6d5f3f", "#8a6a1c", "#6b5a2c", "#ffffff"),
-               "dark": _pal("#15130f", "#1d1a14", "#262219", "#3d3524", "#efe6d0", "#b0a284", "#d9b768", "#f1e2b4", "#15130f")},
-    "lattice": {"label": "Cyan Lattice", "about": "Glowing cyan frames on deep blue", "glow": 0.6,
-                "light": _pal("#eef7fd", "#ffffff", "#e0f0fa", "#c6e2f3", "#06203a", "#3f6684", "#0a7aa8", "#0b5f86", "#ffffff"),
-                "dark": _pal("#06142a", "#0b1d38", "#102748", "#1b3d66", "#dcefff", "#8fb0cf", "#3cc8f4", "#9fe9ff", "#06142a")},
-    "bloom": {"label": "Violet Bloom", "about": "Silver petals on royal violet", "glow": 0.7,
-              "light": _pal("#f6f1ff", "#ffffff", "#ece3ff", "#dccdfb", "#24113f", "#6b5591", "#6d3ad6", "#4b2a9a", "#ffffff"),
-              "dark": _pal("#170a36", "#211048", "#2b1659", "#43277e", "#efe8ff", "#b6a5dd", "#b98cff", "#e4d8ff", "#170a36")},
-    "neonrift": {"label": "Neon Rift", "about": "Magenta and teal circuits", "glow": 0.8,
-                 "light": _pal("#f9f2ff", "#ffffff", "#f1e4fb", "#e2cdf3", "#22103a", "#6a5385", "#a3169f", "#0b8b7a", "#ffffff"),
-                 "dark": _pal("#0c0a1d", "#15112b", "#1d1838", "#34295a", "#f0eaff", "#a99bd0", "#ea4cff", "#33e6cf", "#0c0a1d")},
-    "verdant": {"label": "Verdant Ember", "about": "Amber light over dark jade", "glow": 0.45,
-                "light": _pal("#f3f7f1", "#ffffff", "#e6eee2", "#d1dfcb", "#14241a", "#55684f", "#a8620a", "#7a5410", "#ffffff"),
-                "dark": _pal("#0b1712", "#10201a", "#162a22", "#254236", "#f1ead6", "#a7b09a", "#f2a541", "#ffd58a", "#0b1712")},
-    "lunar": {"label": "Lunar Red", "about": "White ornaments on deep red", "glow": 0.3,
-              "light": _pal("#fbf1ee", "#ffffff", "#f6e1db", "#ecc6bd", "#3a0d0f", "#7a3f39", "#9e1b22", "#c2410c", "#ffffff"),
-              "dark": _pal("#3a0d0f", "#4a1215", "#58171b", "#7a2a2d", "#fbeee8", "#e1b5ab", "#f7e7dc", "#ff9b8a", "#3a0d0f")},
-    "bloodsign": {"label": "Blood Sign", "about": "Red glow on near-black", "glow": 0.45,
-                  "light": _pal("#fdf3f2", "#ffffff", "#f8e3e1", "#efc9c5", "#2a0b0c", "#744440", "#b3141d", "#c2410c", "#ffffff"),
-                  "dark": _pal("#0e0506", "#170a0b", "#210d0f", "#3e1417", "#f4e4e2", "#b88d89", "#e3333d", "#ff7a6e", "#0e0506")},
-    "nightfiligree": {"label": "Night Filigree", "about": "Pale gold on midnight navy", "glow": 0.35,
-                      "light": _pal("#f6f4ee", "#ffffff", "#ecebe2", "#dad7c8", "#141a33", "#575a6e", "#8a6a12", "#3a4a8a", "#ffffff"),
-                      "dark": _pal("#0a0d1c", "#11152a", "#171c36", "#2a3152", "#ece6d6", "#a39f8e", "#cfae5c", "#f0e2b8", "#0a0d1c")},
-    "dusk": {"label": "Nebula Dusk", "about": "Pink nebula, sky-blue light", "glow": 0.9,
-             "light": _pal("#fbf3fb", "#ffffff", "#f3e5f5", "#e6cfe9", "#24143a", "#6a5584", "#b0246f", "#1d6fc2", "#ffffff"),
-             "dark": _pal("#120d2a", "#1a1438", "#221a46", "#3a2f6b", "#f2ecff", "#b1a6d6", "#ff6fb5", "#7fc4ff", "#120d2a")},
+
+def _fit(L, C, h, bg, need, step, lo=0.2, hi=0.97):
+    while lo <= L <= hi:
+        c = hexc(L, C, h)
+        if contrast(c, bg) >= need: return c, L
+        L += step
+    return hexc(min(max(L, lo), hi), C, h), L
+def _build(r):
+    th, tl, td = r["tint"], r.get("tl", .012), r.get("td", .025)
+    out = {}
+    # light
+    bg = hexc(.975, tl, th); s1 = hexc(.995, tl * .4, th); s2 = hexc(.952, tl * 1.2, th); bd = hexc(.9, tl * 1.6, th)
+    tx, _ = _fit(.25, tl * 2.2, th, bg, 13, -.01); mu, _ = _fit(.52, tl * 2, th, s2, 4.8, -.01)
+    ah, ac = r["acc"][:2]; a2h, a2c = r["acc2"][:2]
+    if r.get("ink") == "both": ac_ = tx  # Paper: the accent is the ink itself
+    else: ac_, _ = _fit(.56, ac, ah, bg, 4.6, -.01)
+    a2, _ = _fit(.55, a2c, a2h, bg, 4.6, -.01)
+    on = "#ffffff" if contrast("#ffffff", ac_) >= contrast(bg, ac_) else bg
+    out["light"] = dict(bg=bg, surface=s1, surface2=s2, border=bd, text=tx, muted=mu, accent=ac_, accent2=a2, on=on)
+    # dark
+    Ld = r.get("Ld", .165)
+    bg = hexc(Ld, td, th); s1 = hexc(Ld + .045, td * 1.05, th); s2 = hexc(Ld + .085, td * 1.1, th); bd = hexc(Ld + .16, td * 1.2, th)
+    tx, _ = _fit(.93, td * .5, th, bg, 13, .01, hi=.99); mu, _ = _fit(.72, td * .9, th, s2, 4.8, .01)
+    if r.get("ink"): ac_ = hexc(*r["dark_acc"]) if r.get("dark_acc") else tx
+    else: ac_, _ = _fit(r["acc"][2] if len(r["acc"]) > 2 else .74, ac, ah, bg, 6, .01)
+    a2, _ = _fit(r["acc2"][2] if len(r["acc2"]) > 2 else .78, a2c, a2h, bg, 6, .01)
+    on = bg if contrast(bg, ac_) >= 4.5 else "#ffffff"
+    out["dark"] = dict(bg=bg, surface=s1, surface2=s2, border=bd, text=tx, muted=mu, accent=ac_, accent2=a2, on=on)
+    return out
+
+# The recipes: tint hue (and how much of it the grounds carry), the two accents (hue, chroma[, dark lightness]),
+# a charm (a quiet texture that's the theme's own) and a sigil (the small mark on its labels).
+_RECIPES = {
+ "theta":    dict(label="Theta", about="Indigo and cyan, the house colors", tint=278, td=.03, acc=(280, .19), acc2=(210, .13), glow=.45, charm="orbit", sigil="θ"),
+ "midnight": dict(label="Midnight", about="Royal blue night with a few stars", tint=262, td=.07, Ld=.2, acc=(255, .17), acc2=(300, .13), glow=.55, charm="stars", sigil="✦"),
+ "nebula":   dict(label="Nebula", about="Purple and pink on charcoal dust", tint=300, td=.03, acc=(305, .2), acc2=(350, .15), glow=.6, charm="dust", sigil="✧"),
+ "aurora":   dict(label="Aurora Glass", about="Frosted glass over moving light", tint=280, td=.04, acc=(205, .14), acc2=(320, .16), glow=1.2, glass=True, charm="aurora", sigil="◇"),
+ "graphite": dict(label="Graphite", about="Charcoal with coral and amber, fine grain", tint=255, tl=.004, td=.008, Ld=.22, acc=(12, .17), acc2=(62, .15), glow=.2, charm="grain", sigil="■"),
+ "lobby":    dict(label="Lobby", about="Chat-app gray, blurple and green", tint=265, tl=.006, td=.012, Ld=.21, acc=(276, .17), acc2=(152, .14), glow=0, charm="none", sigil="#"),
+ "forest":   dict(label="Forest", about="Pine green and goldenrod, contour lines", tint=155, td=.03, acc=(150, .15), acc2=(85, .14), glow=.35, charm="topo", sigil="▲"),
+ "ember":    dict(label="Ember", about="Campfire orange and rose, a few sparks", tint=45, td=.03, acc=(50, .17), acc2=(10, .16), glow=.45, charm="embers", sigil="✶"),
+ "ocean":    dict(label="Ocean", about="Teal and sky blue, slow waves", tint=205, td=.035, acc=(185, .12), acc2=(240, .13), glow=.4, charm="waves", sigil="≈"),
+ "paper":    dict(label="Paper", about="Ink on ruled paper, almost no color", tint=90, tl=.012, td=.006, Ld=.19, acc=(90, .0), acc2=(62, .15), ink="both", glow=0, charm="ruled", sigil="¶"),
+ "sakura":   dict(label="Sakura", about="Cherry blossom pink and violet, falling petals", tint=350, td=.03, acc=(355, .17), acc2=(295, .14), glow=.5, charm="petals", sigil="❀"),
+ "terminal": dict(label="Terminal", about="Phosphor green, monospace, scan lines", tint=145, tl=.01, td=.02, Ld=.13, acc=(145, .2), acc2=(205, .12), glow=.2, mono=True, charm="scan", sigil="›"),
+ "redline":  dict(label="Redline", about="Hot red on black, cyan highlights", tint=20, td=.025, Ld=.14, acc=(25, .2), acc2=(200, .13), glow=.35, charm="slash", sigil="▶"),
+ "datalog":  dict(label="Data Log", about="Teal readouts on deep blue", tint=225, td=.04, Ld=.16, acc=(195, .12), acc2=(205, .1), glow=.3, charm="grid", sigil="▣"),
+ "breach":   dict(label="Breach", about="Acid yellow-green on black", tint=115, td=.015, Ld=.14, acc=(118, .19, .88), acc2=(155, .15), glow=.25, charm="scan", sigil="⌁"),
+ "scanner":  dict(label="Scanner", about="Warning red with yellow tags", tint=30, td=.015, Ld=.14, acc=(28, .2), acc2=(95, .17, .9), glow=.3, charm="hazard", sigil="!"),
+ "amber":    dict(label="Amber HUD", about="Signal orange on gunmetal, ruler ticks", tint=240, tl=.006, td=.012, Ld=.18, acc=(58, .17), acc2=(80, .16), glow=.25, charm="ticks", sigil="◢"),
+ "mission":  dict(label="Mission Control", about="Gold and blue data on deep night", tint=255, td=.025, Ld=.15, acc=(78, .14), acc2=(250, .14), glow=.2, charm="grid", sigil="◎"),
+ "hologram": dict(label="Hologram", about="White light in the dark, red for warnings", tint=220, tl=.006, td=.01, Ld=.16, acc=(32, .18), acc2=(230, .04, .93), glow=.15, charm="scan", sigil="◈"),
+ "gilded":   dict(label="Gilded Void", about="Gold lines on smoky dusk", tint=80, td=.015, Ld=.18, acc=(85, .12), acc2=(92, .07), glow=.3, charm="filigree", sigil="❖"),
+ "lattice":  dict(label="Cyan Lattice", about="Glowing cyan lattice on deep blue", tint=250, td=.06, Ld=.2, acc=(225, .13), acc2=(215, .09), glow=.5, charm="lattice", sigil="◇"),
+ "bloom":    dict(label="Violet Bloom", about="Silver petals on royal violet", tint=295, td=.1, Ld=.22, acc=(300, .17), acc2=(300, .06), glow=.55, charm="petals", sigil="✿"),
+ "neonrift": dict(label="Neon Rift", about="Magenta and teal circuits", tint=290, td=.05, Ld=.17, acc=(325, .23), acc2=(180, .14), glow=.6, charm="circuit", sigil="⌬"),
+ "verdant":  dict(label="Verdant Ember", about="Amber light over dark jade", tint=165, td=.035, Ld=.19, acc=(65, .15), acc2=(82, .12), glow=.4, charm="topo", sigil="❦"),
+ "lunar":    dict(label="Lunar Red", about="White ornaments on deep red", tint=22, tl=.02, td=.085, Ld=.22, acc=(22, .19), acc2=(32, .14), ink="dark", dark_acc=(.95, .02, 40), glow=.2, charm="filigree", sigil="☾"),
+ "bloodsign":dict(label="Blood Sign", about="Red glow on near-black", tint=18, td=.03, Ld=.13, acc=(22, .21), acc2=(38, .16), glow=.4, charm="grain", sigil="◆"),
+ "nightfiligree": dict(label="Night Filigree", about="Pale gold on midnight navy", tint=268, td=.045, Ld=.17, acc=(85, .11), acc2=(88, .06), glow=.3, charm="filigree", sigil="✧"),
+ "dusk":     dict(label="Nebula Dusk", about="Pink nebula, sky-blue light", tint=290, td=.07, Ld=.2, acc=(355, .18), acc2=(235, .12), glow=.7, charm="stars", sigil="✦"),
 }
+
+
+THEMES = {k: {"label": r["label"], "about": r["about"], "glow": r.get("glow", 0), "charm": r.get("charm", "none"),
+              "sigil": r.get("sigil", ""), **({"glass": True} if r.get("glass") else {}), **({"mono": True} if r.get("mono") else {}),
+              **_build(r)} for k, r in _RECIPES.items()}
 
 
 # ---- Frames (Settings -> Frame): the shape of every surface, separate from the colors. Glass+ and
@@ -140,9 +150,9 @@ def _frames_css():
         (panel, "border-radius:0;border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);" + cut("14px")
          + ";background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 9%,transparent),transparent 46px),var(--surface);"
          "box-shadow:inset 3px 0 0 var(--accent)"),
-        (".card h2,.win h2,.card h3,.top h1", caps + ";font-weight:760;color:var(--accent)"),
-        (".top h1", "font-size:26px"),
-        (".btn", "border-radius:0;" + cut("8px") + ";" + caps + ";font-size:13.5px"),
+        (".card h2,.win h2,.card h3", caps + ";font-weight:700;color:var(--accent)"),
+        (".top h1", "font-size:28px;font-weight:700;letter-spacing:.01em"),
+        (".btn", "border-radius:0;" + cut("8px") + ";" + caps + ";font-size:14px"),
         (".seg,.seg button,.field,.box,.chip,.sw,.lo,.lrow", "border-radius:0"),
         (".msg.mine .mbody", "border-radius:0;border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);" + cut("10px")),
         (".tabbar", "border-top:1px solid color-mix(in srgb,var(--accent) 55%,transparent)"),
@@ -152,8 +162,8 @@ def _frames_css():
          "background:color-mix(in srgb,var(--surface) 70%,transparent);box-shadow:inset 0 3px 0 var(--accent)"),
         (".card h2,.win h2", "display:inline-block;background:var(--accent);color:var(--on);padding:2px 10px;font-size:15px;"
          + caps + ";" + head + ";font-weight:700"),
-        (".card h3,.eyebrow,.small,.muted.small", label), ("code", mono),
-        (".top h1", caps + ";" + head + ";font-size:24px;color:var(--accent)"),
+        (".card h3,.eyebrow", label), ("code,.kpi .v,.big", mono),
+        (".top h1", head + ";font-size:26px;letter-spacing:.01em"),
         (".btn", "border-radius:0;" + caps + ";" + head + ";font-size:13px"),
         (".seg,.seg button,.field,.box,.chip,.sw,.lo,.lrow,.msg.mine .mbody", "border-radius:0"),
         (".msg.mine .mbody", "border:1px solid color-mix(in srgb,var(--accent) 50%,transparent)"),
@@ -161,7 +171,7 @@ def _frames_css():
     ]), F("hud", [
         (panel, "border-radius:4px;border:1px solid color-mix(in srgb,var(--text) 10%,transparent);background:"
          + _brackets("var(--accent)") + ",linear-gradient(180deg,color-mix(in srgb,var(--text) 4%,transparent),transparent),var(--surface)"),
-        (".card h2,.win h2", caps + ";font-size:16px;font-weight:760"),
+        (".card h2,.win h2", caps + ";font-size:16px;font-weight:700"),
         (".card h2::before,.win h2::before", 'content:"";display:inline-block;width:0;height:0;margin-right:8px;vertical-align:1px;'
          "border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:10px solid var(--accent)"),
         (".btn", "border-radius:3px;" + caps + ";font-size:13px;box-shadow:inset 0 -2px 0 rgba(0,0,0,.25)"),
@@ -169,20 +179,21 @@ def _frames_css():
         (".msg.mine .mbody", "border-radius:4px;background:" + _brackets("var(--accent)", "10px", "2px") + ",var(--surface)"),
     ]), F("console", [
         (panel, "border-radius:2px;border:1px solid var(--border);box-shadow:none;background:var(--surface)"),
-        (".card h2,.win h2,.card h3", caps + ";" + head + ";font-size:12.5px;font-weight:700;color:var(--muted)"),
+        (".card h2,.win h2,.card h3", caps + ";" + head + ";font-size:13px;font-weight:700;color:var(--muted)"),
         (".top h1", head + ";font-size:22px;letter-spacing:.02em"),
         (".eyebrow,.small,.chip", label), ("code", mono),
         (".btn,.seg,.seg button,.field,.box,.chip,.sw,.lo,.lrow,.msg.mine .mbody", "border-radius:2px"),
-        (".btn", caps + ";" + head + ";font-size:12.5px"),
+        (".btn", caps + ";" + head + ";font-size:13px"),
         ("body::before", "background:linear-gradient(color-mix(in srgb,var(--text) 5%,transparent) 1px,transparent 1px) 0 0/100% 32px,"
-         "linear-gradient(90deg,color-mix(in srgb,var(--text) 5%,transparent) 1px,transparent 1px) 0 0/32px 100%,var(--glowbg)"),
+         "linear-gradient(90deg,color-mix(in srgb,var(--text) 5%,transparent) 1px,transparent 1px) 0 0/32px 100%,var(--glowbg),var(--bgfall,none)"),
     ]), F("holo", [
-        (panel, "border-radius:6px;border:1px solid color-mix(in srgb,var(--text) 30%,transparent);background:"
-         + _brackets("color-mix(in srgb,var(--text) 92%,transparent)", "14px", "2px")
-         + ",linear-gradient(160deg,color-mix(in srgb,var(--text) 11%,transparent),color-mix(in srgb,var(--text) 2%,transparent) 60%);"
+        (panel, "border-radius:8px;border:1px solid color-mix(in srgb,var(--text) 24%,transparent);background:"
+         "linear-gradient(90deg,transparent,color-mix(in srgb,var(--text) 70%,transparent) 50%,transparent) top/100% 1px no-repeat"
+         ",linear-gradient(160deg,color-mix(in srgb,var(--text) 11%,transparent),color-mix(in srgb,var(--text) 2%,transparent) 60%);"
          "-webkit-backdrop-filter:blur(10px) saturate(130%);backdrop-filter:blur(10px) saturate(130%);"
          "box-shadow:0 0 22px color-mix(in srgb,var(--text) 10%,transparent),inset 0 0 18px color-mix(in srgb,var(--text) 6%,transparent)"),  # no gyro tilt (2026-11-06)
-        (".card h2,.win h2,.top h1", "text-shadow:0 0 12px color-mix(in srgb,var(--text) 45%,transparent);" + caps),
+        (".card h2,.win h2", "text-shadow:0 0 12px color-mix(in srgb,var(--text) 45%,transparent);" + caps),
+        (".top h1", "text-shadow:0 0 18px color-mix(in srgb,var(--text) 35%,transparent);font-weight:600;letter-spacing:.01em"),
         # faint scan lines, like a projected image (2026-11-04)
         (".card::before,.win::before,.kpi::before", 'content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;'
          "background:repeating-linear-gradient(0deg,color-mix(in srgb,var(--text) 5%,transparent) 0 1px,transparent 1px 3px);"
@@ -276,22 +287,48 @@ _STATE_COLORS = {"light": {"good": "#15803d", "warn": "#b45309", "bad": "#c81e1e
                  "dark": {"good": "#4ade80", "warn": "#fbbf24", "bad": "#f87171"}}
 
 
+# ---- Light, not bloom (2026-11-06). Every glow is drawn the way light falls off: a small hot core that runs
+# toward white, a steep drop, then a long faint tail that reaches nothing. In the dark the lights add onto the
+# page (screen), and the page itself falls from the theme's color to true black away from the light, so
+# nothing fades into "a darker version of the same color".
+_FALL = (0, .025, .06, .11, .18, .28, .42, .6, .8, 1)
+
+
+def _light(shape, at, color, alpha, hot=.4, core=.07):
+    """A radial light: `shape` (e.g. "900px 700px" or "60% 45%") centered `at`, in `color`, `alpha` at the center.
+    Falloff 1/(1+(d/core)^2), windowed to reach 0 at the edge; the core whitens by up to `hot`."""
+    stops = []
+    for d in _FALL:
+        f = (1 / (1 + (d / core) ** 2)) * (1 - d) ** 2
+        a = round(alpha * f, 4)
+        w = round(hot * 100 * f * f)
+        c = f"color-mix(in oklab,{color},white {w}%)" if w else color
+        stops.append(f"color-mix(in srgb,{c} {round(a * 100, 2)}%,transparent) {round(d * 100)}%")
+    return f"radial-gradient({shape} at {at},{','.join(stops)})"
+
+
 def _theme_vars(t, mode):
     p, glow = t[mode], t.get("glow", 0)
     v = {f"--{k}": val for k, val in p.items()}
     v.update({f"--{k}": val for k, val in _STATE_COLORS[mode].items()})
     v["--shadow"] = ("0 1px 2px rgba(16,24,40,.05),0 6px 18px rgba(16,24,40,.06)" if mode == "light"
                      else "0 1px 2px rgba(0,0,0,.35),0 8px 24px rgba(0,0,0,.25)")
-    if glow:
-        a1, a2 = round(16 * glow), round(13 * glow)
-        layers = [f"radial-gradient(1000px 560px at -5% -10%,color-mix(in srgb,var(--accent) {a1}%,transparent),transparent 70%)",
-                  f"radial-gradient(900px 560px at 105% 0%,color-mix(in srgb,var(--accent2) {a2}%,transparent),transparent 70%)"]
+    if glow:  # a key light in the theme's accent from the top left, a weaker fill in its second accent from the right
+        k = .5 if mode == "dark" else .3
+        layers = [_light("1100px 900px", "-8% -14%", "var(--accent)", min(.9, k * glow)),
+                  _light("900px 800px", "108% 4%", "var(--accent2)", min(.7, k * .7 * glow), hot=.25)]
         if t.get("glass"):
-            layers += [f"radial-gradient(800px 600px at 70% 105%,color-mix(in srgb,#ff7a3d {round(14 * glow)}%,transparent),transparent 70%)",
-                       f"radial-gradient(700px 500px at 10% 90%,color-mix(in srgb,#22c55e {round(8 * glow)}%,transparent),transparent 70%)"]
+            layers += [_light("900px 800px", "72% 108%", "#ff7a3d", min(.6, k * .8 * glow), hot=.3),
+                       _light("800px 700px", "8% 96%", "#22c55e", min(.5, k * .5 * glow), hot=.2)]
         v["--glowbg"] = ",".join(layers)
     else:
         v["--glowbg"] = "none"
+    # a surface lit from above: a touch brighter where the light lands, shading toward black underneath
+    v["--lit"] = ("linear-gradient(180deg,color-mix(in srgb,white 5%,transparent),transparent 38%,color-mix(in srgb,#000 24%,transparent))"
+                  if mode == "dark" else "linear-gradient(180deg,color-mix(in srgb,white 55%,transparent),transparent 42%,color-mix(in srgb,#000 3%,transparent))")
+    # in the dark, the page falls off to black away from the light (not to a darker shade of its own color)
+    v["--bgfall"] = ("radial-gradient(140% 95% at 22% -12%,transparent 0%,color-mix(in srgb,#000 38%,transparent) 48%,"
+                     "color-mix(in srgb,#000 78%,transparent) 78%,#000 100%)" if mode == "dark" else "none")
     return ";".join(f"{k}:{val}" for k, val in v.items()) + f";color-scheme:{mode}"
 
 
@@ -321,11 +358,70 @@ def _p3(hexcolor, alpha=None, push=1.35):
     return "color(display-p3 %.4f %.4f %.4f / %s)" % (enc[0], enc[1], enc[2], alpha)
 
 
+# Each theme's charm: one quiet texture behind everything, drawn in its own colors at a few percent, so it
+# reads as character, never as noise. Shown with the theme's own background (not over a picture or Spotlight).
+def _mix(c, pct):
+    return f"color-mix(in srgb,{c} {pct}%,transparent)"
+
+
+_DOT = "radial-gradient({w} {w} at {x} {y},{c},transparent)"
+CHARMS = {
+    "none": "none",
+    # Theta: faint orbits around the top-right corner, where Theta sits when minimized
+    "orbit": f"repeating-radial-gradient(circle at 104% -6%,transparent 0 58px,{_mix('var(--accent)', 9)} 58px 59px,transparent 59px 118px)",
+    "stars": ",".join(_DOT.format(w=w, x=x, y=y, c=_mix("var(--text)", a)) + " 0 0/380px 380px" for w, x, y, a in
+                      (("1.5px", "8%", "12%", 55), ("1px", "23%", "64%", 40), ("2px", "41%", "28%", 35), ("1px", "57%", "83%", 45),
+                       ("1.5px", "72%", "16%", 50), ("1px", "88%", "52%", 40), ("1px", "34%", "92%", 30), ("1.5px", "94%", "88%", 35))),
+    "dust": f"radial-gradient(40vmax 30vmax at 85% 15%,{_mix('var(--accent)', 10)},transparent 70%),"
+            f"radial-gradient(35vmax 25vmax at 10% 80%,{_mix('var(--accent2)', 8)},transparent 70%)",
+    "aurora": "none",  # the glow is its charm
+    "grain": "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E"
+             "%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .5 "
+             "0 0 0 0 .5 0 0 0 0 .5 0 0 0 .06 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
+    "topo": f"repeating-radial-gradient(ellipse 70% 45% at 78% 22%,transparent 0 34px,{_mix('var(--accent)', 7)} 34px 35px),"
+            f"repeating-radial-gradient(ellipse 50% 35% at 12% 88%,transparent 0 30px,{_mix('var(--accent)', 5)} 30px 31px)",
+    "embers": ",".join(_DOT.format(w=w, x=x, y=y, c=_mix(c, a)) + " 0 0/300px 300px" for w, x, y, c, a in
+                       (("2px", "14%", "86%", "var(--accent)", 60), ("1.5px", "31%", "70%", "var(--accent2)", 50), ("2.5px", "63%", "92%", "var(--accent)", 45),
+                        ("1.5px", "79%", "74%", "var(--accent)", 55), ("1px", "48%", "58%", "var(--accent2)", 40))),
+    "waves": f"radial-gradient(ellipse 60px 16px at 50% 100%,transparent 72%,{_mix('var(--accent)', 9)} 73% 78%,transparent 79%) 0 0/120px 28px",
+    "ruled": f"repeating-linear-gradient(180deg,transparent 0 31px,{_mix('var(--text)', 6)} 31px 32px)",
+    "petals": ",".join(f"radial-gradient(ellipse {a} {b} at {x} {y},{_mix(c, o)},transparent) 0 0/340px 340px" for a, b, x, y, c, o in
+                       (("6px", "3.5px", "12%", "20%", "var(--accent)", 32), ("4px", "2.5px", "38%", "66%", "var(--accent2)", 28),
+                        ("5px", "3px", "67%", "34%", "var(--accent)", 26), ("4px", "2.5px", "86%", "80%", "var(--accent)", 30))),
+    "scan": f"repeating-linear-gradient(180deg,{_mix('var(--text)', 3)} 0 1px,transparent 1px 3px)",
+    "slash": f"repeating-linear-gradient(-45deg,{_mix('var(--accent)', 16)} 0 2px,transparent 2px 9px) right top/150px 44px no-repeat",
+    "grid": f"linear-gradient({_mix('var(--accent)', 5)} 1px,transparent 1px) 0 0/44px 44px,"
+            f"linear-gradient(90deg,{_mix('var(--accent)', 5)} 1px,transparent 1px) 0 0/44px 44px",
+    "hazard": f"repeating-linear-gradient(-45deg,{_mix('var(--accent2)', 55)} 0 9px,transparent 9px 18px) left top/100% 4px no-repeat",
+    "ticks": f"repeating-linear-gradient(180deg,{_mix('var(--accent)', 30)} 0 1px,transparent 1px 12px) left top/7px 100% no-repeat,"
+             f"repeating-linear-gradient(180deg,{_mix('var(--accent)', 45)} 0 1px,transparent 1px 60px) left top/14px 100% no-repeat",
+    "filigree": "none",  # a fine double line around the screen (below)
+    "lattice": f"repeating-linear-gradient(45deg,{_mix('var(--accent)', 5)} 0 1px,transparent 1px 34px),"
+               f"repeating-linear-gradient(-45deg,{_mix('var(--accent)', 5)} 0 1px,transparent 1px 34px)",
+    "circuit": f"radial-gradient(circle,{_mix('var(--accent2)', 22)} 1.5px,transparent 2px) 0 0/48px 48px,"
+               f"linear-gradient({_mix('var(--accent)', 5)} 1px,transparent 1px) 0 0/48px 48px,"
+               f"linear-gradient(90deg,{_mix('var(--accent)', 5)} 1px,transparent 1px) 0 0/48px 48px",
+}
+def _charm_base():
+    fil = ",".join(f':root[data-theme="{k}"][data-bg="theme"]::after' for k, t in THEMES.items() if t.get("charm") == "filigree")
+    return (':root[data-bg="theme"]::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:var(--charm,none)}'
+            # filigree: a fine double line around the screen, like an engraved plate
+            + fil + "{inset:max(8px,env(safe-area-inset-top,0px)) 8px max(8px,env(safe-area-inset-bottom,0px));border:1px solid "
+            + _mix("var(--accent)", 30) + ";outline:1px solid " + _mix("var(--accent)", 14) + ";outline-offset:3px;border-radius:4px}"
+            # the sigil: each theme's small mark before its labels
+            + '.eyebrow::before,.w .ey::before{content:var(--sigil,"");color:var(--accent);margin-right:.45em;font-weight:400;letter-spacing:0}'
+            + "@media (prefers-reduced-transparency:reduce){:root::after{display:none}}")
+
+
+def _charm_vars(t):
+    return f"--charm:{CHARMS.get(t.get('charm', 'none'), 'none')}" + (f';--sigil:"{t["sigil"]}"' if t.get("sigil") else "")
+
+
 def theme_css():
     out = []
     for name, t in THEMES.items():
         sel = f':root[data-theme="{name}"]'
-        out.append(f"{sel}{{{_theme_vars(t, 'light')}}}")
+        out.append(f"{sel}{{{_theme_vars(t, 'light')};{_charm_vars(t)}}}")
         out.append(f'{sel}[data-mode="dark"]{{{_theme_vars(t, "dark")}}}')
         out.append(f'@media (prefers-color-scheme:dark){{{sel}:not([data-mode="light"]){{{_theme_vars(t, "dark")}}}}}')
         # HDR: Display P3 accents on P3 displays; the SDR rules above are untouched.
@@ -333,6 +429,7 @@ def theme_css():
         _dk = f'--accent:{_p3(t["dark"]["accent"])};--accent2:{_p3(t["dark"]["accent2"])}'
         out.append(f'@media (color-gamut:p3){{{sel}{{{_li}}}{sel}[data-mode="dark"]{{{_dk}}}}}')
         out.append(f'@media (color-gamut:p3) and (prefers-color-scheme:dark){{{sel}:not([data-mode="light"]){{{_dk}}}}}')
+    out.append(_charm_base())
     return "\n".join(out)
 
 
@@ -372,24 +469,24 @@ def _hdr_css():
 
 _BASE_CSS = r'''
 *{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%;--r:18px;--r-sm:12px;--pad:18px;--gap:14px;--glass-blur:22px;--tabh:calc(60px + env(safe-area-inset-bottom))}
+html{-webkit-text-size-adjust:100%;--r:16px;--r-sm:12px;--pad:18px;--gap:14px;--glass-blur:22px;--tabh:calc(60px + env(safe-area-inset-bottom))}
 body{margin:0;background:var(--bg);color:var(--text);min-height:100dvh;
  font:16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Inter,Roboto,system-ui,sans-serif;
  -webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
-body::before{content:"";position:fixed;inset:0;z-index:-1;background:var(--glowbg);pointer-events:none}
+body::before{content:"";position:fixed;inset:0;z-index:-1;background:var(--glowbg),var(--bgfall,none);pointer-events:none}
 :root[data-font="mono"] body{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:14px}
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
 h1,h2,h3{margin:0;letter-spacing:-.018em;line-height:1.2}
-h1{font-size:30px;font-weight:780}
-h2{font-size:20px;font-weight:720}
-h3{font-size:15px;font-weight:680}
+h1{font-size:28px;font-weight:700}
+h2{font-size:20px;font-weight:650}
+h3{font-size:15px;font-weight:650}
 p{margin:.4em 0}
 code{font:12.5px ui-monospace,Menlo,monospace;background:var(--surface2);padding:1px 5px;border-radius:6px}
 button,input,select,textarea{font:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .muted{color:var(--muted)}
-.small{font-size:12.5px}
+.small{font-size:13px}
 .eyebrow{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 4px}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 
@@ -399,7 +496,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 .tabbar{position:fixed;left:0;right:0;bottom:0;z-index:40;display:flex;justify-content:space-around;
  padding:6px 4px calc(env(safe-area-inset-bottom) + 6px);height:var(--tabh);
 border-top:1px solid var(--border)}
-.tabbar a{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:10.5px;
+.tabbar a{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:11px;
  font-weight:650;color:var(--muted);text-decoration:none;border-radius:12px}
 .tabbar a svg{width:24px;height:24px}
 .tabbar a.on{color:var(--accent)}
@@ -411,15 +508,15 @@ body.typing .tabbar{display:none}
  .tabbar{display:none}
  .main{padding:30px 34px 56px;width:100%}
 }
-.brand{display:flex;align-items:center;gap:10px;font-weight:820;font-size:21px;letter-spacing:-.03em;padding:2px 10px 16px;color:var(--text)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:820;font-size:22px;letter-spacing:-.03em;padding:2px 10px 16px;color:var(--text)}
 .brand:hover{text-decoration:none}
 .rail nav{display:flex;flex-direction:column;gap:2px}
 .rail nav a{display:flex;align-items:center;gap:12px;padding:9px 12px;border-radius:12px;color:var(--muted);font-weight:650;text-decoration:none}
 .rail nav a svg{width:20px;height:20px}
 .rail nav a:hover{background:var(--surface2);color:var(--text)}
 .rail nav a.on{background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent)}
-.rail .label{font-size:11px;font-weight:750;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);padding:18px 12px 6px}
-.crewlink{display:flex;align-items:center;gap:10px;padding:5px 10px;border-radius:10px;color:var(--text);font-size:14px;font-weight:560}
+.rail .label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);padding:18px 12px 6px}
+.crewlink{display:flex;align-items:center;gap:10px;padding:5px 10px;border-radius:12px;color:var(--text);font-size:14px;font-weight:560}
 .crewlink:hover{background:var(--surface2);text-decoration:none}
 .crewlink .act{margin-left:auto;font-size:11px;color:var(--muted);max-width:84px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
@@ -441,12 +538,12 @@ body.typing .tabbar{display:none}
 .top h1{font-size:32px}
 .sect{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:30px 0 12px}
 .sect a{font-weight:650;font-size:14px}
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:var(--r-sm);padding:10px 15px;font-weight:680;
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:var(--r-sm);padding:10px 15px;font-weight:650;
  background:var(--accent);color:var(--on);cursor:pointer;text-decoration:none;transition:transform .12s,filter .12s;white-space:nowrap}
 .btn:hover{filter:brightness(1.07);text-decoration:none}
 .btn:active{transform:scale(.97)}
 .btn.ghost{background:var(--surface2);color:var(--text);border:1px solid var(--border)}
-.btn.small{padding:6px 11px;font-size:14px;border-radius:10px}
+.btn.small{padding:6px 11px;font-size:14px;border-radius:12px}
 .btn:disabled{opacity:.55;cursor:default}
 .btn svg{width:18px;height:18px}
 /* Message action buttons (card Submit, doc Copy/Edit/Save, server buttons) are glass,
@@ -454,7 +551,7 @@ body.typing .tabbar{display:none}
 .msg-acts .btn{background:var(--surface);color:var(--text);border:1px solid var(--border)}
 @supports (backdrop-filter:blur(1px)){
  .msg-acts .btn{background:color-mix(in srgb,var(--surface) 72%,transparent);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(160%);backdrop-filter:blur(var(--glass-blur)) saturate(160%)}}
-.chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 11px;font-size:12.5px;font-weight:650;
+.chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 11px;font-size:13px;font-weight:650;
  background:var(--surface2);color:var(--muted);border:1px solid var(--border);text-decoration:none;white-space:nowrap}
 .chip.on{background:var(--accent);color:var(--on);border-color:transparent}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
@@ -469,10 +566,10 @@ body.typing .tabbar{display:none}
 .smart{margin:0 0 16px}.sc-track{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;
  -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}.sc-track::-webkit-scrollbar{display:none}
 .sc{flex:0 0 100%;scroll-snap-align:start;min-height:132px;box-sizing:border-box;display:flex;flex-direction:column;gap:6px;padding:16px 18px;
- border-radius:22px;background:var(--surface);border:1px solid var(--border);color:var(--text);text-decoration:none}
+ border-radius:24px;background:var(--surface);border:1px solid var(--border);color:var(--text);text-decoration:none}
 .sc:hover{text-decoration:none}.sc:active{transform:scale(.985)}
-.sc-e{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
-.sc-e svg{width:16px;height:16px}.sc-t{font-size:21px;font-weight:750;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.sc-e{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+.sc-e svg{width:16px;height:16px}.sc-t{font-size:22px;font-weight:700;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .sc-s{color:var(--muted);font-size:14px;margin-top:auto}
 .sc.warn .sc-e{color:var(--warn)}.sc.bad .sc-e{color:var(--bad)}
 .sc-dots{display:flex;justify-content:center;gap:6px;margin-top:8px}.sc-dots i{width:6px;height:6px;border-radius:50%;background:var(--border)}
@@ -483,12 +580,12 @@ body.typing .tabbar{display:none}
 .kpi{display:flex;align-items:center;gap:12px;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);
  box-shadow:var(--shadow);color:var(--text);min-width:0}
 a.kpi:hover{text-decoration:none;border-color:color-mix(in srgb,var(--accent) 50%,var(--border))}
-.kpi .v{font-size:21px;font-weight:780;letter-spacing:-.02em;line-height:1.1}
+.kpi .v{font-size:22px;font-weight:700;letter-spacing:-.02em;line-height:1.1}
 .kpi .l{font-size:12px;color:var(--muted);font-weight:600}
-.kpi .s{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi .s{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kpi > div{min-width:0}
 .ring{flex:none;display:block}
-.ico{flex:none;width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent)}
+.ico{flex:none;width:44px;height:44px;border-radius:12px;display:grid;place-items:center;background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent)}
 .ico svg{width:22px;height:22px}
 
 /* Windows (agent and story cards) */
@@ -508,10 +605,10 @@ a.kpi:hover{text-decoration:none;border-color:color-mix(in srgb,var(--accent) 50
 .ph{position:absolute;inset:0;display:grid;place-items:center;background:linear-gradient(135deg,var(--c1),var(--c2))}
 .ph svg{width:34%;max-width:72px;height:auto;opacity:.92}
 .ph::after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 85% 10%,rgba(255,255,255,.22),transparent 45%)}
-.tag{position:absolute;left:8px;top:8px;z-index:2;background:var(--bad);color:#fff;font-size:10.5px;font-weight:800;letter-spacing:.06em;
+.tag{position:absolute;left:8px;top:8px;z-index:2;background:var(--bad);color:#fff;font-size:11px;font-weight:700;letter-spacing:.06em;
  text-transform:uppercase;padding:3px 8px;border-radius:999px}
 .win .body{display:flex;flex-direction:column;gap:5px;padding:10px 12px 13px;flex:1;min-width:0}
-.who{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:680;color:var(--muted);min-width:0}
+.who{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:650;color:var(--muted);min-width:0}
 .who span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .who .nm{flex:none}
 .who .src{min-width:0;font-weight:560}
@@ -519,8 +616,8 @@ a.kpi:hover{text-decoration:none;border-color:color-mix(in srgb,var(--accent) 50
 .pic img.fit{object-fit:contain;background:#fff;padding:6px}
 .who .t{margin-left:auto;font-weight:520;flex:none}
 .who img{width:18px;height:18px;border-radius:6px}
-.win .title{font-weight:720;font-size:15px;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.win .sub{font-size:12.5px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.win .title{font-weight:650;font-size:15px;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.win .sub{font-size:13px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .swipe .win .sub{-webkit-line-clamp:1}
 .logo{width:14px;height:14px;border-radius:3px;vertical-align:-2px;margin-right:4px;flex:none}
 .who > .logo{margin-right:0}
@@ -539,7 +636,7 @@ dialog.sheet:not([open]){display:none}
 dialog.sheet::backdrop{background:rgba(0,0,0,.45)}
 dialog.sheet[open]{animation:up .22s cubic-bezier(.2,.8,.2,1)}
 @keyframes up{from{transform:translateY(40px);opacity:.4}}
-.sheet .grab{width:38px;height:5px;border-radius:9px;background:var(--border);margin:8px auto 0;flex:none}
+.sheet .grab{width:38px;height:5px;border-radius:8px;background:var(--border);margin:8px auto 0;flex:none}
 .sheet .x{position:absolute;right:12px;top:12px;z-index:3;width:34px;height:34px;border-radius:50%;border:0;cursor:pointer;
  background:rgba(0,0,0,.45);color:#fff;font-size:20px;line-height:34px;text-align:center}
 .sheet .scroll{overflow-y:auto;padding-bottom:calc(env(safe-area-inset-bottom) + 18px)}
@@ -554,14 +651,14 @@ dialog.sheet[open]{animation:up .22s cubic-bezier(.2,.8,.2,1)}
 .pf{--s1:#2a78d6;--s2:#eb6834;display:grid;gap:8px}
 :root[data-mode="dark"] .pf{--s1:#3987e5;--s2:#d95926}
 @media (prefers-color-scheme:dark){:root:not([data-mode="light"]) .pf{--s1:#3987e5;--s2:#d95926}}
-.pf-legend{display:flex;gap:14px;font-size:12.5px;color:var(--muted)}
+.pf-legend{display:flex;gap:14px;font-size:13px;color:var(--muted)}
 .pf i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
 .pf i.s1{background:var(--s1)}.pf i.s2{background:var(--s2)}
 #pf-chart{position:relative}#pf-chart svg{width:100%;height:auto;display:block;touch-action:pan-y}
 #pf-chart text{font-size:11px;fill:var(--muted)}#pf-chart .pf-lab{fill:var(--text);font-weight:600}
 .pf-g{stroke:var(--border);stroke-width:1}.pf-l{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
 .pf-l.s1{stroke:var(--s1)}.pf-l.s2{stroke:var(--s2)}.pf-x{stroke:var(--muted);stroke-width:1;opacity:0}
-.pf-tip{position:absolute;top:0;pointer-events:none;opacity:0;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:6px 9px;font-size:12px;line-height:1.5;white-space:nowrap;transition:opacity .12s}
+.pf-tip{position:absolute;top:0;pointer-events:none;opacity:0;background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:6px 9px;font-size:12px;line-height:1.5;white-space:nowrap;transition:opacity .12s}
 .pf-t{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
 .pf-t th,.pf-t td{text-align:left;padding:6px 4px;border-bottom:1px solid var(--border);white-space:nowrap}
 .pf-t th{color:var(--muted);font-weight:600;font-size:12px}.pf-t .up{color:var(--good,#16a34a)}.pf-t .down{color:var(--bad)}
@@ -594,7 +691,7 @@ a,button,.sw,.lo,.chip{touch-action:manipulation}
 /* Feed: one column of big cards */
 :root[data-layout="feed"] .wins{grid-template-columns:minmax(0,1fr);max-width:640px}
 :root[data-layout="feed"] .pic{aspect-ratio:16/9}
-:root[data-layout="feed"] .win .title{font-size:19px}
+:root[data-layout="feed"] .win .title{font-size:20px}
 :root[data-layout="feed"] .win .sub{font-size:14px;-webkit-line-clamp:3}
 :root[data-layout="feed"] .win .body{padding:12px 16px 16px;gap:7px}
 
@@ -620,11 +717,11 @@ a,button,.sw,.lo,.chip{touch-action:manipulation}
 :root[data-layout="compact"] .win{flex-direction:row;align-items:center;border:0;border-bottom:1px solid var(--border);border-radius:0;
  box-shadow:none;background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none}
 :root[data-layout="compact"] .win:hover{transform:none;background:var(--surface2)}
-:root[data-layout="compact"] .pic{width:60px;height:60px;aspect-ratio:auto;margin:10px 0 10px 12px;border-radius:14px}
-:root[data-layout="compact"] .tag{left:3px;top:3px;font-size:8px;padding:2px 5px}
+:root[data-layout="compact"] .pic{width:60px;height:60px;aspect-ratio:auto;margin:10px 0 10px 12px;border-radius:12px}
+:root[data-layout="compact"] .tag{left:3px;top:3px;font-size:10px;padding:2px 5px}
 :root[data-layout="compact"] .ph svg{width:46%}
 :root[data-layout="compact"] .win .body{padding:10px 14px;gap:3px}
-:root[data-layout="compact"] .win .title{font-size:14.5px;-webkit-line-clamp:1}
+:root[data-layout="compact"] .win .title{font-size:15px;-webkit-line-clamp:1}
 :root[data-layout="compact"] .win .sub{-webkit-line-clamp:1}
 
 /* Chat (Discord-style): icon strip | channels | messages | members */
@@ -646,8 +743,8 @@ body.typing .chat{height:100dvh}
 .chans,.members{display:none}
 @media (min-width:900px){.chans{display:flex;flex-direction:column;gap:2px;padding:20px 10px;border-right:1px solid var(--border);overflow-y:auto}}
 @media (min-width:1200px){.members{display:block;padding:20px 12px;border-left:1px solid var(--border);overflow-y:auto}}
-.chans .label,.members .label{font-size:11px;font-weight:750;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);padding:6px 10px}
-.chans a{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:10px;color:var(--muted);font-weight:620}
+.chans .label,.members .label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);padding:6px 10px}
+.chans a{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:12px;color:var(--muted);font-weight:620}
 .chans a:hover{background:var(--surface2);color:var(--text);text-decoration:none}
 .chans a.on{background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--text)}
 .hash{font-weight:500;opacity:.65;font-size:18px;line-height:1}
@@ -655,7 +752,7 @@ body.typing .chat{height:100dvh}
 .chathead{display:flex;align-items:center;gap:10px;padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;border-bottom:1px solid var(--border);
  background:color-mix(in srgb,var(--bg) 80%,transparent);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);min-width:0}
 .chathead b{font-size:16px;white-space:nowrap}
-.chathead .about{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+.chathead .about{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
 .chathead .btn{flex:none}
 @media (min-width:1200px){#members-btn{display:none}}
 .chiprow{display:flex;gap:6px;overflow-x:auto;padding:8px 12px;border-bottom:1px solid var(--border);scrollbar-width:none;flex:none}
@@ -676,9 +773,9 @@ body.typing .chat{height:100dvh}
 .new{animation:pop .25s ease-out}
 @keyframes pop{from{opacity:0;transform:translateY(4px)}}
 .meta{display:flex;align-items:baseline;gap:8px;min-width:0}
-.meta .name{font-weight:720;color:color-mix(in srgb,var(--n) 62%,var(--text))}
-.meta .tier{font-size:10px;font-weight:750;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);border:1px solid var(--border);border-radius:5px;padding:0 4px}
-.meta time{font-size:11.5px;color:var(--muted)}
+.meta .name{font-weight:650;color:color-mix(in srgb,var(--n) 62%,var(--text))}
+.meta .tier{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:0 4px}
+.meta time{font-size:12px;color:var(--muted)}
 .text{white-space:pre-wrap;overflow-wrap:anywhere}
 .msg-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .src-foot{display:flex;align-items:center;gap:8px;margin-top:8px;padding:4px 2px;background:none;border:0;cursor:pointer;color:var(--text);font-family:inherit;font-size:14px}
@@ -690,7 +787,7 @@ body.typing .chat{height:100dvh}
 .src-dlg{padding:12px 16px 0;display:flex;flex-direction:column}
 .src-dlg .scroll{min-height:0}
 .src-head{display:flex;align-items:center;justify-content:space-between;padding:4px 0 10px}
-.src-head .src-title{font-size:17px;font-weight:700}
+.src-head .src-title{font-size:18px;font-weight:700}
 .src-x{background:none;border:0;cursor:pointer;color:var(--muted);font-size:22px;line-height:1;padding:4px 8px}
 .src-row{display:flex;gap:10px;align-items:flex-start;padding:10px 0;text-decoration:none;color:var(--text);border-top:1px solid var(--border)}
 .src-row .src-ic,.src-row .src-tile{width:28px;height:28px}
@@ -700,21 +797,21 @@ body.typing .chat{height:100dvh}
 .src-snip{font-size:13px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .rcal{margin-top:16px}.rstrip{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x proximity;padding:8px 6px 10px;scroll-padding-left:6px;scrollbar-width:none}
 .rel{flex:none;width:112px;scroll-snap-align:start;color:inherit;text-decoration:none;text-align:center}
-.rel .rpic{position:relative;aspect-ratio:2/3;border-radius:10px;overflow:hidden;background:var(--surface2);border:1px solid var(--border)}
+.rel .rpic{position:relative;aspect-ratio:2/3;border-radius:12px;overflow:hidden;background:var(--surface2);border:1px solid var(--border)}
 .rel img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 .rel .rdate{display:flex;justify-content:center;align-items:baseline;gap:6px;margin-top:6px;font-variant-numeric:tabular-nums}
-.rel .rdate b{font-size:20px;font-weight:800}.rel .rdate span{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;border-left:1px solid var(--border);padding-left:6px}
+.rel .rdate b{font-size:20px;font-weight:700}.rel .rdate span{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;border-left:1px solid var(--border);padding-left:6px}
 .rel .rname{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px}
-.rel .rplat{font-size:10.5px;color:var(--muted);opacity:.8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rel .rplat{font-size:11px;color:var(--muted);opacity:.8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rel.next{width:150px}.rel.next .rpic{border:2px solid var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent)}
-.rel.mine .rpic{border-color:var(--accent)}.rel .rtag{position:absolute;right:0;top:8px;background:var(--accent);color:var(--on);font-size:9.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:2px 6px;border-radius:6px 0 0 6px}
+.rel.mine .rpic{border-color:var(--accent)}.rel .rtag{position:absolute;right:0;top:8px;background:var(--accent);color:var(--on);font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 6px;border-radius:6px 0 0 6px}
 .daily{margin:14px 0 4px}.dlist{list-style:none;margin:0;padding:0;display:grid;gap:2px}
 .dlist li{display:flex;align-items:center;gap:10px;min-height:40px}.dcheck{display:flex;align-items:center;gap:10px;flex:1;cursor:pointer;min-width:0}
 .dcheck input{width:22px;height:22px;accent-color:var(--accent);flex:none}
 .dcheck input:checked+span{color:var(--muted);text-decoration:line-through}
 .daily .dx{display:none;border:0;background:none;color:var(--muted);font-size:20px;cursor:pointer;padding:4px 8px}
 .daily.editing .dx{display:block}.daily .dadd{display:none;padding:5px 5px 5px 14px}.daily.editing .dadd{display:flex}
-.via{font-size:11.5px;font-weight:700;color:var(--n);border:1px solid color-mix(in srgb,var(--n) 45%,transparent);
+.via{font-size:12px;font-weight:700;color:var(--n);border:1px solid color-mix(in srgb,var(--n) 45%,transparent);
  background:color-mix(in srgb,var(--n) 12%,transparent);border-radius:999px;padding:1px 8px;line-height:1.5}
 .mem li{justify-content:space-between}.ok-t{color:var(--good);font-weight:600}.bad-t{color:var(--bad)}
 #devices li.dev{display:block;padding:10px 0}#devices details summary{cursor:pointer;padding:4px 0}.mem .dx{border:0;background:none;color:var(--muted);font-size:20px;cursor:pointer;padding:4px 8px}
@@ -735,9 +832,9 @@ html,body{overflow-x:clip;max-width:100%}
 .md .md-table th,.md .md-table td{border-bottom:1px solid var(--border);padding:9px 12px;text-align:left;vertical-align:top;overflow-wrap:break-word;word-break:normal;white-space:normal;min-width:5.5em}
 .md .md-table tr:last-child td{border-bottom:0}
 .md .md-table th{background:var(--surface2);font-weight:650}
-.md pre{background:var(--surface2);border:1px solid var(--border);padding:9px 11px;border-radius:10px;overflow-x:auto;max-height:340px;overflow-y:auto;font-size:14px;margin:6px 0;white-space:pre}
-.md code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;background:var(--surface2);border-radius:5px;padding:0 4px}
-.md pre code{background:none;padding:0}.md .md-img{max-width:100%;border-radius:10px;margin:6px 0;display:block}
+.md pre{background:var(--surface2);border:1px solid var(--border);padding:9px 11px;border-radius:12px;overflow-x:auto;max-height:340px;overflow-y:auto;font-size:14px;margin:6px 0;white-space:pre}
+.md code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;background:var(--surface2);border-radius:6px;padding:0 4px}
+.md pre code{background:none;padding:0}.md .md-img{max-width:100%;border-radius:12px;margin:6px 0;display:block}
 .md .md-quote{border-left:3px solid var(--accent);padding:2px 0 2px 12px;color:var(--muted);margin:6px 0}
 .md .codeblock{border:1px solid var(--border);border-radius:16px;background:var(--surface);color:var(--text);overflow:hidden;margin:6px 0}
 @supports (backdrop-filter:blur(1px)){
@@ -755,7 +852,7 @@ html,body{overflow-x:clip;max-width:100%}
 .md .codeblock .cbtn.is-error{color:#f87171}
 .md .codeblock pre{border:0;border-radius:0;margin:0;background:transparent}
 .md .doccard,.md .cfgcard,.md .quizcard{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:var(--pad);box-shadow:var(--shadow);margin:8px 0}
-.md .doc-title{font-weight:700;font-size:17px;margin-bottom:8px}
+.md .doc-title{font-weight:700;font-size:18px;margin-bottom:8px}
 .md .docbody{white-space:pre-wrap;overflow-wrap:anywhere}
 .md .doccard textarea.field{margin:8px 0}
 .md .cfgrow{display:flex;align-items:center;gap:10px;margin:10px 0}
@@ -786,12 +883,12 @@ html,body{overflow-x:clip;max-width:100%}
 @media (pointer:coarse){.md .doccard .btn,.md .cfgcard .btn,.md .quizcard .btn,.md .codeblock .cbtn,.msg .mbtn{min-height:44px;min-width:44px}}
 .caret{display:inline-block;width:7px;height:1.05em;vertical-align:-2px;margin-left:2px;border-radius:2px;background:var(--accent);animation:blink 1s steps(1) infinite}
 @keyframes blink{50%{opacity:0}}
-.text .at{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);border-radius:5px;padding:0 3px;font-weight:620}
+.text .at{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);border-radius:6px;padding:0 3px;font-weight:620}
 .att{display:block;max-width:min(100%,440px);border-radius:12px;margin-top:6px;border:1px solid var(--border);background:#fff}
 .evt{display:flex;gap:8px;align-items:flex-start;padding:4px 16px 4px 28px;color:var(--muted);font-size:14px}
-.evt img{width:16px;height:16px;border-radius:5px;margin-top:2px;flex:none}
+.evt img{width:16px;height:16px;border-radius:6px;margin-top:2px;flex:none}
 .evt span{overflow-wrap:anywhere}
-.daysep{display:flex;align-items:center;gap:10px;margin:14px 16px 6px;font-size:11.5px;font-weight:700;color:var(--muted)}
+.daysep{display:flex;align-items:center;gap:10px;margin:14px 16px 6px;font-size:12px;font-weight:700;color:var(--muted)}
 .daysep::before,.daysep::after{content:"";flex:1;height:1px;background:var(--border)}
 .composer{position:relative;padding:8px 12px calc(10px + env(safe-area-inset-bottom) * 0);flex:none}
 #chat-send{width:44px;height:44px}
@@ -804,7 +901,7 @@ html,body{overflow-x:clip;max-width:100%}
 .trail .sep{color:var(--muted);font-size:11px;font-weight:600}
 .trail:empty{display:none}
 .msg .trail{margin:2px 0 4px}
-.meta .tok{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.meta .tok{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
 .working .wdots{display:inline-flex;gap:5px}
 .working .wdots i{width:6px;height:6px;border-radius:50%;background:currentColor;animation:wdot 1.2s infinite ease-in-out}
 .working .wdots i:nth-child(2){animation-delay:.2s}.working .wdots i:nth-child(3){animation-delay:.4s}
@@ -814,24 +911,24 @@ html,body{overflow-x:clip;max-width:100%}
 .box{display:flex;align-items:flex-end;gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:5px 5px 5px 14px}
 .box:focus-within{border-color:color-mix(in srgb,var(--accent) 60%,var(--border))}
 .box textarea{flex:1;border:0;background:transparent;resize:none;outline:none;max-height:168px;padding:8px 0;line-height:1.4;min-width:0}
-.send{width:40px;height:40px;padding:0;border-radius:14px;flex:none}
-.box:has(.pick){padding-left:5px}.pick{width:40px;height:40px;padding:0;border-radius:14px;flex:none;display:grid;place-items:center;cursor:pointer}
+.send{width:40px;height:40px;padding:0;border-radius:12px;flex:none}
+.box:has(.pick){padding-left:5px}.pick{width:40px;height:40px;padding:0;border-radius:12px;flex:none;display:grid;place-items:center;cursor:pointer}
 .attach{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px 4px}.attach[hidden]{display:none}a>.att{max-height:340px;width:auto}
 .attp{position:relative;display:inline-block}.attp img{display:block;max-height:96px;max-width:160px;border-radius:12px;border:1px solid var(--border)}
 .attp .dx,.attach .fchip .dx{position:absolute;top:-8px;right:-8px;width:24px;height:24px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;line-height:1;padding:0}
 .fchip{display:inline-flex;align-items:center;gap:8px;max-width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:12px;background:var(--surface2);text-decoration:none;color:var(--text);position:relative}
 .attach .fchip{padding-right:30px}.fchip b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}.fchip span{font-size:12px;color:var(--muted);flex:none}
 #chat-menu{position:absolute;bottom:100%;left:12px;right:12px;max-height:280px;overflow-y:auto;margin:0 0 6px;padding:6px;list-style:none;
- background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 12px 32px rgba(0,0,0,.22);z-index:20}
+ background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.22);z-index:20}
 :root[data-glass] #chat-menu{-webkit-backdrop-filter:blur(24px);backdrop-filter:blur(24px)}
-#chat-menu li{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:10px;cursor:pointer}
+#chat-menu li{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:12px;cursor:pointer}
 #chat-menu li[aria-selected="true"]{background:color-mix(in srgb,var(--accent) 14%,transparent)}
 #chat-menu img{width:26px;height:26px;border-radius:8px}
-#chat-menu .muted{font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mrow{display:flex;align-items:center;gap:10px;padding:6px 10px;border-radius:10px;color:var(--text);min-width:0}
+#chat-menu .muted{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mrow{display:flex;align-items:center;gap:10px;padding:6px 10px;border-radius:12px;color:var(--text);min-width:0}
 .mrow:hover{background:var(--surface2);text-decoration:none}
 .mrow b{font-weight:640;display:block}
-.mrow .muted{font-size:11.5px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mrow .muted{font-size:12px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mrow > span:last-child{min-width:0}
 .members.open{display:block;position:fixed;top:0;right:0;bottom:0;width:min(86vw,300px);z-index:60;
  padding:calc(env(safe-area-inset-top) + 16px) 12px 20px;box-shadow:-12px 0 40px rgba(0,0,0,.3);overflow-y:auto}
@@ -846,19 +943,19 @@ html,body{overflow-x:clip;max-width:100%}
 .sw .pv{display:grid;grid-template-columns:1fr 1fr;height:62px}
 .sw .pv span{display:flex;flex-direction:column;justify-content:flex-end;gap:4px;padding:9px}
 .sw .pv i{display:block;height:7px;border-radius:4px}
-.sw .nm{display:block;padding:8px 10px 9px;font-weight:700;font-size:13.5px}
-.sw .nm small{display:block;color:var(--muted);font-weight:500;font-size:11.5px;line-height:1.3;margin-top:1px}
-.seg{display:inline-flex;background:var(--surface2);border:1px solid var(--border);border-radius:13px;padding:3px;gap:2px;flex-wrap:wrap}
-.seg button{border:0;background:transparent;padding:7px 14px;border-radius:10px;font-weight:650;color:var(--muted);cursor:pointer}
+.sw .nm{display:block;padding:8px 10px 9px;font-weight:700;font-size:14px}
+.sw .nm small{display:block;color:var(--muted);font-weight:500;font-size:12px;line-height:1.3;margin-top:1px}
+.seg{display:inline-flex;background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:3px;gap:2px;flex-wrap:wrap}
+.seg button{border:0;background:transparent;padding:7px 14px;border-radius:12px;font-weight:650;color:var(--muted);cursor:pointer}
 .seg button.on{background:var(--surface);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.16)}
 .layouts{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
 .lo{display:flex;flex-direction:column;justify-content:flex-start;border:2px solid var(--border);border-radius:16px;background:var(--surface);padding:10px;cursor:pointer;text-align:left;color:var(--text)}
 .lo.on{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 28%,transparent)}
 .lo svg{display:block;width:100%;height:auto;margin-bottom:8px;color:var(--muted)}
-.lo b{display:block;font-size:13.5px}
-.lo small{display:block;color:var(--muted);font-size:11.5px;line-height:1.3}
-.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
-.tbl th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:750;padding:6px 8px;border-bottom:1px solid var(--border)}
+.lo b{display:block;font-size:14px}
+.lo small{display:block;color:var(--muted);font-size:12px;line-height:1.3}
+.tbl{width:100%;border-collapse:collapse;font-size:14px}
+.tbl th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:700;padding:6px 8px;border-bottom:1px solid var(--border)}
 .tbl td{padding:8px;border-bottom:1px solid var(--border);vertical-align:top;overflow-wrap:break-word}
 .tbl tr:last-child td{border-bottom:0}
 .scrollx{overflow-x:auto}
@@ -882,16 +979,16 @@ html,body{overflow-x:clip;max-width:100%}
 .llist{list-style:none;margin:0 0 6px;padding:0;display:grid;gap:8px}
 @media (min-width:1000px){.llist{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .lrow{display:flex;gap:12px;align-items:flex-start;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:10px;min-width:0}
-.lpic{position:relative;flex:none;width:54px;height:76px;border-radius:10px;overflow:hidden;display:grid;place-items:center;
- background:linear-gradient(135deg,var(--c1),var(--c2));color:#fff;font-weight:800;font-size:22px}
+.lpic{position:relative;flex:none;width:54px;height:76px;border-radius:12px;overflow:hidden;display:grid;place-items:center;
+ background:linear-gradient(135deg,var(--c1),var(--c2));color:#fff;font-weight:700;font-size:22px}
 .lpic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 .lbody{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
 .ltitle{font-weight:700;line-height:1.25}
 .lchips{display:flex;flex-wrap:wrap;gap:4px}
-.lchips .chip{padding:2px 8px;font-size:11.5px}
+.lchips .chip{padding:2px 8px;font-size:12px}
 .chip.rated{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,var(--border))}
 .lacts{display:flex;gap:6px;flex-wrap:wrap}
-.lrank{flex:none;width:28px;text-align:right;font-weight:800;font-size:18px;color:var(--muted);padding-top:24px}
+.lrank{flex:none;width:28px;text-align:right;font-weight:700;font-size:18px;color:var(--muted);padding-top:24px}
 .lgroup{margin:14px 0 8px}
 .rategrid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
 .rategrid .btn{font-size:18px;padding:12px 0}
@@ -913,18 +1010,18 @@ select.field{width:auto;flex:1;min-width:120px}
 .cal td{background:var(--surface);border:1px solid var(--border);border-radius:12px;vertical-align:top;height:78px;padding:5px;font-size:11px;overflow:hidden}
 .cal td.out{opacity:.45}
 .cal td.today{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
-.cal .n{font-weight:750;font-size:12.5px;margin-bottom:2px}
+.cal .n{font-weight:700;font-size:13px;margin-bottom:2px}
 .cal td.today .n{color:var(--accent)}
-.cal .e{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:color-mix(in srgb,var(--accent) 14%,transparent);border-radius:5px;padding:1px 4px;margin-top:2px}
+.cal .e{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:color-mix(in srgb,var(--accent) 14%,transparent);border-radius:6px;padding:1px 4px;margin-top:2px}
 .cal .e.b{background:color-mix(in srgb,#f472b6 22%,transparent)}
-.day{margin:16px 0 6px;font-weight:720}
+.day{margin:16px 0 6px;font-weight:650}
 .card > .day:first-child{margin-top:0}
 @media (max-width:600px){
  .cal{border-spacing:3px}
- .cal td{height:52px;padding:4px 3px;border-radius:10px}
+ .cal td{height:52px;padding:4px 3px;border-radius:12px}
  .cal .e{display:inline-block;width:7px;height:7px;padding:0;margin:1px;border-radius:50%;font-size:0;background:var(--accent)}
  .cal .e.b{background:#f472b6}
- .cal td > div:not(.n):not(.e){font-size:9px;color:var(--muted)}
+ .cal td > div:not(.n):not(.e){font-size:10px;color:var(--muted)}
 }
 .tbl{min-width:620px}
 .monthnav{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -932,7 +1029,7 @@ select.field{width:auto;flex:1;min-width:120px}
 .minibar{position:fixed;left:0;right:0;bottom:var(--tabh);z-index:39;background:color-mix(in srgb,var(--surface) 92%,transparent);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);border-top:1px solid var(--border);padding:8px 12px}
 .minichips{display:flex;gap:6px;overflow-x:auto;padding:0 0 8px;scrollbar-width:none}
 .minichips::-webkit-scrollbar{display:none}
-.minichips a{flex:none;font-size:12.5px;font-weight:600;color:var(--text);background:var(--surface2);border:1px solid var(--border);border-radius:999px;padding:6px 11px;text-decoration:none;white-space:nowrap}
+.minichips a{flex:none;font-size:13px;font-weight:600;color:var(--text);background:var(--surface2);border:1px solid var(--border);border-radius:999px;padding:6px 11px;text-decoration:none;white-space:nowrap}
 .minibox{display:flex;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:999px;padding:5px 5px 5px 16px}
 .minibox input{flex:1;border:0;background:transparent;outline:none;font-size:16px;min-width:0;color:var(--text)}
 .minibox .btn.send{width:38px;height:38px;border-radius:50%;padding:0;display:grid;place-items:center;flex:none}
@@ -1016,7 +1113,7 @@ body.has-mini header.top{padding-right:60px} /* room for Theta in the corner */
 @keyframes spotin{from{opacity:0;transform:translateY(-6px)}to{opacity:.92;transform:none}}
 .spot-cap .sp-why{display:none}
 .spot-cap .sp-title{font-weight:650;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.spot-cap .sp-src{flex:none;font-size:11.5px;color:#cfe8ff;text-decoration:none;opacity:.9}
+.spot-cap .sp-src{flex:none;font-size:12px;color:#cfe8ff;text-decoration:none;opacity:.9}
 body:not(.headchat) .spot-cap{top:auto;bottom:calc(var(--tabh) + 150px)}
 body.docked .spot-cap,body.has-panels .spot-cap,body.sheet-open .spot-cap{display:none}
 @media (prefers-reduced-motion:reduce){#bg-layer .bgpic{transition:none;transform:none}}
@@ -2070,7 +2167,7 @@ _UI_JS_SRC = r'''
     (rm.pending || []).forEach(([id, what]) => {
       const row = el("div", "brow"), b = el("button", "btn small", "Done");
       b.type = "button";
-      b.onclick = async () => { b.disabled = true; try { await remPost("/api/reminders/" + id + "/done"); row.remove(); note.textContent = "Marked done: " + what; } catch (e) { note.textContent = e.message; b.disabled = false; } };
+      b.onclick = async () => { b.disabled = true; try { await remPost("/api/reminders/" + id + "/done"); if (window.thetaCheer) { const r = b.getBoundingClientRect(); thetaCheer(r.left + r.width / 2, r.top + r.height / 2); } row.remove(); note.textContent = "Marked done: " + what; } catch (e) { note.textContent = e.message; b.disabled = false; } };
       row.append(el("span", "", what), b); box.append(row);
     });
     const f = el("form", "box"), inp = el("input"), add = el("button", "btn small", "Add");
@@ -2887,7 +2984,7 @@ _CHAT_JS = r'''
   // The Head page (voice, panels) shares this thread: it hears about every change and can hand it new messages.
   function announce() { document.dispatchEvent(new CustomEvent("theta:thread", {detail: thread})); }
   window.thetaChat = {take(ms) { stopWorking(); thread = ms; render(); box.scrollTop = box.scrollHeight; announce(); }, load: () => load(),
-    // a message sent another way (Theta's voice): it shows at once, with "Theta is thinking..." under it, like a typed one
+    // a message sent another way (Theta's voice): it shows at once, with "Pondering..." under it, like a typed one
     pending(text, rid) {
       thread = [...thread, {id: "pending", from: "you", name: "You", text, kind: "message", ch: C.channel,
                             at: new Date().toISOString().slice(0, 19).replace("T", " ")}];
@@ -3103,7 +3200,7 @@ _CHAT_JS = r'''
     if (e.key === "Enter" && !e.shiftKey && !touch) { e.preventDefault(); form.requestSubmit(); }
   });
 
-  // "Mistral is thinking..." while a reply is on its way: the hub notes who's
+  // "Thinking..." (with the avatar of whoever it is) while a reply is on its way: the hub notes who's
   // working on this message (and on what) and the chat asks every 1.5 s.
   const VERBS = {mistral: ["thinking", "reading the chat", "working it out"], theta: ["pondering", "ruminating", "weighing it up"],
                  qwerty: ["checking", "scanning"], glass: ["counting", "tallying"], remi: ["checking the calendar"],
@@ -3136,7 +3233,8 @@ _CHAT_JS = r'''
     clearInterval(wTimer);
     if (state === "waiting_approval") { wText.textContent = "Waiting for your approval."; return; }
     let n = 0;
-    const say = () => { const v = VERBS[who] || ["working"]; wText.textContent = name + " is " + (step || v[n++ % v.length]) + "..."; };
+    // just what's happening ("Pondering...", "Looking it up..."): the avatar beside it already says who
+    const say = () => { const v = VERBS[who] || ["working"], w = step || v[n++ % v.length]; wText.textContent = w.charAt(0).toUpperCase() + w.slice(1) + "..."; };
     say(); if (!step) wTimer = setInterval(say, 3000);
   }
   function startWorking(rid, who) {
@@ -3168,7 +3266,7 @@ _CHAT_JS = r'''
     const rid = Math.random().toString(36).slice(2, 12);
     try { sessionStorage.setItem("theta-pending-rid", rid); } catch (_) {}
     status.textContent = isCmd ? "Running " + text.split(" ")[0] + "..." : "";
-    if (!isCmd) startWorking(rid, /@theta\b/i.test(text) ? "theta" : "mistral");
+    if (!isCmd) startWorking(rid, /@theta\b/i.test(text) ? "theta" : (C.lead || "mistral"));
     if (!isCmd) {
       thread = [...thread, {id: "pending", from: "you", name: "You", text, attachments: savedAtts.map(a => ({url: a.data, name: a.name, kind: a.kind, size: a.size})), kind: "message", at: new Date().toISOString().slice(0, 19).replace("T", " "), ch: C.channel}];
       render(); box.scrollTop = box.scrollHeight;
@@ -3284,7 +3382,7 @@ def ui_icon(name):
             f'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{UI_ICONS[name]}</svg>')
 
 
-_BAR_CSS = '\n/* ---- The bottom bar in each frame (2026-11-04): the suggestion chips, the message box, the send button and the\n   tab bar take the frame\'s shape. Glass+ and Liquid Glass keep the round pills they were drawn for. */\n:root[data-glassstyle="edge"] .minibar{border-top:1px solid color-mix(in srgb,var(--accent) 55%,transparent)}\n:root[data-glassstyle="edge"] .minichips a{border-radius:0;clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px));border-color:color-mix(in srgb,var(--accent) 40%,transparent);font-family:var(--f-label);text-transform:uppercase;letter-spacing:.06em;font-size:11px}\n:root[data-glassstyle="edge"] .minibox,:root[data-glassstyle="edge"] .box{border-radius:0;clip-path:polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,11px 100%,0 calc(100% - 11px));border-color:color-mix(in srgb,var(--accent) 45%,transparent);box-shadow:inset 3px 0 0 var(--accent)}\n:root[data-glassstyle="edge"] .minibox .btn.send,:root[data-glassstyle="edge"] .box .btn{border-radius:0;clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px))}\n:root[data-glassstyle="edge"] .tabbar a.on{box-shadow:inset 0 2px 0 var(--accent);border-radius:0}\n:root[data-glassstyle="breach"] .minibar{border-top:1px solid var(--accent)}\n:root[data-glassstyle="breach"] .minichips a{border-radius:0;background:transparent;border-color:color-mix(in srgb,var(--accent) 55%,transparent);font-family:var(--f-mono);font-size:12px}\n:root[data-glassstyle="breach"] .minichips a::before{content:"> ";color:var(--accent)}\n:root[data-glassstyle="breach"] .minibox,:root[data-glassstyle="breach"] .box{border-radius:0;border-color:color-mix(in srgb,var(--accent) 60%,transparent);background:color-mix(in srgb,var(--surface) 70%,transparent);box-shadow:inset 0 3px 0 var(--accent)}\n:root[data-glassstyle="breach"] .minibox input,:root[data-glassstyle="breach"] .box textarea{font-family:var(--f-mono)}\n:root[data-glassstyle="breach"] .minibox .btn.send,:root[data-glassstyle="breach"] .box .btn{border-radius:0}\n:root[data-glassstyle="breach"] .tabbar a.on{background:var(--accent);color:var(--on);border-radius:0}\n:root[data-glassstyle="hud"] .minichips a{border-radius:3px;background:linear-gradient(var(--accent),var(--accent)) left top/7px 1.5px no-repeat,linear-gradient(var(--accent),var(--accent)) left top/1.5px 7px no-repeat,linear-gradient(var(--accent),var(--accent)) right top/7px 1.5px no-repeat,linear-gradient(var(--accent),var(--accent)) right top/1.5px 7px no-repeat,linear-gradient(var(--accent),var(--accent)) left bottom/7px 1.5px no-repeat,linear-gradient(var(--accent),var(--accent)) left bottom/1.5px 7px no-repeat,linear-gradient(var(--accent),var(--accent)) right bottom/7px 1.5px no-repeat,linear-gradient(var(--accent),var(--accent)) right bottom/1.5px 7px no-repeat,var(--surface2);border-color:color-mix(in srgb,var(--text) 10%,transparent);text-transform:uppercase;letter-spacing:.06em;font-size:11.5px}\n:root[data-glassstyle="hud"] .minibox,:root[data-glassstyle="hud"] .box{border-radius:4px;background:linear-gradient(var(--accent),var(--accent)) left top/12px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) left top/2px 12px no-repeat,linear-gradient(var(--accent),var(--accent)) right top/12px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) right top/2px 12px no-repeat,linear-gradient(var(--accent),var(--accent)) left bottom/12px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) left bottom/2px 12px no-repeat,linear-gradient(var(--accent),var(--accent)) right bottom/12px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) right bottom/2px 12px no-repeat,var(--surface2);border-color:color-mix(in srgb,var(--text) 10%,transparent)}\n:root[data-glassstyle="hud"] .minibox .btn.send,:root[data-glassstyle="hud"] .box .btn{border-radius:3px}\n:root[data-glassstyle="hud"] .tabbar a.on{box-shadow:inset 0 2px 0 var(--accent);border-radius:0}\n:root[data-glassstyle="console"] .minibar{border-top:1px solid var(--border);box-shadow:none}\n:root[data-glassstyle="console"] .minichips a{border-radius:2px;background:transparent;font-family:var(--f-mono);font-size:11.5px;color:var(--muted)}\n:root[data-glassstyle="console"] .minibox,:root[data-glassstyle="console"] .box{border-radius:2px}\n:root[data-glassstyle="console"] .minibox::before{content:"\\203A";font-family:var(--f-mono);color:var(--accent);margin-left:-6px}\n:root[data-glassstyle="console"] .minibox input,:root[data-glassstyle="console"] .box textarea{font-family:var(--f-mono);font-size:15px}\n:root[data-glassstyle="console"] .minibox .btn.send,:root[data-glassstyle="console"] .box .btn{border-radius:2px}\n:root[data-glassstyle="console"] .tabbar a{font-family:var(--f-mono);text-transform:uppercase;letter-spacing:.06em;font-size:9.5px}\n:root[data-glassstyle="console"] .tabbar a.on{box-shadow:inset 0 -2px 0 var(--accent);border-radius:0}\n:root[data-glassstyle="holo"] .minibar{background:color-mix(in srgb,var(--bg) 70%,transparent);border-top:1px solid color-mix(in srgb,var(--text) 22%,transparent)}\n:root[data-glassstyle="holo"] .minichips a{border-radius:4px;background:color-mix(in srgb,var(--text) 6%,transparent);border-color:color-mix(in srgb,var(--text) 30%,transparent);text-transform:uppercase;letter-spacing:.08em;font-size:11px;box-shadow:0 0 10px color-mix(in srgb,var(--text) 10%,transparent)}\n:root[data-glassstyle="holo"] .minibox,:root[data-glassstyle="holo"] .box{border-radius:6px;background:linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) left top/10px 1.5px no-repeat,linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) left top/1.5px 10px no-repeat,linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) right top/10px 1.5px no-repeat,linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) right top/1.5px 10px no-repeat,linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) left bottom/10px 1.5px no-repeat,linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) left bottom/1.5px 10px no-repeat,linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) right bottom/10px 1.5px no-repeat,linear-gradient(color-mix(in srgb,var(--text) 85%,transparent),color-mix(in srgb,var(--text) 85%,transparent)) right bottom/1.5px 10px no-repeat,color-mix(in srgb,var(--text) 6%,transparent);border-color:color-mix(in srgb,var(--text) 28%,transparent);box-shadow:0 0 16px color-mix(in srgb,var(--text) 10%,transparent)}\n:root[data-glassstyle="holo"] .minibox .btn.send,:root[data-glassstyle="holo"] .box .btn{border-radius:4px}\n:root[data-glassstyle="holo"] .tabbar a.on{text-shadow:0 0 12px color-mix(in srgb,var(--accent) 70%,transparent)}\n:root[data-glassstyle="ornate"] .minichips a{border-radius:0;background:transparent;border:0;border-bottom:1px solid color-mix(in srgb,var(--accent) 45%,transparent);text-transform:uppercase;letter-spacing:.1em;font-size:11px;font-family:var(--f-label)}\n:root[data-glassstyle="ornate"] .minibox .btn.send,:root[data-glassstyle="ornate"] .box .btn{border-radius:0;background:transparent;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 60%,transparent)}\n:root[data-glassstyle="ornate"] .tabbar a.on{box-shadow:inset 0 -1px 0 var(--accent);border-radius:0}\n'
+_BAR_CSS = '\n/* ---- The bottom bar in each frame (2026-11-04): the suggestion chips, the message box, the send button and the\n   tab bar take the frame\'s shape. Glass+ and Liquid Glass keep the round pills they were drawn for. */\n:root[data-glassstyle="edge"] .minibar{border-top:1px solid color-mix(in srgb,var(--accent) 55%,transparent)}\n:root[data-glassstyle="edge"] .minichips a{border-radius:0;clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px));border-color:color-mix(in srgb,var(--accent) 40%,transparent);font-family:var(--f-label);text-transform:uppercase;letter-spacing:.06em;font-size:11px}\n:root[data-glassstyle="edge"] .minibox,:root[data-glassstyle="edge"] .box{border-radius:0;clip-path:polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,11px 100%,0 calc(100% - 11px));border-color:color-mix(in srgb,var(--accent) 45%,transparent);box-shadow:inset 3px 0 0 var(--accent)}\n:root[data-glassstyle="edge"] .minibox .btn.send,:root[data-glassstyle="edge"] .box .btn{border-radius:0;clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px))}\n:root[data-glassstyle="edge"] .tabbar a.on{box-shadow:inset 0 2px 0 var(--accent);border-radius:0}\n:root[data-glassstyle="breach"] .minibar{border-top:1px solid var(--accent)}\n:root[data-glassstyle="breach"] .minichips a{border-radius:0;background:transparent;border-color:color-mix(in srgb,var(--accent) 55%,transparent);font-family:var(--f-mono);font-size:12px}\n:root[data-glassstyle="breach"] .minichips a::before{content:"> ";color:var(--accent)}\n:root[data-glassstyle="breach"] .minibox,:root[data-glassstyle="breach"] .box{border-radius:0;border-color:color-mix(in srgb,var(--accent) 60%,transparent);background:color-mix(in srgb,var(--surface) 70%,transparent);box-shadow:inset 0 3px 0 var(--accent)}\n:root[data-glassstyle="breach"] .minibox input,:root[data-glassstyle="breach"] .box textarea{font-family:var(--f-mono)}\n:root[data-glassstyle="breach"] .minibox .btn.send,:root[data-glassstyle="breach"] .box .btn{border-radius:0}\n:root[data-glassstyle="breach"] .tabbar a.on{background:var(--accent);color:var(--on);border-radius:0}\n:root[data-glassstyle="hud"] .minichips a{border-radius:3px;background:linear-gradient(var(--accent),var(--accent)) left top/7px 1.5px no-repeat,linear-gradient(var(--accent),var(--accent)) left top/1.5px 7px no-repeat,linear-gradient(var(--accent),var(--accent)) right top/7px 1.5px no-repeat,linear-gradient(var(--accent),var(--accent)) right top/1.5px 7px no-repeat,linear-gradient(var(--accent),var(--accent)) left bottom/7px 1.5px no-repeat,linear-gradient(var(--accent),var(--accent)) left bottom/1.5px 7px no-repeat,linear-gradient(var(--accent),var(--accent)) right bottom/7px 1.5px no-repeat,linear-gradient(var(--accent),var(--accent)) right bottom/1.5px 7px no-repeat,var(--surface2);border-color:color-mix(in srgb,var(--text) 10%,transparent);text-transform:uppercase;letter-spacing:.06em;font-size:12px}\n:root[data-glassstyle="hud"] .minibox,:root[data-glassstyle="hud"] .box{border-radius:4px;background:linear-gradient(var(--accent),var(--accent)) left top/12px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) left top/2px 12px no-repeat,linear-gradient(var(--accent),var(--accent)) right top/12px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) right top/2px 12px no-repeat,linear-gradient(var(--accent),var(--accent)) left bottom/12px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) left bottom/2px 12px no-repeat,linear-gradient(var(--accent),var(--accent)) right bottom/12px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) right bottom/2px 12px no-repeat,var(--surface2);border-color:color-mix(in srgb,var(--text) 10%,transparent)}\n:root[data-glassstyle="hud"] .minibox .btn.send,:root[data-glassstyle="hud"] .box .btn{border-radius:3px}\n:root[data-glassstyle="hud"] .tabbar a.on{box-shadow:inset 0 2px 0 var(--accent);border-radius:0}\n:root[data-glassstyle="console"] .minibar{border-top:1px solid var(--border);box-shadow:none}\n:root[data-glassstyle="console"] .minichips a{border-radius:2px;background:transparent;font-family:var(--f-mono);font-size:12px;color:var(--muted)}\n:root[data-glassstyle="console"] .minibox,:root[data-glassstyle="console"] .box{border-radius:2px}\n:root[data-glassstyle="console"] .minibox::before{content:"\\203A";font-family:var(--f-mono);color:var(--accent);margin-left:-6px}\n:root[data-glassstyle="console"] .minibox input,:root[data-glassstyle="console"] .box textarea{font-family:var(--f-mono);font-size:15px}\n:root[data-glassstyle="console"] .minibox .btn.send,:root[data-glassstyle="console"] .box .btn{border-radius:2px}\n:root[data-glassstyle="console"] .tabbar a{font-family:var(--f-mono);text-transform:uppercase;letter-spacing:.06em;font-size:10px}\n:root[data-glassstyle="console"] .tabbar a.on{box-shadow:inset 0 -2px 0 var(--accent);border-radius:0}\n:root[data-glassstyle="holo"] .minibar{background:color-mix(in srgb,var(--bg) 70%,transparent);border-top:1px solid color-mix(in srgb,var(--text) 22%,transparent)}\n:root[data-glassstyle="holo"] .minichips a{border-radius:4px;background:color-mix(in srgb,var(--text) 6%,transparent);border-color:color-mix(in srgb,var(--text) 30%,transparent);text-transform:uppercase;letter-spacing:.08em;font-size:11px;box-shadow:0 0 10px color-mix(in srgb,var(--text) 10%,transparent)}\n:root[data-glassstyle="holo"] .minibox,:root[data-glassstyle="holo"] .box{border-radius:10px;background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--text) 70%,transparent) 50%,transparent) top/100% 1px no-repeat,color-mix(in srgb,var(--text) 6%,transparent);border-color:color-mix(in srgb,var(--text) 28%,transparent);box-shadow:0 0 16px color-mix(in srgb,var(--text) 10%,transparent)}\n:root[data-glassstyle="holo"] .minibox .btn.send,:root[data-glassstyle="holo"] .box .btn{border-radius:4px}\n:root[data-glassstyle="holo"] .tabbar a.on{text-shadow:0 0 12px color-mix(in srgb,var(--accent) 70%,transparent)}\n:root[data-glassstyle="ornate"] .minichips a{border-radius:0;background:transparent;border:0;border-bottom:1px solid color-mix(in srgb,var(--accent) 45%,transparent);text-transform:uppercase;letter-spacing:.1em;font-size:11px;font-family:var(--f-label)}\n:root[data-glassstyle="ornate"] .minibox .btn.send,:root[data-glassstyle="ornate"] .box .btn{border-radius:0;background:transparent;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 60%,transparent)}\n:root[data-glassstyle="ornate"] .tabbar a.on{box-shadow:inset 0 -1px 0 var(--accent);border-radius:0}\n'
 _MOVE_CSS = r'''
 /* ---- Moving between pages (2026-11-04). Where the browser can (Safari 18.2+, Chrome 126+), each page change is a
    view transition: the old page fades back, the new one rises in, the tab bar stays put, and Theta morphs
@@ -3350,10 +3448,170 @@ _MOVE_CSS = r'''
 @media (prefers-reduced-motion:reduce){@view-transition{navigation:none}
  .main > *,.main > .stack > *,.main > .grid2 > *,.main > .wins > *{animation:none!important}.nav-wait .theta-mini{animation:none}}
 '''
-_UI_CSS = theme_css() + "\n" + _BASE_CSS + "\n" + _hdr_css() + "\n" + _frames_css() + "\n" + _fonts_css() + _MOVE_CSS + _BAR_CSS + "\n/* ---- inside the Theta page's sheet (2026-11-04): the page alone, without the app's own bars */\nhtml.embedded .tabbar,html.embedded .minibar,html.embedded .theta-mini,html.embedded .rail{display:none!important}\nhtml.embedded .main{padding-top:14px;padding-bottom:calc(28px + env(safe-area-inset-bottom,0px))}\nhtml.embedded body.has-mini header.top{padding-right:0}\n" + "\nhtml.veiled .app,html.veiled .tabbar{visibility:hidden}"
+# ---- Charm (2026-11-06): what's delightful about a theme or a frame is how it behaves. A theme celebrates
+# when you finish something, in its own manner (CHEERS: Sakura drops petals, Ember throws sparks, Ocean
+# ripples, Paper stamps a check...); a frame answers your touch in its own manner (Glass+ squishes, Liquid
+# Glass pools light, Edge sweeps a lit edge, HUD snaps target brackets on...). Both stay out of the layout
+# and off with reduced motion.
+CHEERS = {"theta": ("orbit", ""), "midnight": ("star", ""), "nebula": ("star", ""), "aurora": ("wash", ""), "graphite": ("check", ""),
+          "lobby": ("check", ""), "forest": ("leaf", ""), "ember": ("spark", ""), "ocean": ("ripple", ""), "paper": ("stamp", "\u2713 DONE"),
+          "sakura": ("petal", ""), "terminal": ("print", "> done \u2713"), "redline": ("spark", ""), "datalog": ("ripple", ""),
+          "breach": ("print", "[ ACCESS OK ]"), "scanner": ("stamp", "CLEARED"), "amber": ("spark", ""), "mission": ("check", ""),
+          "hologram": ("check", ""), "gilded": ("glint", ""), "lattice": ("ripple", ""), "bloom": ("petal", ""), "neonrift": ("neon", ""),
+          "verdant": ("leaf", ""), "lunar": ("glint", ""), "bloodsign": ("spark", ""), "nightfiligree": ("glint", ""), "dusk": ("star", "")}
+_CHARM_CSS = r'''.card,.win,.kpi,.w{background-image:var(--lit,none)}
+/* ---- Each frame's charm (2026-11-06): how it answers a touch. The pressed thing gets .tap for a moment and a
+   .tapfx layer (inset, its own corners, never in the layout); --tx/--ty is where the finger landed. */
+.tapfx{position:absolute;inset:0;border-radius:inherit;pointer-events:none;overflow:hidden;opacity:0;z-index:0}
+.tap > .tapfx{animation:tapfx-fade .6s ease-out}
+@keyframes tapfx-fade{0%{opacity:1}100%{opacity:0}}
+.cheer{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:9990}
+/* Glass+: a soft squish, a little bloom under the finger */
+:root[data-glassstyle="plus"] .tap{animation:tap-squish .42s cubic-bezier(.34,1.56,.64,1)}
+:root[data-glassstyle="plus"] .tapfx{background:radial-gradient(circle at var(--tx) var(--ty),color-mix(in srgb,white 35%,transparent),transparent 60%)}
+@keyframes tap-squish{0%{transform:scale(1)}30%{transform:scale(.955)}100%{transform:scale(1)}}
+/* Liquid Glass: light pools where you press and spreads to the edges */
+:root[data-glassstyle="liquid"] .tap{animation:tap-squish .5s cubic-bezier(.34,1.56,.64,1)}
+:root[data-glassstyle="liquid"] .tap > .tapfx{animation:tap-pool .65s ease-out}
+:root[data-glassstyle="liquid"] .tapfx{background:radial-gradient(circle at var(--tx) var(--ty),color-mix(in srgb,white 55%,transparent),color-mix(in srgb,var(--accent) 18%,transparent) 30%,transparent 62%)}
+@keyframes tap-pool{0%{opacity:1;clip-path:circle(0 at var(--tx) var(--ty))}60%{opacity:.8}100%{opacity:0;clip-path:circle(150% at var(--tx) var(--ty))}}
+/* Edge: a lit edge sweeps across */
+:root[data-glassstyle="edge"] .tapfx{background:linear-gradient(100deg,transparent 30%,color-mix(in srgb,var(--accent) 45%,transparent) 48%,color-mix(in srgb,white 50%,transparent) 50%,transparent 66%) 200% 0/250% 100% no-repeat}
+:root[data-glassstyle="edge"] .tap > .tapfx{animation:tap-sweep .45s cubic-bezier(.4,0,.2,1)}
+@keyframes tap-sweep{0%{opacity:1;background-position:200% 0}100%{opacity:1;background-position:-100% 0}}
+/* Breach: the box inverts for a blink, like a terminal accepting a key */
+:root[data-glassstyle="breach"] .tapfx{background:var(--accent);mix-blend-mode:difference}
+:root[data-glassstyle="breach"] .tap > .tapfx{animation:tap-blink .32s steps(2,jump-none)}
+@keyframes tap-blink{0%{opacity:1}100%{opacity:0}}
+/* HUD: target brackets snap onto what you touched */
+:root[data-glassstyle="hud"] .tapfx{overflow:visible;background:linear-gradient(var(--accent),var(--accent)) left top/10px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) left top/2px 10px no-repeat,
+ linear-gradient(var(--accent),var(--accent)) right top/10px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) right top/2px 10px no-repeat,
+ linear-gradient(var(--accent),var(--accent)) left bottom/10px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) left bottom/2px 10px no-repeat,
+ linear-gradient(var(--accent),var(--accent)) right bottom/10px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) right bottom/2px 10px no-repeat}
+:root[data-glassstyle="hud"] .tap > .tapfx{animation:tap-lock .5s cubic-bezier(.2,.8,.2,1)}
+@keyframes tap-lock{0%{opacity:0;transform:scale(1.18)}35%{opacity:1;transform:scale(1)}70%{opacity:1}100%{opacity:0;transform:scale(1)}}
+/* Console: the line highlights like a selected row, with a cursor at the end */
+:root[data-glassstyle="console"] .tapfx{background:color-mix(in srgb,var(--accent) 16%,transparent);box-shadow:inset 3px 0 0 var(--accent)}
+:root[data-glassstyle="console"] .tapfx::after{content:"\258C";position:absolute;right:8px;top:50%;transform:translateY(-50%);color:var(--accent);font:600 13px var(--f-mono)}
+:root[data-glassstyle="console"] .tap > .tapfx{animation:tap-row .6s steps(1,end)}
+@keyframes tap-row{0%,100%{opacity:0}1%,30%{opacity:1}31%,45%{opacity:.35}46%,80%{opacity:1}}
+/* Hologram: it flickers as if the projection caught your finger, and a scan line runs through */
+:root[data-glassstyle="holo"] .tap{animation:tap-flicker .4s linear}
+:root[data-glassstyle="holo"] .tapfx{background:linear-gradient(180deg,transparent 45%,color-mix(in srgb,var(--text) 40%,transparent) 50%,transparent 55%) 0 -100%/100% 200% no-repeat}
+:root[data-glassstyle="holo"] .tap > .tapfx{animation:tap-scan .45s linear}
+@keyframes tap-flicker{0%,100%{opacity:1}20%{opacity:.55}30%{opacity:1}55%{opacity:.75}65%{opacity:1}}
+@keyframes tap-scan{0%{opacity:1;background-position:0 -100%}100%{opacity:1;background-position:0 100%}}
+/* Filigree: an engraved line draws itself under what you chose */
+:root[data-glassstyle="ornate"] .tapfx{overflow:visible;background:linear-gradient(90deg,transparent,var(--accent) 20%,var(--accent) 80%,transparent) 50% 100%/0 1px no-repeat}
+:root[data-glassstyle="ornate"] .tap > .tapfx{animation:tap-engrave .7s cubic-bezier(.2,.8,.2,1)}
+@keyframes tap-engrave{0%{opacity:1;background-size:0 1px}55%{opacity:1;background-size:100% 1px}100%{opacity:0;background-size:100% 1px}}
+@media (prefers-reduced-motion:reduce){.tap,.tap > .tapfx{animation:none!important}}
+'''
+_CHARM_JS_SRC = r'''(() => {
+  // ---- The charm of each theme (2026-11-06): how it celebrates when you finish something (a reminder done, a
+  // daily check ticked, a widget cleared). A short, quiet moment in the theme's own character; never with
+  // reduced motion. window.thetaCheer(x, y) from wherever the thing was finished.
+  const CHEER = __CHEERS__, root = document.documentElement;
+  const still = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dark = () => root.dataset.mode === "dark" || (root.dataset.mode !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+  window.thetaCheerKind = () => (CHEER[root.dataset.theme] || CHEER.theta).kind;
+  window.thetaCheer = (x, y) => {
+    document.dispatchEvent(new CustomEvent("theta:cheer")); // Theta takes it in too (proud for a moment)
+    if (still()) return;
+    const c = CHEER[root.dataset.theme] || CHEER.theta, [A, B, T] = dark() ? c.dark : c.light, kind = c.kind;
+    if (x == null) { x = innerWidth / 2; y = innerHeight / 2; }
+    const cv = document.createElement("canvas"), dpr = Math.min(2, devicePixelRatio || 1);
+    cv.className = "cheer"; cv.width = innerWidth * dpr; cv.height = innerHeight * dpr; cv.setAttribute("aria-hidden", "true");
+    document.body.append(cv);
+    const g = cv.getContext("2d"); g.scale(dpr, dpr);
+    const r = (m, n) => m + Math.random() * (n - m), ease = k => 1 - Math.pow(1 - k, 3);
+    const font = getComputedStyle(root).getPropertyValue("--f-label") || "system-ui";
+    let P = [], DUR = 1100;
+    if (kind === "petal" || kind === "leaf") { DUR = 1700;
+      P = Array.from({length: 14}, (_, i) => ({x: x + r(-30, 30), y: y + r(-20, 10), vx: r(-1.2, 1.2), vy: r(-2.6, -.8), rot: r(0, 6), vr: r(-.08, .08), s: r(4, 7), c: i % 3 ? A : B, ph: r(0, 6)})); }
+    if (kind === "spark") { DUR = 1200; P = Array.from({length: 22}, (_, i) => ({x: x + r(-12, 12), y, vx: r(-1.4, 1.4), vy: r(-4.5, -1.5), s: r(1.2, 2.6), c: i % 4 ? A : B, f: r(0, 6)})); }
+    if (kind === "glint") { DUR = 1300; P = Array.from({length: 6}, (_, i) => ({x: x + r(-70, 70), y: y + r(-46, 30), s: r(5, 11), d: i * .09, c: i % 2 ? A : B})); }
+    if (kind === "star") { DUR = 1300; P = Array.from({length: 9}, () => ({a: r(0, 6.3), d: r(14, 46), s: r(1, 2.2)})); }
+    function frame(now) {
+      const k = Math.min(1, (now - t0) / DUR); g.clearRect(0, 0, innerWidth, innerHeight);
+      if (kind === "check") { // a ring draws itself, then the tick: calm and exact
+        const u = ease(Math.min(1, k * 1.8)), v = Math.max(0, Math.min(1, (k - .35) * 2.6)); g.globalAlpha = k < .75 ? 1 : (1 - k) * 4;
+        g.lineWidth = 2.5; g.lineCap = "round"; g.strokeStyle = A; g.beginPath(); g.arc(x, y, 20, -1.57, -1.57 + 6.283 * u); g.stroke();
+        if (v) { g.beginPath(); g.moveTo(x - 8, y + 1); const p1 = Math.min(1, v * 2), p2 = Math.max(0, v * 2 - 1);
+          g.lineTo(x - 8 + 6 * p1, y + 1 + 6 * p1); if (p2) g.lineTo(x - 2 + 11 * p2, y + 7 - 14 * p2); g.stroke(); }
+      } else if (kind === "orbit") { // Theta: a ring opens around it, three moons go round once
+        const u = ease(k), R = 14 + 34 * u; g.globalAlpha = 1 - k; g.lineWidth = 1.5; g.strokeStyle = A;
+        g.beginPath(); g.arc(x, y, R, 0, 6.283); g.stroke();
+        for (let i = 0; i < 3; i++) { const t = -1.57 + i * 2.094 + u * 6.283; g.fillStyle = i ? A : B; g.beginPath(); g.arc(x + R * Math.cos(t), y + R * Math.sin(t), 3, 0, 6.283); g.fill(); }
+      } else if (kind === "ripple" || kind === "neon") { // rings on water (or neon, with a glow)
+        if (kind === "neon") { g.shadowColor = A; g.shadowBlur = 14; }
+        for (let i = 0; i < 3; i++) { const u = Math.max(0, k * 1.4 - i * .18); if (!u || u > 1) continue;
+          g.globalAlpha = (1 - u) * .9; g.lineWidth = kind === "neon" ? 2.5 : 1.5; g.strokeStyle = i % 2 ? B : A;
+          g.beginPath(); g.ellipse(x, y, 10 + 60 * ease(u), (10 + 60 * ease(u)) * (kind === "neon" ? 1 : .55), 0, 0, 6.283); g.stroke(); }
+      } else if (kind === "wash") { // Aurora: a breath of colored light
+        const u = ease(k), R = 40 + 220 * u, gr = g.createRadialGradient(x, y, 0, x, y, R);
+        gr.addColorStop(0, A); gr.addColorStop(.5, B); gr.addColorStop(1, "transparent"); g.globalAlpha = .28 * (1 - k); g.fillStyle = gr; g.fillRect(x - R, y - R, R * 2, R * 2);
+      } else if (kind === "star") { // a shooting star lands where you finished, and twinkles
+        const u = Math.min(1, k * 2.2), sx = x - 170 + 170 * ease(u), sy = y - 110 + 110 * ease(u);
+        if (u < 1) { const gr = g.createLinearGradient(sx - 60, sy - 39, sx, sy); gr.addColorStop(0, "transparent"); gr.addColorStop(1, T);
+          g.strokeStyle = gr; g.lineWidth = 2; g.globalAlpha = 1; g.beginPath(); g.moveTo(sx - 60, sy - 39); g.lineTo(sx, sy); g.stroke(); }
+        else P.forEach(p => { const w = Math.sin((k - .45) / .55 * 3.14); g.globalAlpha = Math.max(0, w); g.fillStyle = T; g.beginPath();
+          g.arc(x + Math.cos(p.a) * p.d * (k + .2), y + Math.sin(p.a) * p.d * (k + .2), p.s, 0, 6.283); g.fill(); });
+      } else if (kind === "stamp" || kind === "print") { // Paper's ink stamp, Scanner's tag, Terminal's printout
+        const word = c.word;
+        if (kind === "stamp") { const u = Math.min(1, k * 4), s = 1.7 - .7 * ease(u); g.save(); g.translate(x, y - 34); g.rotate(-.14); g.scale(s, s);
+          g.globalAlpha = Math.min(1, u * 1.5) * (k < .7 ? 1 : (1 - k) / .3); g.strokeStyle = A; g.fillStyle = A; g.lineWidth = 2;
+          g.font = "700 15px " + font; const w = g.measureText(word).width + 18; g.strokeRect(-w / 2, -13, w, 26); g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(word, 0, 1); g.restore(); }
+        else { const n = Math.ceil(Math.min(1, k * 2.2) * word.length); g.globalAlpha = k < .75 ? 1 : (1 - k) * 4; g.fillStyle = A;
+          g.font = "600 14px " + (getComputedStyle(root).getPropertyValue("--f-mono") || "monospace"); g.textBaseline = "middle";
+          g.fillText(word.slice(0, n) + (k < .9 && (now / 260 | 0) % 2 ? "▌" : ""), x - 40, y - 30); }
+      } else if (kind === "glint") { // the gilded themes: little four-point stars catch the light
+        P.forEach(p => { const u = Math.max(0, Math.min(1, (k - p.d) * 1.6)), s = p.s * Math.sin(u * 3.14); if (s <= 0) return;
+          g.globalAlpha = .95; g.fillStyle = p.c; g.beginPath(); g.moveTo(p.x, p.y - s); g.quadraticCurveTo(p.x, p.y, p.x + s, p.y); g.quadraticCurveTo(p.x, p.y, p.x, p.y + s);
+          g.quadraticCurveTo(p.x, p.y, p.x - s, p.y); g.quadraticCurveTo(p.x, p.y, p.x, p.y - s); g.fill(); });
+      } else { // petals, leaves and sparks: a handful of light things in the theme's colors
+        P.forEach(p => {
+          if (kind === "spark") { p.vy += .06; p.x += p.vx; p.y += p.vy; g.globalAlpha = (1 - k) * (.6 + .4 * Math.sin(now / 40 + p.f)); g.fillStyle = p.c;
+            g.shadowColor = p.c; g.shadowBlur = 8; g.beginPath(); g.arc(p.x, p.y, p.s, 0, 6.283); g.fill(); return; }
+          p.vy = Math.min(p.vy + .07, 1.6); p.x += p.vx + Math.sin(now / 300 + p.ph) * .6; p.y += p.vy; p.rot += p.vr;
+          g.globalAlpha = k < .6 ? 1 : (1 - k) / .4; g.fillStyle = p.c; g.save(); g.translate(p.x, p.y); g.rotate(p.rot); g.beginPath();
+          if (kind === "leaf") { g.moveTo(-p.s, 0); g.quadraticCurveTo(0, -p.s * .7, p.s, 0); g.quadraticCurveTo(0, p.s * .7, -p.s, 0); }
+          else g.ellipse(0, 0, p.s, p.s * .6, 0, 0, 6.283);
+          g.fill(); g.restore(); });
+      }
+      if (k < 1) requestAnimationFrame(frame); else cv.remove();
+    }
+    const t0 = performance.now(); requestAnimationFrame(frame);
+  };
+
+  // ---- The charm of each frame: how it answers a touch. A light effect on the thing you pressed, in the
+  // frame's own manner (CSS: the .tap class and the .tapfx layer); nothing moves the layout.
+  const TAPPABLE = "button,.btn,a.chip,.chip,.bchip,.minichips a,.tabbar a,.w,.card a,.seg button,.sw,.lrow,summary";
+  document.addEventListener("pointerdown", e => {
+    if (still()) return;
+    const el = e.target.closest(TAPPABLE); if (!el || el.disabled || el.closest(".cheer")) return;
+    const b = el.getBoundingClientRect(); if (!b.width) return;
+    el.style.setProperty("--tx", (e.clientX - b.left) + "px"); el.style.setProperty("--ty", (e.clientY - b.top) + "px");
+    let fx = el.querySelector(":scope > .tapfx");
+    if (!fx) { fx = document.createElement("span"); fx.className = "tapfx"; fx.setAttribute("aria-hidden", "true");
+      if (getComputedStyle(el).position === "static") el.style.position = "relative"; el.append(fx); }
+    el.classList.remove("tap"); void el.offsetWidth; el.classList.add("tap");
+    clearTimeout(el._tapT); el._tapT = setTimeout(() => el.classList.remove("tap"), 700);
+  }, {passive: true});
+})();
+'''
+
+
+def _cheers_json():
+    return json.dumps({k: {"kind": CHEERS.get(k, ("check", ""))[0], "word": CHEERS.get(k, ("check", ""))[1],
+                           "light": [t["light"]["accent"], t["light"]["accent2"], t["light"]["text"]],
+                           "dark": [t["dark"]["accent"], t["dark"]["accent2"], t["dark"]["text"]]} for k, t in THEMES.items()})
+
+
+_UI_CSS = theme_css() + "\n" + _BASE_CSS + "\n" + _hdr_css() + "\n" + _frames_css() + "\n" + _fonts_css() + _MOVE_CSS + _BAR_CSS + "\n/* ---- inside the Theta page's sheet (2026-11-04): the page alone, without the app's own bars */\nhtml.embedded .tabbar,html.embedded .minibar,html.embedded .theta-mini,html.embedded .rail{display:none!important}\nhtml.embedded .main{padding-top:14px;padding-bottom:calc(28px + env(safe-area-inset-bottom,0px))}\nhtml.embedded body.has-mini header.top{padding-right:0}\n" + "\nhtml.veiled .app,html.veiled .tabbar{visibility:hidden}" + "\n:root[data-glassstyle=\"liquid\"] .tabbar,:root[data-glassstyle=\"holo\"] .tabbar,:root[data-glassstyle=\"liquid\"] .minibar,:root[data-glassstyle=\"holo\"] .minibar{background:color-mix(in srgb,var(--bg) 88%,transparent);-webkit-backdrop-filter:blur(26px) saturate(160%);backdrop-filter:blur(26px) saturate(160%)}" + "\n" + _CHARM_CSS
 _UI_JS = _UI_JS_SRC.replace("__THEMES__", json.dumps(
     {n: {"glass": bool(t.get("glass")), "mono": bool(t.get("mono")), "light": t["light"]["bg"],
-         "dark": t["dark"]["bg"], "accent2": t["dark"]["accent2"]} for n, t in THEMES.items()}))
+         "dark": t["dark"]["bg"], "accent2": t["dark"]["accent2"]} for n, t in THEMES.items()})) + "\n" + _CHARM_JS_SRC.replace("__CHEERS__", _cheers_json())
 _ASSET_V = hashlib.sha1((_UI_CSS + _UI_JS + _CHAT_JS).encode()).hexdigest()[:10]
 
 
@@ -3557,8 +3815,12 @@ def ring_svg(frac, size=46, color="var(--accent)"):
             f'transform="rotate(-90 {size / 2} {size / 2})"/></svg>')
 
 
-_DONUT_COLORS = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#14b8a6",
-                 "#ec4899", "#84cc16", "#f97316", "#6366f1"]
+# The chart's colors come from the theme (2026-11-06): its two accents, then blends of them and the text,
+# so a chart looks like it belongs to the theme it's in. In order, so neighbors stay distinct.
+_DONUT_COLORS = ["var(--accent)", "var(--accent2)", "color-mix(in oklab,var(--accent) 50%,var(--accent2))",
+                 "color-mix(in oklab,var(--accent) 55%,var(--text))", "color-mix(in oklab,var(--accent2) 55%,var(--text))",
+                 "color-mix(in oklab,var(--accent) 55%,var(--bg))", "color-mix(in oklab,var(--accent2) 55%,var(--bg))",
+                 "color-mix(in oklab,var(--accent) 30%,var(--muted))", "color-mix(in oklab,var(--accent2) 30%,var(--muted))", "var(--muted)"]
 
 
 def donut_svg(cats, total, size=180):
@@ -3573,7 +3835,7 @@ def donut_svg(cats, total, size=180):
     for i, (label, spent) in enumerate(cats):
         frac = spent / total if total else 0
         segs.append(f'<circle cx="{size / 2}" cy="{size / 2}" r="{r:.1f}" fill="none" '
-                    f'stroke="{_DONUT_COLORS[i % len(_DONUT_COLORS)]}" stroke-width="22" '
+                    f'style="stroke:{_DONUT_COLORS[i % len(_DONUT_COLORS)]}" stroke-width="22" '
                     f'stroke-dasharray="{circ * frac:.1f} {circ:.1f}" stroke-dashoffset="{-off:.1f}" '
                     f'transform="rotate(-90 {size / 2} {size / 2})"/>')
         off += circ * frac

@@ -646,11 +646,11 @@ _HEAD_CSS = """
 .headpage .hstate{font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0;min-height:1.4em}
 .headpage .said{color:var(--muted);font-size:15px;text-align:center;margin:0;min-height:1.4em;max-width:46ch}
 .headpage .reply{font-size:17px;line-height:1.55;margin:0;max-width:46ch;white-space:pre-wrap;overflow-wrap:anywhere}
-.headpage .talk{font:inherit;font-weight:750;font-size:16px;padding:14px 28px;border-radius:999px;border:0;cursor:pointer;
+.headpage .talk{font:inherit;font-weight:700;font-size:16px;padding:14px 28px;border-radius:999px;border:0;cursor:pointer;
  color:#04121a;background:#4fd3ff;min-width:180px}
 .headpage .talk[aria-pressed=true]{background:#ff5d6c;color:#fff}
 .headpage .talk:disabled{opacity:.55;cursor:default}
-.headpage .hear{font:inherit;font-weight:750;font-size:15px;padding:10px 22px;border-radius:999px;cursor:pointer;
+.headpage .hear{font:inherit;font-weight:700;font-size:15px;padding:10px 22px;border-radius:999px;cursor:pointer;
  color:inherit;background:transparent;border:1.5px solid #4fd3ff}
 .headpage .talk:focus-visible,.headpage canvas:focus-visible{outline:2px solid #4fd3ff;outline-offset:3px}
 .headpage form{display:flex;gap:8px;width:100%}
@@ -661,7 +661,7 @@ _HEAD_CSS = """
 .headpage .note{font-size:13px;color:var(--muted);margin:0;text-align:center}
 .headpage .modes{display:grid;gap:10px;justify-items:center;width:100%}
 .headpage .tr{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;font-size:14px}
-.headpage .tr select,.headpage .tr button{font:inherit;padding:8px 12px;border-radius:10px;border:1px solid var(--line,rgba(127,127,127,.3));background:transparent;color:inherit}
+.headpage .tr select,.headpage .tr button{font:inherit;padding:8px 12px;border-radius:12px;border:1px solid var(--line,rgba(127,127,127,.3));background:transparent;color:inherit}
 .headpage .tr button{font-weight:700;cursor:pointer;border-color:#4fd3ff}
 .headpage a.hear{text-decoration:none;display:inline-block}
 .headpage .opts .test{font:inherit;font-weight:700;padding:4px 12px;border-radius:999px;border:1px solid #4fd3ff;background:transparent;color:inherit;cursor:pointer}
@@ -692,7 +692,7 @@ _HEAD_JS = r"""
   let AV = Object.assign({}, AV_DEFAULT);
   try { Object.assign(AV, JSON.parse(store("theta:avatar") || "{}")); } catch (e) {}
   const MOODS = {
-    calm: [__THEME__.calm, 1.0, 0, 0], focused: ["#7d8bff", 1.25, 0, 0], happy: ["#ffc04d", 1.15, 0, 1],
+    calm: [__THEME__.calm, 1.0, 0, 0], focused: [__THEME__.focus || "#7d8bff", 1.25, 0, 0], happy: ["#ffc04d", 1.15, 0, 1],
     concerned: ["#ff6a5c", 1.35, 1, 0], sleepy: ["#b58cff", 0.45, 0, 0], proud: ["#5ef0a2", 1.1, 0, 0.6]};
   function hexHsl(hex) {
     const n = parseInt((hex || "#4fd3ff").slice(1), 16), r = (n >> 16 & 255) / 255, gg = (n >> 8 & 255) / 255, b = (n & 255) / 255;
@@ -784,16 +784,55 @@ _HEAD_JS = r"""
     for (const [px, py, z, pr, br, s, v] of pts) {
       if (!coreDone && z < 0) { core(c, 0.035 + 0.045 * lv); coreDone = true; }
       const fog = Math.max(0.12, Math.min(1, 0.62 - z * 0.55)), spark = moodW.proud > 0.3 && s > 0.97 ? 0.45 : 0;
-      g.fillStyle = col(s * 40 - 20, (pr - 0.8) * 50 + Math.min(1, v * 40) * 12 + spark * 40 - (lightBg ? 22 : 0), (0.1 + 0.55 * br) * fog + spark + (lightBg ? 0.15 : 0));
+      g.fillStyle = col(s * 18 - 9, (pr - 0.8) * 50 + Math.min(1, v * 40) * 12 + spark * 40 - (lightBg ? 22 : 0), (0.1 + 0.55 * br) * fog + spark + (lightBg ? 0.15 : 0));
       g.beginPath(); g.arc(px, py, S * 0.0075 * pr * pr, 0, TAU); g.fill();
     }
     if (!coreDone) core(c, 0.035 + 0.045 * lv);
     g.globalCompositeOperation = "source-over";
   }
+  // ---- the theme's character in Theta itself (2026-11-06): a small idle behavior that matches how the theme
+  // celebrates (window.thetaCheerKind): Theta's moons go round, a petal or a leaf drifts off, a spark rises, a
+  // ring ripples around it, a scan line passes, a glint catches the light, Aurora's color breathes. The quiet
+  // themes stay quiet. Never with reduced motion.
+  const STILL = matchMedia("(prefers-reduced-motion: reduce)").matches, drift = [];
+  let nextDrift = 0;
+  function flourish(t) {
+    if (STILL || !window.thetaCheerKind) return;
+    const kind = thetaCheerKind(), c = S / 2, R = S * 0.42 * 0.55, now = t;
+    g.save(); g.globalCompositeOperation = lightBg ? "source-over" : "lighter";
+    if (kind === "orbit") { // two moons on a tilted orbit; the far half passes behind
+      for (let i = 0; i < 2; i++) { const a = t * (0.7 + i * 0.25) + i * 3.1, x = c + Math.cos(a) * R * 1.55, y = c + Math.sin(a) * R * 0.42 - i * S * 0.02;
+        g.globalAlpha = Math.sin(a) > 0 ? 0.95 : 0.3; g.fillStyle = col(i ? 40 : 0, 20, 1); g.beginPath(); g.arc(x, y, S * (i ? 0.009 : 0.012), 0, TAU); g.fill(); }
+    } else if (kind === "wash") { cur.hue = (cur.hue + Math.sin(t * 0.4) * 0.35 + 360) % 360; // Aurora: the color breathes
+    } else if (kind === "ripple" || kind === "neon") { // a ring opens around the equator every few seconds
+      const u = (t % 3.2) / 3.2; g.globalAlpha = (1 - u) * 0.5; g.strokeStyle = col(0, 10, 1); g.lineWidth = S * 0.004;
+      g.beginPath(); g.ellipse(c, c + R * 0.1, R * (1 + u * 0.9), R * (1 + u * 0.9) * 0.3, 0, 0, TAU); g.stroke();
+    } else if (kind === "print" || kind === "stamp") { // a scan line passes over Theta
+      const u = (t % 4) / 4, y = c - R * 1.3 + u * R * 2.6; if (u < 0.6) { const gr = g.createLinearGradient(c - R * 1.4, 0, c + R * 1.4, 0);
+        gr.addColorStop(0, "transparent"); gr.addColorStop(0.5, col(0, 25, 0.55)); gr.addColorStop(1, "transparent"); g.fillStyle = gr; g.fillRect(c - R * 1.4, y, R * 2.8, S * 0.004); }
+    } else if (kind !== "check") { // petals, leaves, sparks, stars and glints leave the edge now and then
+      if (t > nextDrift) { nextDrift = t + (kind === "spark" ? 1.2 : 2.6); const a = Math.random() * TAU;
+        drift.push({x: c + Math.cos(a) * R * 1.05, y: c + Math.sin(a) * R * 1.05, born: t, a, r: Math.random() * 6}); }
+      for (let i = drift.length - 1; i >= 0; i--) { const d = drift[i], age = t - d.born, life = kind === "spark" ? 1.3 : 2.4;
+        if (age > life) { drift.splice(i, 1); continue; } const u = age / life; g.globalAlpha = Math.min(1, Math.sin(u * Math.PI) * 1.3); g.fillStyle = col(kind === "spark" ? 15 : 0, 15, 1);
+        if (kind === "spark") { g.beginPath(); g.arc(d.x + Math.sin(age * 6) * 2, d.y - age * S * 0.08, S * 0.009, 0, TAU); g.fill(); }
+        else if (kind === "star" || kind === "glint") { const s2 = S * 0.032 * Math.sin(u * Math.PI); g.beginPath(); g.moveTo(d.x, d.y - s2); g.quadraticCurveTo(d.x, d.y, d.x + s2, d.y);
+          g.quadraticCurveTo(d.x, d.y, d.x, d.y + s2); g.quadraticCurveTo(d.x, d.y, d.x - s2, d.y); g.quadraticCurveTo(d.x, d.y, d.x, d.y - s2); g.fill(); }
+        else { g.save(); g.translate(d.x + Math.cos(d.a) * age * S * 0.03 + Math.sin(age * 2) * S * 0.01, d.y + age * S * 0.05); g.rotate(d.r + age); g.beginPath();
+          if (kind === "leaf") { const L = S * 0.022; g.moveTo(-L, 0); g.quadraticCurveTo(0, -L * 0.7, L, 0); g.quadraticCurveTo(0, L * 0.7, -L, 0); } else g.ellipse(0, 0, S * 0.019, S * 0.011, 0, 0, TAU);
+          g.fill(); g.restore(); } }
+    }
+    g.restore();
+  }
+  // when you finish something, Theta is proud of you for a moment
+  let cheerMoodT = 0;
+  document.addEventListener("theta:cheer", () => { if (mood === "concerned") return; const before = mood; setMood("proud");
+    clearTimeout(cheerMoodT); cheerMoodT = setTimeout(() => setMood(before === "proud" ? "calm" : before), 2800); });
   function core(c, r) {
     const op = g.globalCompositeOperation; g.globalCompositeOperation = "source-over";
     const cr = S * r, gr = g.createRadialGradient(c, c, 0, c, c, cr * 3.2);
-    gr.addColorStop(0, "#ffffff"); gr.addColorStop(0.16, col(0, 30, 1)); gr.addColorStop(0.45, col(0, 0, 0.75)); gr.addColorStop(1, col(0, 0, 0));
+    [[0, "#ffffff"], [0.05, col(0, 34, 1)], [0.11, col(0, 18, 0.85)], [0.2, col(0, 6, 0.5)], [0.32, col(0, 0, 0.26)], [0.48, col(0, 0, 0.12)],
+     [0.68, col(0, 0, 0.045)], [0.86, col(0, 0, 0.012)], [1, col(0, 0, 0)]].forEach(([o, c2]) => gr.addColorStop(o, c2));
     g.fillStyle = gr; g.beginPath(); g.arc(c, c, cr * 3.2, 0, TAU); g.fill(); g.globalCompositeOperation = op;
   }
   function drawRings(t) { // the classic avatar, kept as a style
@@ -865,12 +904,17 @@ _HEAD_JS = r"""
     burst *= 0.86; level += (Math.min(1, target) - level) * 0.3;
     g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, S, S);
     g.translate(0, -S * cur.bounce * 0.012 * Math.abs(Math.sin(t * 3)));
-    if (AV.style === "rings") drawRings(t); else if (AV.style === "image" && avImgs.length) drawPicture(t, level); else drawUrchin(t, level);
+    if (AV.style === "rings") drawRings(t); else if (AV.style === "image" && avImgs.length) drawPicture(t, level); else { drawUrchin(t, level); flourish(t); }
     if (AV.style !== "image" && curBg) { curBg = ""; cv.style.backgroundImage = ""; cv.style.borderRadius = ""; }
+    if (!(++lightTick % 15)) { // the room's light comes from wherever Theta is
+      const hud = cv.closest(".hud"), H = hud && hud.getBoundingClientRect(), a = cv.getBoundingClientRect();
+      if (H && H.height) { hud.style.setProperty("--avx", Math.round(a.left + a.width / 2 - H.left) + "px"); hud.style.setProperty("--avy", Math.round(a.top + a.height / 2 - H.top) + "px"); }
+    }
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);
   // mood: from Theta's latest reply (the server tags it), and sleepy late at night when nothing else is going on
+  let lightTick = 0;
   function setMood(m) {
     mood = MOODS[m] ? m : "calm"; cv.dataset.mood = mood;
     const hex = (AV.colors || {})[mood] || MOODS[mood][0];
@@ -1371,7 +1415,7 @@ _DECK_CSS = """
 .hud-more .opts{justify-content:flex-start;margin:6px 0}.hud-more .modes{justify-items:start}.hud-more .tr{justify-content:flex-start}
 .deck{display:flex;width:100%;max-width:100%;min-width:0;box-sizing:border-box;gap:10px;overflow-x:auto;padding:10px 2px 6px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;align-items:flex-start}
 .deck:empty{display:none}
-.holo{flex:0 0 min(80vw,300px);scroll-snap-align:start;position:relative;border-radius:14px;padding:10px 12px 12px;color:#e6f6ff;
+.holo{flex:0 0 min(80vw,300px);scroll-snap-align:start;position:relative;border-radius:12px;padding:10px 12px 12px;color:#e6f6ff;
  background:linear-gradient(160deg,rgba(79,211,255,.16),rgba(6,14,22,.88) 45%);border:1px solid rgba(79,211,255,.6);
  box-shadow:0 0 18px rgba(79,211,255,.28),inset 0 0 24px rgba(79,211,255,.08);overflow:hidden;
  animation:holoIn .45s cubic-bezier(.2,.8,.2,1) both}
@@ -1382,12 +1426,12 @@ _DECK_CSS = """
 @media (prefers-reduced-motion:reduce){.holo,.holo::after{animation:none}}
 .holo header{display:flex;align-items:center;gap:8px;margin-bottom:6px}
 .holo .ic{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:12px;border:1px solid var(--mood,#4fd3ff);color:var(--mood,#4fd3ff);box-shadow:0 0 8px rgba(79,211,255,.6)}
-.holo h3{margin:0;font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--mood,#4fd3ff);flex:1;font-weight:700}
+.holo h3{margin:0;font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--mood,#4fd3ff);flex:1;font-weight:700}
 .holo .x{background:none;border:0;color:#9fb8c8;font-size:18px;line-height:1;cursor:pointer;padding:2px 4px;min-width:36px;min-height:36px;margin:-8px -8px -8px 0}
 .holo .row{display:flex;gap:8px;font-size:14px;padding:5px 0;border-top:1px solid rgba(79,211,255,.16);align-items:baseline}
 .holo .row b{color:#bff0ff;font-weight:650;white-space:nowrap}.holo .row span{min-width:0;overflow-wrap:anywhere}
-.holo .dim{color:#8fa9b8;font-size:12.5px}
-.holo .big{font-size:30px;font-weight:760;color:#f2fcff;text-shadow:0 0 14px rgba(79,211,255,.7);line-height:1.1}
+.holo .dim{color:#8fa9b8;font-size:13px}
+.holo .big{font-size:28px;font-weight:700;color:#f2fcff;text-shadow:0 0 14px rgba(79,211,255,.7);line-height:1.1}
 .holo .bar{height:6px;border-radius:3px;background:rgba(79,211,255,.16);overflow:hidden;margin-top:4px}
 .holo .bar i{display:block;height:100%;background:var(--mood,#4fd3ff);box-shadow:0 0 8px var(--mood,#4fd3ff)}.holo .bar i.over{background:#ff5d6c;box-shadow:0 0 8px #ff5d6c}
 .holo a.go{display:inline-block;margin-top:10px;padding:8px 16px;border-radius:999px;border:1px solid var(--mood,#4fd3ff);color:#e6f6ff;text-decoration:none;font-weight:700;font-size:14px;box-shadow:0 0 10px rgba(79,211,255,.35)}
@@ -1484,11 +1528,11 @@ _DECK_JS = r"""
 # chat appearing when you tap and fading 1.5 s after you stop; the opening assembles Theta and greets.
 _STAGE_CSS = """
 #head-av{view-transition-name:theta} /* the browser morphs it to and from the corner of other pages */
-.hud{background:radial-gradient(60% 45% at 50% 40%,color-mix(in srgb,var(--mood,#4fd3ff) 13%,transparent),transparent 72%),var(--stage,#070b10);color:#e6f2fa}
+.hud{background:__HUD_LIGHT__,radial-gradient(120% 90% at 50% 38%,transparent 0%,color-mix(in srgb,#000 45%,transparent) 55%,#000 100%),var(--stage,#070b10);color:#e6f2fa}
 .hud .hstate{color:var(--mood,#4fd3ff)}.hud .said,.hud .note{color:#9fb3c2}
 .hud .talk{background:var(--mood,#4fd3ff)}.hud .hear{border-color:var(--mood,#4fd3ff)}
 .caption{margin:6px 0 0;font-size:15px;line-height:1.45}.caption:empty{display:none}
-.hint{font-size:12.5px!important}
+.hint{font-size:13px!important}
 body.immersive .chat{height:100dvh}
 body.immersive .hud{position:fixed;inset:0;z-index:1;max-height:none;overflow:hidden;border:0;padding:0 max(16px,env(safe-area-inset-left,0px));
  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px}
@@ -1514,7 +1558,7 @@ body.immersive .chans,body.immersive .members{display:none}
 body.opening .deck,body.opening .caption,body.opening #head-note,body.opening .hud-mid{opacity:0;pointer-events:none}
 .hud-mid{transition:opacity .5s ease}
 /* the stage is the Settings background: no fill of its own, only Theta's glow */
-.hud{background:radial-gradient(55% 40% at 50% 42%,color-mix(in srgb,var(--mood,#4fd3ff) 12%,transparent),transparent 70%)!important}
+.hud{background:__HUD_LIGHT__!important}
 body.light-stage .hud{color:var(--text)}body.light-stage .caption{color:var(--text)!important}body.light-stage .hud .said,body.light-stage .hud .note{color:var(--muted)}
 /* the cinematic opening */
 .cine-layer{position:fixed;inset:0;width:100vw;height:100dvh;z-index:9;pointer-events:none}
@@ -1738,7 +1782,8 @@ def theme_stage(headers):
     if 0.2126 * r + 0.7152 * g_ + 0.0722 * b < 110:
         calm = "#4fd3ff"
     stage = t["bg"] if re.fullmatch(r"#[0-9a-fA-F]{6}", t["bg"] or "") else "#070b10"
-    return {"calm": calm, "stage": stage}
+    focus = t["accent"] if re.fullmatch(r"#[0-9a-fA-F]{6}", t["accent"] or "") else "#7d8bff"  # focused wears the theme too
+    return {"calm": calm, "stage": stage, "focus": focus}
 
 
 def head_hud(headers=None):
@@ -1802,7 +1847,8 @@ def head_assets():
                 .replace("__THEME__", cfg + ".theme").replace("__FISH__", cfg + ".fish"))
         js = "\n".join("try {\n" + part.strip() + "\n} catch (e) { console.error(e); }"
                        for part in (head, _DECK_JS, _STAGE_JS, BOARD_JS))
-        css = _HEAD_CSS.replace(".headpage", ".hud") + _DECK_CSS + _STAGE_CSS + BOARD_CSS
+        css = (_HEAD_CSS.replace(".headpage", ".hud") + _DECK_CSS + _STAGE_CSS + BOARD_CSS).replace(
+            "__HUD_LIGHT__", _light("80% 62%", "var(--avx,50%) var(--avy,34%)", "var(--mood,#4fd3ff)", .55, hot=.35, core=.075))  # Theta lights the room
         v = hashlib.sha1((js + css).encode()).hexdigest()[:10]
         _HEAD_ASSETS.update(js=js, css=css, v=v)
     return _HEAD_ASSETS
