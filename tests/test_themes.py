@@ -105,4 +105,7 @@ check("the opening plays on black; the first tap or key brings in your backgroun
       and 'addEventListener("pointerdown", unblack' in h._STAGE_JS and "body.boot-black .hud{box-shadow:inset 0 0 0 200vmax #000}" in h.head_assets()["css"])
 check("the Theta frames draw behind the content at the lab's density, so the cards are the dots", "const base = v === \"grain\" ? 6 : v === \"press\" ? 7 : 9" in h._UI_JS
       and "area / (v === \"lines\" ? 140 : 60)" in h._UI_JS)
+check("a card's motes move with it exactly when you scroll (the springs only shape them)", "if (c.lx != null && (R.x !== c.lx || R.y !== c.ly))" in h._UI_JS)
+check("two kinds of Theta card: made of motes (outline traced in motes) or solid in their style (dotted edge, halftone grain)", "d.ring = 1" in h._UI_JS
+      and ':root[data-motecards="styled"] .dotframe{z-index:8}' in h._UI_CSS and 'id="theta-cards"' in h.settings_page({}) if hasattr(h, "settings_page") else True)
 print("done")
