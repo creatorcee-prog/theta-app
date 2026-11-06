@@ -90,4 +90,14 @@ check("progress as dots: the card rings, the day ring and the focus timer (one d
       and ".dayring .dr-left,.dayring .dr-done{stroke-linecap:round;stroke-dasharray:0 9}" in h._UI_CSS and "one dot a minute" in h._DECK_JS)
 check("the star background is Theta's dots: depth, its mood's tint, and alive with it", "window.thetaStars" in h._UI_JS and 'state === "speaking" ? starLv * near' in h._UI_JS)
 check("only Theta on: the status line doesn't say Mistral passed it on", 'C.lead !== "theta" ? "Mistral passed this to' in h._CHAT_JS)
+hud = h.head_hud({})
+check("the opening is a choice: Cinematic or Converge (the stars glide in and become Theta)", '<select id="av-open"' in hud
+      and 'localStorage.getItem("theta:opening")' in h._HEAD_JS and "function converge()" in h._STAGE_JS and 'pick === "converge"' in h._STAGE_JS)
+check("Theta's dots have a shape: circle, triangle, square, diamond, pentagon, hexagon or star", all(f'value="{k}"' in hud for k in
+      ("circle", "triangle", "square", "diamond", "pentagon", "hexagon", "star")) and "window.thetaDot = {path, shape: current}" in h._UI_JS)
+check("...and every dot Theta draws takes it: avatar, frames, moments, the sky and the opening", h._UI_JS.count("thetaDot.path(") >= 3
+      and "dotPath(px, py" in h._HEAD_JS and "thetaDot.path(" in h._STAGE_JS)
+check("a long card keeps its dots dense: only the bands near the screen get dots", "const BAND = 240, tall = R => R.h > H * .9;" in h._UI_JS and "fillBands(c, R, false)" in h._UI_JS)
+check("nothing inside a card is wider than the card", "select,input:not([type=checkbox]):not([type=radio]),textarea{max-width:100%;min-width:0}" in h._UI_CSS)
+check("a folded card's contents show when opened (no stuck entrance)", ".main > details.stack > *{animation:none}" in h._UI_CSS)
 print("done")

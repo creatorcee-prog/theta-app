@@ -784,7 +784,7 @@ _HEAD_JS = r"""
       if (!coreDone && z < 0) { core(c, 0.035 + 0.045 * lv); coreDone = true; }
       const fog = Math.max(0.12, Math.min(1, 0.62 - z * 0.55)), spark = moodW.proud > 0.3 && s > 0.97 ? 0.45 : 0;
       g.fillStyle = col(s * 18 - 9, (pr - 0.8) * 50 + Math.min(1, v * 40) * 12 + spark * 40 - (lightBg ? 22 : 0), (0.1 + 0.55 * br) * fog + spark + (lightBg ? 0.15 : 0));
-      g.beginPath(); g.arc(px, py, S * 0.0075 * pr * pr, 0, TAU); g.fill();
+      dotPath(px, py, S * 0.0075 * pr * pr, s * 6.283); g.fill();
     }
     if (!coreDone) core(c, 0.035 + 0.045 * lv);
     g.globalCompositeOperation = "source-over";
@@ -909,7 +909,7 @@ _HEAD_JS = r"""
       if (tip) { const gr = g.createLinearGradient(x, y, tip[0], tip[1]); gr.addColorStop(0, g7hsla(hue, cur.sat * satK, 86, 0.9 * A)); gr.addColorStop(1, g7hsla(hue, cur.sat * satK, 80, 0));
         g.strokeStyle = gr; g.lineWidth = S * 0.005 * k; g.beginPath(); g.moveTo(x, y); g.lineTo(tip[0], tip[1]); g.stroke(); }
       g.fillStyle = g7hsla(hue, cur.sat * satK, L, A);
-      g.beginPath(); g.arc(x, y, S * 0.0036 * k * k * (0.7 + 0.6 * s) * (0.7 + 0.5 * front), 0, TAU); g.fill();
+      dotPath(x, y, S * 0.0036 * k * k * (0.7 + 0.6 * s) * (0.7 + 0.5 * front), s * 6.283); g.fill();
     }
     g.globalCompositeOperation = "source-over";
     if (o.rim) { const rr = R * breathe * (D / (D - 0.2)), gr = g.createRadialGradient(c, c, rr * 0.86, c, c, rr * 1.12), rh = H + (36 - H) * SIT.alert * 0.8;
@@ -917,6 +917,8 @@ _HEAD_JS = r"""
       g.fillStyle = gr; g.beginPath(); g.arc(c, c, rr * 1.12, 0, TAU); g.fill(); }
     if (!lightBg) g7light(c, c, S * (0.09 + 0.07 * lv + 0.03 * SW.thinking * Math.abs(Math.sin(t * 4))), 0.95, 0.1);
   }
+  // the shape of Theta's dots (Voice and tools > Dots; kept with the avatar, so a persona can have its own)
+  const dotPath = (x, y, r, rot) => { if (window.thetaDot && AV.dot && AV.dot !== "circle") thetaDot.path(g, x, y, r, rot, AV.dot); else { g.beginPath(); g.arc(x, y, r, 0, TAU); } };
   function core(c, r) {
     const op = g.globalCompositeOperation; g.globalCompositeOperation = "source-over";
     const cr = S * r, gr = g.createRadialGradient(c, c, 0, c, c, cr * 3.2);
@@ -1025,6 +1027,9 @@ _HEAD_JS = r"""
   if (avStyle) {
     avStyle.value = AV.style; avSize.value = AV.size; avEnergy.value = Math.round(AV.energy * 100);
     avStyle.onchange = () => { AV.style = avStyle.value; saveAV(); };
+    const avOpen = document.getElementById("av-open"), avDot = document.getElementById("av-dot");
+    if (avOpen) { try { avOpen.value = localStorage.getItem("theta:opening") || "cinematic"; } catch (e) {} avOpen.onchange = () => { try { localStorage.setItem("theta:opening", avOpen.value); } catch (e) {} }; }
+    if (avDot) { avDot.value = AV.dot || "circle"; avDot.onchange = () => { AV.dot = avDot.value; saveAV(); }; } // every one of Theta's dots, everywhere
     avSize.onchange = () => { AV.size = avSize.value; saveAV(); };
     avEnergy.oninput = () => { AV.energy = avEnergy.value / 100; saveAV(); };
     document.querySelectorAll("[data-avmood]").forEach(inp => {
@@ -1796,9 +1801,45 @@ _STAGE_JS = r"""
     body.classList.add("docked"); docked = true; greetAt = 500;
     requestAnimationFrame(() => requestAnimationFrame(undock));
   } else if (!booted && !reduce) {
-    greetAt = 2600; cinematic(); // right after the shockwave (2.25 s)
+    let pick = "cinematic"; try { pick = localStorage.getItem("theta:opening") || "cinematic"; } catch (e) {}
+    if (pick === "converge") { greetAt = 3300; converge(); } else { greetAt = 2600; cinematic(); } // right after the shockwave (2.25 s)
   } else {
     TH.scatter(); body.classList.add("opening");
+  }
+  // ---- Converge (2026-11-06, from the Opening Lab): Theta's dots begin as stars in the sky. The ones that are Theta
+  // glide in, nearest the middle first, on gently curving paths and settle into the globe; the rest of the sky stays
+  // (with the Stars background, it's that sky). Then Theta itself fades in where they landed, and greets you.
+  function converge() {
+    const TAU = Math.PI * 2;
+    body.classList.add("opening", "cine");
+    const ov = document.createElement("canvas"); ov.className = "cine-layer"; ov.setAttribute("aria-hidden", "true"); body.append(ov);
+    const dpr = Math.min(2, window.devicePixelRatio || 1), W = innerWidth, Hh = innerHeight;
+    ov.width = W * dpr; ov.height = Hh * dpr; const x = ov.getContext("2d"); x.scale(dpr, dpr);
+    const r = cv.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2, R = r.width * 0.25;
+    const hex = getComputedStyle(document.documentElement).getPropertyValue("--mood").trim() || "#4fd3ff";
+    const ownSky = document.documentElement.dataset.bg !== "stars"; // with the Stars background the sky is already there
+    const sky = ownSky ? Array.from({length: Math.round(Math.min(380, W * Hh / 2600))}, () => ({x: Math.random() * W, y: Math.random() * Hh, d: Math.random(), p: Math.random() * TAU, s: 0.4 + Math.random() * 1.2})) : [];
+    const N = 360, mine = Array.from({length: N}, (_, i) => { const y = 1 - (i / (N - 1)) * 2;
+      return {sx: Math.random() * W, sy: Math.random() * Hh, lat: Math.asin(y), lon: (i * 2.399963) % TAU, d: Math.random(), p: Math.random() * TAU}; });
+    const inOut = k => { k = Math.max(0, Math.min(1, k)); return k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2; }, t0 = performance.now(), diag = Math.hypot(W, Hh);
+    const dot = (px, py, rad, rot) => { if (window.thetaDot) thetaDot.path(x, px, py, rad, rot); else { x.beginPath(); x.arc(px, py, rad, 0, TAU); } x.fill(); };
+    function frame(now) {
+      const t = (now - t0) / 1000; x.clearRect(0, 0, W, Hh); x.globalCompositeOperation = "lighter";
+      const out = Math.max(0, Math.min(1, (t - 3.1) / 0.6)); // the hand-over to Theta itself
+      for (const st of sky) { x.globalAlpha = (0.12 + 0.55 * st.d) * (0.45 + 0.55 * (0.5 + 0.5 * Math.sin(t * st.s + st.p))) * (1 - out); x.fillStyle = "#dfefff"; dot(st.x, st.y, 0.4 + 1.2 * st.d * st.d, st.p); }
+      for (const q of mine) {
+        const lon = q.lon + t * 0.3, gx = cx + Math.cos(q.lat) * Math.cos(lon) * R, gy = cy + Math.sin(q.lat) * R, gz = Math.cos(q.lat) * Math.sin(lon);
+        const dist = Math.hypot(q.sx - cx, q.sy - cy) / diag, k = inOut((t - 0.7 - dist * 1.6) / 1.5), bend = Math.sin(Math.PI * k) * dist * 0.5 * 0.35;
+        const px = q.sx + (gx - q.sx) * k - (q.sy - cy) * bend, py = q.sy + (gy - q.sy) * k + (q.sx - cx) * bend, front = Math.max(0, 0.55 - gz * 0.6);
+        const twinkle = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(t * 1.4 + q.p));
+        x.globalAlpha = ((1 - k) * twinkle * (0.35 + 0.65 * q.d) + k * (0.1 + 0.85 * front)) * (1 - out); x.fillStyle = k > 0.5 ? hex : "#dfefff";
+        dot(px, py, (1 - k) * (0.5 + 1.1 * q.d * q.d) + k * (1.2 + front), q.p);
+      }
+      x.globalAlpha = 1; x.globalCompositeOperation = "source-over";
+      if (t > 3.1 && body.classList.contains("cine")) { body.classList.remove("cine"); TH.scatter(true); } // Theta takes over from its own stars
+      if (t < 3.8) requestAnimationFrame(frame); else { ov.remove(); if (word) { word.classList.add("show"); setTimeout(() => word.classList.remove("show"), 1600); } }
+    }
+    requestAnimationFrame(frame);
   }
   function cinematic() {
     body.classList.add("opening", "cine");
@@ -1910,6 +1951,9 @@ def head_hud(headers=None):
             '<button type="button" id="head-test" class="test">Test</button>'
             '<label title="Tap your Bluetooth glasses or earbuds to talk"><input type="checkbox" id="head-glasses"> Glasses mode</label></div>'
             '<div class="av-set" aria-label="Avatar"><div class="row"><b>Avatar</b>'
+            '<label>Opening <select id="av-open"><option value="cinematic">Cinematic</option><option value="converge">Converge: from the stars</option></select></label>'
+            '<label>Dots <select id="av-dot"><option value="circle">Circles</option><option value="triangle">Triangles</option><option value="square">Squares</option>'
+            '<option value="diamond">Diamonds</option><option value="pentagon">Pentagons</option><option value="hexagon">Hexagons</option><option value="star">Stars</option></select></label>'
             '<label>Style <select id="av-style"><option value="urchin">Urchin Pour</option><option value="precision">Precision</option><option value="lumen">Lumen</option>'
             '<option value="flow">Flow</option><option value="signal">Signal</option><option value="rings">Classic rings</option>'
             '<option value="image">Your pictures</option></select></label>'

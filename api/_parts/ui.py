@@ -1002,6 +1002,9 @@ html,body{overflow-x:clip;max-width:100%}
 .rategrid .btn{font-size:18px;padding:12px 0}
 .field{width:100%;border:1px solid var(--border);background:var(--surface2);color:var(--text);border-radius:var(--r-sm);padding:10px 12px;font:inherit}
 select.field{width:auto;flex:1;min-width:120px}
+/* nothing inside a card is wider than the card: long selects truncate, inputs shrink */
+select,input:not([type=checkbox]):not([type=radio]),textarea{max-width:100%;min-width:0}select{text-overflow:ellipsis}
+.card > *,.stack > *{min-width:0}
 
 /* Agent profile */
 .hero{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
@@ -1658,7 +1661,7 @@ _UI_JS_SRC = r'''
         var tw = .5 + .5 * Math.sin(t * st.s + st.p), glow = state === "speaking" ? starLv * near * (.6 + .4 * Math.sin(dist * .05 - t * 6)) : 0;
         ctx.globalAlpha = Math.min(1, (.12 + .58 * st.d) * (.45 + .55 * tw) + glow * .6);
         ctx.fillStyle = "hsl(" + ((starHue + st.hue) % 360) + "," + Math.round(25 + 30 * st.d + 30 * glow) + "%," + Math.round(82 + 10 * glow) + "%)";
-        ctx.beginPath(); ctx.arc(x, y, st.r * (1 + .6 * glow), 0, 6.283); ctx.fill();
+        if (window.thetaDot) thetaDot.path(ctx, x, y, st.r * (1 + .6 * glow), st.p); else { ctx.beginPath(); ctx.arc(x, y, st.r * (1 + .6 * glow), 0, 6.283); } ctx.fill();
       }
       ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
     }
@@ -3438,6 +3441,8 @@ _MOVE_CSS = r'''
 @keyframes vt-in{from{opacity:0;transform:translateY(14px)}}
 /* the page's cards come in one after another */
 .main > .top,.main > .stack > *,.main > .grid2 > *,.main > .wins > *,.main > section{animation:var(--in,pagein) var(--in-dur,.42s) var(--in-ease,cubic-bezier(.2,.8,.2,1)) backwards}
+/* a folded card's contents are hidden when the page comes in, so their entrance never finishes; they just show when opened */
+.main > details.stack > *{animation:none}
 .main > .stack > :nth-child(2),.main > .grid2 > :nth-child(2),.main > .wins > :nth-child(2){animation-delay:.05s}
 .main > .stack > :nth-child(3),.main > .grid2 > :nth-child(3),.main > .wins > :nth-child(3){animation-delay:.1s}
 .main > .stack > :nth-child(4),.main > .wins > :nth-child(4){animation-delay:.15s}
@@ -3574,6 +3579,27 @@ _CHARM_CSS = r'''.card,.win,.kpi,.w{background-image:var(--lit,none)}
 @keyframes tap-engrave{0%{opacity:1;background-size:0 1px}55%{opacity:1;background-size:100% 1px}100%{opacity:0;background-size:100% 1px}}
 @media (prefers-reduced-motion:reduce){.tap,.tap > .tapfx{animation:none!important}}
 '''
+_DOTSHAPE_JS = r'''(() => {
+  // ---- The shape of Theta's dots (2026-11-06): circle, triangle, square, diamond, pentagon, hexagon or star, picked in
+  // Voice and tools > Dots and kept with the avatar (so a persona can have its own). Every dot Theta draws takes it:
+  // the avatar, the Theta frames, the dot moments, the star sky and the opening. thetaDot.path(g, x, y, r, rot[, shape])
+  // makes the path; the caller fills it. Polygons are a little bigger than their circle, so they weigh the same.
+  const SIDES = {triangle: 3, square: 4, diamond: 4, pentagon: 5, hexagon: 6};
+  let shape = "circle", readAt = 0;
+  function current() { const now = performance.now(); if (now - readAt > 1000) { readAt = now;
+      try { shape = (JSON.parse(localStorage.getItem("theta:avatar") || "{}") || {}).dot || "circle"; } catch (e) { shape = "circle"; } } return shape; }
+  function path(g, x, y, r, rot, sh) {
+    sh = sh || current(); g.beginPath();
+    if (sh === "circle" || r < .6) { g.arc(x, y, r, 0, 6.283); return; }
+    if (sh === "star") { const R = r * 1.5, ri = R * .45; for (let i = 0; i < 10; i++) { const a = (rot || 0) + i * Math.PI / 5 - Math.PI / 2, rr = i % 2 ? ri : R;
+        i ? g.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr) : g.moveTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); } g.closePath(); return; }
+    const n = SIDES[sh] || 4, R = r * (n === 3 ? 1.45 : n === 4 ? 1.25 : 1.12), off = (sh === "diamond" ? 0 : sh === "square" ? Math.PI / 4 : -Math.PI / 2) + (rot || 0);
+    for (let i = 0; i < n; i++) { const a = off + i * 6.283 / n; i ? g.lineTo(x + Math.cos(a) * R, y + Math.sin(a) * R) : g.moveTo(x + Math.cos(a) * R, y + Math.sin(a) * R); }
+    g.closePath();
+  }
+  window.thetaDot = {path, shape: current};
+})();
+'''
 _DOTMOMENTS_JS = r'''(() => {
   // ---- Dot moments (2026-11-06): Theta's dots carry what happens. Your message breaks into dots that fly into
   // Theta; its reply and its cards form from dots it sends out; a tapped option goes back to it as a burst; while it
@@ -3639,7 +3665,7 @@ _DOTMOMENTS_JS = r'''(() => {
       if (p.to === "land" && d < 3 && p.arr == null) p.arr = age;
       if ((p.to === "theta" && d < 8) || (p.to === "fade" && d < 6) || (p.to === "land" && p.arr != null && age - p.arr > .5) || age > 4) { P.splice(i, 1); continue; }
       g.fillStyle = `hsla(${(p.hue != null ? p.hue : hue) + 20 * (p.s - .5)},${70 + Math.min(25, sp * 3)}%,${66 + Math.min(20, sp * 2)}%,${a * (.55 + .45 * p.s)})`;
-      g.beginPath(); g.arc(p.x, p.y, p.size * (.7 + .6 * p.s), 0, TAU); g.fill();
+      window.thetaDot ? thetaDot.path(g, p.x, p.y, p.size * (.7 + .6 * p.s), p.s * 6.283) : (g.beginPath(), g.arc(p.x, p.y, p.size * (.7 + .6 * p.s), 0, TAU)); g.fill();
     }
     g.globalCompositeOperation = "source-over";
     if (P.length || streamTo) requestAnimationFrame(frame); else { running = false; g.clearRect(0, 0, W, H); }
@@ -3678,24 +3704,43 @@ _DOTFRAME_JS = r'''(() => {
     g = cv.getContext("2d"); size(); addEventListener("resize", size); last = performance.now(); requestAnimationFrame(frame);
   }
   function stop() { running = false; cards.clear(); homing = []; if (cv) cv.remove(); cv = null; removeEventListener("resize", size); }
-  function spawn(el, R, fromTheta) {
-    const v = variant(), kind = KINDS[v], area = R.w * R.h, s0 = source(), list = [];
-    const budget = Math.max(60, Math.min(520, (MAXDOTS - [...cards.values()].reduce((n, c) => n + c.dots.length, 0)) / 2));
-    const mk = (gx, gy, i, n) => ({gx, gy, i, n, u: i / n, ph: Math.random() * TAU, pace: .6 + Math.random() * .8, s: Math.random(),
+  // A tall card (taller than most of the screen, like Settings' Color scheme) gets its dots in bands of BAND px, and only
+  // the bands near the screen exist, so the dots stay as dense on a long card as on a short one.
+  const BAND = 240, tall = R => R.h > H * .9;
+  function fill(R, v, fromTheta, y0, y1, budget, band) {
+    const kind = KINDS[v], s0 = source(), list = [], bh = (y1 - y0) * R.h, area = R.w * bh, top = y0 === 0, bot = y1 === 1;
+    const mk = (gx, gy, i, n) => ({gx, gy, i, n, u: i / n, ph: Math.random() * TAU, pace: .6 + Math.random() * .8, s: Math.random(), band,
       x: fromTheta ? s0.x + (Math.random() - .5) * 8 : R.x + gx * R.w, y: fromTheta ? s0.y + (Math.random() - .5) * 8 : R.y + gy * R.h, vx: 0, vy: 0,
       delay: fromTheta ? Math.random() * .3 : 0, cx: gx, cy: gy});
     if (kind === "print" || v === "settle") {
       const base = v === "grain" ? 7 : v === "press" ? 8 : 10, sp = Math.max(base, Math.sqrt(area / budget));
-      const cols = Math.max(2, Math.floor(R.w / sp)), rows = Math.max(2, Math.floor(R.h / sp));
-      for (let a = 0; a < cols; a++) for (let b = 0; b < rows; b++) list.push(mk((a + .5) / cols, (b + .5) / rows, a * rows + b, cols * rows));
-      if (v === "settle") list.forEach(d => { d.cx = d.gx; d.cy = d.gy; d.gx = Math.random(); d.gy = Math.random(); });
+      const cols = Math.max(2, Math.floor(R.w / sp)), rows = Math.max(2, Math.round(bh / sp));
+      for (let a = 0; a < cols; a++) for (let b = 0; b < rows; b++) list.push(mk((a + .5) / cols, y0 + (b + .5) / rows * (y1 - y0), a * rows + b, cols * rows));
+      if (v === "settle") list.forEach(d => { d.cx = d.gx; d.cy = d.gy; d.gx = Math.random(); d.gy = y0 + Math.random() * (y1 - y0); });
     } else {
       const n = Math.round(Math.min(budget, area / (v === "lines" ? 150 : 70)));
-      for (let i = 0; i < n; i++) { const d = mk(Math.random(), Math.random(), i, n);
-        if (v === "nebula" && Math.random() < .8) { const e = .015 + Math.random() * .06 * (Math.random() < .6 ? 1 : 1.8); if (Math.random() < R.h / (R.w + R.h)) d.gx = Math.random() < .5 ? e : 1 - e; else d.gy = Math.random() < .5 ? e : 1 - e; }
+      for (let i = 0; i < n; i++) { const d = mk(Math.random(), y0 + Math.random() * (y1 - y0), i, n);
+        if (v === "nebula" && Math.random() < .8) { const px = (.015 + Math.random() * .06 * (Math.random() < .6 ? 1 : 1.8)) * Math.min(R.w, 260), sides = [0, 1];
+          if (top) sides.push(2); if (bot) sides.push(3); const sd = sides[Math.floor(Math.random() * sides.length)];
+          if (sd < 2) d.gx = sd ? 1 - px / R.w : px / R.w; else d.gy = sd === 2 ? px / R.h : 1 - px / R.h; d.cx = d.gx; d.cy = d.gy; }
         list.push(d); }
     }
-    return {el, dots: list, born: clock, v};
+    return list;
+  }
+  const used = () => [...cards.values()].reduce((n, c) => n + c.dots.length, 0);
+  function bandsNear(R) { const a = Math.max(0, Math.floor((-R.y - 120) / BAND)), b = Math.min(Math.ceil(R.h / BAND) - 1, Math.floor((H + 120 - R.y) / BAND)), out = [];
+    for (let i = a; i <= b; i++) out.push(i); return out; }
+  function fillBands(c, R, fromTheta) { // add the bands coming on screen, drop the ones far off it
+    const want = new Set(bandsNear(R)), have = new Set(c.dots.map(d => d.band));
+    if ([...have].some(b => !want.has(b))) c.dots = c.dots.filter(d => want.has(d.band));
+    for (const b of want) if (!have.has(b)) { const y0 = b * BAND / R.h, y1 = Math.min(1, (b + 1) * BAND / R.h);
+      c.dots.push(...fill(R, c.v, fromTheta, y0, y1, Math.max(60, Math.min(420, (MAXDOTS - used()) / 3)), b)); }
+  }
+  function spawn(el, R, fromTheta) {
+    const v = variant(), c = {el, dots: [], born: clock, v, tall: tall(R)};
+    if (c.tall) fillBands(c, R, fromTheta);
+    else c.dots = fill(R, v, fromTheta, 0, 1, Math.max(60, Math.min(520, (MAXDOTS - used()) / 2)), 0);
+    return c;
   }
   function scan() { // which cards are on screen now: new ones form from Theta (or in place, if seen before), gone ones go home
     const v = variant(), now = new Set();
@@ -3705,7 +3750,9 @@ _DOTFRAME_JS = r'''(() => {
       if (el.parentElement && el.parentElement.closest(SEL)) return; // a card inside a card: the outer one has the dots
       now.add(el);
       const c = cards.get(el);
-      if (!c || c.v !== v) { cards.set(el, spawn(el, {x: r.left, y: r.top, w: r.width, h: r.height}, !seen.has(el))); seen.add(el); }
+      const R = {x: r.left, y: r.top, w: r.width, h: r.height};
+      if (!c || c.v !== v || c.tall !== tall(R) || (!c.tall && Math.abs(c.h - R.h) > 40)) { const n = spawn(el, R, !seen.has(el)); n.h = R.h; cards.set(el, n); seen.add(el); }
+      else if (c.tall) fillBands(c, R, false);
     });
     for (const [el, c] of cards) if (!now.has(el)) { cards.delete(el); if (el.isConnected === false || !el.getBoundingClientRect().width) homing.push(...c.dots.map(d => (d.home = 1, d))); }
   }
@@ -3725,7 +3772,7 @@ _DOTFRAME_JS = r'''(() => {
     const draw = (d, tx, ty, rad, a, h) => {
       const k = .05 + .04 * d.pace; d.vx = (d.vx + (tx - d.x) * k) * .8; d.vy = (d.vy + (ty - d.y) * k) * .8; d.x += d.vx; d.y += d.vy;
       if (a <= .01 || rad <= .2) return; const sp = Math.hypot(d.vx, d.vy);
-      g.fillStyle = hsla(h, 70 + 20 * Math.min(1, sp / 6), 62 + Math.min(18, sp * 2), a); g.beginPath(); g.arc(d.x, d.y, rad, 0, TAU); g.fill(); };
+      g.fillStyle = hsla(h, 70 + 20 * Math.min(1, sp / 6), 62 + Math.min(18, sp * 2), a); window.thetaDot ? thetaDot.path(g, d.x, d.y, rad, d.ph) : (g.beginPath(), g.arc(d.x, d.y, rad, 0, TAU)); g.fill(); };
     for (const [el, c] of cards) {
       const r = el.getBoundingClientRect(), R = {x: r.left, y: r.top, w: r.width, h: r.height}, age = t - c.born, set = [];
       for (const d of c.dots) {
@@ -3885,7 +3932,7 @@ def _cheers_json():
 _UI_CSS = theme_css() + "\n" + _BASE_CSS + "\n" + _hdr_css() + "\n" + _frames_css() + "\n" + _fonts_css() + _MOVE_CSS + _BAR_CSS + "\n/* ---- inside the Theta page's sheet (2026-11-04): the page alone, without the app's own bars */\nhtml.embedded .tabbar,html.embedded .minibar,html.embedded .theta-mini,html.embedded .rail{display:none!important}\nhtml.embedded .main{padding-top:14px;padding-bottom:calc(28px + env(safe-area-inset-bottom,0px))}\nhtml.embedded body.has-mini header.top{padding-right:0}\n" + "\nhtml.veiled .app,html.veiled .tabbar{visibility:hidden}" + "\n:root[data-glassstyle=\"liquid\"] .tabbar,:root[data-glassstyle=\"holo\"] .tabbar,:root[data-glassstyle=\"liquid\"] .minibar,:root[data-glassstyle=\"holo\"] .minibar{background:color-mix(in srgb,var(--bg) 88%,transparent);-webkit-backdrop-filter:blur(26px) saturate(160%);backdrop-filter:blur(26px) saturate(160%)}" + "\n" + _CHARM_CSS
 _UI_JS = _UI_JS_SRC.replace("__THEMES__", json.dumps(
     {n: {"glass": bool(t.get("glass")), "mono": bool(t.get("mono")), "light": t["light"]["bg"],
-         "dark": t["dark"]["bg"], "accent2": t["dark"]["accent2"]} for n, t in THEMES.items()})) + "\n" + _CHARM_JS_SRC.replace("__CHEERS__", _cheers_json()) + "\n" + _DOTFRAME_JS + "\n" + _DOTMOMENTS_JS
+         "dark": t["dark"]["bg"], "accent2": t["dark"]["accent2"]} for n, t in THEMES.items()})) + "\n" + _CHARM_JS_SRC.replace("__CHEERS__", _cheers_json()) + "\n" + _DOTSHAPE_JS + "\n" + _DOTFRAME_JS + "\n" + _DOTMOMENTS_JS
 _ASSET_V = hashlib.sha1((_UI_CSS + _UI_JS + _CHAT_JS).encode()).hexdigest()[:10]
 
 
