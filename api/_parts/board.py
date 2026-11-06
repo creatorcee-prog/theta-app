@@ -359,7 +359,7 @@ BOARD_CSS = r"""
 body.docked .ticker:not([hidden]){display:flex}
 .tk-track{display:flex;gap:0;white-space:nowrap;will-change:transform;animation:tkcrawl var(--tkdur,40s) linear infinite}
 .ticker:hover .tk-track,.ticker.held .tk-track{animation-play-state:paused}
-.tk-item{display:inline-flex;align-items:center;gap:7px;padding:0 16px;font-size:13.5px;color:var(--text);text-decoration:none;border-right:1px solid var(--border)}
+.tk-item{display:inline-flex;align-items:center;gap:7px;padding:0 16px;min-height:38px;font-size:13.5px;color:var(--text);text-decoration:none;border-right:1px solid var(--border)}
 .tk-item b{font-family:var(--f-label);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--mood,var(--accent))}
 .tk-item.bad b{color:var(--bad)}
 @keyframes tkcrawl{to{transform:translateX(-50%)}}
@@ -692,7 +692,17 @@ BOARD_JS = r"""
     track.style.setProperty("--tkdur", Math.max(18, Math.round(chars / 7)) + "s");
     ticker.hidden = false;
   }
-  ticker.addEventListener("pointerdown", e => { if (!e.target.closest("a")) ticker.classList.toggle("held"); });
+  // a moving crawl is hard to hit: the first tap stops it (and opens nothing), then a link opens with a tap;
+  // a tap on no link sets it going again, and so does leaving it alone for 6 s
+  let tkStop = 0, tkSwallow = false;
+  ticker.addEventListener("pointerdown", e => {
+    const held = ticker.classList.contains("held"), link = e.target.closest("a");
+    tkSwallow = !held; clearTimeout(tkStop);
+    if (held && !link) { ticker.classList.remove("held"); return; }
+    ticker.classList.add("held");
+    tkStop = setTimeout(() => { if (document.activeElement !== msg) ticker.classList.remove("held"); }, 6000);
+  });
+  ticker.addEventListener("click", e => { if (tkSwallow) { e.preventDefault(); e.stopPropagation(); tkSwallow = false; } }, true);
   async function load() {
     try {
       const d = await (await fetch("/api/board", {headers: H})).json();

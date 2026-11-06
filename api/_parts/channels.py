@@ -1236,6 +1236,9 @@ def handle(method, path, query, headers, body):
         return 200, "text/javascript; charset=utf-8", _SW_JS.encode(), [("Cache-Control", "no-cache")]
     assets = {"/ui.css": ("text/css; charset=utf-8", _UI_CSS), "/ui.js": ("text/javascript; charset=utf-8", _UI_JS),
               "/chat.js": ("text/javascript; charset=utf-8", _CHAT_JS)}
+    if path in ("/head.js", "/head.css"):  # the Theta page's own script and styles, versioned (?v=) like ui.js
+        a = head_assets()
+        assets[path] = ("text/javascript; charset=utf-8", a["js"]) if path == "/head.js" else ("text/css; charset=utf-8", a["css"])
     if path in assets:  # versioned URLs (?v=), so they can be cached for good
         kind, text = assets[path]
         return 200, kind, text.encode(), [("Cache-Control", "public, max-age=31536000, immutable")]

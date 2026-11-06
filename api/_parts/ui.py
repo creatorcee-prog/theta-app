@@ -113,11 +113,11 @@ THEMES = {
 #   breach   square boxes with solid title tags and mono type (a hacking screen)
 #   hud      dark panels held by corner brackets, warning-tick titles (a control-room HUD)
 #   console  hairlines, mono labels, dense rows over a faint grid (a mission-control dashboard)
-#   holo     see-through light panels with bright corners that tilt with the phone (a hologram)
+#   holo     see-through light panels with bright corners and faint scan lines (a hologram)
 FRAMES = {"plus": ("Glass+", "Frosted bars and bubbles"), "liquid": ("Liquid Glass", "Gloss, deep blur, edge light"),
           "edge": ("Edge", "Cut corners and a lit edge"), "breach": ("Breach", "Square boxes, solid title tags"),
           "hud": ("HUD", "Corner brackets on dark panels"), "console": ("Console", "Hairlines and mono data"),
-          "holo": ("Hologram", "See-through light that tilts"),
+          "holo": ("Hologram", "See-through light with scan lines"),
           "ornate": ("Filigree", "Fine double lines, engraved capitals")}
 
 
@@ -181,8 +181,7 @@ def _frames_css():
          + _brackets("color-mix(in srgb,var(--text) 92%,transparent)", "14px", "2px")
          + ",linear-gradient(160deg,color-mix(in srgb,var(--text) 11%,transparent),color-mix(in srgb,var(--text) 2%,transparent) 60%);"
          "-webkit-backdrop-filter:blur(10px) saturate(130%);backdrop-filter:blur(10px) saturate(130%);"
-         "box-shadow:0 0 22px color-mix(in srgb,var(--text) 10%,transparent),inset 0 0 18px color-mix(in srgb,var(--text) 6%,transparent);"
-         "transform:perspective(900px) rotateY(calc(var(--shine-x,0) * 0.6deg)) rotateX(calc(var(--shine-y,0) * -0.45deg));transition:transform .25s ease-out"),
+         "box-shadow:0 0 22px color-mix(in srgb,var(--text) 10%,transparent),inset 0 0 18px color-mix(in srgb,var(--text) 6%,transparent)"),  # no gyro tilt (2026-11-06)
         (".card h2,.win h2,.top h1", "text-shadow:0 0 12px color-mix(in srgb,var(--text) 45%,transparent);" + caps),
         # faint scan lines, like a projected image (2026-11-04)
         (".card::before,.win::before,.kpi::before", 'content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;'
@@ -1446,7 +1445,7 @@ _UI_JS_SRC = r'''
   // shine setting; iOS still needs one tap to allow motion,
   // and touch position covers a denied request.
   let edgeX = 0, edgeY = 0, edgeLast = 0, edgeFrame = 0, edgeGyroStarted = false;
-  const edgeLiquid = () => /^(liquid|holo)$/.test(document.documentElement.dataset.glassstyle || ""); // the hologram tilts with it too
+  const edgeLiquid = () => (document.documentElement.dataset.glassstyle || "") === "liquid"; // the hologram stays still (2026-11-06)
   function edgeSet(x, y) {
     if (still || !edgeLiquid()) return;
     const now = performance.now();
@@ -2887,7 +2886,14 @@ _CHAT_JS = r'''
   }
   // The Head page (voice, panels) shares this thread: it hears about every change and can hand it new messages.
   function announce() { document.dispatchEvent(new CustomEvent("theta:thread", {detail: thread})); }
-  window.thetaChat = {take(ms) { thread = ms; render(); box.scrollTop = box.scrollHeight; announce(); }, load: () => load()};
+  window.thetaChat = {take(ms) { stopWorking(); thread = ms; render(); box.scrollTop = box.scrollHeight; announce(); }, load: () => load(),
+    // a message sent another way (Theta's voice): it shows at once, with "Theta is thinking..." under it, like a typed one
+    pending(text, rid) {
+      thread = [...thread, {id: "pending", from: "you", name: "You", text, kind: "message", ch: C.channel,
+                            at: new Date().toISOString().slice(0, 19).replace("T", " ")}];
+      render(); box.scrollTop = box.scrollHeight; startWorking(rid, "theta");
+    },
+    failed() { stopWorking(); thread = thread.filter(m => m.id !== "pending"); render(); }};
   async function load() {
     try {
       const d = await (await fetch("/api/allchat?channel=" + C.channel, {headers: H})).json();
