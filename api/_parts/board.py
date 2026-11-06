@@ -507,6 +507,7 @@ BOARD_JS = r"""
     btn.disabled = true; btn.closest(".rrow").classList.add("doneit");
     fetch(a.post, {method: "POST", headers: H, body: JSON.stringify(a.body || {})}).then(r => r.json()).then(d => {
       if (!d.ok) throw new Error(d.error || "didn’t work"); if (window.thetaSfx) thetaSfx.play(); setTimeout(load, 350);
+      if (window.thetaCheer) { const b = btn.getBoundingClientRect(); thetaCheer(b.left + b.width / 2, b.top + b.height / 2); } // the theme's own little celebration
     }).catch(e => { btn.disabled = false; btn.closest(".rrow").classList.remove("doneit"); toast(e.message || String(e)); });
   }
   function card(w, i, first) {
@@ -711,7 +712,7 @@ BOARD_JS = r"""
       data = d; seen = get("theta:seen", {});
       if (!(ST() && ST().docked())) { shown = null; newIds = new Set(); moreOpen = false; }
       const gone = [...before].filter(([id]) => !d.widgets.some(w => w.id === id && isTask(w))).map(([, t]) => t); // dealt with: gone, or no longer a task
-      if (gone.length && before.size) { addCleared(gone); toast("\u2713 Cleared: " + gone.join(", ")); }
+      if (gone.length && before.size) { addCleared(gone); toast("\u2713 Cleared: " + gone.join(", ")); if (window.thetaCheer) thetaCheer(innerWidth / 2, innerHeight - 140); }
       render(); tick();
     } catch (e) {}
   }

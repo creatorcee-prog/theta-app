@@ -2140,7 +2140,7 @@ _UI_JS_SRC = r'''
     (rm.pending || []).forEach(([id, what]) => {
       const row = el("div", "brow"), b = el("button", "btn small", "Done");
       b.type = "button";
-      b.onclick = async () => { b.disabled = true; try { await remPost("/api/reminders/" + id + "/done"); row.remove(); note.textContent = "Marked done: " + what; } catch (e) { note.textContent = e.message; b.disabled = false; } };
+      b.onclick = async () => { b.disabled = true; try { await remPost("/api/reminders/" + id + "/done"); if (window.thetaCheer) { const r = b.getBoundingClientRect(); thetaCheer(r.left + r.width / 2, r.top + r.height / 2); } row.remove(); note.textContent = "Marked done: " + what; } catch (e) { note.textContent = e.message; b.disabled = false; } };
       row.append(el("span", "", what), b); box.append(row);
     });
     const f = el("form", "box"), inp = el("input"), add = el("button", "btn small", "Add");
@@ -3420,10 +3420,167 @@ _MOVE_CSS = r'''
 @media (prefers-reduced-motion:reduce){@view-transition{navigation:none}
  .main > *,.main > .stack > *,.main > .grid2 > *,.main > .wins > *{animation:none!important}.nav-wait .theta-mini{animation:none}}
 '''
-_UI_CSS = theme_css() + "\n" + _BASE_CSS + "\n" + _hdr_css() + "\n" + _frames_css() + "\n" + _fonts_css() + _MOVE_CSS + _BAR_CSS + "\n/* ---- inside the Theta page's sheet (2026-11-04): the page alone, without the app's own bars */\nhtml.embedded .tabbar,html.embedded .minibar,html.embedded .theta-mini,html.embedded .rail{display:none!important}\nhtml.embedded .main{padding-top:14px;padding-bottom:calc(28px + env(safe-area-inset-bottom,0px))}\nhtml.embedded body.has-mini header.top{padding-right:0}\n" + "\nhtml.veiled .app,html.veiled .tabbar{visibility:hidden}"
+# ---- Charm (2026-11-06): what's delightful about a theme or a frame is how it behaves. A theme celebrates
+# when you finish something, in its own manner (CHEERS: Sakura drops petals, Ember throws sparks, Ocean
+# ripples, Paper stamps a check...); a frame answers your touch in its own manner (Glass+ squishes, Liquid
+# Glass pools light, Edge sweeps a lit edge, HUD snaps target brackets on...). Both stay out of the layout
+# and off with reduced motion.
+CHEERS = {"theta": ("orbit", ""), "midnight": ("star", ""), "nebula": ("star", ""), "aurora": ("wash", ""), "graphite": ("check", ""),
+          "lobby": ("check", ""), "forest": ("leaf", ""), "ember": ("spark", ""), "ocean": ("ripple", ""), "paper": ("stamp", "\u2713 DONE"),
+          "sakura": ("petal", ""), "terminal": ("print", "> done \u2713"), "redline": ("spark", ""), "datalog": ("ripple", ""),
+          "breach": ("print", "[ ACCESS OK ]"), "scanner": ("stamp", "CLEARED"), "amber": ("spark", ""), "mission": ("check", ""),
+          "hologram": ("check", ""), "gilded": ("glint", ""), "lattice": ("ripple", ""), "bloom": ("petal", ""), "neonrift": ("neon", ""),
+          "verdant": ("leaf", ""), "lunar": ("glint", ""), "bloodsign": ("spark", ""), "nightfiligree": ("glint", ""), "dusk": ("star", "")}
+_CHARM_CSS = r'''/* ---- Each frame's charm (2026-11-06): how it answers a touch. The pressed thing gets .tap for a moment and a
+   .tapfx layer (inset, its own corners, never in the layout); --tx/--ty is where the finger landed. */
+.tapfx{position:absolute;inset:0;border-radius:inherit;pointer-events:none;overflow:hidden;opacity:0;z-index:0}
+.tap > .tapfx{animation:tapfx-fade .6s ease-out}
+@keyframes tapfx-fade{0%{opacity:1}100%{opacity:0}}
+.cheer{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:9990}
+/* Glass+: a soft squish, a little bloom under the finger */
+:root[data-glassstyle="plus"] .tap{animation:tap-squish .42s cubic-bezier(.34,1.56,.64,1)}
+:root[data-glassstyle="plus"] .tapfx{background:radial-gradient(circle at var(--tx) var(--ty),color-mix(in srgb,white 35%,transparent),transparent 60%)}
+@keyframes tap-squish{0%{transform:scale(1)}30%{transform:scale(.955)}100%{transform:scale(1)}}
+/* Liquid Glass: light pools where you press and spreads to the edges */
+:root[data-glassstyle="liquid"] .tap{animation:tap-squish .5s cubic-bezier(.34,1.56,.64,1)}
+:root[data-glassstyle="liquid"] .tap > .tapfx{animation:tap-pool .65s ease-out}
+:root[data-glassstyle="liquid"] .tapfx{background:radial-gradient(circle at var(--tx) var(--ty),color-mix(in srgb,white 55%,transparent),color-mix(in srgb,var(--accent) 18%,transparent) 30%,transparent 62%)}
+@keyframes tap-pool{0%{opacity:1;clip-path:circle(0 at var(--tx) var(--ty))}60%{opacity:.8}100%{opacity:0;clip-path:circle(150% at var(--tx) var(--ty))}}
+/* Edge: a lit edge sweeps across */
+:root[data-glassstyle="edge"] .tapfx{background:linear-gradient(100deg,transparent 30%,color-mix(in srgb,var(--accent) 45%,transparent) 48%,color-mix(in srgb,white 50%,transparent) 50%,transparent 66%) 200% 0/250% 100% no-repeat}
+:root[data-glassstyle="edge"] .tap > .tapfx{animation:tap-sweep .45s cubic-bezier(.4,0,.2,1)}
+@keyframes tap-sweep{0%{opacity:1;background-position:200% 0}100%{opacity:1;background-position:-100% 0}}
+/* Breach: the box inverts for a blink, like a terminal accepting a key */
+:root[data-glassstyle="breach"] .tapfx{background:var(--accent);mix-blend-mode:difference}
+:root[data-glassstyle="breach"] .tap > .tapfx{animation:tap-blink .32s steps(2,jump-none)}
+@keyframes tap-blink{0%{opacity:1}100%{opacity:0}}
+/* HUD: target brackets snap onto what you touched */
+:root[data-glassstyle="hud"] .tapfx{overflow:visible;background:linear-gradient(var(--accent),var(--accent)) left top/10px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) left top/2px 10px no-repeat,
+ linear-gradient(var(--accent),var(--accent)) right top/10px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) right top/2px 10px no-repeat,
+ linear-gradient(var(--accent),var(--accent)) left bottom/10px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) left bottom/2px 10px no-repeat,
+ linear-gradient(var(--accent),var(--accent)) right bottom/10px 2px no-repeat,linear-gradient(var(--accent),var(--accent)) right bottom/2px 10px no-repeat}
+:root[data-glassstyle="hud"] .tap > .tapfx{animation:tap-lock .5s cubic-bezier(.2,.8,.2,1)}
+@keyframes tap-lock{0%{opacity:0;transform:scale(1.18)}35%{opacity:1;transform:scale(1)}70%{opacity:1}100%{opacity:0;transform:scale(1)}}
+/* Console: the line highlights like a selected row, with a cursor at the end */
+:root[data-glassstyle="console"] .tapfx{background:color-mix(in srgb,var(--accent) 16%,transparent);box-shadow:inset 3px 0 0 var(--accent)}
+:root[data-glassstyle="console"] .tapfx::after{content:"\258C";position:absolute;right:8px;top:50%;transform:translateY(-50%);color:var(--accent);font:600 13px var(--f-mono)}
+:root[data-glassstyle="console"] .tap > .tapfx{animation:tap-row .6s steps(1,end)}
+@keyframes tap-row{0%,100%{opacity:0}1%,30%{opacity:1}31%,45%{opacity:.35}46%,80%{opacity:1}}
+/* Hologram: it flickers as if the projection caught your finger, and a scan line runs through */
+:root[data-glassstyle="holo"] .tap{animation:tap-flicker .4s linear}
+:root[data-glassstyle="holo"] .tapfx{background:linear-gradient(180deg,transparent 45%,color-mix(in srgb,var(--text) 40%,transparent) 50%,transparent 55%) 0 -100%/100% 200% no-repeat}
+:root[data-glassstyle="holo"] .tap > .tapfx{animation:tap-scan .45s linear}
+@keyframes tap-flicker{0%,100%{opacity:1}20%{opacity:.55}30%{opacity:1}55%{opacity:.75}65%{opacity:1}}
+@keyframes tap-scan{0%{opacity:1;background-position:0 -100%}100%{opacity:1;background-position:0 100%}}
+/* Filigree: an engraved line draws itself under what you chose */
+:root[data-glassstyle="ornate"] .tapfx{overflow:visible;background:linear-gradient(90deg,transparent,var(--accent) 20%,var(--accent) 80%,transparent) 50% 100%/0 1px no-repeat}
+:root[data-glassstyle="ornate"] .tap > .tapfx{animation:tap-engrave .7s cubic-bezier(.2,.8,.2,1)}
+@keyframes tap-engrave{0%{opacity:1;background-size:0 1px}55%{opacity:1;background-size:100% 1px}100%{opacity:0;background-size:100% 1px}}
+@media (prefers-reduced-motion:reduce){.tap,.tap > .tapfx{animation:none!important}}
+'''
+_CHARM_JS_SRC = r'''(() => {
+  // ---- The charm of each theme (2026-11-06): how it celebrates when you finish something (a reminder done, a
+  // daily check ticked, a widget cleared). A short, quiet moment in the theme's own character; never with
+  // reduced motion. window.thetaCheer(x, y) from wherever the thing was finished.
+  const CHEER = __CHEERS__, root = document.documentElement;
+  const still = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dark = () => root.dataset.mode === "dark" || (root.dataset.mode !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+  window.thetaCheer = (x, y) => {
+    if (still()) return;
+    const c = CHEER[root.dataset.theme] || CHEER.theta, [A, B, T] = dark() ? c.dark : c.light, kind = c.kind;
+    if (x == null) { x = innerWidth / 2; y = innerHeight / 2; }
+    const cv = document.createElement("canvas"), dpr = Math.min(2, devicePixelRatio || 1);
+    cv.className = "cheer"; cv.width = innerWidth * dpr; cv.height = innerHeight * dpr; cv.setAttribute("aria-hidden", "true");
+    document.body.append(cv);
+    const g = cv.getContext("2d"); g.scale(dpr, dpr);
+    const r = (m, n) => m + Math.random() * (n - m), ease = k => 1 - Math.pow(1 - k, 3);
+    const font = getComputedStyle(root).getPropertyValue("--f-label") || "system-ui";
+    let P = [], DUR = 1100;
+    if (kind === "petal" || kind === "leaf") { DUR = 1700;
+      P = Array.from({length: 14}, (_, i) => ({x: x + r(-30, 30), y: y + r(-20, 10), vx: r(-1.2, 1.2), vy: r(-2.6, -.8), rot: r(0, 6), vr: r(-.08, .08), s: r(4, 7), c: i % 3 ? A : B, ph: r(0, 6)})); }
+    if (kind === "spark") { DUR = 1200; P = Array.from({length: 22}, (_, i) => ({x: x + r(-12, 12), y, vx: r(-1.4, 1.4), vy: r(-4.5, -1.5), s: r(1.2, 2.6), c: i % 4 ? A : B, f: r(0, 6)})); }
+    if (kind === "glint") { DUR = 1300; P = Array.from({length: 6}, (_, i) => ({x: x + r(-70, 70), y: y + r(-46, 30), s: r(5, 11), d: i * .09, c: i % 2 ? A : B})); }
+    if (kind === "star") { DUR = 1300; P = Array.from({length: 9}, () => ({a: r(0, 6.3), d: r(14, 46), s: r(1, 2.2)})); }
+    function frame(now) {
+      const k = Math.min(1, (now - t0) / DUR); g.clearRect(0, 0, innerWidth, innerHeight);
+      if (kind === "check") { // a ring draws itself, then the tick: calm and exact
+        const u = ease(Math.min(1, k * 1.8)), v = Math.max(0, Math.min(1, (k - .35) * 2.6)); g.globalAlpha = k < .75 ? 1 : (1 - k) * 4;
+        g.lineWidth = 2.5; g.lineCap = "round"; g.strokeStyle = A; g.beginPath(); g.arc(x, y, 20, -1.57, -1.57 + 6.283 * u); g.stroke();
+        if (v) { g.beginPath(); g.moveTo(x - 8, y + 1); const p1 = Math.min(1, v * 2), p2 = Math.max(0, v * 2 - 1);
+          g.lineTo(x - 8 + 6 * p1, y + 1 + 6 * p1); if (p2) g.lineTo(x - 2 + 11 * p2, y + 7 - 14 * p2); g.stroke(); }
+      } else if (kind === "orbit") { // Theta: a ring opens around it, three moons go round once
+        const u = ease(k), R = 14 + 34 * u; g.globalAlpha = 1 - k; g.lineWidth = 1.5; g.strokeStyle = A;
+        g.beginPath(); g.arc(x, y, R, 0, 6.283); g.stroke();
+        for (let i = 0; i < 3; i++) { const t = -1.57 + i * 2.094 + u * 6.283; g.fillStyle = i ? A : B; g.beginPath(); g.arc(x + R * Math.cos(t), y + R * Math.sin(t), 3, 0, 6.283); g.fill(); }
+      } else if (kind === "ripple" || kind === "neon") { // rings on water (or neon, with a glow)
+        if (kind === "neon") { g.shadowColor = A; g.shadowBlur = 14; }
+        for (let i = 0; i < 3; i++) { const u = Math.max(0, k * 1.4 - i * .18); if (!u || u > 1) continue;
+          g.globalAlpha = (1 - u) * .9; g.lineWidth = kind === "neon" ? 2.5 : 1.5; g.strokeStyle = i % 2 ? B : A;
+          g.beginPath(); g.ellipse(x, y, 10 + 60 * ease(u), (10 + 60 * ease(u)) * (kind === "neon" ? 1 : .55), 0, 0, 6.283); g.stroke(); }
+      } else if (kind === "wash") { // Aurora: a breath of colored light
+        const u = ease(k), R = 40 + 220 * u, gr = g.createRadialGradient(x, y, 0, x, y, R);
+        gr.addColorStop(0, A); gr.addColorStop(.5, B); gr.addColorStop(1, "transparent"); g.globalAlpha = .28 * (1 - k); g.fillStyle = gr; g.fillRect(x - R, y - R, R * 2, R * 2);
+      } else if (kind === "star") { // a shooting star lands where you finished, and twinkles
+        const u = Math.min(1, k * 2.2), sx = x - 170 + 170 * ease(u), sy = y - 110 + 110 * ease(u);
+        if (u < 1) { const gr = g.createLinearGradient(sx - 60, sy - 39, sx, sy); gr.addColorStop(0, "transparent"); gr.addColorStop(1, T);
+          g.strokeStyle = gr; g.lineWidth = 2; g.globalAlpha = 1; g.beginPath(); g.moveTo(sx - 60, sy - 39); g.lineTo(sx, sy); g.stroke(); }
+        else P.forEach(p => { const w = Math.sin((k - .45) / .55 * 3.14); g.globalAlpha = Math.max(0, w); g.fillStyle = T; g.beginPath();
+          g.arc(x + Math.cos(p.a) * p.d * (k + .2), y + Math.sin(p.a) * p.d * (k + .2), p.s, 0, 6.283); g.fill(); });
+      } else if (kind === "stamp" || kind === "print") { // Paper's ink stamp, Scanner's tag, Terminal's printout
+        const word = c.word;
+        if (kind === "stamp") { const u = Math.min(1, k * 4), s = 1.7 - .7 * ease(u); g.save(); g.translate(x, y - 34); g.rotate(-.14); g.scale(s, s);
+          g.globalAlpha = Math.min(1, u * 1.5) * (k < .7 ? 1 : (1 - k) / .3); g.strokeStyle = A; g.fillStyle = A; g.lineWidth = 2;
+          g.font = "700 15px " + font; const w = g.measureText(word).width + 18; g.strokeRect(-w / 2, -13, w, 26); g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(word, 0, 1); g.restore(); }
+        else { const n = Math.ceil(Math.min(1, k * 2.2) * word.length); g.globalAlpha = k < .75 ? 1 : (1 - k) * 4; g.fillStyle = A;
+          g.font = "600 14px " + (getComputedStyle(root).getPropertyValue("--f-mono") || "monospace"); g.textBaseline = "middle";
+          g.fillText(word.slice(0, n) + (k < .9 && (now / 260 | 0) % 2 ? "▌" : ""), x - 40, y - 30); }
+      } else if (kind === "glint") { // the gilded themes: little four-point stars catch the light
+        P.forEach(p => { const u = Math.max(0, Math.min(1, (k - p.d) * 1.6)), s = p.s * Math.sin(u * 3.14); if (s <= 0) return;
+          g.globalAlpha = .95; g.fillStyle = p.c; g.beginPath(); g.moveTo(p.x, p.y - s); g.quadraticCurveTo(p.x, p.y, p.x + s, p.y); g.quadraticCurveTo(p.x, p.y, p.x, p.y + s);
+          g.quadraticCurveTo(p.x, p.y, p.x - s, p.y); g.quadraticCurveTo(p.x, p.y, p.x, p.y - s); g.fill(); });
+      } else { // petals, leaves and sparks: a handful of light things in the theme's colors
+        P.forEach(p => {
+          if (kind === "spark") { p.vy += .06; p.x += p.vx; p.y += p.vy; g.globalAlpha = (1 - k) * (.6 + .4 * Math.sin(now / 40 + p.f)); g.fillStyle = p.c;
+            g.shadowColor = p.c; g.shadowBlur = 8; g.beginPath(); g.arc(p.x, p.y, p.s, 0, 6.283); g.fill(); return; }
+          p.vy = Math.min(p.vy + .07, 1.6); p.x += p.vx + Math.sin(now / 300 + p.ph) * .6; p.y += p.vy; p.rot += p.vr;
+          g.globalAlpha = k < .6 ? 1 : (1 - k) / .4; g.fillStyle = p.c; g.save(); g.translate(p.x, p.y); g.rotate(p.rot); g.beginPath();
+          if (kind === "leaf") { g.moveTo(-p.s, 0); g.quadraticCurveTo(0, -p.s * .7, p.s, 0); g.quadraticCurveTo(0, p.s * .7, -p.s, 0); }
+          else g.ellipse(0, 0, p.s, p.s * .6, 0, 0, 6.283);
+          g.fill(); g.restore(); });
+      }
+      if (k < 1) requestAnimationFrame(frame); else cv.remove();
+    }
+    const t0 = performance.now(); requestAnimationFrame(frame);
+  };
+
+  // ---- The charm of each frame: how it answers a touch. A light effect on the thing you pressed, in the
+  // frame's own manner (CSS: the .tap class and the .tapfx layer); nothing moves the layout.
+  const TAPPABLE = "button,.btn,a.chip,.chip,.bchip,.minichips a,.tabbar a,.w,.card a,.seg button,.sw,.lrow,summary";
+  document.addEventListener("pointerdown", e => {
+    if (still()) return;
+    const el = e.target.closest(TAPPABLE); if (!el || el.disabled || el.closest(".cheer")) return;
+    const b = el.getBoundingClientRect(); if (!b.width) return;
+    el.style.setProperty("--tx", (e.clientX - b.left) + "px"); el.style.setProperty("--ty", (e.clientY - b.top) + "px");
+    let fx = el.querySelector(":scope > .tapfx");
+    if (!fx) { fx = document.createElement("span"); fx.className = "tapfx"; fx.setAttribute("aria-hidden", "true");
+      if (getComputedStyle(el).position === "static") el.style.position = "relative"; el.append(fx); }
+    el.classList.remove("tap"); void el.offsetWidth; el.classList.add("tap");
+    clearTimeout(el._tapT); el._tapT = setTimeout(() => el.classList.remove("tap"), 700);
+  }, {passive: true});
+})();
+'''
+
+
+def _cheers_json():
+    return json.dumps({k: {"kind": CHEERS.get(k, ("check", ""))[0], "word": CHEERS.get(k, ("check", ""))[1],
+                           "light": [t["light"]["accent"], t["light"]["accent2"], t["light"]["text"]],
+                           "dark": [t["dark"]["accent"], t["dark"]["accent2"], t["dark"]["text"]]} for k, t in THEMES.items()})
+
+
+_UI_CSS = theme_css() + "\n" + _BASE_CSS + "\n" + _hdr_css() + "\n" + _frames_css() + "\n" + _fonts_css() + _MOVE_CSS + _BAR_CSS + "\n/* ---- inside the Theta page's sheet (2026-11-04): the page alone, without the app's own bars */\nhtml.embedded .tabbar,html.embedded .minibar,html.embedded .theta-mini,html.embedded .rail{display:none!important}\nhtml.embedded .main{padding-top:14px;padding-bottom:calc(28px + env(safe-area-inset-bottom,0px))}\nhtml.embedded body.has-mini header.top{padding-right:0}\n" + "\nhtml.veiled .app,html.veiled .tabbar{visibility:hidden}" + "\n" + _CHARM_CSS
 _UI_JS = _UI_JS_SRC.replace("__THEMES__", json.dumps(
     {n: {"glass": bool(t.get("glass")), "mono": bool(t.get("mono")), "light": t["light"]["bg"],
-         "dark": t["dark"]["bg"], "accent2": t["dark"]["accent2"]} for n, t in THEMES.items()}))
+         "dark": t["dark"]["bg"], "accent2": t["dark"]["accent2"]} for n, t in THEMES.items()})) + "\n" + _CHARM_JS_SRC.replace("__CHEERS__", _cheers_json())
 _ASSET_V = hashlib.sha1((_UI_CSS + _UI_JS + _CHAT_JS).encode()).hexdigest()[:10]
 
 

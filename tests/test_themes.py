@@ -37,4 +37,15 @@ check("the spending chart wears the theme", 'style="stroke:var(--accent)"' in h.
 import re
 sizes = {float(x) for x in re.findall(r"font-size:([\d.]+)px", h._BASE_CSS)}
 check("one type scale (17px only for reading text)", sizes <= {10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 28, 32})
+# charm: how a theme or frame behaves, not only how it looks
+check("every theme celebrates when you finish something, its own way", set(h.CHEERS) == set(h.THEMES)
+      and "window.thetaCheer" in h._UI_JS and "__CHEERS__" not in h._UI_JS)
+kinds = {k for k, _ in h.CHEERS.values()}
+check("...and the celebrations differ (petals, sparks, ripples, stamps, a shooting star...)", len(kinds) >= 10)
+check("...from the board's Done and cleared widgets, and the calendar's Done", "thetaCheer(b.left" in h.BOARD_JS and "thetaCheer(innerWidth / 2" in h.BOARD_JS
+      and "thetaCheer(r.left" in h._UI_JS)
+for f in h.FRAMES:
+    check(f"the {f} frame answers a touch its own way", f':root[data-glassstyle="{f}"] .tap' in h._UI_CSS)
+check("charm stays out of the layout and off with reduced motion", ".tapfx{position:absolute;inset:0" in h._UI_CSS
+      and "@media (prefers-reduced-motion:reduce){.tap,.tap > .tapfx{animation:none!important}}" in h._UI_CSS and "if (still()) return;" in h._UI_JS)
 print("done")
