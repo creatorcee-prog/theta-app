@@ -1661,6 +1661,13 @@ body.light-stage .hud{color:var(--text)}body.light-stage .caption{color:var(--te
 /* the cinematic opening */
 .cine-layer{position:fixed;inset:0;width:100vw;height:100dvh;z-index:9;pointer-events:none}
 body.cine #head-av{opacity:0}
+/* the opening plays on black; the first tap brings in your background (a black layer under everything, and the
+   stage's own background shaded over by an inset shadow, which fades) */
+body.boot-black::after,body.boot-unblack::after{content:"";position:fixed;inset:0;z-index:-1;background:#000;pointer-events:none}
+body.boot-unblack::after{animation:boot-unblack 1.4s ease forwards}
+@keyframes boot-unblack{to{opacity:0}}
+body.boot-black .hud{box-shadow:inset 0 0 0 200vmax #000}
+body.boot-unblack .hud{box-shadow:inset 0 0 0 200vmax transparent;transition:box-shadow 1.4s ease}
 #head-av{transition:opacity .7s ease}
 .wordmark{margin:0;height:0;overflow:visible;text-align:center;font:600 13px/1 ui-monospace,Menlo,monospace;letter-spacing:.9em;text-indent:.9em;
  color:var(--mood,#4fd3ff);opacity:0;transition:opacity .9s ease,letter-spacing 1.4s cubic-bezier(.2,.8,.2,1),text-indent 1.4s cubic-bezier(.2,.8,.2,1)}
@@ -1802,14 +1809,18 @@ _STAGE_JS = r"""
     requestAnimationFrame(() => requestAnimationFrame(undock));
   } else if (!booted && !reduce) {
     let pick = "cinematic"; try { pick = localStorage.getItem("theta:opening") || "cinematic"; } catch (e) {}
-    if (pick === "converge") { greetAt = 3300; converge(); } else { greetAt = 2600; cinematic(); } // right after the shockwave (2.25 s)
+    const SETS = {converge: 3300, signal: 3500, pulse: 3600};
+    body.classList.add("boot-black"); // the opening plays on black; your first tap brings in your background
+    if (SETS[pick]) { greetAt = SETS[pick]; converge(pick); } else { greetAt = 2600; cinematic(); } // right after the shockwave (2.25 s)
   } else {
     TH.scatter(); body.classList.add("opening");
   }
-  // ---- Converge (2026-11-06, from the Opening Lab): Theta's dots begin as stars in the sky. The ones that are Theta
-  // glide in, nearest the middle first, on gently curving paths and settle into the globe; the rest of the sky stays
-  // (with the Stars background, it's that sky). Then Theta itself fades in where they landed, and greets you.
-  function converge() {
+  // ---- The dot openings (2026-11-06, from the Opening Lab). Each moves Theta's dots from somewhere into the globe,
+  // then Theta itself fades in where they landed, and greets you.
+  //   Converge: the dots begin as stars; Theta's glide in, nearest the middle first, on gently curving paths.
+  //   Signal: rings of dots pulse out from where Theta will be, like a broadcast, then come home as its latitudes.
+  //   Pulse: a heartbeat line traces across the screen, then curls in from the beat outward and winds into the globe.
+  function converge(kind) {
     const TAU = Math.PI * 2;
     body.classList.add("opening", "cine");
     const ov = document.createElement("canvas"); ov.className = "cine-layer"; ov.setAttribute("aria-hidden", "true"); body.append(ov);
@@ -1817,27 +1828,42 @@ _STAGE_JS = r"""
     ov.width = W * dpr; ov.height = Hh * dpr; const x = ov.getContext("2d"); x.scale(dpr, dpr);
     const r = cv.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2, R = r.width * 0.25;
     const hex = getComputedStyle(document.documentElement).getPropertyValue("--mood").trim() || "#4fd3ff";
-    const ownSky = document.documentElement.dataset.bg !== "stars"; // with the Stars background the sky is already there
+    kind = kind || "converge";
+    const ownSky = kind === "converge"; // the opening plays on black, so Converge brings its own sky
     const sky = ownSky ? Array.from({length: Math.round(Math.min(380, W * Hh / 2600))}, () => ({x: Math.random() * W, y: Math.random() * Hh, d: Math.random(), p: Math.random() * TAU, s: 0.4 + Math.random() * 1.2})) : [];
     const N = 360, mine = Array.from({length: N}, (_, i) => { const y = 1 - (i / (N - 1)) * 2;
       return {sx: Math.random() * W, sy: Math.random() * Hh, lat: Math.asin(y), lon: (i * 2.399963) % TAU, d: Math.random(), p: Math.random() * TAU}; });
     const inOut = k => { k = Math.max(0, Math.min(1, k)); return k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2; }, t0 = performance.now(), diag = Math.hypot(W, Hh);
+    const ease = k => 1 - Math.pow(1 - Math.max(0, Math.min(1, k)), 3), END = {converge: 3.1, signal: 3.3, pulse: 3.4}[kind];
+    const beat = s => -.22 * Math.exp(-(((s + .2) / .05) ** 2)) + Math.exp(-((s / .03) ** 2)) - .38 * Math.exp(-(((s - .08) / .04) ** 2)) + .12 * Math.exp(-(((s - .3) / .08) ** 2));
+    // where dot i of N is at time t, given where it ends (gx, gy): [x, y, how far it is home (0..1), how visible before it is]
+    const place = {
+      converge: (q, i, t, gx, gy) => { const dist = Math.hypot(q.sx - cx, q.sy - cy) / diag, k = inOut((t - 0.7 - dist * 1.6) / 1.5), bend = Math.sin(Math.PI * k) * dist * 0.5 * 0.35;
+        return [q.sx + (gx - q.sx) * k - (q.sy - cy) * bend, q.sy + (gy - q.sy) * k + (q.sx - cx) * bend, k, 1]; },
+      signal: (q, i, t, gx, gy) => { const n = Math.floor(((Math.sin(q.lat) + 1) / 2) * 8.99), e = ease((t - n * 0.1) / 1), rr = e * W * (0.16 + 0.042 * n), a = q.lon + t * 0.3;
+        const k = inOut((t - 1.55 - Math.abs(n - 4) * 0.06) / 1.4); return [cx + Math.cos(a) * rr + (gx - cx - Math.cos(a) * rr) * k, cy + Math.sin(a) * rr + (gy - cy - Math.sin(a) * rr) * k, k, e > 0 ? Math.min(1, e * 3) * (1 - 0.6 * e) : 0]; },
+      pulse: (q, i, t, gx, gy) => { const u = i / (N - 1), sweep = t / 1.2; if (u > sweep) return [0, 0, 0, 0];
+        const sd = u - 0.5, x0 = u * W, y0 = cy - Hh * 0.1 * beat(sd), k = inOut((t - 1.45 - Math.abs(sd) * 1.2) / 1.3), spin = (1 - k) * k * 2.4 * Math.sign(sd);
+        const x1 = x0 + (gx - x0) * k - cx, y1 = y0 + (gy - y0) * k - cy;
+        return [cx + x1 * Math.cos(spin) - y1 * Math.sin(spin), cy + x1 * Math.sin(spin) + y1 * Math.cos(spin), k, Math.abs(u - sweep) < 0.03 ? 1 : 0.6]; },
+    }[kind];
     const dot = (px, py, rad, rot) => { if (window.thetaDot) thetaDot.path(x, px, py, rad, rot); else { x.beginPath(); x.arc(px, py, rad, 0, TAU); } x.fill(); };
     function frame(now) {
       const t = (now - t0) / 1000; x.clearRect(0, 0, W, Hh); x.globalCompositeOperation = "lighter";
-      const out = Math.max(0, Math.min(1, (t - 3.1) / 0.6)); // the hand-over to Theta itself
+      const out = Math.max(0, Math.min(1, (t - END) / 0.6)); // the hand-over to Theta itself
+      if (kind === "signal") for (let n = 0; n < 3; n++) { const u = Math.max(0, Math.min(1, (t - n * 0.35) / 1.2)); if (!u || u >= 1) continue; // the broadcast's own rings
+        x.globalAlpha = 0.25 * (1 - u); x.strokeStyle = hex; x.lineWidth = 1; x.beginPath(); x.arc(cx, cy, u * W * 0.55, 0, TAU); x.stroke(); }
       for (const st of sky) { x.globalAlpha = (0.12 + 0.55 * st.d) * (0.45 + 0.55 * (0.5 + 0.5 * Math.sin(t * st.s + st.p))) * (1 - out); x.fillStyle = "#dfefff"; dot(st.x, st.y, 0.4 + 1.2 * st.d * st.d, st.p); }
-      for (const q of mine) {
+      mine.forEach((q, i) => {
         const lon = q.lon + t * 0.3, gx = cx + Math.cos(q.lat) * Math.cos(lon) * R, gy = cy + Math.sin(q.lat) * R, gz = Math.cos(q.lat) * Math.sin(lon);
-        const dist = Math.hypot(q.sx - cx, q.sy - cy) / diag, k = inOut((t - 0.7 - dist * 1.6) / 1.5), bend = Math.sin(Math.PI * k) * dist * 0.5 * 0.35;
-        const px = q.sx + (gx - q.sx) * k - (q.sy - cy) * bend, py = q.sy + (gy - q.sy) * k + (q.sx - cx) * bend, front = Math.max(0, 0.55 - gz * 0.6);
-        const twinkle = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(t * 1.4 + q.p));
-        x.globalAlpha = ((1 - k) * twinkle * (0.35 + 0.65 * q.d) + k * (0.1 + 0.85 * front)) * (1 - out); x.fillStyle = k > 0.5 ? hex : "#dfefff";
-        dot(px, py, (1 - k) * (0.5 + 1.1 * q.d * q.d) + k * (1.2 + front), q.p);
-      }
+        const [px, py, k, vis] = place(q, i, t, gx, gy), front = Math.max(0, 0.55 - gz * 0.6); if (!vis && !k) return;
+        const twinkle = kind === "converge" ? 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(t * 1.4 + q.p)) : vis;
+        x.globalAlpha = ((1 - k) * twinkle * (0.35 + 0.65 * q.d) + k * (0.1 + 0.85 * front)) * (1 - out); x.fillStyle = k > 0.5 || kind !== "converge" ? hex : "#dfefff";
+        dot(px, py, (1 - k) * (kind === "converge" ? 0.5 + 1.1 * q.d * q.d : 1.1) + k * (1.2 + front), q.p);
+      });
       x.globalAlpha = 1; x.globalCompositeOperation = "source-over";
-      if (t > 3.1 && body.classList.contains("cine")) { body.classList.remove("cine"); TH.scatter(true); } // Theta takes over from its own stars
-      if (t < 3.8) requestAnimationFrame(frame); else { ov.remove(); if (word) { word.classList.add("show"); setTimeout(() => word.classList.remove("show"), 1600); } }
+      if (t > END && body.classList.contains("cine")) { body.classList.remove("cine"); TH.scatter(true); } // Theta takes over from its own stars
+      if (t < END + 0.7) requestAnimationFrame(frame); else { ov.remove(); if (word) { word.classList.add("show"); setTimeout(() => word.classList.remove("show"), 1600); } }
     }
     requestAnimationFrame(frame);
   }
@@ -1890,6 +1916,9 @@ _STAGE_JS = r"""
     if (d && d.mood) TH.setMood(d.mood);
     cap.textContent = greeting; pending = !fromCorner && !!greeting; hint.hidden = fromCorner || !greeting; body.classList.remove("opening");
   }, greetAt);
+  const unblack = () => { if (!body.classList.contains("boot-black")) return; body.classList.add("boot-unblack"); body.classList.remove("boot-black");
+    setTimeout(() => body.classList.remove("boot-unblack"), 1600); };
+  document.addEventListener("pointerdown", unblack, {capture: true}); document.addEventListener("keydown", unblack, {capture: true});
   document.addEventListener("pointerdown", e => {
     if (!pending) return;
     pending = false; hint.hidden = true; TH.unlock();
@@ -1951,7 +1980,7 @@ def head_hud(headers=None):
             '<button type="button" id="head-test" class="test">Test</button>'
             '<label title="Tap your Bluetooth glasses or earbuds to talk"><input type="checkbox" id="head-glasses"> Glasses mode</label></div>'
             '<div class="av-set" aria-label="Avatar"><div class="row"><b>Avatar</b>'
-            '<label>Opening <select id="av-open"><option value="cinematic">Cinematic</option><option value="converge">Converge: from the stars</option></select></label>'
+            '<label>Opening <select id="av-open"><option value="cinematic">Cinematic</option><option value="converge">Converge: from the stars</option><option value="signal">Signal: a broadcast comes home</option><option value="pulse">Pulse: a heartbeat becomes Theta</option></select></label>'
             '<label>Dots <select id="av-dot"><option value="circle">Circles</option><option value="triangle">Triangles</option><option value="square">Squares</option>'
             '<option value="diamond">Diamonds</option><option value="pentagon">Pentagons</option><option value="hexagon">Hexagons</option><option value="star">Stars</option></select></label>'
             '<label>Style <select id="av-style"><option value="urchin">Urchin Pour</option><option value="precision">Precision</option><option value="lumen">Lumen</option>'
