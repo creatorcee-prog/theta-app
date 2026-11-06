@@ -1470,6 +1470,7 @@ _HEAD_JS = r"""
   // hooks for the page's opening (the stage script): assemble, greet, mood
   window.thetaHead = {
     speak: t => speak(t), unlock: () => unlock(), setMood: m => setMood(m), talking: () => state === "speaking", fx: b => voiceFx(b),
+    state: () => state, level: () => level, // the dot frames read these, so the cards move with Theta
     scatter(near) { for (const q of dots) { const a = Math.random() * TAU, b = Math.acos(2 * Math.random() - 1), r = near ? 1.1 + Math.random() * 0.9 : 2.4 + Math.random() * 2;
       q.w = [Math.cos(a) * Math.sin(b) * r, Math.cos(b) * r, Math.sin(a) * Math.sin(b) * r]; q.v = [0, 0, 0]; } },
   };

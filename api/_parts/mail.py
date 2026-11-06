@@ -765,7 +765,14 @@ def settings_page(headers):
         'any frame works with any scheme. Hologram tilts with your phone. Saved on this device.</p>'
         '<div class="seg" role="group" aria-label="Frame">' + "".join(
             f'<button type="button" data-pref="glassstyle" data-val="{k}" title="{html.escape(about)}">{html.escape(label)}</button>'
-            for k, (label, about) in FRAMES.items()) + '</div></div>'
+            for k, (label, about) in FRAMES.items() if k not in THETA_FRAMES)
+        + (f'<button type="button" data-pref="glassstyle" data-val="{glassstyle if glassstyle in THETA_FRAMES else "settle"}" id="theta-frame-btn" '
+           'title="Every card made of Theta\'s own dots">Theta</button>') + '</div>'
+        '<div class="field" style="margin-top:8px"><label for="theta-frame">Theta frame: cards made of Theta\'s own dots</label>'
+        '<select id="theta-frame">' + "".join(f'<option value="{k}"{" selected" if k == glassstyle else ""}>{html.escape(FRAMES[k][0].split(" \u00b7 ")[1])}: '
+                                              f'{html.escape(FRAMES[k][1])}</option>' for k in THETA_FRAMES) + '</select></div>'
+        '<script>(() => { const s = document.getElementById("theta-frame"), b = document.getElementById("theta-frame-btn"); if (!s || !b) return;'
+        ' s.onchange = () => { b.dataset.val = s.value; if (window.thetaPref) thetaPref("glassstyle", s.value); }; })();</script></div>'
         '<div><h3>Sounds</h3><p class="muted small">Each frame has its own short sound as a page comes in (Glass+ fizz, '
         'Liquid gloop, Edge binary chirp, Breach hex print, HUD target lock, Console typewriter, Hologram projector hum, Filigree chime). '
         'They play from the tap that opens a page. Saved on this device.</p>'
