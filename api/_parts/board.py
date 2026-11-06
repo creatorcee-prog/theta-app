@@ -499,7 +499,7 @@ BOARD_JS = r"""
   function visible() {
     if (!shown) shown = new Set();
     fresh().forEach(w => { if (!shown.has(w.id)) { shown.add(w.id); if (!w.important && seen[w.id] !== w.sig) newIds.add(w.id); } });
-    return data.widgets.filter(w => showAll || shown.has(w.id));
+    return data.widgets.filter(w => (showAll || shown.has(w.id)) && swiped[w.id] !== w.sig); // swiped away: gone until it changes
   }
   const isTask = w => w.cat === "task" && w.id !== "diagnostics-ok";
   function act(w, i, btn) { // one tap clears a row (a reminder done, a daily check ticked); the board updates at once
@@ -509,6 +509,20 @@ BOARD_JS = r"""
       if (!d.ok) throw new Error(d.error || "didn’t work"); if (window.thetaSfx) thetaSfx.play(); setTimeout(load, 350);
       if (window.thetaCheer) { const b = btn.getBoundingClientRect(); thetaCheer(b.left + b.width / 2, b.top + b.height / 2); } // the theme's own little celebration
     }).catch(e => { btn.disabled = false; btn.closest(".rrow").classList.remove("doneit"); toast(e.message || String(e)); });
+  }
+  // swipe a widget sideways to dismiss it: it crumbles into dots that drift home to Theta, and stays gone until it changes
+  const swiped = get("theta:swiped", {});
+  function swipeable(c, w) {
+    let x0 = null, y0 = 0, dx = 0, swallow = false;
+    c.addEventListener("pointerdown", e => { if (e.target.closest("button,a,input")) return; x0 = e.clientX; y0 = e.clientY; dx = 0; }, {passive: true});
+    c.addEventListener("pointermove", e => { if (x0 == null) return; dx = e.clientX - x0; if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(e.clientY - y0)) {
+      c.style.transform = `translateX(${dx}px)`; c.style.opacity = String(Math.max(.25, 1 - Math.abs(dx) / 260)); } }, {passive: true});
+    const end = () => { if (x0 == null) return; x0 = null;
+      if (Math.abs(dx) > 90) { swallow = true; if (window.thetaDots) thetaDots.crumble(c); c.style.visibility = "hidden";
+        swiped[w.id] = w.sig; put("theta:swiped", swiped); seen[w.id] = w.sig; put("theta:seen", seen); setTimeout(() => render(), 380); }
+      else if (Math.abs(dx) > 12) { swallow = true; c.style.transform = ""; c.style.opacity = ""; } };
+    c.addEventListener("pointerup", end); c.addEventListener("pointercancel", () => { x0 = null; c.style.transform = ""; c.style.opacity = ""; });
+    c.addEventListener("click", e => { if (swallow) { e.stopImmediatePropagation(); e.preventDefault(); swallow = false; } }, true);
   }
   function card(w, i, first) {
     const c = el("article", "w card s" + (w.size || 1) + (w.tone ? " " + w.tone : "") + (w.important ? " important" : newIds.has(w.id) ? " isnew" : "") + (first ? " first" : ""));
@@ -538,6 +552,7 @@ BOARD_JS = r"""
         if (/^https?:/.test(x.u || "")) { a.target = "_blank"; a.rel = "noopener"; } a.onclick = e => { e.stopPropagation(); if (w.id === "news" || w.id === "breaking") tap({kind: "news", title: x.t}); if (!/^https?:/.test(x.u || "")) { e.preventDefault(); openW({open: x.u, title: w.title}); } }; l.append(a); });
       c.append(l);
     }
+    if (!w.app) swipeable(c, w);
     c.onclick = () => openW(w); c.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openW(w); } };
     return c;
   }
@@ -763,7 +778,8 @@ BOARD_JS = r"""
     const id = r.dataset.id || "", t = r.querySelector("time"), at = t ? Date.parse(t.dateTime) : Date.now();
     if (id === String(closed) || (wasFirst && Date.now() - at > 30 * 60e3)) return;
     if (id === termId && !term.hidden && tbody.contains(document.activeElement)) return; // you're typing in it: leave it be
-    termId = id; mirror(r); term.hidden = false;
+    const was = term.hidden; termId = id; mirror(r); term.hidden = false;
+    if (was && window.thetaDots) requestAnimationFrame(() => thetaDots.emitTo(term, 120)); // its card forms from its dots
   }, 0));
   $("term-x").onclick = () => { term.hidden = true; closed = termId; put("theta:termClosed", termId); };
 })();

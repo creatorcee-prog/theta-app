@@ -1624,20 +1624,43 @@ _UI_JS_SRC = r'''
     }
     // Stars: fixed positions, twinkling alpha.
     var stars = [];
+    // Stars (2026-11-06): the sky is made of Theta's dots. Depth (near stars bigger and brighter), a tint from Theta's
+    // mood, a slow twinkle, and the same life as the avatar: while Theta speaks the stars near it brighten with its
+    // voice, while it listens they lean toward it, while it thinks the sky turns slowly around it. window.thetaStars
+    // hands the opening the stars to gather into Theta.
+    var starHue = 195, starHueAt = -9, starLv = 0, starSpin = 0;
     function initStars() {
       stars = [];
-      var n = Math.round(Math.min(160, Math.max(70, W * H / 12000)));
-      for (var i = 0; i < n; i++) stars.push({x: Math.random() * W, y: Math.random() * H, r: rnd(.4, 1.6), p: Math.random() * 6.28, s: rnd(.6, 2.2)});
+      var n = Math.round(Math.min(420, Math.max(160, W * H / 2600)));
+      for (var i = 0; i < n; i++) { var d = Math.random(); stars.push({x: Math.random() * W, y: Math.random() * H, d: d, r: .4 + 1.25 * d * d, p: Math.random() * 6.283, s: rnd(.4, 1.6), hue: (Math.random() - .5) * 40}); }
+      window.thetaStars = {list: function () { return stars; }, size: function () { return [W, H]; }};
+    }
+    function starMoodHue() {
+      var c = getComputedStyle(document.documentElement).getPropertyValue("--mood").trim() || getComputedStyle(document.documentElement).getPropertyValue("--accent2").trim();
+      var m = c.match(/^#([0-9a-f]{6})$/i); if (!m) return starHue;
+      var n = parseInt(m[1], 16), r = (n >> 16 & 255) / 255, g = (n >> 8 & 255) / 255, b = (n & 255) / 255, mx = Math.max(r, g, b), mn = Math.min(r, g, b), dd = mx - mn;
+      if (!dd) return starHue; var h = mx === r ? ((g - b) / dd) % 6 : mx === g ? (b - r) / dd + 2 : (r - g) / dd + 4; return (h * 60 + 360) % 360;
     }
     function drawStars(t) {
       ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+      if (t - starHueAt > 2) { starHue = starMoodHue(); starHueAt = t; }
+      var TH = window.thetaHead, state = TH && TH.state ? TH.state() : "idle", lv = TH && TH.level ? TH.level() : 0;
+      starLv += (lv - starLv) * .2; starSpin += (state === "thinking" ? .00035 : 0);
+      var av = document.getElementById("head-av"), ax = W / 2, ay = H * .33;
+      if (av) { var rr = av.getBoundingClientRect(); if (rr.width) { ax = rr.left + rr.width / 2; ay = rr.top + rr.height / 2; } }
+      var cs = Math.cos(starSpin), sn = Math.sin(starSpin);
+      ctx.globalCompositeOperation = "lighter";
       for (var i = 0; i < stars.length; i++) {
-        var st = stars[i];
-        ctx.globalAlpha = .35 + .65 * (0.5 + 0.5 * Math.sin(t * st.s + st.p));
-        ctx.fillStyle = "#fff";
-        ctx.beginPath(); ctx.arc(st.x, st.y, st.r, 0, 6.283); ctx.fill();
+        var st = stars[i], x = st.x, y = st.y;
+        if (starSpin) { var dx = x - ax, dy = y - ay; x = ax + dx * cs - dy * sn; y = ay + dx * sn + dy * cs; }
+        var dist = Math.hypot(x - ax, y - ay), near = Math.max(0, 1 - dist / (Math.min(W, H) * .7));
+        if (state === "listening") { x += (ax - x) / (dist || 1) * 6 * near; y += (ay - y) / (dist || 1) * 6 * near; }
+        var tw = .5 + .5 * Math.sin(t * st.s + st.p), glow = state === "speaking" ? starLv * near * (.6 + .4 * Math.sin(dist * .05 - t * 6)) : 0;
+        ctx.globalAlpha = Math.min(1, (.12 + .58 * st.d) * (.45 + .55 * tw) + glow * .6);
+        ctx.fillStyle = "hsl(" + ((starHue + st.hue) % 360) + "," + Math.round(25 + 30 * st.d + 30 * glow) + "%," + Math.round(82 + 10 * glow) + "%)";
+        ctx.beginPath(); ctx.arc(x, y, st.r * (1 + .6 * glow), 0, 6.283); ctx.fill();
       }
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
     }
     // Shards: many small bright glass fragments, drifting and tumbling.
     // They catch the light as they turn (brightness follows the tumble),
@@ -2884,6 +2907,7 @@ _CHAT_JS = r'''
       }
       const agentMsg = a && m.from !== "you" && m.from !== "hub";
       body.append(fresh && agentMsg ? typed(m) : richText(m.text, m));
+      if (fresh && agentMsg) { row.classList.add("dotin"); requestAnimationFrame(() => { if (window.thetaDots) thetaDots.emitTo(row, 80); }); } // its reply forms from its dots
       const imgs = [];
       if (m.attachments) for (const a of m.attachments) if (a.kind === "image") imgs.push(a);
       if (m.image && !imgs.some(a => a.url === m.image)) imgs.push({url: m.image, name: ""});
@@ -3241,7 +3265,7 @@ _CHAT_JS = r'''
     // A stopped agent leaves no bar behind: completed and failed both
     // hide the box instead of lingering on a finished note.
     if (state === "completed" || state === "failed") { wBox.hidden = true; wDone.replaceChildren(); clearInterval(wTimer); return; }
-    wBox.hidden = false;
+    wBox.hidden = false; if (window.thetaDots) thetaDots.stream(wBox); // a stream of dots from Theta while it works
     wAv.replaceChildren(avatar(who, 22));
     trailRow(done || [], wDone);
     wDots.hidden = state !== "working";
@@ -3269,7 +3293,7 @@ _CHAT_JS = r'''
       } catch (_) {}
     }, 1500);
   }
-  function stopWorking() { clearInterval(wTimer); clearInterval(wPoll); wBox.hidden = true; wDone.replaceChildren();
+  function stopWorking() { clearInterval(wTimer); clearInterval(wPoll); wBox.hidden = true; wDone.replaceChildren(); if (window.thetaDots) thetaDots.stream(null);
     try { sessionStorage.removeItem("theta-pending-rid"); } catch (_) {} }
 
   form.onsubmit = async e => {
@@ -3277,6 +3301,7 @@ _CHAT_JS = r'''
     const text = msg.value.trim(), savedAtts = atts;
     if (!text && !savedAtts.length) return;
     if (sending) return; sending = true;  // button and keyboard both land here, so one guard covers both
+    if (!(text.startsWith("/") && !savedAtts.length) && window.thetaDots) thetaDots.absorb(msg, 70); // your words fly into Theta as dots
     msg.value = ""; grow(); setAtts([]); btn.disabled = true; btn.classList.add("is-loading"); status.classList.remove("is-error"); closeMenu();
     const isCmd = text.startsWith("/") && !savedAtts.length;
     const rid = Math.random().toString(36).slice(2, 12);
@@ -3297,7 +3322,7 @@ _CHAT_JS = r'''
       if (isCmd) { status.textContent = d.result; status.classList.remove("is-error"); }
       else {
         const errs = Object.entries(d.errors || {}).map(([n, m]) => n + " couldn't reply: " + m);
-        const routed = (d.routed || []).length ? "Mistral passed this to " + d.routed.join(" and ") + "." : "";
+        const routed = (d.routed || []).length && C.lead !== "theta" ? "Mistral passed this to " + d.routed.join(" and ") + "." : ""; // only Theta on: nothing was passed
         status.textContent = [routed, ...errs].filter(Boolean).join(" | ");
         status.classList.toggle("is-error", errs.length > 0);
       }
@@ -3476,6 +3501,23 @@ CHEERS = {"theta": ("orbit", ""), "midnight": ("star", ""), "nebula": ("star", "
           "hologram": ("check", ""), "gilded": ("glint", ""), "lattice": ("ripple", ""), "bloom": ("petal", ""), "neonrift": ("neon", ""),
           "verdant": ("leaf", ""), "lunar": ("glint", ""), "bloodsign": ("spark", ""), "nightfiligree": ("glint", ""), "dusk": ("star", "")}
 _CHARM_CSS = r'''.card,.win,.kpi,.w{background-image:var(--lit,none)}
+/* dot moments: the overlay that carries Theta's dots between things (window.thetaDots) */
+.dotfx{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:40;mix-blend-mode:screen}
+:root[data-mode="light"] .dotfx{mix-blend-mode:multiply}
+/* its reply sharpens in as its dots land */
+.msg.dotin .mbody{animation:dotsharpen .8s ease-out .15s backwards}
+@keyframes dotsharpen{from{opacity:0;filter:blur(6px)}}
+/* while it works: a small stream of dots instead of words (the words stay for screen readers) */
+.working .wdots.stream{position:relative;display:inline-block;width:96px;height:8px;flex:none}
+.working .wdots.stream i{position:absolute;left:0;top:1px;width:5px;height:5px;border-radius:50%;background:currentColor;animation:wstream 1.7s linear infinite;opacity:0}
+.working .wdots.stream i:nth-child(2){animation-delay:.24s}.working .wdots.stream i:nth-child(3){animation-delay:.48s}.working .wdots.stream i:nth-child(4){animation-delay:.72s}
+.working .wdots.stream i:nth-child(5){animation-delay:.96s}.working .wdots.stream i:nth-child(6){animation-delay:1.2s}.working .wdots.stream i:nth-child(7){animation-delay:1.44s}
+@keyframes wstream{0%{transform:translateX(0) scale(.4);opacity:0}15%{opacity:1}100%{transform:translateX(90px) scale(1);opacity:0}}
+.working .wdots.stream:not([hidden]) ~ #chat-working-text{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+/* progress as dots: the day ring's arcs */
+.dayring .dr-left,.dayring .dr-done{stroke-linecap:round;stroke-dasharray:0 9}
+.dayring .dr-track{stroke-linecap:round;stroke-dasharray:0 9;stroke-width:4!important}
+@media (prefers-reduced-motion:reduce){.msg.dotin .mbody{animation:none}.working .wdots.stream i{animation:none;opacity:.6}}
 /* ---- The Theta frames: the cards are Theta's dots (drawn on .dotframe), so their own fill steps back */
 .dotframe{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:8;mix-blend-mode:screen}
 :root[data-mode="light"] .dotframe{mix-blend-mode:multiply}
@@ -3531,6 +3573,80 @@ _CHARM_CSS = r'''.card,.win,.kpi,.w{background-image:var(--lit,none)}
 :root[data-glassstyle="ornate"] .tap > .tapfx{animation:tap-engrave .7s cubic-bezier(.2,.8,.2,1)}
 @keyframes tap-engrave{0%{opacity:1;background-size:0 1px}55%{opacity:1;background-size:100% 1px}100%{opacity:0;background-size:100% 1px}}
 @media (prefers-reduced-motion:reduce){.tap,.tap > .tapfx{animation:none!important}}
+'''
+_DOTMOMENTS_JS = r'''(() => {
+  // ---- Dot moments (2026-11-06): Theta's dots carry what happens. Your message breaks into dots that fly into
+  // Theta; its reply and its cards form from dots it sends out; a tapped option goes back to it as a burst; while it
+  // works, a stream of dots runs from it to the chat; a widget you swipe away crumbles into dots that drift home.
+  // One overlay that only adds light, in every frame; nothing with reduced motion.
+  const root = document.documentElement, TAU = Math.PI * 2;
+  let cv = null, g = null, W = 0, H = 0, P = [], running = false, last = 0, streamTo = null, hue = 195, hueAt = 0, clock = 0;
+  const still = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function theta() { const e = document.getElementById("head-av") || document.querySelector(".theta-mini");
+    if (e) { const r = e.getBoundingClientRect(); if (r.width) return {x: r.left + r.width / 2, y: r.top + r.height / 2}; } return {x: innerWidth - 30, y: 34}; }
+  function readHue() { const c = getComputedStyle(root).getPropertyValue("--mood").trim() || getComputedStyle(root).getPropertyValue("--accent2").trim(), m = c.match(/^#([0-9a-f]{6})$/i);
+    if (!m) return hue; const n = parseInt(m[1], 16), r = (n >> 16 & 255) / 255, gg = (n >> 8 & 255) / 255, b = (n & 255) / 255, mx = Math.max(r, gg, b), mn = Math.min(r, gg, b), d = mx - mn;
+    if (!d) return hue; const h = mx === r ? ((gg - b) / d) % 6 : mx === gg ? (b - r) / d + 2 : (r - gg) / d + 4; return (h * 60 + 360) % 360; }
+  function size() { const dpr = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight; cv.width = W * dpr; cv.height = H * dpr; g.setTransform(dpr, 0, 0, dpr, 0, 0); }
+  function ensure() {
+    if (still() || !document.body) return false;
+    if (!cv) { cv = document.createElement("canvas"); cv.className = "dotfx"; cv.setAttribute("aria-hidden", "true"); document.body.append(cv); g = cv.getContext("2d"); size(); addEventListener("resize", size); }
+    if (!running) { running = true; last = performance.now(); requestAnimationFrame(frame); }
+    return true;
+  }
+  const rectOf = el => { const r = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null; return r && r.width ? r : null; };
+  // from an area to Theta (your message, a tapped option, a dismissed widget)
+  function absorb(el, n, opts) {
+    const r = rectOf(el); if (!r || !ensure()) return; const t = theta(), o = opts || {};
+    for (let i = 0; i < (n || 60); i++) { const x = r.left + Math.random() * r.width, y = r.top + Math.random() * r.height;
+      P.push({x, y, vx: (Math.random() - .5) * (o.burst || 2), vy: (Math.random() - .5) * (o.burst || 2) - (o.lift || 0), tx: t.x, ty: t.y, to: "theta",
+              delay: Math.random() * (o.spread || .35), life: 0, s: Math.random(), size: o.size || 1.5, hue: o.hue}); }
+  }
+  // from Theta into an area, landing on it (its reply, its cards)
+  function emitTo(el, n) {
+    const r = rectOf(el); if (!r || !ensure()) return; const t = theta();
+    for (let i = 0; i < (n || 70); i++) P.push({x: t.x + (Math.random() - .5) * 10, y: t.y + (Math.random() - .5) * 10, vx: (Math.random() - .5) * 3, vy: (Math.random() - .5) * 3,
+      tx: r.left + Math.random() * r.width, ty: r.top + Math.random() * r.height, to: "land", delay: Math.random() * .3, life: 0, s: Math.random(), size: 1.5});
+  }
+  // a widget crumbles into dots in place, which then drift home
+  function crumble(el) {
+    const r = rectOf(el); if (!r || !ensure()) return; const sp = Math.max(8, Math.sqrt(r.width * r.height / 260)), t = theta();
+    for (let x = r.left + sp / 2; x < r.right; x += sp) for (let y = r.top + sp / 2; y < r.bottom; y += sp)
+      P.push({x, y, vx: (Math.random() - .5) * 1.5, vy: -Math.random() * 1.5, tx: t.x, ty: t.y, to: "theta", delay: .15 + ((x - r.left) / r.width) * .35 + Math.random() * .1, life: 0, s: Math.random(), size: 1.8, fall: 1});
+  }
+  function stream(el) { streamTo = el; if (el) ensure(); }
+  window.thetaDots = {absorb, emitTo, crumble, stream};
+
+  function frame(now) {
+    const dt = Math.min(.05, (now - last) / 1000); last = now; clock += dt;
+    if (clock - hueAt > 1.5) { hue = readHue(); hueAt = clock; }
+    g.clearRect(0, 0, W, H);
+    const t = theta();
+    if (streamTo && streamTo.isConnected && rectOf(streamTo)) { const r = rectOf(streamTo); // while Theta works: a stream of dots from it to the chat
+      if (Math.random() < .7) P.push({x: t.x, y: t.y, vx: (Math.random() - .5) * 2, vy: (Math.random() - .5) * 2, tx: r.left + 24 + Math.random() * Math.min(160, r.width - 24), ty: r.top + r.height / 2,
+        to: "fade", delay: 0, life: 0, s: Math.random(), size: 1.3}); }
+    else streamTo = null;
+    g.globalCompositeOperation = "lighter";
+    for (let i = P.length - 1; i >= 0; i--) {
+      const p = P[i]; p.life += dt; if (p.life < p.delay) continue;
+      const age = p.life - p.delay;
+      if (p.to === "theta") { p.tx = t.x; p.ty = t.y; }
+      if (p.fall && age < .35) { p.vy += .12; p.x += p.vx; p.y += p.vy; } // a crumble first falls apart a little
+      else { const k = .045 + .03 * p.s; p.vx = (p.vx + (p.tx - p.x) * k) * .82; p.vy = (p.vy + (p.ty - p.y) * k) * .82; p.x += p.vx; p.y += p.vy; }
+      const d = Math.hypot(p.tx - p.x, p.ty - p.y), sp = Math.hypot(p.vx, p.vy);
+      let a = Math.min(1, age * 4);
+      if (p.to === "land" && d < 3) a *= Math.max(0, 1 - (age - p.arr || 0)); // landed: fade into what formed
+      if (p.to === "land" && d < 3 && p.arr == null) p.arr = age;
+      if ((p.to === "theta" && d < 8) || (p.to === "fade" && d < 6) || (p.to === "land" && p.arr != null && age - p.arr > .5) || age > 4) { P.splice(i, 1); continue; }
+      g.fillStyle = `hsla(${(p.hue != null ? p.hue : hue) + 20 * (p.s - .5)},${70 + Math.min(25, sp * 3)}%,${66 + Math.min(20, sp * 2)}%,${a * (.55 + .45 * p.s)})`;
+      g.beginPath(); g.arc(p.x, p.y, p.size * (.7 + .6 * p.s), 0, TAU); g.fill();
+    }
+    g.globalCompositeOperation = "source-over";
+    if (P.length || streamTo) requestAnimationFrame(frame); else { running = false; g.clearRect(0, 0, W, H); }
+  }
+  // a tapped option or answer goes back to Theta as a burst
+  document.addEventListener("click", e => { const b = e.target.closest(".msg-acts .btn,.quizcard button,.cfgcard button,#term-body .btn"); if (b) absorb(b, 26, {burst: 4, spread: .15, size: 1.3}); }, true);
+})();
 '''
 _DOTFRAME_JS = r'''(() => {
   // ---- The Theta frames (2026-11-06, from the Dot UI Lab): every card is made of Theta's own dots. Grain and Press
@@ -3769,7 +3885,7 @@ def _cheers_json():
 _UI_CSS = theme_css() + "\n" + _BASE_CSS + "\n" + _hdr_css() + "\n" + _frames_css() + "\n" + _fonts_css() + _MOVE_CSS + _BAR_CSS + "\n/* ---- inside the Theta page's sheet (2026-11-04): the page alone, without the app's own bars */\nhtml.embedded .tabbar,html.embedded .minibar,html.embedded .theta-mini,html.embedded .rail{display:none!important}\nhtml.embedded .main{padding-top:14px;padding-bottom:calc(28px + env(safe-area-inset-bottom,0px))}\nhtml.embedded body.has-mini header.top{padding-right:0}\n" + "\nhtml.veiled .app,html.veiled .tabbar{visibility:hidden}" + "\n:root[data-glassstyle=\"liquid\"] .tabbar,:root[data-glassstyle=\"holo\"] .tabbar,:root[data-glassstyle=\"liquid\"] .minibar,:root[data-glassstyle=\"holo\"] .minibar{background:color-mix(in srgb,var(--bg) 88%,transparent);-webkit-backdrop-filter:blur(26px) saturate(160%);backdrop-filter:blur(26px) saturate(160%)}" + "\n" + _CHARM_CSS
 _UI_JS = _UI_JS_SRC.replace("__THEMES__", json.dumps(
     {n: {"glass": bool(t.get("glass")), "mono": bool(t.get("mono")), "light": t["light"]["bg"],
-         "dark": t["dark"]["bg"], "accent2": t["dark"]["accent2"]} for n, t in THEMES.items()})) + "\n" + _CHARM_JS_SRC.replace("__CHEERS__", _cheers_json()) + "\n" + _DOTFRAME_JS
+         "dark": t["dark"]["bg"], "accent2": t["dark"]["accent2"]} for n, t in THEMES.items()})) + "\n" + _CHARM_JS_SRC.replace("__CHEERS__", _cheers_json()) + "\n" + _DOTFRAME_JS + "\n" + _DOTMOMENTS_JS
 _ASSET_V = hashlib.sha1((_UI_CSS + _UI_JS + _CHAT_JS).encode()).hexdigest()[:10]
 
 
@@ -3962,14 +4078,20 @@ def coverage_html(cov):
             f'<span>{html.escape(text)}</span></div>')
 
 
+def _dot_arc(circ, frac, n=20):
+    """A progress arc as dots: one dot per twentieth of the ring, as far as the progress goes (2026-11-06)."""
+    k = max(0, min(n, round(frac * n)))
+    return " ".join([f"0 {circ / n:.2f}"] * k + [f"0 {circ:.2f}"]) if k else f"0 {circ:.2f}"
+
+
 def ring_svg(frac, size=46, color="var(--accent)"):
     r = (size - 7) / 2
     circ = 2 * 3.14159 * r
     frac = max(0.0, min(frac, 1.0))
     return (f'<svg class="ring" width="{size}" height="{size}" viewBox="0 0 {size} {size}" aria-hidden="true">'
-            f'<circle cx="{size / 2}" cy="{size / 2}" r="{r:.1f}" fill="none" stroke="var(--surface2)" stroke-width="6"/>'
+            f'<circle cx="{size / 2}" cy="{size / 2}" r="{r:.1f}" fill="none" stroke="var(--surface2)" stroke-width="4" stroke-linecap="round" stroke-dasharray="0 {circ / 20:.2f}"/>'
             f'<circle cx="{size / 2}" cy="{size / 2}" r="{r:.1f}" fill="none" stroke="{color}" stroke-width="6" '
-            f'stroke-linecap="round" stroke-dasharray="{circ * frac:.1f} {circ:.1f}" '
+            f'stroke-linecap="round" stroke-dasharray="{_dot_arc(circ, frac)}" '
             f'transform="rotate(-90 {size / 2} {size / 2})"/></svg>')
 
 

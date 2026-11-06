@@ -1235,7 +1235,8 @@ _HEAD_JS = r"""
     if (/^(ok(ay)?\s+|theta,?\s+)?(close|clear|hide|dismiss)\s+(the\s+|all\s+|those\s+)?(panels?|screens?|that|it|everything)[.!]?$/i.test(text)) {
       document.dispatchEvent(new CustomEvent("theta:clear-panels")); saidEl.textContent = "\u201c" + text + "\u201d"; setState("idle"); return;
     }
-    busy = true; talk.disabled = true; saidEl.textContent = "“" + text + "”"; setState("thinking"); moment("working"); // the Gen 7 styles fill a ring while it works
+    busy = true; talk.disabled = true; saidEl.textContent = "“" + text + "”"; setState("thinking"); moment("working");
+    if (window.thetaDots) thetaDots.absorb(saidEl, 50); // what you said flies into Theta as dots // the Gen 7 styles fill a ring while it works
     tSent = performance.now(); tReply = 0; warmVoice();
     try {
       const rid = Math.random().toString(36).slice(2, 12);
@@ -1575,12 +1576,13 @@ _DECK_JS = r"""
       svg.setAttribute("viewBox", "0 0 90 90"); svg.setAttribute("width", "90"); svg.setAttribute("height", "90"); svg.setAttribute("class", "ring");
       const bg = document.createElementNS(ns, "circle"), fg = document.createElementNS(ns, "circle");
       [bg, fg].forEach(c => { c.setAttribute("cx", 45); c.setAttribute("cy", 45); c.setAttribute("r", R); c.setAttribute("fill", "none"); c.setAttribute("stroke-width", 5); });
-      bg.setAttribute("stroke", "rgba(79,211,255,.18)"); fg.setAttribute("stroke", "#4fd3ff"); fg.setAttribute("stroke-linecap", "round");
+      bg.setAttribute("stroke", "rgba(79,211,255,.18)"); fg.setAttribute("stroke", "#4fd3ff"); fg.setAttribute("stroke-linecap", "round"); bg.setAttribute("stroke-linecap", "round"); bg.setAttribute("stroke-dasharray", "0 7");
       fg.setAttribute("transform", "rotate(-90 45 45)"); fg.setAttribute("stroke-dasharray", L); svg.append(bg, fg);
       const t = el("div", "big"); t.style.textAlign = "center";
       const upd = () => {
         const left = Math.max(0, p.until * 1000 - Date.now()), all = p.minutes * 60e3;
-        fg.setAttribute("stroke-dashoffset", L * (1 - left / all));
+        const mins = Math.max(1, p.minutes), on = Math.ceil(left / 60e3); // one dot a minute; one goes each minute
+        fg.setAttribute("stroke-dasharray", (("0 " + (L / mins).toFixed(2) + " ").repeat(on) + "0 " + L).trim()); fg.setAttribute("stroke-dashoffset", 0);
         t.textContent = left ? Math.floor(left / 60e3) + ":" + String(Math.floor(left / 1000) % 60).padStart(2, "0") : "Time!";
       };
       upd(); clearInterval(tick); tick = setInterval(upd, 1000);
