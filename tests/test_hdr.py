@@ -70,7 +70,7 @@ for name, t in h.THEMES.items():
         check("SDR base keeps the %s/%s hex accents" % (name, m),
               ("--accent:" + t[m]["accent"]) in css and ("--accent2:" + t[m]["accent2"]) in css)
 check("SDR theta light accent precedes its P3 override",
-      css.index("--accent:#5543e8") < css.index("color(display-p3 0.3035 0.2150 0.9823)"))
+      css.index("--accent:" + h.THEMES["theta"]["light"]["accent"]) < css.index(h._p3(h.THEMES["theta"]["light"]["accent"])))
 
 # --- P3 accents for every theme ---
 p3vals = re.findall(r"color\(display-p3 ([0-9.]+) ([0-9.]+) ([0-9.]+)\)", css)
@@ -86,8 +86,8 @@ for name, t in h.THEMES.items():
           and (sel + '[data-mode="dark"]{' + dk + "}") in css
           and ("@media (color-gamut:p3) and (prefers-color-scheme:dark){" + sel
                + ':not([data-mode="light"]){' + dk + "}}") in css)
-check("theta P3 conversion is pinned (a matrix change fails loudly)",
-      "color(display-p3 0.3035 0.2150 0.9823)" in css)
+check("the P3 conversion is pinned (a matrix change fails loudly): the old theta indigo",
+      h._p3("#5543e8") == "color(display-p3 0.3035 0.2150 0.9823)")
 
 # --- Gemini stops in P3, same geometry and peak alphas ---
 gem_before = ("@media (color-gamut:p3){#bg-layer.bg-gemini::before{background-image:"

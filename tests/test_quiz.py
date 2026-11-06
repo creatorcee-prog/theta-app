@@ -126,5 +126,5 @@ check("base text is larger", "font:16px/1.5 " in css)
 check("message bodies are larger", ".msg .mbody{font-size:17px}" in css)
 check("code text is larger", "overflow-y:auto;font-size:14px;" in css)
 check("titles are slightly larger",
-      "h1{font-size:30px" in css and "h2{font-size:20px" in css
+      "h1{font-size:28px" in css and "h2{font-size:20px" in css
       and ".md .md-h{font-weight:700;font-size:18px" in css)

@@ -353,14 +353,14 @@ BOARD_CSS = r"""
 /* the ticker: a crawl across the top while Theta is minimized, like a sports or news channel */
 .ticker{position:fixed;top:calc(env(safe-area-inset-top,0px) + 14px);left:max(12px,env(safe-area-inset-left,0px));
  right:calc(env(safe-area-inset-right,0px) + 72px);height:38px;z-index:7;overflow:hidden;display:none;align-items:center;
- border:1px solid color-mix(in srgb,var(--mood,var(--accent)) 35%,var(--border));border-radius:10px;
+ border:1px solid color-mix(in srgb,var(--mood,var(--accent)) 35%,var(--border));border-radius:12px;
  background:color-mix(in srgb,var(--surface) 78%,transparent);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
  -webkit-mask-image:linear-gradient(90deg,transparent,#000 14px,#000 calc(100% - 22px),transparent);mask-image:linear-gradient(90deg,transparent,#000 14px,#000 calc(100% - 22px),transparent)}
 body.docked .ticker:not([hidden]){display:flex}
 .tk-track{display:flex;gap:0;white-space:nowrap;will-change:transform;animation:tkcrawl var(--tkdur,40s) linear infinite}
 .ticker:hover .tk-track,.ticker.held .tk-track{animation-play-state:paused}
-.tk-item{display:inline-flex;align-items:center;gap:7px;padding:0 16px;min-height:38px;font-size:13.5px;color:var(--text);text-decoration:none;border-right:1px solid var(--border)}
-.tk-item b{font-family:var(--f-label);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--mood,var(--accent))}
+.tk-item{display:inline-flex;align-items:center;gap:7px;padding:0 16px;min-height:38px;font-size:14px;color:var(--text);text-decoration:none;border-right:1px solid var(--border)}
+.tk-item b{font-family:var(--f-label);font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--mood,var(--accent))}
 .tk-item.bad b{color:var(--bad)}
 @keyframes tkcrawl{to{transform:translateX(-50%)}}
 @media (prefers-reduced-motion:reduce){.tk-track{animation:none}.ticker{overflow-x:auto}}
@@ -377,7 +377,7 @@ body.headchat{--tabh:env(safe-area-inset-bottom,0px)}
  overflow-y:auto;overscroll-behavior:contain;padding:4px max(14px,env(safe-area-inset-left,0px)) 14px max(14px,env(safe-area-inset-right,0px))}
 body.docked #board{display:block}
 .bhead{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:0 2px 10px;font-size:13px;color:var(--muted)}
-.bchip{font:inherit;font-size:12.5px;font-weight:650;border:1px solid var(--border);background:var(--surface2);color:var(--text);border-radius:999px;padding:5px 12px;cursor:pointer}
+.bchip{font:inherit;font-size:13px;font-weight:650;border:1px solid var(--border);background:var(--surface2);color:var(--text);border-radius:999px;padding:5px 12px;cursor:pointer}
 .bgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:minmax(108px,auto);grid-auto-flow:dense;gap:10px}
 @media (min-width:720px){.bgrid{grid-template-columns:repeat(4,minmax(0,1fr))}}
 .w{position:relative;display:flex;flex-direction:column;gap:3px;min-width:0;overflow:hidden;cursor:pointer;text-align:left;font:inherit;color:var(--text);
@@ -385,13 +385,13 @@ body.docked #board{display:block}
 .w.s2{grid-column:span 2}.w.s3{grid-row:span 2}.w.s4{grid-column:span 2;grid-row:span 2}
 .w .ey{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-family:var(--f-label)}
 .w h3{font-size:14px;margin:0;font-family:var(--f-head)}
-.w .big{font-size:21px;font-weight:760;line-height:1.15;overflow-wrap:anywhere;font-family:var(--f-head);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-.w.s1 .big{font-size:19px}
-.w .sub{font-size:12.5px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.w .big{font-size:22px;font-weight:700;line-height:1.15;overflow-wrap:anywhere;font-family:var(--f-head);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.w.s1 .big{font-size:20px}
+.w .sub{font-size:13px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .w .rows{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 9px;font-size:13px;margin-top:4px}
 .w .rows b{font-weight:650;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
 .w .rows span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.w .items{display:flex;flex-direction:column;gap:7px;margin-top:4px;font-size:13.5px}
+.w .items{display:flex;flex-direction:column;gap:7px;margin-top:4px;font-size:14px}
 .w .items a{color:var(--text);text-decoration:none;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .w .items small{color:var(--muted);font-size:11px;margin-right:6px}
 .w .thumb{width:100%;height:96px;object-fit:cover;border-radius:calc(var(--r) - 6px);margin:2px 0 4px}
@@ -407,13 +407,13 @@ body.docked .board-open{display:none}
  linear-gradient(currentColor,currentColor) 0 7px/5px 5px no-repeat,linear-gradient(currentColor,currentColor) 7px 7px/5px 5px no-repeat}
 body.docked:not(.showchat) .msgs{display:none}
 body.docked #head-note,body.docked #head-taps,body.docked .hud-row,body.docked .hud .reply{opacity:0;pointer-events:none}
-body.showchat .msgs{opacity:1!important;pointer-events:auto!important;transform:none!important;z-index:6;top:calc(env(safe-area-inset-top,0px) + 56px);bottom:calc(var(--formh,96px) + 8px);max-height:none;background:color-mix(in srgb,var(--bg) 92%,transparent);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);border:1px solid var(--border);border-radius:14px;padding:10px 12px;overflow-y:auto;overscroll-behavior:contain}
+body.showchat .msgs{opacity:1!important;pointer-events:auto!important;transform:none!important;z-index:6;top:calc(env(safe-area-inset-top,0px) + 56px);bottom:calc(var(--formh,96px) + 8px);max-height:none;background:color-mix(in srgb,var(--bg) 92%,transparent);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);border:1px solid var(--border);border-radius:12px;padding:10px 12px;overflow-y:auto;overscroll-behavior:contain}
 /* the chat replaces the board while it's open, so the two never sit on top of each other */
 body.showchat #board,body.showchat .board-open{visibility:hidden}
 /* the terminal: Theta's cards (tables, quizzes, docs, code) above everything */
 .term{position:fixed;left:max(10px,env(safe-area-inset-left,0px));right:max(10px,env(safe-area-inset-right,0px));top:calc(env(safe-area-inset-top,0px) + 64px);
  z-index:9;max-height:62dvh;display:flex;flex-direction:column;background:color-mix(in srgb,var(--bg) 94%,transparent);
- -webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);border:1px solid color-mix(in srgb,var(--accent) 45%,var(--border));border-radius:14px;
+ -webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);border:1px solid color-mix(in srgb,var(--accent) 45%,var(--border));border-radius:12px;
  box-shadow:0 18px 50px rgba(0,0,0,.45),0 0 0 1px color-mix(in srgb,var(--accent) 12%,transparent);animation:termin .35s cubic-bezier(.2,.8,.2,1)}
 @keyframes termin{from{opacity:0;transform:translateY(-10px) scale(.98)}}
 .term[hidden]{display:none}
@@ -435,13 +435,13 @@ body.showchat #board,body.showchat .board-open{visibility:hidden}
 @media (prefers-reduced-motion:reduce){.w,.term,.wsheet{animation:none}}
 /* ---- live board (2026-11-04): dots, Start here, one-tap Done, leaving, cleared toast, app chips */
 .w.isnew::after{content:"";position:absolute;top:10px;right:10px;width:8px;height:8px;border-radius:50%;background:var(--accent2);box-shadow:0 0 8px var(--accent2)}
-.w .start{position:absolute;top:-1px;left:12px;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--on);background:var(--accent);padding:1px 7px;border-radius:0 0 6px 6px}
+.w .start{position:absolute;top:-1px;left:12px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--on);background:var(--accent);padding:1px 7px;border-radius:0 0 6px 6px}
 .w.first{box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 55%,transparent),var(--shadow)}
 .w.first .ey{margin-top:8px}
 .w .rows{display:flex;flex-direction:column;gap:2px}
 .w .rrow{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:9px;align-items:center;min-height:30px;transition:opacity .3s}
 .w .rrow.doneit{opacity:.35;text-decoration:line-through}
-.w .rdone{width:32px;height:32px;border-radius:50%;border:1.5px solid color-mix(in srgb,var(--good) 70%,var(--border));background:transparent;color:var(--good);font-size:15px;font-weight:800;cursor:pointer;flex:none}
+.w .rdone{width:32px;height:32px;border-radius:50%;border:1.5px solid color-mix(in srgb,var(--good) 70%,var(--border));background:transparent;color:var(--good);font-size:15px;font-weight:700;cursor:pointer;flex:none}
 .w .rdone:active{transform:scale(.9);background:color-mix(in srgb,var(--good) 20%,transparent)}
 @media (pointer:coarse){.w .rdone{width:40px;height:40px}.bchip{min-height:38px}}
 .w.kept{animation:none}

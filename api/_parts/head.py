@@ -646,11 +646,11 @@ _HEAD_CSS = """
 .headpage .hstate{font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0;min-height:1.4em}
 .headpage .said{color:var(--muted);font-size:15px;text-align:center;margin:0;min-height:1.4em;max-width:46ch}
 .headpage .reply{font-size:17px;line-height:1.55;margin:0;max-width:46ch;white-space:pre-wrap;overflow-wrap:anywhere}
-.headpage .talk{font:inherit;font-weight:750;font-size:16px;padding:14px 28px;border-radius:999px;border:0;cursor:pointer;
+.headpage .talk{font:inherit;font-weight:700;font-size:16px;padding:14px 28px;border-radius:999px;border:0;cursor:pointer;
  color:#04121a;background:#4fd3ff;min-width:180px}
 .headpage .talk[aria-pressed=true]{background:#ff5d6c;color:#fff}
 .headpage .talk:disabled{opacity:.55;cursor:default}
-.headpage .hear{font:inherit;font-weight:750;font-size:15px;padding:10px 22px;border-radius:999px;cursor:pointer;
+.headpage .hear{font:inherit;font-weight:700;font-size:15px;padding:10px 22px;border-radius:999px;cursor:pointer;
  color:inherit;background:transparent;border:1.5px solid #4fd3ff}
 .headpage .talk:focus-visible,.headpage canvas:focus-visible{outline:2px solid #4fd3ff;outline-offset:3px}
 .headpage form{display:flex;gap:8px;width:100%}
@@ -661,7 +661,7 @@ _HEAD_CSS = """
 .headpage .note{font-size:13px;color:var(--muted);margin:0;text-align:center}
 .headpage .modes{display:grid;gap:10px;justify-items:center;width:100%}
 .headpage .tr{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;font-size:14px}
-.headpage .tr select,.headpage .tr button{font:inherit;padding:8px 12px;border-radius:10px;border:1px solid var(--line,rgba(127,127,127,.3));background:transparent;color:inherit}
+.headpage .tr select,.headpage .tr button{font:inherit;padding:8px 12px;border-radius:12px;border:1px solid var(--line,rgba(127,127,127,.3));background:transparent;color:inherit}
 .headpage .tr button{font-weight:700;cursor:pointer;border-color:#4fd3ff}
 .headpage a.hear{text-decoration:none;display:inline-block}
 .headpage .opts .test{font:inherit;font-weight:700;padding:4px 12px;border-radius:999px;border:1px solid #4fd3ff;background:transparent;color:inherit;cursor:pointer}
@@ -1371,7 +1371,7 @@ _DECK_CSS = """
 .hud-more .opts{justify-content:flex-start;margin:6px 0}.hud-more .modes{justify-items:start}.hud-more .tr{justify-content:flex-start}
 .deck{display:flex;width:100%;max-width:100%;min-width:0;box-sizing:border-box;gap:10px;overflow-x:auto;padding:10px 2px 6px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;align-items:flex-start}
 .deck:empty{display:none}
-.holo{flex:0 0 min(80vw,300px);scroll-snap-align:start;position:relative;border-radius:14px;padding:10px 12px 12px;color:#e6f6ff;
+.holo{flex:0 0 min(80vw,300px);scroll-snap-align:start;position:relative;border-radius:12px;padding:10px 12px 12px;color:#e6f6ff;
  background:linear-gradient(160deg,rgba(79,211,255,.16),rgba(6,14,22,.88) 45%);border:1px solid rgba(79,211,255,.6);
  box-shadow:0 0 18px rgba(79,211,255,.28),inset 0 0 24px rgba(79,211,255,.08);overflow:hidden;
  animation:holoIn .45s cubic-bezier(.2,.8,.2,1) both}
@@ -1382,12 +1382,12 @@ _DECK_CSS = """
 @media (prefers-reduced-motion:reduce){.holo,.holo::after{animation:none}}
 .holo header{display:flex;align-items:center;gap:8px;margin-bottom:6px}
 .holo .ic{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:12px;border:1px solid var(--mood,#4fd3ff);color:var(--mood,#4fd3ff);box-shadow:0 0 8px rgba(79,211,255,.6)}
-.holo h3{margin:0;font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--mood,#4fd3ff);flex:1;font-weight:700}
+.holo h3{margin:0;font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--mood,#4fd3ff);flex:1;font-weight:700}
 .holo .x{background:none;border:0;color:#9fb8c8;font-size:18px;line-height:1;cursor:pointer;padding:2px 4px;min-width:36px;min-height:36px;margin:-8px -8px -8px 0}
 .holo .row{display:flex;gap:8px;font-size:14px;padding:5px 0;border-top:1px solid rgba(79,211,255,.16);align-items:baseline}
 .holo .row b{color:#bff0ff;font-weight:650;white-space:nowrap}.holo .row span{min-width:0;overflow-wrap:anywhere}
-.holo .dim{color:#8fa9b8;font-size:12.5px}
-.holo .big{font-size:30px;font-weight:760;color:#f2fcff;text-shadow:0 0 14px rgba(79,211,255,.7);line-height:1.1}
+.holo .dim{color:#8fa9b8;font-size:13px}
+.holo .big{font-size:28px;font-weight:700;color:#f2fcff;text-shadow:0 0 14px rgba(79,211,255,.7);line-height:1.1}
 .holo .bar{height:6px;border-radius:3px;background:rgba(79,211,255,.16);overflow:hidden;margin-top:4px}
 .holo .bar i{display:block;height:100%;background:var(--mood,#4fd3ff);box-shadow:0 0 8px var(--mood,#4fd3ff)}.holo .bar i.over{background:#ff5d6c;box-shadow:0 0 8px #ff5d6c}
 .holo a.go{display:inline-block;margin-top:10px;padding:8px 16px;border-radius:999px;border:1px solid var(--mood,#4fd3ff);color:#e6f6ff;text-decoration:none;font-weight:700;font-size:14px;box-shadow:0 0 10px rgba(79,211,255,.35)}
@@ -1488,7 +1488,7 @@ _STAGE_CSS = """
 .hud .hstate{color:var(--mood,#4fd3ff)}.hud .said,.hud .note{color:#9fb3c2}
 .hud .talk{background:var(--mood,#4fd3ff)}.hud .hear{border-color:var(--mood,#4fd3ff)}
 .caption{margin:6px 0 0;font-size:15px;line-height:1.45}.caption:empty{display:none}
-.hint{font-size:12.5px!important}
+.hint{font-size:13px!important}
 body.immersive .chat{height:100dvh}
 body.immersive .hud{position:fixed;inset:0;z-index:1;max-height:none;overflow:hidden;border:0;padding:0 max(16px,env(safe-area-inset-left,0px));
  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px}
