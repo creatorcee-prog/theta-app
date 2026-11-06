@@ -93,7 +93,7 @@ check("the first open of a session is cinematic, later ones the quick assembly, 
 check("cinematic: a spark, streams spiraling in, a shockwave, the name", "the spark" in stage and "the streams" in stage
       and "the shockwave" in stage and 'id="head-word"' in page)
 check("reduced motion skips the cinematic", "!booted && !reduce" in stage)
-check("the stage is the Settings background: no fill of its own", "transparent 70%)!important" in h._STAGE_CSS)
+check("the stage is the Settings background: no fill of its own, only Theta's light", ".hud{background:__HUD_LIGHT__!important}" in h._STAGE_CSS)
 check("on a light background the dots draw darker instead of adding light", "lightBg" in js and 'lightBg ? "source-over" : "lighter"' in js)
 check("docks to the corner once you've talked and Theta pulls something up", "theta:panels" in stage and "if (e.detail.count && talked) dock(\"panels\")" in stage
       and "panelsEvent(m.panels.length)" in h._DECK_JS)

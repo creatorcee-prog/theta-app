@@ -831,7 +831,8 @@ _HEAD_JS = r"""
   function core(c, r) {
     const op = g.globalCompositeOperation; g.globalCompositeOperation = "source-over";
     const cr = S * r, gr = g.createRadialGradient(c, c, 0, c, c, cr * 3.2);
-    gr.addColorStop(0, "#ffffff"); gr.addColorStop(0.16, col(0, 30, 1)); gr.addColorStop(0.45, col(0, 0, 0.75)); gr.addColorStop(1, col(0, 0, 0));
+    [[0, "#ffffff"], [0.05, col(0, 34, 1)], [0.11, col(0, 18, 0.85)], [0.2, col(0, 6, 0.5)], [0.32, col(0, 0, 0.26)], [0.48, col(0, 0, 0.12)],
+     [0.68, col(0, 0, 0.045)], [0.86, col(0, 0, 0.012)], [1, col(0, 0, 0)]].forEach(([o, c2]) => gr.addColorStop(o, c2));
     g.fillStyle = gr; g.beginPath(); g.arc(c, c, cr * 3.2, 0, TAU); g.fill(); g.globalCompositeOperation = op;
   }
   function drawRings(t) { // the classic avatar, kept as a style
@@ -905,10 +906,15 @@ _HEAD_JS = r"""
     g.translate(0, -S * cur.bounce * 0.012 * Math.abs(Math.sin(t * 3)));
     if (AV.style === "rings") drawRings(t); else if (AV.style === "image" && avImgs.length) drawPicture(t, level); else { drawUrchin(t, level); flourish(t); }
     if (AV.style !== "image" && curBg) { curBg = ""; cv.style.backgroundImage = ""; cv.style.borderRadius = ""; }
+    if (!(++lightTick % 15)) { // the room's light comes from wherever Theta is
+      const hud = cv.closest(".hud"), H = hud && hud.getBoundingClientRect(), a = cv.getBoundingClientRect();
+      if (H && H.height) { hud.style.setProperty("--avx", Math.round(a.left + a.width / 2 - H.left) + "px"); hud.style.setProperty("--avy", Math.round(a.top + a.height / 2 - H.top) + "px"); }
+    }
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);
   // mood: from Theta's latest reply (the server tags it), and sleepy late at night when nothing else is going on
+  let lightTick = 0;
   function setMood(m) {
     mood = MOODS[m] ? m : "calm"; cv.dataset.mood = mood;
     const hex = (AV.colors || {})[mood] || MOODS[mood][0];
@@ -1522,7 +1528,7 @@ _DECK_JS = r"""
 # chat appearing when you tap and fading 1.5 s after you stop; the opening assembles Theta and greets.
 _STAGE_CSS = """
 #head-av{view-transition-name:theta} /* the browser morphs it to and from the corner of other pages */
-.hud{background:radial-gradient(60% 45% at 50% 40%,color-mix(in srgb,var(--mood,#4fd3ff) 13%,transparent),transparent 72%),var(--stage,#070b10);color:#e6f2fa}
+.hud{background:__HUD_LIGHT__,radial-gradient(120% 90% at 50% 38%,transparent 0%,color-mix(in srgb,#000 45%,transparent) 55%,#000 100%),var(--stage,#070b10);color:#e6f2fa}
 .hud .hstate{color:var(--mood,#4fd3ff)}.hud .said,.hud .note{color:#9fb3c2}
 .hud .talk{background:var(--mood,#4fd3ff)}.hud .hear{border-color:var(--mood,#4fd3ff)}
 .caption{margin:6px 0 0;font-size:15px;line-height:1.45}.caption:empty{display:none}
@@ -1552,7 +1558,7 @@ body.immersive .chans,body.immersive .members{display:none}
 body.opening .deck,body.opening .caption,body.opening #head-note,body.opening .hud-mid{opacity:0;pointer-events:none}
 .hud-mid{transition:opacity .5s ease}
 /* the stage is the Settings background: no fill of its own, only Theta's glow */
-.hud{background:radial-gradient(55% 40% at 50% 42%,color-mix(in srgb,var(--mood,#4fd3ff) 12%,transparent),transparent 70%)!important}
+.hud{background:__HUD_LIGHT__!important}
 body.light-stage .hud{color:var(--text)}body.light-stage .caption{color:var(--text)!important}body.light-stage .hud .said,body.light-stage .hud .note{color:var(--muted)}
 /* the cinematic opening */
 .cine-layer{position:fixed;inset:0;width:100vw;height:100dvh;z-index:9;pointer-events:none}
@@ -1841,7 +1847,8 @@ def head_assets():
                 .replace("__THEME__", cfg + ".theme").replace("__FISH__", cfg + ".fish"))
         js = "\n".join("try {\n" + part.strip() + "\n} catch (e) { console.error(e); }"
                        for part in (head, _DECK_JS, _STAGE_JS, BOARD_JS))
-        css = _HEAD_CSS.replace(".headpage", ".hud") + _DECK_CSS + _STAGE_CSS + BOARD_CSS
+        css = (_HEAD_CSS.replace(".headpage", ".hud") + _DECK_CSS + _STAGE_CSS + BOARD_CSS).replace(
+            "__HUD_LIGHT__", _light("80% 62%", "var(--avx,50%) var(--avy,34%)", "var(--mood,#4fd3ff)", .55, hot=.35, core=.075))  # Theta lights the room
         v = hashlib.sha1((js + css).encode()).hexdigest()[:10]
         _HEAD_ASSETS.update(js=js, css=css, v=v)
     return _HEAD_ASSETS

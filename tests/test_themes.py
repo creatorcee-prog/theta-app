@@ -63,4 +63,13 @@ check("Theta has the theme's character: moons, drifting petals and leaves, spark
       "function flourish(t)" in hj and all(k in hj for k in ('kind === "orbit"', 'kind === "ripple"', 'kind === "print"', 'kind === "spark"', 'kind === "leaf"'))
       and "window.thetaCheerKind" in h._UI_JS)
 check("a win makes Theta proud for a moment", 'addEventListener("theta:cheer"' in hj and 'new CustomEvent("theta:cheer")' in h._UI_JS)
+# light, not bloom: hot core, steep fall, long faint tail; in the dark, everything falls to black
+g_ = h._light("100px 100px", "50% 50%", "red", .5)
+check("a light whitens at its core and reaches nothing at its edge", "red,white 40%) 50.0%" in g_ and g_.endswith("red 0.0%,transparent) 100%)"))
+check("the page falls off to true black in the dark, not to a darker shade of its color", "#000 100%" in h._theme_vars(h.THEMES["ocean"], "dark")
+      and "--bgfall:none" in h._theme_vars(h.THEMES["ocean"], "light"))
+check("cards are lit from above and shade toward black", "--lit:linear-gradient(180deg" in h._theme_vars(h.THEMES["theta"], "dark") and ".card,.win,.kpi,.w{background-image:var(--lit,none)}" in h._UI_CSS)
+hc = h.head_assets()["css"]
+check("Theta lights the room from where it is, and the room falls off to black", "var(--avx,50%) var(--avy,34%)" in hc and "__HUD_LIGHT__" not in hc
+      and 'hud.style.setProperty("--avy"' in h._HEAD_JS)
 print("done")

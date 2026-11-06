@@ -185,7 +185,7 @@ def _frames_css():
         (".btn,.seg,.seg button,.field,.box,.chip,.sw,.lo,.lrow,.msg.mine .mbody", "border-radius:2px"),
         (".btn", caps + ";" + head + ";font-size:13px"),
         ("body::before", "background:linear-gradient(color-mix(in srgb,var(--text) 5%,transparent) 1px,transparent 1px) 0 0/100% 32px,"
-         "linear-gradient(90deg,color-mix(in srgb,var(--text) 5%,transparent) 1px,transparent 1px) 0 0/32px 100%,var(--glowbg)"),
+         "linear-gradient(90deg,color-mix(in srgb,var(--text) 5%,transparent) 1px,transparent 1px) 0 0/32px 100%,var(--glowbg),var(--bgfall,none)"),
     ]), F("holo", [
         (panel, "border-radius:8px;border:1px solid color-mix(in srgb,var(--text) 24%,transparent);background:"
          "linear-gradient(90deg,transparent,color-mix(in srgb,var(--text) 70%,transparent) 50%,transparent) top/100% 1px no-repeat"
@@ -287,22 +287,48 @@ _STATE_COLORS = {"light": {"good": "#15803d", "warn": "#b45309", "bad": "#c81e1e
                  "dark": {"good": "#4ade80", "warn": "#fbbf24", "bad": "#f87171"}}
 
 
+# ---- Light, not bloom (2026-11-06). Every glow is drawn the way light falls off: a small hot core that runs
+# toward white, a steep drop, then a long faint tail that reaches nothing. In the dark the lights add onto the
+# page (screen), and the page itself falls from the theme's color to true black away from the light, so
+# nothing fades into "a darker version of the same color".
+_FALL = (0, .025, .06, .11, .18, .28, .42, .6, .8, 1)
+
+
+def _light(shape, at, color, alpha, hot=.4, core=.07):
+    """A radial light: `shape` (e.g. "900px 700px" or "60% 45%") centered `at`, in `color`, `alpha` at the center.
+    Falloff 1/(1+(d/core)^2), windowed to reach 0 at the edge; the core whitens by up to `hot`."""
+    stops = []
+    for d in _FALL:
+        f = (1 / (1 + (d / core) ** 2)) * (1 - d) ** 2
+        a = round(alpha * f, 4)
+        w = round(hot * 100 * f * f)
+        c = f"color-mix(in oklab,{color},white {w}%)" if w else color
+        stops.append(f"color-mix(in srgb,{c} {round(a * 100, 2)}%,transparent) {round(d * 100)}%")
+    return f"radial-gradient({shape} at {at},{','.join(stops)})"
+
+
 def _theme_vars(t, mode):
     p, glow = t[mode], t.get("glow", 0)
     v = {f"--{k}": val for k, val in p.items()}
     v.update({f"--{k}": val for k, val in _STATE_COLORS[mode].items()})
     v["--shadow"] = ("0 1px 2px rgba(16,24,40,.05),0 6px 18px rgba(16,24,40,.06)" if mode == "light"
                      else "0 1px 2px rgba(0,0,0,.35),0 8px 24px rgba(0,0,0,.25)")
-    if glow:
-        a1, a2 = round(16 * glow), round(13 * glow)
-        layers = [f"radial-gradient(1000px 560px at -5% -10%,color-mix(in srgb,var(--accent) {a1}%,transparent),transparent 70%)",
-                  f"radial-gradient(900px 560px at 105% 0%,color-mix(in srgb,var(--accent2) {a2}%,transparent),transparent 70%)"]
+    if glow:  # a key light in the theme's accent from the top left, a weaker fill in its second accent from the right
+        k = .5 if mode == "dark" else .3
+        layers = [_light("1100px 900px", "-8% -14%", "var(--accent)", min(.9, k * glow)),
+                  _light("900px 800px", "108% 4%", "var(--accent2)", min(.7, k * .7 * glow), hot=.25)]
         if t.get("glass"):
-            layers += [f"radial-gradient(800px 600px at 70% 105%,color-mix(in srgb,#ff7a3d {round(14 * glow)}%,transparent),transparent 70%)",
-                       f"radial-gradient(700px 500px at 10% 90%,color-mix(in srgb,#22c55e {round(8 * glow)}%,transparent),transparent 70%)"]
+            layers += [_light("900px 800px", "72% 108%", "#ff7a3d", min(.6, k * .8 * glow), hot=.3),
+                       _light("800px 700px", "8% 96%", "#22c55e", min(.5, k * .5 * glow), hot=.2)]
         v["--glowbg"] = ",".join(layers)
     else:
         v["--glowbg"] = "none"
+    # a surface lit from above: a touch brighter where the light lands, shading toward black underneath
+    v["--lit"] = ("linear-gradient(180deg,color-mix(in srgb,white 5%,transparent),transparent 38%,color-mix(in srgb,#000 24%,transparent))"
+                  if mode == "dark" else "linear-gradient(180deg,color-mix(in srgb,white 55%,transparent),transparent 42%,color-mix(in srgb,#000 3%,transparent))")
+    # in the dark, the page falls off to black away from the light (not to a darker shade of its own color)
+    v["--bgfall"] = ("radial-gradient(140% 95% at 22% -12%,transparent 0%,color-mix(in srgb,#000 38%,transparent) 48%,"
+                     "color-mix(in srgb,#000 78%,transparent) 78%,#000 100%)" if mode == "dark" else "none")
     return ";".join(f"{k}:{val}" for k, val in v.items()) + f";color-scheme:{mode}"
 
 
@@ -447,7 +473,7 @@ html{-webkit-text-size-adjust:100%;--r:16px;--r-sm:12px;--pad:18px;--gap:14px;--
 body{margin:0;background:var(--bg);color:var(--text);min-height:100dvh;
  font:16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Inter,Roboto,system-ui,sans-serif;
  -webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
-body::before{content:"";position:fixed;inset:0;z-index:-1;background:var(--glowbg);pointer-events:none}
+body::before{content:"";position:fixed;inset:0;z-index:-1;background:var(--glowbg),var(--bgfall,none);pointer-events:none}
 :root[data-font="mono"] body{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:14px}
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
@@ -3432,7 +3458,8 @@ CHEERS = {"theta": ("orbit", ""), "midnight": ("star", ""), "nebula": ("star", "
           "breach": ("print", "[ ACCESS OK ]"), "scanner": ("stamp", "CLEARED"), "amber": ("spark", ""), "mission": ("check", ""),
           "hologram": ("check", ""), "gilded": ("glint", ""), "lattice": ("ripple", ""), "bloom": ("petal", ""), "neonrift": ("neon", ""),
           "verdant": ("leaf", ""), "lunar": ("glint", ""), "bloodsign": ("spark", ""), "nightfiligree": ("glint", ""), "dusk": ("star", "")}
-_CHARM_CSS = r'''/* ---- Each frame's charm (2026-11-06): how it answers a touch. The pressed thing gets .tap for a moment and a
+_CHARM_CSS = r'''.card,.win,.kpi,.w{background-image:var(--lit,none)}
+/* ---- Each frame's charm (2026-11-06): how it answers a touch. The pressed thing gets .tap for a moment and a
    .tapfx layer (inset, its own corners, never in the layout); --tx/--ty is where the finger landed. */
 .tapfx{position:absolute;inset:0;border-radius:inherit;pointer-events:none;overflow:hidden;opacity:0;z-index:0}
 .tap > .tapfx{animation:tapfx-fade .6s ease-out}
