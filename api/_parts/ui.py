@@ -3524,12 +3524,12 @@ _CHARM_CSS = r'''.card,.win,.kpi,.w{background-image:var(--lit,none)}
 .dayring .dr-track{stroke-linecap:round;stroke-dasharray:0 9;stroke-width:4!important}
 @media (prefers-reduced-motion:reduce){.msg.dotin .mbody{animation:none}.working .wdots.stream i{animation:none;opacity:.6}}
 /* ---- The Theta frames: the cards are Theta's dots (drawn on .dotframe), so their own fill steps back */
-.dotframe{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:8;mix-blend-mode:screen}
+.dotframe{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:-1;mix-blend-mode:screen}
 :root[data-mode="light"] .dotframe{mix-blend-mode:multiply}
 @media (prefers-color-scheme:light){:root:not([data-mode="dark"]) .dotframe{mix-blend-mode:multiply}}
 :root[data-glassstyle="lines"] :is(.card,.win,.kpi,.w,.holo),:root[data-glassstyle="nebula"] :is(.card,.win,.kpi,.w,.holo){background:transparent!important;border-color:transparent!important;box-shadow:none!important;-webkit-backdrop-filter:none;backdrop-filter:none}
 :root[data-glassstyle="settle"] :is(.card,.win,.kpi,.w,.holo){background:color-mix(in srgb,var(--surface) 22%,transparent)!important;border-color:transparent!important;box-shadow:none!important}
-:root[data-glassstyle="grain"] :is(.card,.win,.kpi,.w,.holo),:root[data-glassstyle="press"] :is(.card,.win,.kpi,.w,.holo){background:color-mix(in srgb,var(--surface) 38%,transparent)!important;border-color:color-mix(in srgb,var(--accent) 14%,transparent)!important;box-shadow:none!important}
+:root[data-glassstyle="grain"] :is(.card,.win,.kpi,.w,.holo),:root[data-glassstyle="press"] :is(.card,.win,.kpi,.w,.holo){background:color-mix(in srgb,var(--surface) 38%,transparent)!important;border-color:transparent!important;box-shadow:none!important}
 @media (prefers-reduced-motion:reduce){:root:is([data-glassstyle="lines"],[data-glassstyle="nebula"],[data-glassstyle="settle"]) :is(.card,.win,.kpi,.w,.holo){background:var(--surface)!important;border-color:var(--border)!important}}
 
 /* ---- Each frame's charm (2026-11-06): how it answers a touch. The pressed thing gets .tap for a moment and a
@@ -3682,7 +3682,7 @@ _DOTFRAME_JS = r'''(() => {
   // over the page that only adds light (screen), so words stay readable. Off with reduced motion.
   const KINDS = {grain: "print", press: "print", lines: "swarm", nebula: "swarm", settle: "swarm"};
   const SEL = ".card,.win,.kpi,.w,.holo,.term:not([hidden]),.dialog-card";
-  const root = document.documentElement, TAU = Math.PI * 2, MAXDOTS = 2600;
+  const root = document.documentElement, TAU = Math.PI * 2, MAXDOTS = 3400;
   let cv = null, g = null, W = 0, H = 0, dpr = 1, running = false, clock = 0, last = 0, level = 0, hue = 195, hueAt = 0;
   const cards = new Map(), seen = new WeakSet(), SW = {idle: 1, listening: 0, thinking: 0, speaking: 0};
   let touch = {x: -999, y: -999, t: -9}, homing = [];
@@ -3713,12 +3713,12 @@ _DOTFRAME_JS = r'''(() => {
       x: fromTheta ? s0.x + (Math.random() - .5) * 8 : R.x + gx * R.w, y: fromTheta ? s0.y + (Math.random() - .5) * 8 : R.y + gy * R.h, vx: 0, vy: 0,
       delay: fromTheta ? Math.random() * .3 : 0, cx: gx, cy: gy});
     if (kind === "print" || v === "settle") {
-      const base = v === "grain" ? 7 : v === "press" ? 8 : 10, sp = Math.max(base, Math.sqrt(area / budget));
+      const base = v === "grain" ? 6 : v === "press" ? 7 : 9, sp = Math.max(base, Math.sqrt(area / budget));
       const cols = Math.max(2, Math.floor(R.w / sp)), rows = Math.max(2, Math.round(bh / sp));
       for (let a = 0; a < cols; a++) for (let b = 0; b < rows; b++) list.push(mk((a + .5) / cols, y0 + (b + .5) / rows * (y1 - y0), a * rows + b, cols * rows));
       if (v === "settle") list.forEach(d => { d.cx = d.gx; d.cy = d.gy; d.gx = Math.random(); d.gy = y0 + Math.random() * (y1 - y0); });
     } else {
-      const n = Math.round(Math.min(budget, area / (v === "lines" ? 150 : 70)));
+      const n = Math.round(Math.min(budget, area / (v === "lines" ? 140 : 60)));
       for (let i = 0; i < n; i++) { const d = mk(Math.random(), y0 + Math.random() * (y1 - y0), i, n);
         if (v === "nebula" && Math.random() < .8) { const px = (.015 + Math.random() * .06 * (Math.random() < .6 ? 1 : 1.8)) * Math.min(R.w, 260), sides = [0, 1];
           if (top) sides.push(2); if (bot) sides.push(3); const sd = sides[Math.floor(Math.random() * sides.length)];
@@ -3734,12 +3734,12 @@ _DOTFRAME_JS = r'''(() => {
     const want = new Set(bandsNear(R)), have = new Set(c.dots.map(d => d.band));
     if ([...have].some(b => !want.has(b))) c.dots = c.dots.filter(d => want.has(d.band));
     for (const b of want) if (!have.has(b)) { const y0 = b * BAND / R.h, y1 = Math.min(1, (b + 1) * BAND / R.h);
-      c.dots.push(...fill(R, c.v, fromTheta, y0, y1, Math.max(60, Math.min(420, (MAXDOTS - used()) / 3)), b)); }
+      c.dots.push(...fill(R, c.v, fromTheta, y0, y1, Math.max(80, Math.min(700, (MAXDOTS - used()) / 3)), b)); }
   }
   function spawn(el, R, fromTheta) {
     const v = variant(), c = {el, dots: [], born: clock, v, tall: tall(R)};
     if (c.tall) fillBands(c, R, fromTheta);
-    else c.dots = fill(R, v, fromTheta, 0, 1, Math.max(60, Math.min(520, (MAXDOTS - used()) / 2)), 0);
+    else c.dots = fill(R, v, fromTheta, 0, 1, Math.max(80, Math.min(900, (MAXDOTS - used()) / 2)), 0);
     return c;
   }
   function scan() { // which cards are on screen now: new ones form from Theta (or in place, if seen before), gone ones go home
@@ -3786,12 +3786,12 @@ _DOTFRAME_JS = r'''(() => {
             const grow = Math.max(0, Math.min(1, (age - .15 - Math.hypot(tx - th.x, ty - th.y) / H * 1.1) / .45));
             const keep = Math.max(0, 1 - edge * 5) ** 1.5 + (Math.min(d.gx, 1 - d.gx) < .06 && Math.min(d.gy, 1 - d.gy) < .2 ? .5 : 0);
             const ring = Math.max(0, Math.sin(Math.hypot(tx - th.x, ty - th.y) * .09 - t * 6)) ** 3 * level * SW.speaking;
-            rad = 2.3 * grow * ((1 - settled) + settled * (keep * (.6 + .4 * Math.sin(t * d.pace + d.ph)) + 1.1 * ring + 1.4 * touched + .5 * SW.thinking * Math.max(0, Math.sin((d.gx - d.gy) * 9 - t * 4)) * keep));
-            a = .5 * grow; hh += 28 * ring - 26 * SW.listening * (1 - d.gy) + 40 * Math.sin(d.gx * 6 + t * 3) * SW.thinking;
+            rad = 2.5 * grow * ((1 - settled) + settled * (keep * (.6 + .4 * Math.sin(t * d.pace + d.ph)) + 1.1 * ring + 1.4 * touched + .5 * SW.thinking * Math.max(0, Math.sin((d.gx - d.gy) * 9 - t * 4)) * keep));
+            a = .55 * grow; hh += 28 * ring - 26 * SW.listening * (1 - d.gy) + 40 * Math.sin(d.gx * 6 + t * 3) * SW.thinking;
           } else {
             const grow = Math.max(0, Math.min(1, (age - .15 - d.gy * .6) / .25)), lit = (1 - d.gy) ** 1.4, shimmer = Math.max(0, Math.sin((d.gx + d.gy) * 7 - t * 4)) ** 4 * SW.thinking;
-            rad = 2.4 * grow * ((1 - settled) + settled * (lit * (.75 + .25 * Math.sin(t * d.pace + d.ph)) * (1 + .5 * level * SW.speaking) + .45 * SW.listening * (d.gy < .35 ? 1 : 0) + .8 * shimmer + 1.2 * touched));
-            a = .4 * grow; hh += 30 * level * SW.speaking - 26 * SW.listening * (1 - d.gy) + 40 * shimmer;
+            rad = 3.1 * grow * ((1 - settled) + settled * (lit * (.75 + .25 * Math.sin(t * d.pace + d.ph)) * (1 + .5 * level * SW.speaking) + .45 * SW.listening * (d.gy < .35 ? 1 : 0) + .8 * shimmer + 1.2 * touched));
+            a = .5 * grow; hh += 30 * level * SW.speaking - 26 * SW.listening * (1 - d.gy) + 40 * shimmer;
           }
         } else {
           const swirl = SW.thinking * t * .8 * (d.s - .5), ang = d.ph + swirl, rr = (c.v === "lines" ? .05 : .04) * Math.sin(t * d.pace + d.ph);
@@ -3802,8 +3802,8 @@ _DOTFRAME_JS = r'''(() => {
           tx = R.x + R.w / 2 + (fx - .5) * R.w * swell; ty = R.y + R.h / 2 + (fy - .5) * R.h * swell;
           if (touched > .05) { const dx = tx - touch.x, dy = ty - touch.y, dd = Math.hypot(dx, dy) || 1; tx += dx / dd * 26 * touched; ty += dy / dd * 26 * touched; }
           const edgeFade = Math.min(1, Math.min(fx, 1 - fx, fy, 1 - fy) * 9 + .15);
-          rad = c.v === "nebula" ? (d.s > .85 ? 2.4 : 1 + .6 * d.s) + level * SW.speaking : c.v === "settle" ? 1.1 + 1.1 * SW.idle * (1 - fy) + level * SW.speaking : 1.4 + .5 * d.s;
-          a = (c.v === "nebula" ? (d.s > .85 ? .2 : .26 + .4 * d.s) : c.v === "settle" ? .22 + .36 * d.s * (1 - SW.idle) + .2 * SW.idle : .38 + .4 * d.s) * edgeFade;
+          rad = c.v === "nebula" ? (d.s > .85 ? 2.6 : 1.1 + .6 * d.s) + level * SW.speaking : c.v === "settle" ? 1.2 + 1.3 * SW.idle * (1 - fy) + level * SW.speaking : 1.5 + .6 * d.s;
+          a = (c.v === "nebula" ? (d.s > .85 ? .22 : .3 + .5 * d.s) : c.v === "settle" ? .25 + .45 * d.s * (1 - SW.idle) + .25 * SW.idle : .45 + .45 * d.s) * edgeFade;
           hh += -30 * SW.listening * (1 - fy) + 40 * Math.sin(Math.atan2(fy - .5, fx - .5) * 2 + t * 3) * SW.thinking + 26 * level * SW.speaking;
           if (c.v === "lines") set.push(d);
         }
@@ -3816,7 +3816,7 @@ _DOTFRAME_JS = r'''(() => {
     g.lineWidth = .7;
     for (const L of lineSets) for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) { const p = L[i], q = L[j], dx = p.x - q.x, dy = p.y - q.y;
       if (Math.abs(dx) > 26 || Math.abs(dy) > 26) continue; const dd = Math.hypot(dx, dy); if (dd > 26) continue;
-      g.strokeStyle = hsla(hue + 40 * SW.thinking * Math.sin(p.u * 9 + t * 3), 70, 66, (1 - dd / 26) * (.26 + .3 * SW.thinking + .2 * level * SW.speaking));
+      g.strokeStyle = hsla(hue + 40 * SW.thinking * Math.sin(p.u * 9 + t * 3), 70, 66, (1 - dd / 26) * (.3 + .35 * SW.thinking + .2 * level * SW.speaking));
       g.beginPath(); g.moveTo(p.x, p.y); g.lineTo(q.x, q.y); g.stroke(); }
     g.globalCompositeOperation = "source-over";
     requestAnimationFrame(frame);

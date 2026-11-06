@@ -77,7 +77,7 @@ check("Theta lights the room from where it is, and the room falls off to black",
       and 'hud.style.setProperty("--avy"' in h._HEAD_JS)
 # the Theta frames: cards made of Theta's dots
 check("the Theta frames draw every card from Theta's dots, follow its state and voice, and stay readable", "const KINDS = {grain: \"print\"" in h._UI_JS
-      and "TH.state()" in h._UI_JS and ".dotframe{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:8;mix-blend-mode:screen}" in h._UI_CSS)
+      and "TH.state()" in h._UI_JS and ".dotframe{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:-1;mix-blend-mode:screen}" in h._UI_CSS)
 check("...and step back with reduced motion", "if (!KINDS[v] || still()) { stop(); return; }" in h._UI_JS)
 # dot moments: Theta's dots carry what happens
 check("your message flies into Theta as dots, its reply and cards form from them, a tapped option goes back as a burst",
@@ -92,7 +92,7 @@ check("the star background is Theta's dots: depth, its mood's tint, and alive wi
 check("only Theta on: the status line doesn't say Mistral passed it on", 'C.lead !== "theta" ? "Mistral passed this to' in h._CHAT_JS)
 hud = h.head_hud({})
 check("the opening is a choice: Cinematic or Converge (the stars glide in and become Theta)", '<select id="av-open"' in hud
-      and 'localStorage.getItem("theta:opening")' in h._HEAD_JS and "function converge()" in h._STAGE_JS and 'pick === "converge"' in h._STAGE_JS)
+      and 'localStorage.getItem("theta:opening")' in h._HEAD_JS and "function converge(kind)" in h._STAGE_JS and 'if (SETS[pick])' in h._STAGE_JS)
 check("Theta's dots have a shape: circle, triangle, square, diamond, pentagon, hexagon or star", all(f'value="{k}"' in hud for k in
       ("circle", "triangle", "square", "diamond", "pentagon", "hexagon", "star")) and "window.thetaDot = {path, shape: current}" in h._UI_JS)
 check("...and every dot Theta draws takes it: avatar, frames, moments, the sky and the opening", h._UI_JS.count("thetaDot.path(") >= 3
@@ -100,4 +100,9 @@ check("...and every dot Theta draws takes it: avatar, frames, moments, the sky a
 check("a long card keeps its dots dense: only the bands near the screen get dots", "const BAND = 240, tall = R => R.h > H * .9;" in h._UI_JS and "fillBands(c, R, false)" in h._UI_JS)
 check("nothing inside a card is wider than the card", "select,input:not([type=checkbox]):not([type=radio]),textarea{max-width:100%;min-width:0}" in h._UI_CSS)
 check("a folded card's contents show when opened (no stuck entrance)", ".main > details.stack > *{animation:none}" in h._UI_CSS)
+check("Signal and Pulse are openings too", '<option value="signal">' in hud and '<option value="pulse">' in hud and "const SETS = {converge: 3300, signal: 3500, pulse: 3600};" in h._STAGE_JS)
+check("the opening plays on black; the first tap or key brings in your background", 'body.classList.add("boot-black")' in h._STAGE_JS
+      and 'addEventListener("pointerdown", unblack' in h._STAGE_JS and "body.boot-black .hud{box-shadow:inset 0 0 0 200vmax #000}" in h.head_assets()["css"])
+check("the Theta frames draw behind the content at the lab's density, so the cards are the dots", "const base = v === \"grain\" ? 6 : v === \"press\" ? 7 : 9" in h._UI_JS
+      and "area / (v === \"lines\" ? 140 : 60)" in h._UI_JS)
 print("done")
