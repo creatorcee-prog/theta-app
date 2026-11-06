@@ -61,6 +61,9 @@ check("terminal: a copy, so the message stays in the chat; taps and typing go to
       and "o.click()" in js and 'o.dispatchEvent(new Event("input"' in js and "tbody.replaceChildren(r)" not in js)
 check("terminal: an old card doesn't pop up on open, and a closed one stays closed", "30 * 60e3" in js and '"theta:termClosed"' in js)
 check("chat rows carry their id", "row.dataset.id = m.id" in h._CHAT_JS)
+check("only Theta on: a typed message shows Theta working, not Mistral picking who answers", '(C.lead || "mistral")' in h._CHAT_JS
+      and '"lead": "theta" if head_on() else "mistral"' in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "api", "_parts", "home.py")).read())
+check("the working line says what's happening, without \"[Name] is\"", 'w.charAt(0).toUpperCase() + w.slice(1) + "..."' in h._CHAT_JS and 'name + " is "' not in h._CHAT_JS)
 a = h.head_assets(); page = h.handle("GET", "/head", {}, K, b"")[2].decode()
 check("the Theta page's script and styles are cached files, not inline", f'/head.js?v={a["v"]}' in page and f'/head.css?v={a["v"]}' in page
       and "window.THETA_HEADCFG" in page and len(page) < 60000 and "thetaStage" not in page)

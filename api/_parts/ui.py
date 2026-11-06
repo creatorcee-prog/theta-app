@@ -2984,7 +2984,7 @@ _CHAT_JS = r'''
   // The Head page (voice, panels) shares this thread: it hears about every change and can hand it new messages.
   function announce() { document.dispatchEvent(new CustomEvent("theta:thread", {detail: thread})); }
   window.thetaChat = {take(ms) { stopWorking(); thread = ms; render(); box.scrollTop = box.scrollHeight; announce(); }, load: () => load(),
-    // a message sent another way (Theta's voice): it shows at once, with "Theta is thinking..." under it, like a typed one
+    // a message sent another way (Theta's voice): it shows at once, with "Pondering..." under it, like a typed one
     pending(text, rid) {
       thread = [...thread, {id: "pending", from: "you", name: "You", text, kind: "message", ch: C.channel,
                             at: new Date().toISOString().slice(0, 19).replace("T", " ")}];
@@ -3200,7 +3200,7 @@ _CHAT_JS = r'''
     if (e.key === "Enter" && !e.shiftKey && !touch) { e.preventDefault(); form.requestSubmit(); }
   });
 
-  // "Mistral is thinking..." while a reply is on its way: the hub notes who's
+  // "Thinking..." (with the avatar of whoever it is) while a reply is on its way: the hub notes who's
   // working on this message (and on what) and the chat asks every 1.5 s.
   const VERBS = {mistral: ["thinking", "reading the chat", "working it out"], theta: ["pondering", "ruminating", "weighing it up"],
                  qwerty: ["checking", "scanning"], glass: ["counting", "tallying"], remi: ["checking the calendar"],
@@ -3233,7 +3233,8 @@ _CHAT_JS = r'''
     clearInterval(wTimer);
     if (state === "waiting_approval") { wText.textContent = "Waiting for your approval."; return; }
     let n = 0;
-    const say = () => { const v = VERBS[who] || ["working"]; wText.textContent = name + " is " + (step || v[n++ % v.length]) + "..."; };
+    // just what's happening ("Pondering...", "Looking it up..."): the avatar beside it already says who
+    const say = () => { const v = VERBS[who] || ["working"], w = step || v[n++ % v.length]; wText.textContent = w.charAt(0).toUpperCase() + w.slice(1) + "..."; };
     say(); if (!step) wTimer = setInterval(say, 3000);
   }
   function startWorking(rid, who) {
@@ -3265,7 +3266,7 @@ _CHAT_JS = r'''
     const rid = Math.random().toString(36).slice(2, 12);
     try { sessionStorage.setItem("theta-pending-rid", rid); } catch (_) {}
     status.textContent = isCmd ? "Running " + text.split(" ")[0] + "..." : "";
-    if (!isCmd) startWorking(rid, /@theta\b/i.test(text) ? "theta" : "mistral");
+    if (!isCmd) startWorking(rid, /@theta\b/i.test(text) ? "theta" : (C.lead || "mistral"));
     if (!isCmd) {
       thread = [...thread, {id: "pending", from: "you", name: "You", text, attachments: savedAtts.map(a => ({url: a.data, name: a.name, kind: a.kind, size: a.size})), kind: "message", at: new Date().toISOString().slice(0, 19).replace("T", " "), ch: C.channel}];
       render(); box.scrollTop = box.scrollHeight;
