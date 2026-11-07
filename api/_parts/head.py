@@ -1101,6 +1101,16 @@ _HEAD_JS = r"""
   }
   fillVoices(); if (synth) synth.onvoiceschanged = fillVoices;
   voiceSel.addEventListener("change", () => { store("theta:voice", voiceSel.value); voiceOut = 0; note.textContent = ""; setTimeout(warmVoice, 50); });
+  // a persona swapped in (Settings or Voice and tools): wear its avatar, voice and effect now, without a reload
+  window.addEventListener("theta:persona", e => {
+    const d = e.detail || {};
+    try { AV = Object.assign({}, AV_DEFAULT, JSON.parse(store("theta:avatar") || "{}")); } catch (err) { AV = Object.assign({}, AV_DEFAULT); }
+    applySize();
+    const v = store("theta:voice"); if (v && [...voiceSel.options].some(o => o.value === v)) voiceSel.value = v; else fillVoices();
+    voiceOut = 0; setTimeout(warmVoice, 50); fxInit();
+    const w = document.getElementById("head-word"); if (w && d.name) w.textContent = d.name.toUpperCase();
+    document.querySelectorAll("[data-persona-name]").forEach(n => { n.textContent = d.name || "Theta"; });
+  });
   if (store("theta:speak") === "off") voiceOn.checked = false;
   function hush() { if (synth) synth.cancel(); player.pause(); }
   voiceOn.addEventListener("change", () => { store("theta:speak", voiceOn.checked ? "on" : "off"); if (!voiceOn.checked) hush(); });
@@ -1542,7 +1552,7 @@ _DECK_JS = r"""
   // The panel deck: when Theta looks something up or changes something, what it pulled up shows here,
   // newest reply only, until you close it (the X, or say "close the panels").
   const deck = document.getElementById("deck"); if (!deck) return;
-  const panelsEvent = n => { document.body.classList.toggle("has-panels", n > 0); document.dispatchEvent(new CustomEvent("theta:panels", {detail: {count: n}})); };
+  const panelsEvent = n => { if (!n) window.thetaKeep = null; document.body.classList.toggle("has-panels", n > 0); document.dispatchEvent(new CustomEvent("theta:panels", {detail: {count: n}})); };
   let shown = null, tick = 0, first = true;
   // closed stays closed, across reloads too
   const gone = new Set((() => { try { return JSON.parse(localStorage.getItem("theta:panelsGone") || "[]"); } catch (e) { return []; } })());
@@ -1615,6 +1625,9 @@ _DECK_JS = r"""
     // only what was just pulled up; opening the app, only from the last couple of minutes (a reload), not the last chat's
     if (Date.now() - at > (opening ? 2 : 30) * 60e3) return;
     shown = m.id; clearInterval(tick);
+    // the board shows only what was pulled up (and what Theta put alongside it) until the panels close
+    const PANEL_CARD = {calendar: "calendar", budget: "money", reminders: "reminders", weather: "weather", focus: "focus", jobs: "jobs"};
+    window.thetaKeep = new Set([...m.panels.map(p => PANEL_CARD[p.kind]).filter(Boolean), ...(m.alongside || [])]);
     deck.replaceChildren(...m.panels.map(card)); deck.scrollLeft = 0; panelsEvent(m.panels.length);
   });
   document.addEventListener("theta:clear-panels", () => { if (shown) forget(shown); clearInterval(tick); deck.replaceChildren(); panelsEvent(0); });
@@ -1659,7 +1672,7 @@ body.opening .deck,body.opening .caption,body.opening #head-note,body.opening .h
 .hud{background:__HUD_LIGHT__!important}
 body.light-stage .hud{color:var(--text)}body.light-stage .caption{color:var(--text)!important}body.light-stage .hud .said,body.light-stage .hud .note{color:var(--muted)}
 /* the cinematic opening */
-.cine-layer{position:fixed;inset:0;width:100vw;height:100dvh;z-index:9;pointer-events:none}
+.cine-layer{position:fixed;left:0;top:0;width:var(--vw,100vw);height:var(--vh,100dvh);z-index:9;pointer-events:none}
 body.cine #head-av{opacity:0}
 /* the opening plays on black; the first tap brings in your background (a black layer under everything, and the
    stage's own background shaded over by an inset shadow, which fades) */

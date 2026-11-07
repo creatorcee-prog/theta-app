@@ -122,6 +122,25 @@ def _tool_weather(arg, agent):
 
 
 TOOLS["weather"] = ("weather | today   (today's forecast at home: high, low, chance of rain)", _tool_weather, {"theta"})
+
+# ---- What goes alongside (2026-11-07): when a reply pulls something up, the board shows only that (the calendar
+# with its calendar card, the budget with Money...) until the panels close. Theta can name other board cards that
+# belong next to it ("what's my evening look like" -> the calendar, plus reminders and the weather).
+BOARD_CARDS = ("reminders", "calendar", "money", "diagnostics", "breaking", "news", "trending", "releases", "daily",
+               "focus", "weather", "jobs", "dreams")
+PANEL_CARD = {"calendar": "calendar", "budget": "money", "reminders": "reminders", "weather": "weather", "focus": "focus", "jobs": "jobs"}
+
+
+def _tool_alongside(arg, agent):
+    ids = [w for w in dict.fromkeys(re.findall(r"[a-z]+", (arg or "").lower())) if w in BOARD_CARDS]
+    if not ids:
+        return "Name board cards to keep on screen: " + ", ".join(BOARD_CARDS) + "."
+    _REQ.alongside = list(dict.fromkeys((getattr(_REQ, "alongside", None) or []) + ids))[:4]
+    return "Keeping " + ", ".join(_REQ.alongside) + " on screen next to what you pulled up."
+
+
+TOOLS["alongside"] = ("alongside | <board cards>   (when you pull something up, the board shows only it; name up to 4 other "
+                      "cards that belong next to it: " + ", ".join(BOARD_CARDS) + ". Only when they truly help)", _tool_alongside, {"theta"})
 HEAD_LOOKUPS.add("weather")
 
 

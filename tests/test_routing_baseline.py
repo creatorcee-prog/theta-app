@@ -103,7 +103,7 @@ INTERNAL = ["remember", "forget", "cancel", "remind", "check", "note", "self_not
 BRIDGE = ["web_search", "fetch_page", "task_create", "task_list", "task_complete",
           "task_reopen", "task_note", "follow_create", "follow_list", "follow_cancel"]
 check("TOOLS holds exactly the 29 internal tools", sorted(
-    k for k in h.TOOLS if k in INTERNAL) == sorted(INTERNAL) and len(h.TOOLS) == 41)
+    k for k in h.TOOLS if k in INTERNAL) == sorted(INTERNAL) and len(h.TOOLS) == 42 and "alongside" in h.TOOLS)  # +alongside (2026-11-07)
 check("BRIDGE_TOOLS holds exactly the 10 bridge tools (incl. 3 follow tools)",
       sorted(h.BRIDGE_TOOLS) == sorted(BRIDGE))
 mp = h.tools_prompt("mistral")
