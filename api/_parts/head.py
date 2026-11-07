@@ -1653,7 +1653,7 @@ body.immersive #chat-form{position:fixed;left:0;right:0;bottom:var(--tabh,64px);
 body.immersive .hud-more{position:fixed;top:calc(env(safe-area-inset-top,0px) + 8px);right:max(12px,env(safe-area-inset-right,0px));z-index:6;
  background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:4px 12px;max-width:min(92vw,520px);max-height:min(72dvh,calc(100dvh - 190px));overflow:auto;overscroll-behavior:contain}
 body.immersive .chans,body.immersive .members{display:none}
-body.opening .deck,body.opening .caption,body.opening #head-note,body.opening .hud-mid{opacity:0;pointer-events:none}
+body.opening .deck,body.opening .caption,body.opening #head-note,body.opening .hud-mid,body.opening .term{opacity:0;pointer-events:none}
 .hud-mid{transition:opacity .5s ease}
 /* the stage is the Settings background: no fill of its own, only Theta's glow */
 .hud{background:__HUD_LIGHT__!important}

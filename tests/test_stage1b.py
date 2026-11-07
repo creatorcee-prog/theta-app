@@ -97,7 +97,7 @@ s, diag = call("GET", "/diagnostics", headers=K)
 check("diagnostics serves", s == 200)
 diag = diag.decode() if isinstance(diag, bytes) else diag
 check("diagnostics keeps the Crew table",
-      "<h2>Crew</h2>" in diag and "<th>Agent</th><th>Tier</th><th>Status</th><th>Activity</th>" in diag)
+      "<h3>Crew</h3>" in diag and "<th>Agent</th><th>Tier</th><th>Status</th><th>Activity</th>" in diag)
 check("diagnostics has the canonical Models & providers panel",
       "Models &amp; providers" in diag and 'id="wiring"' in diag
       and 'id="diag-wiring-rows"' in diag and 'id="diag-wiring-recheck"' in diag)

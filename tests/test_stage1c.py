@@ -102,30 +102,24 @@ s, diag = call("GET", "/diagnostics", headers=K)
 check("diagnostics serves", s == 200)
 diag = diag.decode() if isinstance(diag, bytes) else diag
 check("diagnostics keeps the Crew table",
-      "<h2>Crew</h2>" in diag and "<th>Agent</th><th>Tier</th><th>Status</th><th>Activity</th>" in diag)
+      "<h3>Crew</h3>" in diag and "<th>Agent</th><th>Tier</th><th>Status</th><th>Activity</th>" in diag)
 check("diagnostics has the Security and health panel with its id",
       'id="security"' in diag and "Security and health" in diag
       and "QWERTY checks this every round" in diag)
 check("diagnostics has the Speed panel with its id",
-      'id="speed"' in diag and "<h2>Speed</h2>" in diag
+      'id="speed"' in diag and "<h3>Speed</h3>" in diag
       and "How long the server takes" in diag)
 check("diagnostics keeps Models & providers (1b canonical panel)",
       "Models &amp; providers" in diag and 'id="diag-wiring-rows"' in diag)
 check("diagnostics keeps Storage, Scheduled work, Token use, Tools",
-      "<h2>Storage</h2>" in diag and "<h2>Scheduled work</h2>" in diag
-      and "<h2>Token use</h2>" in diag and "<h2>Tools</h2>" in diag)
+      "<h3>Storage</h3>" in diag and "<h3>Scheduled work</h3>" in diag
+      and "<h3>Token use</h3>" in diag and "<h3>Tools</h3>" in diag)
 
-# --- Speed placement: Storage + Speed share one grid2, Crew sits above it ---
-g2 = [m.start() for m in _re.finditer('<div class="grid2"', diag)]
-storage_i = diag.index("<h2>Storage</h2>")
-speed_i = diag.index("<h2>Speed</h2>")
-crew_i = diag.index("<h2>Crew</h2>")
-containing = max(g for g in g2 if g <= storage_i)
-following = min([g for g in g2 if g > containing] or [len(diag)])
-check("Speed sits immediately right of Storage in the same grid2",
-      containing < storage_i < speed_i < following)
-check("Crew table sits full-width above the Storage/Speed grid2",
-      crew_i < containing)
+# --- One card per topic (2026-11-07): Storage with Health, Speed and Crew with AI models ---
+gh, gm, gt = diag.index('id="g-health"'), diag.index('id="g-models"'), diag.index('id="g-tools"')
+check("Storage, Scheduled work and Recent failures sit in Health",
+      all(gh < diag.index(f"<h3>{n}</h3>") < gm for n in ("Storage", "Scheduled work", "Recent failures")))
+check("Speed, Token use and Crew sit in AI models", all(gm < diag.index(f"<h3>{n}</h3>") < gt for n in ("Speed", "Token use", "Crew")))
 
 # --- Stacking + clipping protection at CSS level (no browser harness) ---
 s, css = call("GET", "/ui.css")
@@ -149,8 +143,8 @@ check("settings keeps passkeys, devices, Gmail, memory, Siri",
       "Sign in with Face ID" in settings and "Devices" in settings and "Gmail" in settings
       and "Memory and notes" in settings and "Voice commands (Siri)" in settings)
 check("settings keeps Rounds, Bench, Standing orders, reports, About",
-      "<h2>Rounds</h2>" in settings and "Mistral benchmark" in settings
-      and "<h2>Standing orders</h2>" in settings and "<h2>Latest reports</h2>" in settings
+      "<h3>Rounds</h3>" in settings and "Mistral benchmark" in settings
+      and "<h3>Standing orders</h3>" in settings and "<h3>Latest reports</h3>" in settings
       and "<h2>About</h2>" in settings)
 check("wiring consolidated by merged Stage 1b (Settings copy gone, Diagnostics canonical)",
       'id="wiring-rows"' not in settings and 'id="diag-wiring-rows"' in diag)
