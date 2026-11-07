@@ -447,7 +447,7 @@ body.showchat #board,body.showchat .board-open{visibility:hidden}
 .w.kept{animation:none}
 .w.leaving{animation:wleave .4s ease forwards;pointer-events:none}
 @keyframes wleave{to{opacity:0;transform:scale(.92)}}
-.approw{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.approw{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;align-items:flex-start;align-self:start}
 .bchip.more{grid-column:1/-1;justify-self:start}
 #board.allclear .bhead span{color:var(--good);font-weight:700}
 .btoast{position:fixed;left:50%;bottom:calc(var(--formh,96px) + 60px);transform:translate(-50%,10px);z-index:12;opacity:0;pointer-events:none;

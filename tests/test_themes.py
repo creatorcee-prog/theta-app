@@ -109,5 +109,5 @@ check("a card's motes move with it exactly when you scroll (the springs only sha
 check("the terminal is the solid card; the rest are made of motes, buttons too", "solid: el.matches(\".term\")" in h._UI_JS
       and ".dotframe.top{z-index:2147483000}" in h._UI_CSS and 'const SEL = ".card,.win,.kpi,.w,.holo,.term:not([hidden]),.dialog-card", BTN = "button,.btn";' in h._UI_JS)
 check("no spring: motes glide in on an eased path, then sit exactly where they belong", "function place(d, tx, ty, arrive)" in h._UI_JS and "d.vx" not in h._DOTFRAME_JS)
-check("a card's words appear once it is built", ":root.motes-on .mote-wait > *{opacity:0!important}" in h._UI_CSS and 'el.classList.remove("mote-wait")' in h._UI_JS)
+check("a card's words appear once it is built", ":root.motes-on .mote-wait > *{opacity:0!important}" in h._UI_CSS and 'e.classList.remove("mote-wait")' in h._UI_JS and "gates.set(el, n.ready)" in h._UI_JS)
 print("done")

@@ -3799,18 +3799,20 @@ _DOTFRAME_JS = r'''(() => {
     const c = cards.get(el), R = {x: r.left, y: r.top, w: r.width, h: r.height};
     if (!c || c.v !== v || c.tall !== (kind === "card" && tall(R)) || (!c.tall && (Math.abs(c.h - R.h) > (kind === "button" ? 6 : 40) || Math.abs(c.w - R.w) > 6))) {
       const first = !seen.has(el), n = spawn(el, R, first && (clock < 2.5 || fresh.has(el) || el.matches(".term")), kind); n.h = R.h; n.w = R.w;
-      // its words appear once it is built (a rebuild while it waits keeps waiting, but never more than 2 s in all)
-      if (first) { el.classList.add("mote-wait"); n.gate = 1; n.gateAt = clock; }
-      else if (c && c.gate) { n.gate = 1; n.gateAt = c.gateAt; } else el.classList.add("mote-built");
+      // its words appear once it is built: the schedule belongs to the element, so a rebuild, a resize or a moment
+      // off screen never pushes it back
+      if (first && !gates.has(el)) { gates.set(el, n.ready); el.classList.add("mote-wait"); }
       cards.set(el, n); seen.add(el); fresh.delete(el);
     } else if (c.tall) fillBands(c, R, false);
   }
+  const gates = new WeakMap(); // element -> when its motes will have arrived
+  function reveal() { document.querySelectorAll(".mote-wait").forEach(e => { const at = gates.get(e); if (at == null || clock >= at) { e.classList.remove("mote-wait"); e.classList.add("mote-built"); } }); }
   function scan() { // what's on screen now: cards and buttons; new ones form, gone ones go home
     const v = variant(), now = new Set();
     document.querySelectorAll(SEL).forEach(el => { if (el.parentElement && el.parentElement.closest(SEL)) return; track(el, "card", now, v); }); // a card in a card: the outer one
     document.querySelectorAll(BTN).forEach(el => { if (el.parentElement && el.parentElement.closest(BTN)) return; track(el, "button", now, v); });
-    for (const [el, c] of cards) if (!now.has(el)) { cards.delete(el); el.classList.remove("mote-wait");
-      if (el.isConnected === false || !el.getBoundingClientRect().width) { homing.push(...c.dots.map(d => (d.home = 1, d.top = c.top, d))); seen.delete(el); } }
+    for (const [el, c] of cards) if (!now.has(el)) { cards.delete(el);
+      if (el.isConnected === false || !el.getBoundingClientRect().width) { homing.push(...c.dots.map(d => (d.home = 1, d.top = c.top, d))); seen.delete(el); gates.delete(el); } }
   }
   // one mote, placed: an eased glide from where it started to where it belongs, then exactly there (plus any give
   // from your finger, which eases back); going home, it eases to Theta. No spring, no overshoot.
@@ -3833,6 +3835,7 @@ _DOTFRAME_JS = r'''(() => {
     level += (lv - level) * .3;
     if (clock - hueAt > 1) { hue = moodHue(); hueAt = clock; }
     if (clock - scanAt > .2) { scan(); scanAt = clock; }
+    reveal();
     g.clearRect(0, 0, W, H); gT.clearRect(0, 0, W, H);
     const t = clock, th = source(), lineSets = [];
     g.globalCompositeOperation = gT.globalCompositeOperation = "lighter";
@@ -3841,7 +3844,7 @@ _DOTFRAME_JS = r'''(() => {
       // the card moved (a scroll, a layout change): its motes move with it, exactly, this frame
       if (c.lx != null && (R.x !== c.lx || R.y !== c.ly)) { const dx = R.x - c.lx, dy = R.y - c.ly; for (const d of c.dots) { d.x += dx; d.y += dy; if (d.sx != null) { d.sx += dx; d.sy += dy; } } }
       c.lx = R.x; c.ly = R.y;
-      if (c.gate && (t >= c.ready || t - c.gateAt > 2)) { c.gate = 0; el.classList.remove("mote-wait"); el.classList.add("mote-built"); }
+
       const arrive = c.arrive;
       const handover = c.solid ? Math.max(1 - Math.min(1, Math.max(0, age - 1.1) / .7), .5 * (1 - SW.idle)) : 1; // the terminal: the motes build it, then hand over
       for (const d of c.dots) {
