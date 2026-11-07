@@ -3509,7 +3509,7 @@ CHEERS = {"theta": ("orbit", ""), "midnight": ("star", ""), "nebula": ("star", "
           "verdant": ("leaf", ""), "lunar": ("glint", ""), "bloodsign": ("spark", ""), "nightfiligree": ("glint", ""), "dusk": ("star", "")}
 _CHARM_CSS = r'''.card,.win,.kpi,.w{background-image:var(--lit,none)}
 /* dot moments: the overlay that carries Theta's dots between things (window.thetaDots) */
-.dotfx{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:40;mix-blend-mode:screen}
+.dotfx{position:fixed;left:0;top:0;width:var(--vw,100vw);height:var(--vh,100vh);pointer-events:none;z-index:40;mix-blend-mode:screen}
 :root[data-mode="light"] .dotfx{mix-blend-mode:multiply}
 /* its reply sharpens in as its dots land */
 .msg.dotin .mbody{animation:dotsharpen .8s ease-out .15s backwards}
@@ -3526,7 +3526,7 @@ _CHARM_CSS = r'''.card,.win,.kpi,.w{background-image:var(--lit,none)}
 .dayring .dr-track{stroke-linecap:round;stroke-dasharray:0 9;stroke-width:4!important}
 @media (prefers-reduced-motion:reduce){.msg.dotin .mbody{animation:none}.working .wdots.stream i{animation:none;opacity:.6}}
 /* ---- The Theta frames: the cards are Theta's dots (drawn on .dotframe), so their own fill steps back */
-.dotframe{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:-1;mix-blend-mode:screen}
+.dotframe{position:fixed;left:0;top:0;width:var(--vw,100vw);height:var(--vh,100vh);pointer-events:none;z-index:-1;mix-blend-mode:screen}
 :root[data-mode="light"] .dotframe{mix-blend-mode:multiply}
 @media (prefers-color-scheme:light){:root:not([data-mode="dark"]) .dotframe{mix-blend-mode:multiply}}
 :root[data-glassstyle="lines"] :is(.card,.win,.kpi,.w,.holo),:root[data-glassstyle="nebula"] :is(.card,.win,.kpi,.w,.holo){background:transparent!important;border-color:transparent!important;box-shadow:none!important;-webkit-backdrop-filter:none;backdrop-filter:none}
@@ -3555,7 +3555,7 @@ _CHARM_CSS = r'''.card,.win,.kpi,.w{background-image:var(--lit,none)}
 .tapfx{position:absolute;inset:0;border-radius:inherit;pointer-events:none;overflow:hidden;opacity:0;z-index:0}
 .tap > .tapfx{animation:tapfx-fade .6s ease-out}
 @keyframes tapfx-fade{0%{opacity:1}100%{opacity:0}}
-.cheer{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:9990}
+.cheer{position:fixed;left:0;top:0;width:var(--vw,100vw);height:var(--vh,100vh);pointer-events:none;z-index:9990}
 /* Glass+: a soft squish, a little bloom under the finger */
 :root[data-glassstyle="plus"] .tap{animation:tap-squish .42s cubic-bezier(.34,1.56,.64,1)}
 :root[data-glassstyle="plus"] .tapfx{background:radial-gradient(circle at var(--tx) var(--ty),color-mix(in srgb,white 35%,transparent),transparent 60%)}
@@ -3598,6 +3598,13 @@ _CHARM_CSS = r'''.card,.win,.kpi,.w{background-image:var(--lit,none)}
 @media (prefers-reduced-motion:reduce){.tap,.tap > .tapfx{animation:none!important}}
 '''
 _DOTSHAPE_JS = r'''(() => {
+  // The canvases that draw over the page (motes, moments, cheers, the opening) are sized to the screen you can see, in
+  // pixels. 100vh on an iPhone is the height with Safari's bars hidden, which stretched every drawing down a little more
+  // the lower it was: a button's motes sat below the button and drifted as you scrolled.
+  const vp = () => { const s = document.documentElement.style; s.setProperty("--vw", innerWidth + "px"); s.setProperty("--vh", innerHeight + "px"); };
+  vp(); addEventListener("resize", vp); if (window.visualViewport) visualViewport.addEventListener("resize", vp);
+})();
+(() => {
   // ---- The shape of Theta's dots (2026-11-06): circle, triangle, square, diamond, pentagon, hexagon or star, picked in
   // Voice and tools > Dots and kept with the avatar (so a persona can have its own). Every dot Theta draws takes it:
   // the avatar, the Theta frames, the dot moments, the star sky and the opening. thetaDot.path(g, x, y, r, rot[, shape])
@@ -3675,9 +3682,14 @@ _DOTMOMENTS_JS = r'''(() => {
       const p = P[i]; p.life += dt; if (p.life < p.delay) continue;
       const age = p.life - p.delay;
       if (p.to === "theta") { p.tx = t.x; p.ty = t.y; }
+      const ox = p.x, oy = p.y;
       if (p.fall && age < .35) { p.vy += .12; p.x += p.vx; p.y += p.vy; } // a crumble first falls apart a little
-      else { const k = .045 + .03 * p.s; p.vx = (p.vx + (p.tx - p.x) * k) * .82; p.vy = (p.vy + (p.ty - p.y) * k) * .82; p.x += p.vx; p.y += p.vy; }
-      const d = Math.hypot(p.tx - p.x, p.ty - p.y), sp = Math.hypot(p.vx, p.vy);
+      else { // an eased glide on a gentle curve, no spring: it starts where it is and lands exactly on its target
+        if (p.sx == null) { p.sx = p.x; p.sy = p.y; p.t0 = age; p.dur = .55 + .35 * p.s; p.bend = (p.s - .5) * .5; }
+        const k = Math.min(1, (age - p.t0) / p.dur), e = k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2, dx = p.tx - p.sx, dy = p.ty - p.sy, arc = Math.sin(Math.PI * e) * p.bend;
+        p.x = p.sx + dx * e - dy * arc; p.y = p.sy + dy * e + dx * arc;
+      }
+      const d = Math.hypot(p.tx - p.x, p.ty - p.y), sp = Math.hypot(p.x - ox, p.y - oy);
       let a = Math.min(1, age * 4);
       if (p.to === "land" && d < 3) a *= Math.max(0, 1 - (age - p.arr || 0)); // landed: fade into what formed
       if (p.to === "land" && d < 3 && p.arr == null) p.arr = age;

@@ -496,10 +496,13 @@ BOARD_JS = r"""
   let newIds = new Set(), moreOpen = false;
   const TASKS_MAX = 4; // more than four things to do at once is a wall, not a list
   function fresh() { return data.widgets.filter(w => w.important || seen[w.id] !== w.sig); }
+  document.addEventListener("theta:panels", () => { if (data) render(); });
+  document.addEventListener("theta:board-filter", () => { if (data) render(); });
   function visible() {
     if (!shown) shown = new Set();
     fresh().forEach(w => { if (!shown.has(w.id)) { shown.add(w.id); if (!w.important && seen[w.id] !== w.sig) newIds.add(w.id); } });
-    return data.widgets.filter(w => (showAll || shown.has(w.id)) && swiped[w.id] !== w.sig); // swiped away: gone until it changes
+    const keep = window.thetaKeep || window.thetaTermKeep; // Theta pulled something up: only it, and what Theta put alongside
+    return data.widgets.filter(w => (showAll || shown.has(w.id)) && swiped[w.id] !== w.sig && (!keep || keep.has(w.id))); // swiped away: gone until it changes
   }
   const isTask = w => w.cat === "task" && w.id !== "diagnostics-ok";
   function act(w, i, btn) { // one tap clears a row (a reminder done, a daily check ticked); the board updates at once
@@ -771,6 +774,13 @@ BOARD_JS = r"""
   });
   tbody.addEventListener("input", e => { const o = twin(e); if (o && "value" in o) { o.value = e.target.value; o.dispatchEvent(new Event("input", {bubbles: true})); } });
   tbody.addEventListener("change", e => { const o = twin(e); if (o && "value" in o) { o.value = e.target.value; o.dispatchEvent(new Event("change", {bubbles: true})); } });
+  // while the terminal shows a card Theta just pulled up (a reply in the last couple of minutes), the board shows only
+  // what Theta put alongside it; an older card left open doesn't empty the board
+  const termKeep = (id, at) => {
+    window.thetaTermKeep = id == null || Date.now() - (at || 0) > 2 * 60e3 ? null
+      : new Set(((window.thetaThreadMsgs || []).find(x => String(x.id) === String(id)) || {}).alongside || []);
+    document.dispatchEvent(new CustomEvent("theta:board-filter")); };
+  document.addEventListener("theta:thread", e => { window.thetaThreadMsgs = e.detail || []; }, true);
   document.addEventListener("theta:thread", () => setTimeout(() => {
     const rows = [...document.querySelectorAll("#msgs .msg:not(.mine)")].filter(r => r.querySelector(CARD));
     const r = rows[rows.length - 1], wasFirst = firstThread; firstThread = false;
@@ -778,10 +788,10 @@ BOARD_JS = r"""
     const id = r.dataset.id || "", t = r.querySelector("time"), at = t ? Date.parse(t.dateTime) : Date.now();
     if (id === String(closed) || (wasFirst && Date.now() - at > 30 * 60e3)) return;
     if (id === termId && !term.hidden && tbody.contains(document.activeElement)) return; // you're typing in it: leave it be
-    const was = term.hidden; termId = id; mirror(r); term.hidden = false;
+    const was = term.hidden; termId = id; mirror(r); term.hidden = false; termKeep(id, at);
     if (was && window.thetaDots) requestAnimationFrame(() => thetaDots.emitTo(term, 120)); // its card forms from its dots
   }, 0));
-  $("term-x").onclick = () => { term.hidden = true; closed = termId; put("theta:termClosed", termId); };
+  $("term-x").onclick = () => { term.hidden = true; closed = termId; put("theta:termClosed", termId); termKeep(null); };
 })();
 """
 

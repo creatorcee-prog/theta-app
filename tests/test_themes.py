@@ -77,7 +77,7 @@ check("Theta lights the room from where it is, and the room falls off to black",
       and 'hud.style.setProperty("--avy"' in h._HEAD_JS)
 # the Theta frames: cards made of Theta's dots
 check("the Theta frames draw every card from Theta's dots, follow its state and voice, and stay readable", "const KINDS = {grain: \"print\"" in h._UI_JS
-      and "TH.state()" in h._UI_JS and ".dotframe{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:-1;mix-blend-mode:screen}" in h._UI_CSS)
+      and "TH.state()" in h._UI_JS and ".dotframe{position:fixed;left:0;top:0;width:var(--vw,100vw);height:var(--vh,100vh);pointer-events:none;z-index:-1;mix-blend-mode:screen}" in h._UI_CSS and 's.setProperty("--vh", innerHeight + "px")' in h._UI_JS)
 check("...and step back with reduced motion", "if (!KINDS[v] || still()) { stop(); return; }" in h._UI_JS)
 # dot moments: Theta's dots carry what happens
 check("your message flies into Theta as dots, its reply and cards form from them, a tapped option goes back as a burst",
@@ -110,4 +110,8 @@ check("the terminal is the solid card; the rest are made of motes, buttons too",
       and ".dotframe.top{z-index:2147483000}" in h._UI_CSS and 'const SEL = ".card,.win,.kpi,.w,.holo,.term:not([hidden]),.dialog-card", BTN = "button,.btn";' in h._UI_JS)
 check("no spring: motes glide in on an eased path, then sit exactly where they belong", "function place(d, tx, ty, arrive)" in h._UI_JS and "d.vx" not in h._DOTFRAME_JS)
 check("a card's words appear once it is built", ":root.motes-on .mote-wait > *{opacity:0!important}" in h._UI_CSS and 'e.classList.remove("mote-wait")' in h._UI_JS and "gates.set(el, n.ready)" in h._UI_JS)
+check("personas: New starts empty and switches to it; Edit changes the active one; a switch applies live", 'id="pa-new">New persona' in h.persona_card()
+      and "if (isNew || d.persona.id === active) await switchTo(d.persona.id)" in h.PERSONA_JS and 'window.addEventListener("theta:persona"' in h._STAGE_JS + h._HEAD_JS)
+check("Theta pulling something up: the board shows only it and what Theta puts alongside", "window.thetaKeep = new Set(" in h._DECK_JS
+      and "(!keep || keep.has(w.id))" in h.BOARD_JS and "alongside" in h.TOOLS)
 print("done")

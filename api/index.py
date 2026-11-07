@@ -2723,8 +2723,9 @@ def reply_extra():
     panels = getattr(_REQ, "panels", None) or []  # Jarvis-style panels for the Head page (panels.py)
     mood, _REQ.mood = getattr(_REQ, "mood", None), None  # the avatar's mood for this reply, used once
     nav, _REQ.nav = getattr(_REQ, "nav", None), None  # a page Theta opens on screen (the open tool), used once
+    along, _REQ.alongside = getattr(_REQ, "alongside", None), None  # board cards Theta keeps next to what it pulled up, used once
     return {**({"nav": nav} if nav else {}), **({"trail": trail} if trail else {}), **({"tokens": {"in": tok[0], "out": tok[1]}} if tok[0] or tok[1] else {}),
-            **({"panels": panels} if panels else {}),
+            **({"panels": panels} if panels else {}), **({"alongside": along} if along else {}),
             **({"mood": mood} if mood else {})}
 
 

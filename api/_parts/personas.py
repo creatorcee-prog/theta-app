@@ -118,9 +118,11 @@ def persona_card():
     return (
         '<section class="card stack" id="personas"><div><h2>Personas</h2><p class="muted small">Who Theta is, kept as sets you can swap: '
         'a name, what it calls you, its personality, and its voice, voice effect, avatar and (if you like) theme and frame on this phone. '
-        'Swap one in and all of it changes at once. "Theta" is the original.</p></div>'
+        'Pick one and it takes over at once. "Theta" is the original.</p></div>'
         '<div class="field"><label for="pa-pick">Active</label><select id="pa-pick"><option value="">Theta (original)</option></select></div>'
-        '<details id="pa-edit"><summary class="btn ghost small">New persona / edit this one</summary><div class="stack" style="margin-top:10px">'
+        '<div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn small" id="pa-new">New persona</button>'
+        '<button type="button" class="btn ghost small" id="pa-edit-btn" hidden>Edit this one</button></div>'
+        '<div class="stack" id="pa-form" hidden style="margin-top:4px"><h3 id="pa-form-title" style="margin:0">New persona</h3>'
         '<div class="field"><label for="pa-name">Name</label><input id="pa-name" maxlength="40" placeholder="Like: Simaris"></div>'
         '<div class="field"><label for="pa-addr">What it calls you</label><input id="pa-addr" maxlength="40" placeholder="Like: Hunter"></div>'
         '<div class="field"><label for="pa-soul">Personality</label><textarea id="pa-soul" rows="7" maxlength="4000" '
@@ -131,62 +133,77 @@ def persona_card():
         '<option value="image">My pictures</option></select></div>'
         '<label class="small"><input type="checkbox" id="pa-look" checked> Save the voice, voice effect and avatar I have on right now</label>'
         '<label class="small"><input type="checkbox" id="pa-ui"> ...and the theme, frame and background too</label>'
-        '<div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn" id="pa-save">Save persona</button>'
-        '<button type="button" class="btn ghost" id="pa-new">Start a new one</button>'
-        '<button type="button" class="btn ghost" id="pa-del">Delete this one</button></div></div></details>'
+        '<div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn" id="pa-save">Save</button>'
+        '<button type="button" class="btn ghost" id="pa-cancel">Cancel</button>'
+        '<button type="button" class="btn ghost" id="pa-del" hidden>Delete this one</button></div></div>'
         '<p class="muted small" id="pa-note" role="status"></p></section>'
         f"<script>{PERSONA_JS}</script>")
 
 
 PERSONA_JS = r"""
 (() => {
+  // Personas (2026-11-07): New persona always starts empty and never touches the one you're on; Edit changes the
+  // active one. Saving a new persona switches to it. A switch takes effect at once: the server speaks as it from the
+  // next message, and this phone wears its voice, effect and avatar without a reload (only its own theme reloads).
   const H = window.THETA_H || {}, $ = id => document.getElementById(id), pick = $("pa-pick"); if (!pick) return;
   const KEYS = {voice: "theta:voice", fx: "theta:fx", fxAmt: "theta:fxAmt", avatar: "theta:avatar", avimg: "theta:avimg"};
   const ls = {get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) {} }};
   const note = t => { const n = $("pa-note"); if (n) n.textContent = t || ""; }, val = (id, v) => { const e = $(id); if (e) e.value = v; };
+  const uiNow = () => (document.cookie.match(/(?:^|; )theta_ui=([^;]*)/) || [])[1] || "";
   let list = [], active = "", editing = "";
   async function load() {
     const d = await (await fetch("/api/personas", {headers: H})).json(); if (!d.ok) return;
     list = d.personas; active = d.active;
     pick.replaceChildren(new Option("Theta (original)", ""), ...list.map(p => new Option(p.name + (p.address ? " · calls you " + p.address : ""), p.id)));
-    pick.value = active; fill(list.find(p => p.id === active));
+    pick.value = active; const e = $("pa-edit-btn"); if (e) { e.hidden = !active; const p = list.find(x => x.id === active); if (p) e.textContent = "Edit " + p.name; }
   }
-  function fill(p) { editing = p ? p.id : ""; val("pa-name", p ? p.name : ""); val("pa-addr", p ? p.address : ""); val("pa-soul", p ? p.soul : "");
-    if ($("pa-del")) $("pa-del").hidden = !p; }
-  function apply(look) { // put a persona's look on this phone, then reload so everything wears it
+  function open(p) { editing = p ? p.id : ""; const f = $("pa-form"); if (!f) return; f.hidden = false;
+    $("pa-form-title").textContent = p ? "Editing " + p.name : "New persona";
+    val("pa-name", p ? p.name : ""); val("pa-addr", p ? p.address : ""); val("pa-soul", p ? p.soul : ""); val("pa-av", "");
+    $("pa-del").hidden = !p; $("pa-name").focus(); }
+  const close = () => { const f = $("pa-form"); if (f) f.hidden = true; editing = ""; };
+  // wear a look on this phone; tell every open part of the app (Theta's screen too) so it changes now
+  function wear(look, name) {
     for (const [k, key] of Object.entries(KEYS)) if (look && k in look) ls.set(key, look[k]);
-    if (look && look.ui) document.cookie = "theta_ui=" + look.ui + ";path=/;max-age=31536000;samesite=lax";
-    (window.top || window).location.reload();
+    if (look && look.ui && look.ui !== uiNow()) { document.cookie = "theta_ui=" + look.ui + ";path=/;max-age=31536000;samesite=lax"; (window.top || window).location.reload(); return; }
+    const ev = () => new CustomEvent("theta:persona", {detail: {name: name || "Theta"}});
+    window.dispatchEvent(ev()); try { if (window.top && window.top !== window) window.top.dispatchEvent(ev()); } catch (e) {}
   }
   const snapshot = () => { const look = {}; for (const [k, key] of Object.entries(KEYS)) { const v = ls.get(key); if (v != null) look[k] = v; }
-    look.ui = (document.cookie.match(/(?:^|; )theta_ui=([^;]*)/) || [])[1] || ""; return look; };
-  pick.addEventListener("change", async () => {
+    look.ui = uiNow(); return look; };
+  async function switchTo(id) {
     note("Switching…");
     if (!active) ls.set("theta:originalLook", JSON.stringify(snapshot())); // leaving the original: keep its look on this phone
-    const d = await (await fetch("/api/personas/activate", {method: "POST", headers: H, body: JSON.stringify({id: pick.value})})).json();
+    const d = await (await fetch("/api/personas/activate", {method: "POST", headers: H, body: JSON.stringify({id})})).json();
     if (!d.ok) { note(d.error || "Couldn't switch."); pick.value = active; return; }
     let look = d.look || {};
-    if (!pick.value) { try { look = JSON.parse(ls.get("theta:originalLook") || "{}"); } catch (e) { look = {}; } } // back to Theta: its own look
-    apply(look);
-  });
+    if (!id) { try { look = JSON.parse(ls.get("theta:originalLook") || "{}"); } catch (e) { look = {}; } } // back to Theta: its own look
+    await load(); const p = list.find(x => x.id === id);
+    wear(look, p ? p.name : "Theta"); note(p ? p.name + " is on." : "Theta is back.");
+  }
+  pick.addEventListener("change", () => switchTo(pick.value));
   if (!$("pa-save")) { load(); return; } // the quick switcher (Theta's Voice and tools): just the list
-  $("pa-new").onclick = () => { fill(null); $("pa-name").focus(); note("A new persona: name it, then save."); };
+  $("pa-new").onclick = () => { open(null); note(""); };
+  $("pa-edit-btn").onclick = () => { open(list.find(p => p.id === active)); note(""); };
+  $("pa-cancel").onclick = () => { close(); note(""); };
   $("pa-save").onclick = async () => {
-    const look = {};
-    const now = snapshot();
+    const look = {}, now = snapshot(), isNew = !editing;
     if ($("pa-look").checked) for (const k of Object.keys(KEYS)) if (k in now) look[k] = now[k];
     if ($("pa-ui").checked) look.ui = now.ui;
-    if ($("pa-av") && $("pa-av").value) { let av = {}; try { av = JSON.parse(look.avatar || now.avatar || "{}") || {}; } catch (e) {}
+    if ($("pa-av").value) { let av = {}; try { av = JSON.parse(look.avatar || now.avatar || "{}") || {}; } catch (e) {}
       av.style = $("pa-av").value; look.avatar = JSON.stringify(av); } // this persona's own avatar style
     const body = {id: editing, name: $("pa-name").value, address: $("pa-addr").value, soul: $("pa-soul").value};
-    if ($("pa-look").checked || $("pa-ui").checked || ($("pa-av") && $("pa-av").value)) body.look = look;
+    if ($("pa-look").checked || $("pa-ui").checked || $("pa-av").value) body.look = look;
     const d = await (await fetch("/api/personas", {method: "POST", headers: H, body: JSON.stringify(body)})).json();
     if (!d.ok) return note(d.error || "Couldn't save.");
-    note("Saved " + d.persona.name + (d.persona.look.includes("avimg") || !look.avimg ? "." : " (its pictures were too big to keep).")); editing = d.persona.id; load();
+    close();
+    if (isNew || d.persona.id === active) await switchTo(d.persona.id); else await load(); // a new one takes over; an edit to the active one applies now
+    note((isNew ? "Made " : "Saved ") + d.persona.name + (isNew ? " and switched to it." : ".") + (d.persona.look.includes("avimg") || !look.avimg ? "" : " (Its pictures were too big to keep.)"));
   };
   $("pa-del").onclick = async () => {
     if (!editing || !confirm("Delete this persona? Its personality and saved look go too.")) return;
-    await fetch("/api/personas/delete", {method: "POST", headers: H, body: JSON.stringify({id: editing})}); fill(null); note("Deleted."); load();
+    const was = editing; await fetch("/api/personas/delete", {method: "POST", headers: H, body: JSON.stringify({id: was})}); close();
+    if (was === active) await switchTo(""); else await load(); note("Deleted.");
   };
   load();
 })();
