@@ -165,8 +165,8 @@ s, diag = call("GET", "/diagnostics", headers=K)
 check("diagnostics serves", s == 200)
 diag = diag.decode() if isinstance(diag, bytes) else diag
 check("diagnostics keeps all sections",
-      all(t in diag for t in ["<h2>Crew</h2>", "<h2>Storage</h2>", "<h2>Scheduled work</h2>",
-                               "<h2>Recent failures</h2>", "<h2>Token use</h2>", "<h2>Tools</h2>",
+      all(t in diag for t in ["<h3>Crew</h3>", "<h3>Storage</h3>", "<h3>Scheduled work</h3>",
+                               "<h3>Recent failures</h3>", "<h3>Token use</h3>", "<h3>Tools</h3>",
                                "Models &amp; providers"]))
 check("every diagnostics table sits inside a horizontal scroller",
       diag.count("<table") == diag.count('class="scrollx"') + diag.count('class="md-scroll"')

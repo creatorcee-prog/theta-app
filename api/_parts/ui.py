@@ -536,6 +536,8 @@ body.typing .tabbar{display:none}
 
 /* Building blocks */
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:var(--pad);box-shadow:var(--shadow)}details.card summary{cursor:pointer}
+/* one card per topic: its sections, a line between them */
+.cgroup > .subcard{border-top:1px solid var(--border);padding-top:16px}.subcard{display:grid;gap:10px;min-width:0}details.subcard summary{cursor:pointer}
 :root[data-glass] .card,:root[data-glass] .win,:root[data-glass] .kpi,:root[data-glass] .sw{-webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%)}
 .stack{display:flex;flex-direction:column;gap:var(--gap)}
 .top{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin:2px 0 20px;flex-wrap:wrap}
@@ -3529,15 +3531,20 @@ _CHARM_CSS = r'''.card,.win,.kpi,.w{background-image:var(--lit,none)}
 @media (prefers-color-scheme:light){:root:not([data-mode="dark"]) .dotframe{mix-blend-mode:multiply}}
 :root[data-glassstyle="lines"] :is(.card,.win,.kpi,.w,.holo),:root[data-glassstyle="nebula"] :is(.card,.win,.kpi,.w,.holo){background:transparent!important;border-color:transparent!important;box-shadow:none!important;-webkit-backdrop-filter:none;backdrop-filter:none}
 :root[data-glassstyle="settle"] :is(.card,.win,.kpi,.w,.holo){background:color-mix(in srgb,var(--surface) 22%,transparent)!important;border-color:transparent!important;box-shadow:none!important}
-/* made of motes: the controls inside a card are traced in motes too (a dotted edge on a see-through ground) */
-:root:is([data-glassstyle="grain"],[data-glassstyle="press"],[data-glassstyle="lines"],[data-glassstyle="nebula"],[data-glassstyle="settle"]):not([data-motecards="styled"]) :is(.card,.win,.kpi,.w,.holo) :is(.btn,.seg,select,input:not([type=checkbox]):not([type=radio]),textarea,.field){background:color-mix(in srgb,var(--surface) 40%,transparent)!important;border:1.5px dotted color-mix(in srgb,var(--accent) 50%,transparent)!important;box-shadow:none!important}
-/* styled: a solid card drawn in the motes' style: a dotted edge, and a halftone grain thick at the edges, clear in the middle */
-:root[data-motecards="styled"] .dotframe{z-index:8}
-/* a card inside a card: only the outer one is the card */
-:root[data-motecards="styled"]:is([data-glassstyle="grain"],[data-glassstyle="press"],[data-glassstyle="lines"],[data-glassstyle="nebula"],[data-glassstyle="settle"]) :is(.card,.win,.kpi,.w,.holo) :is(.card,.win,.kpi,.w,.holo){background:transparent!important;border-color:transparent!important}
-:root[data-motecards="styled"] :is(.card,.win,.kpi,.w,.holo) :is(.card,.win,.kpi,.w,.holo)::before{content:none!important}
-:root[data-motecards="styled"]:is([data-glassstyle="grain"],[data-glassstyle="press"],[data-glassstyle="lines"],[data-glassstyle="nebula"],[data-glassstyle="settle"]) :is(.card,.win,.kpi,.w,.holo){background:color-mix(in srgb,var(--surface) 94%,transparent)!important;border:1.5px dotted color-mix(in srgb,var(--accent) 55%,transparent)!important;box-shadow:none!important;position:relative;isolation:isolate}
-:root[data-motecards="styled"]:is([data-glassstyle="grain"],[data-glassstyle="press"],[data-glassstyle="lines"],[data-glassstyle="nebula"],[data-glassstyle="settle"]) :is(.card,.win,.kpi,.w,.holo)::before{content:"";position:absolute;inset:0;z-index:-1;border-radius:inherit;pointer-events:none;
+/* buttons and fields are traced in motes too: their own edge steps back (their fill and icons stay) */
+:root:is([data-glassstyle="grain"],[data-glassstyle="press"],[data-glassstyle="lines"],[data-glassstyle="nebula"],[data-glassstyle="settle"]) :is(button,.btn){border-color:transparent!important;box-shadow:none!important}
+:root:is([data-glassstyle="grain"],[data-glassstyle="press"],[data-glassstyle="lines"],[data-glassstyle="nebula"],[data-glassstyle="settle"]) :is(.card,.win,.kpi,.w,.holo) :is(select,input:not([type=checkbox]):not([type=radio]),textarea,.field){border:1.5px dotted color-mix(in srgb,var(--accent) 50%,transparent)!important;box-shadow:none!important}
+/* the motes of the terminal (and its buttons) draw above it */
+.dotframe.top{z-index:2147483000}
+/* built, then shown: a card's (or button's) words appear once its motes have arrived */
+:root.motes-on .mote-wait{color:transparent!important}:root.motes-on .mote-wait > *{opacity:0!important}
+/* before the motes start (the first moments of a page), a card's words wait too; never longer than 2.5 s, in case they can't start */
+@media (prefers-reduced-motion:no-preference){:root:is([data-glassstyle="grain"],[data-glassstyle="press"],[data-glassstyle="lines"],[data-glassstyle="nebula"],[data-glassstyle="settle"]) :is(.card,.win,.kpi,.w,.holo,.term,.dialog-card):not(.mote-built) > *{animation:mote-prehide 2.5s step-end}}
+@keyframes mote-prehide{from{opacity:0}to{opacity:1}}
+:root.motes-on :is(.card,.win,.kpi,.w,.holo,.term,.dialog-card,button,.btn) > *{transition:opacity .3s ease}
+/* the terminal is the one solid card, drawn in the motes' style: a dotted edge, and a halftone grain thick at the edges, clear in the middle */
+:root:is([data-glassstyle="grain"],[data-glassstyle="press"],[data-glassstyle="lines"],[data-glassstyle="nebula"],[data-glassstyle="settle"]) .term{background:color-mix(in srgb,var(--surface) 94%,transparent)!important;border:1.5px dotted color-mix(in srgb,var(--accent) 55%,transparent)!important;box-shadow:none!important;isolation:isolate}
+:root:is([data-glassstyle="grain"],[data-glassstyle="press"],[data-glassstyle="lines"],[data-glassstyle="nebula"],[data-glassstyle="settle"]) .term::before{content:"";position:absolute;inset:0;z-index:-1;border-radius:inherit;pointer-events:none;
  background:radial-gradient(circle,color-mix(in srgb,var(--accent) 34%,transparent) 1px,transparent 1.7px) 0 0/7px 7px;
  -webkit-mask:linear-gradient(90deg,#000,transparent 14%,transparent 86%,#000),linear-gradient(#000,transparent 22%,transparent 78%,#000);mask:linear-gradient(90deg,#000,transparent 14%,transparent 86%,#000),linear-gradient(#000,transparent 22%,transparent 78%,#000)}
 :root[data-glassstyle="grain"] :is(.card,.win,.kpi,.w,.holo),:root[data-glassstyle="press"] :is(.card,.win,.kpi,.w,.holo){background:color-mix(in srgb,var(--surface) 38%,transparent)!important;border-color:transparent!important;box-shadow:none!important}
@@ -3686,26 +3693,24 @@ _DOTMOMENTS_JS = r'''(() => {
 })();
 '''
 _DOTFRAME_JS = r'''(() => {
-  // ---- The Theta frames (2026-11-06, from the Dot UI Lab): every card is made of Theta's own dots. Grain and Press
-  // print the card in a halftone; Lines, Nebula and Settle make it a constellation (Settle sits in a neat grid while
-  // Theta is at rest and comes alive when it listens, thinks or speaks). Dots stream out of Theta when a card appears
-  // and fly home when it goes; they follow Theta's state, voice and mood, and scatter from your finger. One canvas
-  // over the page that only adds light (screen), so words stay readable. Off with reduced motion.
+  // ---- The Theta frames (2026-11-06, from the Dot UI Lab; 2026-11-07: no spring, buttons, the terminal, build-then-show).
+  // Every card is made of Theta's motes: its outline traced in motes, and inside it Grain and Press print a halftone while
+  // Lines, Nebula and Settle hold a constellation (Settle sits in a neat grid while Theta is at rest and comes alive when it
+  // listens, thinks or speaks). Every button is traced in motes too. A new card's motes come out of Theta (a card that was
+  // only scrolled to forms where it is), and its words appear once it is built. The motes sit exactly where they belong:
+  // they glide in on an eased path, move with the page as you scroll, and give way under your finger without bouncing.
+  // The terminal is the one solid card: the motes build it, then hand over to its surface (dotted edge, halftone grain),
+  // and come back while Theta listens, thinks or speaks. Off with reduced motion.
   const KINDS = {grain: "print", press: "print", lines: "swarm", nebula: "swarm", settle: "swarm"};
-  const SEL = ".card,.win,.kpi,.w,.holo,.term:not([hidden]),.dialog-card";
-  const root = document.documentElement, TAU = Math.PI * 2, MAXDOTS = 3400;
-  let cv = null, g = null, W = 0, H = 0, dpr = 1, running = false, clock = 0, last = 0, level = 0, hue = 195, hueAt = 0;
-  const cards = new Map(), seen = new WeakSet(), SW = {idle: 1, listening: 0, thinking: 0, speaking: 0};
-  let touch = {x: -999, y: -999, t: -9}, homing = [];
+  const SEL = ".card,.win,.kpi,.w,.holo,.term:not([hidden]),.dialog-card", BTN = "button,.btn";
+  const root = document.documentElement, TAU = Math.PI * 2, MAXDOTS = 5200;
+  let cv = null, g = null, cvT = null, gT = null, W = 0, H = 0, dpr = 1, running = false, clock = 0, last = 0, dt = 0, level = 0, hue = 195, hueAt = 0;
+  const cards = new Map(), seen = new WeakSet(), fresh = new WeakSet(), SW = {idle: 1, listening: 0, thinking: 0, speaking: 0};
+  let homing = [];
   const still = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
   const variant = () => root.dataset.glassstyle;
-  // Two kinds of card (Settings > Theta cards): "made" (the default), where the card IS motes, with no box of its own and
-  // its outline traced in motes; or "styled", a solid card drawn in the motes' style (dotted edge, a halftone grain), that
-  // the motes form and then hand over to, coming back while Theta listens, thinks or speaks.
-  const styled = () => root.dataset.motecards === "styled";
-  try { const m = localStorage.getItem("theta:motecards"); if (m) root.dataset.motecards = m; } catch (e) {}
-  addEventListener("storage", e => { if (e.key === "theta:motecards") root.dataset.motecards = e.newValue || "made"; }); // changed in Settings (another frame)
   const hsla = (h, s, l, a) => `hsla(${(h % 360 + 360) % 360},${s}%,${Math.min(97, l)}%,${Math.max(0, Math.min(1, a))})`;
+  const ease = k => 1 - Math.pow(1 - Math.max(0, Math.min(1, k)), 3);
   function source() { const e = document.getElementById("head-av") || document.querySelector(".theta-mini");
     if (e) { const r = e.getBoundingClientRect(); if (r.width) return {x: r.left + r.width / 2, y: r.top + r.height / 2}; } return {x: innerWidth - 30, y: 30}; }
   function moodHue() { // Theta's mood color (or the theme's), as a hue
@@ -3714,106 +3719,142 @@ _DOTFRAME_JS = r'''(() => {
     const n = parseInt(m[1], 16), r = (n >> 16 & 255) / 255, gg = (n >> 8 & 255) / 255, b = (n & 255) / 255, mx = Math.max(r, gg, b), mn = Math.min(r, gg, b), d = mx - mn;
     if (!d) return hue; let h = mx === r ? ((gg - b) / d) % 6 : mx === gg ? (b - r) / d + 2 : (r - gg) / d + 4; return (h * 60 + 360) % 360;
   }
-  function size() { dpr = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight; cv.width = W * dpr; cv.height = H * dpr; g.setTransform(dpr, 0, 0, dpr, 0, 0); }
+  function size() { dpr = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight;
+    for (const [c, x] of [[cv, g], [cvT, gT]]) { c.width = W * dpr; c.height = H * dpr; x.setTransform(dpr, 0, 0, dpr, 0, 0); } }
+  // new cards (added to the page after it loaded) come out of Theta; the rest form where they are
+  const mo = new MutationObserver(ms => { for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1) {
+    if (n.matches(SEL) || n.matches(BTN)) fresh.add(n); n.querySelectorAll && n.querySelectorAll(SEL + "," + BTN).forEach(e => fresh.add(e)); } });
   function start() {
-    if (running) return; running = true;
-    cv = document.createElement("canvas"); cv.className = "dotframe"; cv.setAttribute("aria-hidden", "true"); document.body.append(cv);
-    g = cv.getContext("2d"); size(); addEventListener("resize", size); last = performance.now(); requestAnimationFrame(frame);
+    if (running) return; running = true; root.classList.add("motes-on");
+    cv = document.createElement("canvas"); cv.className = "dotframe"; cv.setAttribute("aria-hidden", "true");
+    cvT = document.createElement("canvas"); cvT.className = "dotframe top"; cvT.setAttribute("aria-hidden", "true"); // above the terminal
+    document.body.append(cv, cvT); g = cv.getContext("2d"); gT = cvT.getContext("2d");
+    size(); addEventListener("resize", size); mo.observe(document.body, {childList: true, subtree: true}); last = performance.now(); scan(); requestAnimationFrame(frame);
   }
-  function stop() { running = false; cards.clear(); homing = []; if (cv) cv.remove(); cv = null; removeEventListener("resize", size); }
-  // A tall card (taller than most of the screen, like Settings' Color scheme) gets its dots in bands of BAND px, and only
-  // the bands near the screen exist, so the dots stay as dense on a long card as on a short one.
+  function stop() { running = false; root.classList.remove("motes-on"); document.querySelectorAll(".mote-wait").forEach(e => { e.classList.remove("mote-wait"); e.classList.add("mote-built"); });
+    cards.clear(); homing = []; if (cv) cv.remove(); if (cvT) cvT.remove(); cv = cvT = null; mo.disconnect(); removeEventListener("resize", size); }
+  // A tall card (taller than most of the screen, like Settings' Look and feel) gets its motes in bands of BAND px, and only
+  // the bands near the screen exist, so the motes stay as dense on a long card as on a short one.
   const BAND = 240, tall = R => R.h > H * .9;
-  function fill(R, v, fromTheta, y0, y1, budget, band) {
-    const kind = KINDS[v], s0 = source(), list = [], bh = (y1 - y0) * R.h, area = R.w * bh, top = y0 === 0, bot = y1 === 1;
+  function outline(R, rr, y0, y1, gap) { // points on the rounded outline (fractions of the box) inside rows y0..y1
+    rr = Math.max(0, Math.min(rr, R.w / 2, R.h / 2)); const L = 2 * (R.w + R.h - 4 * rr) + TAU * rr, n = Math.max(8, Math.round(L / gap)), at = [];
+    const seg = [[R.w - 2 * rr, d => [rr + d, 0]], [Math.PI / 2 * rr, d => { const a = -Math.PI / 2 + d / rr; return [R.w - rr + Math.cos(a) * rr, rr + Math.sin(a) * rr]; }],
+      [R.h - 2 * rr, d => [R.w, rr + d]], [Math.PI / 2 * rr, d => { const a = d / rr; return [R.w - rr + Math.cos(a) * rr, R.h - rr + Math.sin(a) * rr]; }],
+      [R.w - 2 * rr, d => [R.w - rr - d, R.h]], [Math.PI / 2 * rr, d => { const a = Math.PI / 2 + d / rr; return [rr + Math.cos(a) * rr, R.h - rr + Math.sin(a) * rr]; }],
+      [R.h - 2 * rr, d => [0, R.h - rr - d]], [Math.PI / 2 * rr, d => { const a = Math.PI + d / rr; return [rr + Math.cos(a) * rr, rr + Math.sin(a) * rr]; }]];
+    for (let i = 0; i < n; i++) { let d = i / n * L; for (const [len, f] of seg) { if (d <= len + 1e-6) { const [px, py] = f(Math.min(d, len)), gy = py / R.h; if (gy >= y0 && gy <= y1) at.push([px / R.w, gy, i / n]); break; } d -= len; } }
+    return at;
+  }
+  function fill(R, v, fromTheta, y0, y1, budget, band, kind, rr) {
+    const s0 = source(), list = [], bh = (y1 - y0) * R.h, area = R.w * bh, top = y0 === 0, bot = y1 === 1;
     const mk = (gx, gy, i, n) => ({gx, gy, i, n, u: i / n, ph: Math.random() * TAU, pace: .6 + Math.random() * .8, s: Math.random(), band,
-      x: fromTheta ? s0.x + (Math.random() - .5) * 8 : R.x + gx * R.w, y: fromTheta ? s0.y + (Math.random() - .5) * 8 : R.y + gy * R.h, vx: 0, vy: 0,
+      x: fromTheta ? s0.x + (Math.random() - .5) * 8 : R.x + gx * R.w, y: fromTheta ? s0.y + (Math.random() - .5) * 8 : R.y + gy * R.h, ox: 0, oy: 0,
       delay: fromTheta ? Math.random() * .3 : 0, cx: gx, cy: gy});
-    if (kind === "print" || v === "settle") {
-      const base = v === "grain" ? 6 : v === "press" ? 7 : 9, sp = Math.max(base, Math.sqrt(area / budget));
-      const cols = Math.max(2, Math.floor(R.w / sp)), rows = Math.max(2, Math.round(bh / sp));
-      for (let a = 0; a < cols; a++) for (let b = 0; b < rows; b++) list.push(mk((a + .5) / cols, y0 + (b + .5) / rows * (y1 - y0), a * rows + b, cols * rows));
-      if (v === "settle") list.forEach(d => { d.cx = d.gx; d.cy = d.gy; d.gx = Math.random(); d.gy = y0 + Math.random() * (y1 - y0); });
-    } else {
-      const n = Math.round(Math.min(budget, area / (v === "lines" ? 140 : 60)));
-      for (let i = 0; i < n; i++) { const d = mk(Math.random(), y0 + Math.random() * (y1 - y0), i, n);
-        if (v === "nebula" && Math.random() < .8) { const px = (.015 + Math.random() * .06 * (Math.random() < .6 ? 1 : 1.8)) * Math.min(R.w, 260), sides = [0, 1];
-          if (top) sides.push(2); if (bot) sides.push(3); const sd = sides[Math.floor(Math.random() * sides.length)];
-          if (sd < 2) d.gx = sd ? 1 - px / R.w : px / R.w; else d.gy = sd === 2 ? px / R.h : 1 - px / R.h; d.cx = d.gx; d.cy = d.gy; }
-        list.push(d); }
+    if (kind !== "button") {
+      if (KINDS[v] === "print" || v === "settle") {
+        const base = v === "grain" ? 6 : v === "press" ? 7 : 9, sp = Math.max(base, Math.sqrt(area / budget));
+        const cols = Math.max(2, Math.floor(R.w / sp)), rows = Math.max(2, Math.round(bh / sp));
+        for (let a = 0; a < cols; a++) for (let b = 0; b < rows; b++) list.push(mk((a + .5) / cols, y0 + (b + .5) / rows * (y1 - y0), a * rows + b, cols * rows));
+        if (v === "settle") list.forEach(d => { d.cx = d.gx; d.cy = d.gy; d.gx = Math.random(); d.gy = y0 + Math.random() * (y1 - y0); });
+      } else {
+        const n = Math.round(Math.min(budget, area / (v === "lines" ? 140 : 60)));
+        for (let i = 0; i < n; i++) { const d = mk(Math.random(), y0 + Math.random() * (y1 - y0), i, n);
+          if (v === "nebula" && Math.random() < .8) { const px = (.015 + Math.random() * .06 * (Math.random() < .6 ? 1 : 1.8)) * Math.min(R.w, 260), sides = [0, 1];
+            if (top) sides.push(2); if (bot) sides.push(3); const sd = sides[Math.floor(Math.random() * sides.length)];
+            if (sd < 2) d.gx = sd ? 1 - px / R.w : px / R.w; else d.gy = sd === 2 ? px / R.h : 1 - px / R.h; d.cx = d.gx; d.cy = d.gy; }
+          list.push(d); }
+      }
     }
-    if (!styled()) { // the card's outline, traced in motes (its rounded corners too), only the part inside this band
-      const rr = Math.min(16, R.w / 4, R.h / 4), L = 2 * (R.w + R.h - 4 * rr) + TAU * rr, n = Math.round(L / 6), at = [];
-      const seg = [[R.w - 2 * rr, d => [rr + d, 0]], [Math.PI / 2 * rr, d => { const a = -Math.PI / 2 + d / rr; return [R.w - rr + Math.cos(a) * rr, rr + Math.sin(a) * rr]; }],
-        [R.h - 2 * rr, d => [R.w, rr + d]], [Math.PI / 2 * rr, d => { const a = d / rr; return [R.w - rr + Math.cos(a) * rr, R.h - rr + Math.sin(a) * rr]; }],
-        [R.w - 2 * rr, d => [R.w - rr - d, R.h]], [Math.PI / 2 * rr, d => { const a = Math.PI / 2 + d / rr; return [rr + Math.cos(a) * rr, R.h - rr + Math.sin(a) * rr]; }],
-        [R.h - 2 * rr, d => [0, R.h - rr - d]], [Math.PI / 2 * rr, d => { const a = Math.PI + d / rr; return [rr + Math.cos(a) * rr, rr + Math.sin(a) * rr]; }]];
-      for (let i = 0; i < n; i++) { let d = i / n * L; for (const [len, f] of seg) { if (d <= len) { const [px, py] = f(d), gy = py / R.h; if (gy >= y0 && gy <= y1) at.push([px / R.w, gy, i / n]); break; } d -= len; } }
-      at.forEach(([gx, gy, u], i) => { const d = mk(gx, gy, i, at.length); d.ring = 1; d.u = u; list.push(d); });
-    }
+    // the outline, traced in motes (rounded like the thing itself), only the part inside this band
+    const at = outline(R, rr, y0, y1, kind === "button" ? 5 : 6);
+    at.forEach(([gx, gy, u], i) => { const d = mk(gx, gy, i, at.length); d.ring = 1; d.u = u; list.push(d); });
     return list;
   }
-  const used = () => [...cards.values()].reduce((n, c) => n + c.dots.length, 0);
+  const used = () => { let n = 0; for (const c of cards.values()) n += c.dots.length; return n; };
   function bandsNear(R) { const a = Math.max(0, Math.floor((-R.y - 120) / BAND)), b = Math.min(Math.ceil(R.h / BAND) - 1, Math.floor((H + 120 - R.y) / BAND)), out = [];
     for (let i = a; i <= b; i++) out.push(i); return out; }
   function fillBands(c, R, fromTheta) { // add the bands coming on screen, drop the ones far off it
     const want = new Set(bandsNear(R)), have = new Set(c.dots.map(d => d.band));
     if ([...have].some(b => !want.has(b))) c.dots = c.dots.filter(d => want.has(d.band));
     for (const b of want) if (!have.has(b)) { const y0 = b * BAND / R.h, y1 = Math.min(1, (b + 1) * BAND / R.h);
-      c.dots.push(...fill(R, c.v, fromTheta, y0, y1, Math.max(80, Math.min(700, (MAXDOTS - used()) / 3)), b)); }
+      c.dots.push(...fill(R, c.v, fromTheta, y0, y1, Math.max(80, Math.min(700, (MAXDOTS - used()) / 3)), b, c.kind, c.rr)); }
   }
-  function spawn(el, R, fromTheta) {
-    const v = variant(), c = {el, dots: [], born: clock, v, st: styled(), tall: tall(R)};
+  function radius(el, R) { const r = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0; return Math.min(r || 4, R.w / 2, R.h / 2); }
+  function spawn(el, R, fromTheta, kind) {
+    const v = variant(), c = {el, dots: [], born: clock, v, kind, solid: el.matches(".term"), top: !!el.closest(".term"), tall: kind === "card" && tall(R), rr: radius(el, R)};
     if (c.tall) fillBands(c, R, fromTheta);
-    else c.dots = fill(R, v, fromTheta, 0, 1, Math.max(80, Math.min(900, (MAXDOTS - used()) / 2)), 0);
+    else c.dots = fill(R, v, fromTheta, 0, 1, Math.max(80, Math.min(900, (MAXDOTS - used()) / 2)), 0, kind, c.rr);
+    c.arrive = fromTheta ? .75 : .45; c.ready = clock + (fromTheta ? .3 : 0) + c.arrive; // built: every mote has arrived
     return c;
   }
-  function scan() { // which cards are on screen now: new ones form from Theta (or in place, if seen before), gone ones go home
-    const v = variant(), now = new Set();
-    document.querySelectorAll(SEL).forEach(el => {
-      const r = el.getBoundingClientRect(); if (r.width < 40 || r.height < 30 || r.bottom < -60 || r.top > H + 60) return;
-      const cs = getComputedStyle(el); if (cs.visibility === "hidden" || +cs.opacity < .05) return;
-      if (el.parentElement && el.parentElement.closest(SEL)) return; // a card inside a card: the outer one has the dots
-      now.add(el);
-      const c = cards.get(el);
-      const R = {x: r.left, y: r.top, w: r.width, h: r.height};
-      if (!c || c.v !== v || c.st !== styled() || c.tall !== tall(R) || (!c.tall && Math.abs(c.h - R.h) > 40)) { const n = spawn(el, R, !seen.has(el)); n.h = R.h; cards.set(el, n); seen.add(el); }
-      else if (c.tall) fillBands(c, R, false);
-    });
-    for (const [el, c] of cards) if (!now.has(el)) { cards.delete(el); if (el.isConnected === false || !el.getBoundingClientRect().width) homing.push(...c.dots.map(d => (d.home = 1, d))); }
+  function shown(el) { // really visible: not hidden, and not inside something faded out or hidden
+    if (el.checkVisibility) return el.checkVisibility({opacityProperty: true, visibilityProperty: true});
+    for (let e = el, i = 0; e && e !== document.body && i < 12; e = e.parentElement, i++) { const cs = getComputedStyle(e);
+      if (cs.display === "none" || cs.visibility === "hidden" || +cs.opacity < .05) return false; } return true; }
+  function track(el, kind, now, v) {
+    const r = el.getBoundingClientRect(), small = kind === "button" ? (r.width < 18 || r.height < 14) : (r.width < 40 || r.height < 30);
+    if (small || r.bottom < -260 || r.top > H + 260) return; // a little ahead of the screen, so a card is built before you scroll to it
+    if (!shown(el)) return;
+    now.add(el);
+    const c = cards.get(el), R = {x: r.left, y: r.top, w: r.width, h: r.height};
+    if (!c || c.v !== v || c.tall !== (kind === "card" && tall(R)) || (!c.tall && (Math.abs(c.h - R.h) > (kind === "button" ? 6 : 40) || Math.abs(c.w - R.w) > 6))) {
+      const first = !seen.has(el), n = spawn(el, R, first && (clock < 2.5 || fresh.has(el) || el.matches(".term")), kind); n.h = R.h; n.w = R.w;
+      // its words appear once it is built (a rebuild while it waits keeps waiting, but never more than 2 s in all)
+      if (first) { el.classList.add("mote-wait"); n.gate = 1; n.gateAt = clock; }
+      else if (c && c.gate) { n.gate = 1; n.gateAt = c.gateAt; } else el.classList.add("mote-built");
+      cards.set(el, n); seen.add(el); fresh.delete(el);
+    } else if (c.tall) fillBands(c, R, false);
   }
+  function scan() { // what's on screen now: cards and buttons; new ones form, gone ones go home
+    const v = variant(), now = new Set();
+    document.querySelectorAll(SEL).forEach(el => { if (el.parentElement && el.parentElement.closest(SEL)) return; track(el, "card", now, v); }); // a card in a card: the outer one
+    document.querySelectorAll(BTN).forEach(el => { if (el.parentElement && el.parentElement.closest(BTN)) return; track(el, "button", now, v); });
+    for (const [el, c] of cards) if (!now.has(el)) { cards.delete(el); el.classList.remove("mote-wait");
+      if (el.isConnected === false || !el.getBoundingClientRect().width) { homing.push(...c.dots.map(d => (d.home = 1, d.top = c.top, d))); seen.delete(el); } }
+  }
+  // one mote, placed: an eased glide from where it started to where it belongs, then exactly there (plus any give
+  // from your finger, which eases back); going home, it eases to Theta. No spring, no overshoot.
+  function place(d, tx, ty, arrive) {
+    if (d.home) { const k = Math.min(1, dt * 6); d.x += (tx - d.x) * k; d.y += (ty - d.y) * k; return; }
+    if (d.arr == null) { d.arr = 0; d.sx = d.x; d.sy = d.y; }
+    d.ox *= Math.exp(-dt * 4); d.oy *= Math.exp(-dt * 4);
+    if (d.arr < 1) { d.arr = Math.min(1, d.arr + dt / arrive); const e = ease(d.arr); d.x = d.sx + (tx - d.sx) * e + d.ox; d.y = d.sy + (ty - d.sy) * e + d.oy; }
+    else { d.x = tx + d.ox; d.y = ty + d.oy; }
+  }
+  function dot(x, d, rad, a, h, lift) { if (a <= .01 || rad <= .2) return;
+    x.fillStyle = hsla(h, 70 + 20 * lift, 62 + 18 * lift, a); window.thetaDot ? thetaDot.path(x, d.x, d.y, rad, d.ph) : (x.beginPath(), x.arc(d.x, d.y, rad, 0, TAU)); x.fill(); }
   let scanAt = 0;
   function frame(nowMs) {
     if (!running) return;
     const v = variant(); if (!KINDS[v] || still()) { stop(); return; }
-    const dt = Math.min(.05, (nowMs - last) / 1000); last = nowMs; clock += dt;
+    dt = Math.min(.05, (nowMs - last) / 1000); last = nowMs; clock += dt;
     const TH = window.thetaHead, state = TH && TH.state ? TH.state() : "idle", lv = TH && TH.level ? TH.level() : 0;
     for (const k in SW) SW[k] += ((state === k ? 1 : 0) - SW[k]) * Math.min(1, dt * 3.2);
     level += (lv - level) * .3;
     if (clock - hueAt > 1) { hue = moodHue(); hueAt = clock; }
-    if (clock - scanAt > .25) { scan(); scanAt = clock; }
-    g.clearRect(0, 0, W, H);
+    if (clock - scanAt > .2) { scan(); scanAt = clock; }
+    g.clearRect(0, 0, W, H); gT.clearRect(0, 0, W, H);
     const t = clock, th = source(), lineSets = [];
-    g.globalCompositeOperation = "lighter";
-    const draw = (d, tx, ty, rad, a, h) => {
-      const k = .05 + .04 * d.pace; d.vx = (d.vx + (tx - d.x) * k) * .8; d.vy = (d.vy + (ty - d.y) * k) * .8; d.x += d.vx; d.y += d.vy;
-      if (a <= .01 || rad <= .2) return; const sp = Math.hypot(d.vx, d.vy);
-      g.fillStyle = hsla(h, 70 + 20 * Math.min(1, sp / 6), 62 + Math.min(18, sp * 2), a); window.thetaDot ? thetaDot.path(g, d.x, d.y, rad, d.ph) : (g.beginPath(), g.arc(d.x, d.y, rad, 0, TAU)); g.fill(); };
+    g.globalCompositeOperation = gT.globalCompositeOperation = "lighter";
     for (const [el, c] of cards) {
-      const r = el.getBoundingClientRect(), R = {x: r.left, y: r.top, w: r.width, h: r.height}, age = t - c.born, set = [];
-      // the card moved (a scroll, a layout change): its motes move with it, exactly, this frame; the springs only shape them
-      if (c.lx != null && (R.x !== c.lx || R.y !== c.ly)) { const dx = R.x - c.lx, dy = R.y - c.ly; for (const d of c.dots) if (age >= d.delay) { d.x += dx; d.y += dy; } }
+      const r = el.getBoundingClientRect(), R = {x: r.left, y: r.top, w: r.width, h: r.height}, age = t - c.born, set = [], x = c.top ? gT : g;
+      // the card moved (a scroll, a layout change): its motes move with it, exactly, this frame
+      if (c.lx != null && (R.x !== c.lx || R.y !== c.ly)) { const dx = R.x - c.lx, dy = R.y - c.ly; for (const d of c.dots) { d.x += dx; d.y += dy; if (d.sx != null) { d.sx += dx; d.sy += dy; } } }
       c.lx = R.x; c.ly = R.y;
-      const handover = c.st ? Math.max(1 - Math.min(1, Math.max(0, age - 1.1) / .7), .5 * (1 - SW.idle)) : 1; // styled: the motes form the card, then hand over to it
+      if (c.gate && (t >= c.ready || t - c.gateAt > 2)) { c.gate = 0; el.classList.remove("mote-wait"); el.classList.add("mote-built"); }
+      const arrive = c.arrive;
+      const handover = c.solid ? Math.max(1 - Math.min(1, Math.max(0, age - 1.1) / .7), .5 * (1 - SW.idle)) : 1; // the terminal: the motes build it, then hand over
       for (const d of c.dots) {
-        if (age < d.delay) { draw(d, th.x, th.y, 0, 0, hue); continue; }
+        if (age < d.delay) continue;
+        const px = d.x, py = d.y;
         if (d.ring) { // the outline: crisp, breathing a little; ripples with Theta's voice, comets run round while it thinks
           const wave = Math.max(0, Math.sin(d.u * TAU * 7 - t * 6)) * level * SW.speaking, comet = Math.max(0, Math.sin(d.u * TAU * 3 - t * 4)) ** 6 * SW.thinking;
-          const grow = Math.min(1, Math.max(0, age - d.delay) * 2.2);
-          draw(d, R.x + d.gx * R.w, R.y + d.gy * R.h, (1.15 + .9 * wave + .9 * comet) * grow, (.5 + .35 * comet + .3 * wave + .1 * Math.sin(t * d.pace + d.ph)) * grow,
-            hue - 26 * SW.listening * (1 - d.gy) + 40 * comet + 26 * wave); continue; }
+          const grow = Math.min(1, Math.max(0, age - d.delay) * 2.2), btn = c.kind === "button";
+          place(d, R.x + d.gx * R.w, R.y + d.gy * R.h, arrive);
+          dot(x, d, (btn ? .95 : 1.15) * (1 + .8 * wave + .8 * comet) * grow, ((btn ? .62 : .5) + .35 * comet + .3 * wave + .1 * Math.sin(t * d.pace + d.ph)) * grow * (c.solid ? Math.max(handover, .35) : 1),
+            hue - 26 * SW.listening * (1 - d.gy) + 40 * comet + 26 * wave, Math.min(1, Math.hypot(d.x - px, d.y - py) / 6)); continue; }
         let hh = hue + 7 * Math.sin(t * d.pace * 1.7 + d.ph) * SW.idle, tx, ty, rad, a;
-        const touched = Math.max(0, 1 - Math.hypot(d.x - touch.x, d.y - touch.y) / 60) * Math.max(0, 1 - (t - touch.t) * .8);
+        const touched = touchAt(d, t);
         if (c.v === "grain" || c.v === "press") {
           tx = R.x + d.gx * R.w; ty = R.y + d.gy * R.h;
           const edge = Math.min(d.gx, 1 - d.gx, d.gy * R.h / R.w, (1 - d.gy) * R.h / R.w) * 2, settled = Math.min(1, Math.max(0, age - 1.2) * 1.2);
@@ -3835,30 +3876,34 @@ _DOTFRAME_JS = r'''(() => {
           if (c.v === "settle") { const calm = SW.idle * Math.min(1, Math.max(0, age - .8) * 1.5); fx += (d.cx - fx) * calm; fy += (d.cy - fy) * calm; }
           const swell = 1 + .08 * level * SW.speaking * Math.sin(d.gx * 9 - t * 7) + .02 * Math.sin(t * 1.3);
           tx = R.x + R.w / 2 + (fx - .5) * R.w * swell; ty = R.y + R.h / 2 + (fy - .5) * R.h * swell;
-          if (touched > .05) { const dx = tx - touch.x, dy = ty - touch.y, dd = Math.hypot(dx, dy) || 1; tx += dx / dd * 26 * touched; ty += dy / dd * 26 * touched; }
           const edgeFade = Math.min(1, Math.min(fx, 1 - fx, fy, 1 - fy) * 9 + .15);
           rad = c.v === "nebula" ? (d.s > .85 ? 2.6 : 1.1 + .6 * d.s) + level * SW.speaking : c.v === "settle" ? 1.2 + 1.3 * SW.idle * (1 - fy) + level * SW.speaking : 1.5 + .6 * d.s;
           a = (c.v === "nebula" ? (d.s > .85 ? .22 : .3 + .5 * d.s) : c.v === "settle" ? .25 + .45 * d.s * (1 - SW.idle) + .25 * SW.idle : .45 + .45 * d.s) * edgeFade;
           hh += -30 * SW.listening * (1 - fy) + 40 * Math.sin(Math.atan2(fy - .5, fx - .5) * 2 + t * 3) * SW.thinking + 26 * level * SW.speaking;
           if (c.v === "lines") set.push(d);
         }
-        draw(d, tx, ty, rad, a * handover, hh);
+        place(d, tx, ty, arrive);
+        dot(x, d, rad, a * handover, hh, Math.min(1, Math.hypot(d.x - px, d.y - py) / 6));
       }
-      if (set.length) lineSets.push(set);
+      if (set.length) lineSets.push([x, set]);
     }
-    for (let i = homing.length - 1; i >= 0; i--) { const d = homing[i]; draw(d, th.x, th.y, 1.2, .6 * Math.min(1, Math.hypot(d.x - th.x, d.y - th.y) / 80), hue);
+    for (let i = homing.length - 1; i >= 0; i--) { const d = homing[i]; place(d, th.x, th.y, 1); dot(d.top ? gT : g, d, 1.2, .6 * Math.min(1, Math.hypot(d.x - th.x, d.y - th.y) / 80), hue, .5);
       if (Math.hypot(d.x - th.x, d.y - th.y) < 6 || homing.length > 1500) homing.splice(i, 1); }
-    g.lineWidth = .7;
-    for (const L of lineSets) for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) { const p = L[i], q = L[j], dx = p.x - q.x, dy = p.y - q.y;
-      if (Math.abs(dx) > 26 || Math.abs(dy) > 26) continue; const dd = Math.hypot(dx, dy); if (dd > 26) continue;
-      g.strokeStyle = hsla(hue + 40 * SW.thinking * Math.sin(p.u * 9 + t * 3), 70, 66, (1 - dd / 26) * (.3 + .35 * SW.thinking + .2 * level * SW.speaking));
-      g.beginPath(); g.moveTo(p.x, p.y); g.lineTo(q.x, q.y); g.stroke(); }
-    g.globalCompositeOperation = "source-over";
+    for (const [x, L] of lineSets) { x.lineWidth = .7;
+      for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) { const p = L[i], q = L[j], dx = p.x - q.x, dy = p.y - q.y;
+        if (Math.abs(dx) > 26 || Math.abs(dy) > 26) continue; const dd = Math.hypot(dx, dy); if (dd > 26) continue;
+        x.strokeStyle = hsla(hue + 40 * SW.thinking * Math.sin(p.u * 9 + t * 3), 70, 66, (1 - dd / 26) * (.3 + .35 * SW.thinking + .2 * level * SW.speaking));
+        x.beginPath(); x.moveTo(p.x, p.y); x.lineTo(q.x, q.y); x.stroke(); } }
+    g.globalCompositeOperation = gT.globalCompositeOperation = "source-over";
     requestAnimationFrame(frame);
   }
+  // your finger: the motes near it give way (and ease back), the print blooms under it
+  let touch = {x: -999, y: -999, t: -9};
+  const touchAt = (d, t) => Math.max(0, 1 - Math.hypot(d.x - touch.x, d.y - touch.y) / 60) * Math.max(0, 1 - (t - touch.t) * .8);
   document.addEventListener("pointerdown", e => { if (!running) return; touch = {x: e.clientX, y: e.clientY, t: clock};
-    for (const c of cards.values()) for (const d of c.dots) { const dx = d.x - e.clientX, dy = d.y - e.clientY, r = Math.hypot(dx, dy); if (r < 70) { const k = (1 - r / 70) * 9; d.vx += dx / (r || 1) * k; d.vy += dy / (r || 1) * k; } } }, {passive: true});
-  const check = () => { if (KINDS[variant()] && !still() && document.body) start(); };
+    for (const c of cards.values()) for (const d of c.dots) { const dx = d.x - e.clientX, dy = d.y - e.clientY, r = Math.hypot(dx, dy);
+      if (r < 70) { const k = (1 - r / 70) * 22; d.ox += dx / (r || 1) * k; d.oy += dy / (r || 1) * k; } } }, {passive: true});
+  const check = () => { if (KINDS[variant()] && !still() && document.body) start(); else if (running) stop(); };
   new MutationObserver(check).observe(root, {attributes: true, attributeFilter: ["data-glassstyle"]});
   if (document.readyState === "loading") addEventListener("DOMContentLoaded", check); else check();
 })();

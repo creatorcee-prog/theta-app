@@ -106,6 +106,8 @@ check("the opening plays on black; the first tap or key brings in your backgroun
 check("the Theta frames draw behind the content at the lab's density, so the cards are the dots", "const base = v === \"grain\" ? 6 : v === \"press\" ? 7 : 9" in h._UI_JS
       and "area / (v === \"lines\" ? 140 : 60)" in h._UI_JS)
 check("a card's motes move with it exactly when you scroll (the springs only shape them)", "if (c.lx != null && (R.x !== c.lx || R.y !== c.ly))" in h._UI_JS)
-check("two kinds of Theta card: made of motes (outline traced in motes) or solid in their style (dotted edge, halftone grain)", "d.ring = 1" in h._UI_JS
-      and ':root[data-motecards="styled"] .dotframe{z-index:8}' in h._UI_CSS and 'id="theta-cards"' in h.settings_page({}) if hasattr(h, "settings_page") else True)
+check("the terminal is the solid card; the rest are made of motes, buttons too", "solid: el.matches(\".term\")" in h._UI_JS
+      and ".dotframe.top{z-index:2147483000}" in h._UI_CSS and 'const SEL = ".card,.win,.kpi,.w,.holo,.term:not([hidden]),.dialog-card", BTN = "button,.btn";' in h._UI_JS)
+check("no spring: motes glide in on an eased path, then sit exactly where they belong", "function place(d, tx, ty, arrive)" in h._UI_JS and "d.vx" not in h._DOTFRAME_JS)
+check("a card's words appear once it is built", ":root.motes-on .mote-wait > *{opacity:0!important}" in h._UI_CSS and 'el.classList.remove("mote-wait")' in h._UI_JS)
 print("done")

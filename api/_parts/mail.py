@@ -730,6 +730,43 @@ def theme_globe(name):
             f'<g fill="{calm}">{"".join(dots)}</g><circle cx="12" cy="12" r="2.4" fill="#fff" opacity=".9"/></svg>')
 
 
+def group_card(gid, title, about, *parts):
+    """One card per topic (2026-11-07): the cards in `parts` become its sections (their own ids kept, so links like
+    /settings#gmail still land), with a line between them."""
+    subs = []
+    for p in parts:
+        if not p:
+            continue
+        p = re.sub(r'^(\s*<(?:section|details)\b[^>]*?class=")card\b', r"\1subcard", p, count=1)
+        p = p.replace(' style="margin-top:14px"', "", 1).replace("<h2", "<h3").replace("</h2>", "</h3>")
+        subs.append(p)
+    return (f'<section class="card stack cgroup" id="{gid}"><div><h2>{html.escape(title)}</h2>'
+            f'<p class="muted small">{html.escape(about)}</p></div>' + "".join(subs) + "</section>")
+
+
+OPENINGS = {"cinematic": "Cinematic: a spark, streams of light, a shockwave", "converge": "Converge: the stars become Theta",
+            "signal": "Signal: a broadcast comes home", "pulse": "Pulse: a heartbeat becomes Theta"}
+MOTE_SHAPES = {"circle": "Circles", "triangle": "Triangles", "square": "Squares", "diamond": "Diamonds", "pentagon": "Pentagons",
+               "hexagon": "Hexagons", "star": "Stars"}
+
+
+def opening_card():
+    """The opening and the motes' shape, here as well as under Voice and tools on Theta's screen (the same settings)."""
+    opts = lambda d: "".join(f'<option value="{k}">{html.escape(v)}</option>' for k, v in d.items())
+    return ('<section class="card stack" id="opening"><div><h2>Opening and motes</h2><p class="muted small">How Theta arrives when you '
+            'open the app, and the shape of its motes (the specks of light it\u2019s made of, which also build the Theta frames).</p></div>'
+            f'<label class="small" for="set-open">Opening</label><select id="set-open" class="field">{opts(OPENINGS)}</select>'
+            f'<label class="small" for="set-dot">Motes</label><select id="set-dot" class="field">{opts(MOTE_SHAPES)}</select>'
+            '<p class="note small" id="set-open-note"></p>'
+            '<script>(() => { const o = document.getElementById("set-open"), d = document.getElementById("set-dot"), n = document.getElementById("set-open-note");'
+            ' const av = () => { try { return JSON.parse(localStorage.getItem("theta:avatar") || "{}") || {}; } catch (e) { return {}; } };'
+            ' try { o.value = localStorage.getItem("theta:opening") || "cinematic"; } catch (e) {} d.value = av().dot || "circle";'
+            ' o.onchange = () => { try { localStorage.setItem("theta:opening", o.value); sessionStorage.removeItem("theta:booted"); } catch (e) {}'
+            '   n.textContent = "Plays the next time you open the app."; };'
+            ' d.onchange = () => { const a = av(); a.dot = d.value; try { localStorage.setItem("theta:avatar", JSON.stringify(a)); } catch (e) {} n.textContent = "Saved."; };'
+            '})();</script></section>')
+
+
 def settings_page(headers):
     theme, mode, layout, glassstyle, bg = ui_prefs(headers)
     st = store()
@@ -754,9 +791,7 @@ def settings_page(headers):
     reports = "".join(f"<li><b>{html.escape(display_name(r['bot_id']))}</b> {html.escape(r['event_type'])}: "
                       f"{html.escape(_gist(r['payload']))} <span class=\"muted small\">{html.escape(r['created_at'])}</span></li>"
                       for r in st.list_reports(15)) or '<li class="empty">No reports yet.</li>'
-    body = (
-        '<header class="top"><div><p class="eyebrow">Settings</p><h1>Make it yours</h1></div></header>'
-        '<div class="stack">' + persona_card() + ''
+    look = (
         '<section class="card stack" id="look"><div><h2>Color scheme</h2><p class="muted small">Every scheme has a light and a dark '
         'version. Saved on this device.</p></div>'
         f'<div class="swatches">{swatches}</div>'
@@ -772,11 +807,8 @@ def settings_page(headers):
         '<select id="theta-frame" class="field">' + "".join(f'<option value="{k}" data-about="{html.escape(FRAMES[k][1])}"{" selected" if k == glassstyle else ""}>'
                                               f'{html.escape(FRAMES[k][0].split(" \u00b7 ")[1])}</option>' for k in THETA_FRAMES) + '</select>'
         f'<p class="muted small" id="theta-frame-about">{html.escape(FRAMES[glassstyle if glassstyle in THETA_FRAMES else "settle"][1])}</p>'
-        '<label for="theta-cards" class="small">Theta cards</label><select id="theta-cards" class="field">'
-        '<option value="made">Made of motes: no box, the outline traced in motes</option><option value="styled">Solid, in the motes\u2019 style: they form it, then hand over</option></select></div>'
+        '</div>'
         '<script>(() => { const s = document.getElementById("theta-frame"), b = document.getElementById("theta-frame-btn"), ab = document.getElementById("theta-frame-about"); if (!s || !b) return;'
-        ' const k = document.getElementById("theta-cards"); try { k.value = localStorage.getItem("theta:motecards") || "made"; } catch (e) {}'
-        ' k.onchange = () => { try { localStorage.setItem("theta:motecards", k.value); } catch (e) {} document.documentElement.dataset.motecards = k.value; };'
         ' s.onchange = () => { b.dataset.val = s.value; ab.textContent = s.selectedOptions[0].dataset.about; if (window.thetaPref) thetaPref("glassstyle", s.value); }; })();</script></div>'
         '<div><h3>Sounds</h3><p class="muted small">Each frame has its own short sound as a page comes in (Glass+ fizz, '
         'Liquid gloop, Edge binary chirp, Breach hex print, HUD target lock, Console typewriter, Hologram projector hum, Filigree chime, and a swarm of motes for the Theta frames). '
@@ -818,24 +850,36 @@ def settings_page(headers):
         'phone it can follow how you tilt it (your phone asks once for motion access).</p>'
         '<div class="seg" role="group" aria-label="Shine follows tilt"><button type="button" data-tilt="on">Follow tilt</button>'
         '<button type="button" data-tilt="off">Off</button></div><p class="note small" id="tilt-note"></p></div>'
-        f'<div><h3>Home layout</h3><p class="muted small">How the windows on Home are arranged.</p><div class="layouts">{layouts}</div></div></section>'
-        + passkeys_card(headers) + devices_card(headers) + gmail_card(headers) + memory_card() + siri_card(headers) + fish_card() + phone_card(headers) + notifs_card() +
+        f'<div><h3>Home layout</h3><p class="muted small">How the windows on Home are arranged.</p><div class="layouts">{layouts}</div></div></section>')
+    rounds = (
         '<section class="card stack"><div class="brow"><h2>Rounds</h2></div><p class="muted small">Every agent does its '
         'job three times a day (Supabase Cron). Run one now to refresh the windows.</p>'
         f'<p><button class="btn" type="button" data-run-round="round-status-s">{ui_icon("play")}Run a round now</button></p>'
-        '<p class="note" id="round-status-s"></p></section>'
+        '<p class="note" id="round-status-s"></p></section>')
+    bench = (
         '<section class="card stack" id="bench"><div><h2>Mistral benchmark</h2><p class="muted small">Six kinds of message, each answered '
         'by Mistral\'s model with thinking on and with it off, on his real prompt. Shows how long each took, whether he did the '
         'right thing (answer, use a tool, search, or hand it to Theta), and what it cost. Nothing is posted and no tools run. '
         'About 12 calls, a few cents.</p></div>'
         f'<p><button class="btn" id="bench-run" type="button">{ui_icon("play")}Run the benchmark</button> '
-        '<span class="note" id="bench-note"></span></p><div id="bench-out"></div></section>'
-        f'<div class="grid2"><section class="card"><h2>Standing orders</h2><ul class="list">{orders}</ul></section>'
-        f'<section class="card"><h2>Open escalations</h2><ul class="list">{escs}</ul></section></div>'
-        f'<section class="card"><h2>Latest reports</h2><ul class="list">{reports}</ul></section>'
+        '<span class="note" id="bench-note"></span></p><div id="bench-out"></div></section>')
+    about = (
         f'<section class="card"><h2>About</h2><p class="muted small">Storage: {html.escape(STORAGE_MODE)}. '
         f'Times in {html.escape(HUB_TIMEZONE)}.</p>' + (f'<p class="muted small">{TMDB_NOTICE}</p>' if TMDB_API_KEY else "")
-        + '</section></div>'
+        + '</section>')
+    body = (
+        '<header class="top"><div><p class="eyebrow">Settings</p><h1>Make it yours</h1></div></header>'
+        '<div class="stack">'
+        # one card per topic (2026-11-07): what Theta is, how the app looks, the AI, what it's connected to, security
+        + group_card("g-theta", "Theta", "Who Theta is, how it sounds, and how you call it.", persona_card(), fish_card(), siri_card(headers))
+        + group_card("g-look", "Look and feel", "Everything you see and hear in the app. Saved on this device.", look, opening_card())
+        + group_card("g-ai", "AI and memory", "What Theta and the crew remember, how they run, and what they're working on.",
+                     memory_card(), rounds, bench, f'<section class="card"><h2>Standing orders</h2><ul class="list">{orders}</ul></section>',
+                     f'<section class="card"><h2>Open escalations</h2><ul class="list">{escs}</ul></section>',
+                     f'<section class="card"><h2>Latest reports</h2><ul class="list">{reports}</ul></section>')
+        + group_card("g-connect", "Connections and alerts", "Mail, your phone's widget and automations, and notifications.", gmail_card(headers), phone_card(headers), notifs_card())
+        + group_card("g-security", "Sign-in and devices", "How you get in, and what's signed in.", passkeys_card(headers), devices_card(headers))
+        + about + '</div>'
         f"<script>{_BENCH_JS}</script>")
     return page(headers, "Settings", "/settings", body)
 
@@ -1126,29 +1170,25 @@ def diagnostics_page(headers):
     body = (
         f'<header class="top"><div><p class="eyebrow">System health</p><h1>Diagnostics</h1></div></header>'
         f'<p class="muted">From real data. Anything unmeasured is labeled as such, never shown as healthy.</p>'
-        f'<section class="card stack" id="checkup"><div><h2>Checkup</h2><p class="muted small">One button: storage, the '
+        + '<div class="stack">'
+        # one card per topic (2026-11-07): is it healthy, the AI models, the tools and security
+        + group_card("g-health", "Health", "Is everything running: one-button checkup, storage, scheduled work, and what failed.",
+                     (f'<section class="card stack" id="checkup"><div><h2>Checkup</h2><p class="muted small">One button: storage, the '
         f'tick, rounds, every model, search and the tool bridge, worst first.</p></div>'
         f'<ul class="list" id="checkup-list"></ul>'
-        f'<p><button class="btn small" id="checkup-run" type="button">Run checkup</button> <span class="note" id="checkup-note"></span></p></section>'
-        f'<section class="card"><h2>Crew</h2><div class="scrollx"><table class="tbl"><thead><tr><th>Agent</th><th>Tier</th><th>Status</th><th>Activity</th></tr></thead><tbody>{crew_rows}</tbody></table></div></section>'
-        f'<div class="grid2" style="margin-top:14px">'
-        f'<section class="card"><h2>Storage</h2><p><b>{html.escape(STORAGE_MODE)}</b></p><p class="muted small">{html.escape(storage_note)}</p></section>'
-        f'{speed_card()}'
-        f'</div><div class="grid2" style="margin-top:14px">'
-        f'<section class="card"><h2>Scheduled work</h2><div class="scrollx"><table class="tbl"><thead><tr><th>Job</th><th>Last run</th></tr></thead>'
-        f'<tbody>{round_rows}<tr><td style="font-weight:650">5-minute tick</td><td class="muted">{html.escape(tick_note)}</td></tr></tbody></table></div></section>'
-        f'<section class="card"><h2>Recent failures</h2><ul>{fail_html}</ul><h2 style="margin-top:14px">Recent errors</h2><ul>{err_html}</ul></section>'
-        f'</div><section class="card" style="margin-top:14px"><h2>Token use</h2><ul><li>{claude_row}</li>'
-        f'<li class="muted">Gemini and Groq per-model totals: not tracked yet. Replies show their tokens, but no totals are stored (see TODO).</li></ul></section>'
-        f'{tools_card}'
-        f'<section class="card stack" id="wiring" style="margin-top:14px"><div><h2>Models &amp; providers</h2><p class="muted small">Live check.</p></div>'
+        f'<p><button class="btn small" id="checkup-run" type="button">Run checkup</button> <span class="note" id="checkup-note"></span></p></section>'), (f'<section class="card"><h2>Storage</h2><p><b>{html.escape(STORAGE_MODE)}</b></p><p class="muted small">{html.escape(storage_note)}</p></section>'), (f'<section class="card"><h2>Scheduled work</h2><div class="scrollx"><table class="tbl"><thead><tr><th>Job</th><th>Last run</th></tr></thead>'
+        f'<tbody>{round_rows}<tr><td style="font-weight:650">5-minute tick</td><td class="muted">{html.escape(tick_note)}</td></tr></tbody></table></div></section>'), (f'<section class="card"><h2>Recent failures</h2><ul>{fail_html}</ul><h2 style="margin-top:14px">Recent errors</h2><ul>{err_html}</ul></section>'))
+        + group_card("g-models", "AI models", "Which model each agent runs on, whether it answers, how fast, and what it costs.",
+                     (f'<section class="card stack" id="wiring" style="margin-top:14px"><div><h2>Models &amp; providers</h2><p class="muted small">Live check.</p></div>'
         f'<div class="scrollx"><table class="tbl"><thead><tr><th>Agent</th><th>Model</th><th>Status</th><th>Details</th><th></th></tr></thead>'
         f'<tbody id="diag-wiring-rows"></tbody></table></div>'
-        f'<p><button class="btn ghost small" id="diag-wiring-recheck" type="button">Recheck</button> <span class="note" id="diag-wiring-note"></span></p></section>'
-        f'<section class="card stack" id="security" style="margin-top:14px"><div class="hero" style="gap:12px">{avatar_img("qwerty", 40)}<div><h2>Security and health</h2>'
+        f'<p><button class="btn ghost small" id="diag-wiring-recheck" type="button">Recheck</button> <span class="note" id="diag-wiring-note"></span></p></section>'), speed_card(), (f'<section class="card" style="margin-top:14px"><h2>Token use</h2><ul><li>{claude_row}</li>'
+        f'<li class="muted">Gemini and Groq per-model totals: not tracked yet. Replies show their tokens, but no totals are stored (see TODO).</li></ul></section>'), harness_card(), (f'<section class="card"><h2>Crew</h2><div class="scrollx"><table class="tbl"><thead><tr><th>Agent</th><th>Tier</th><th>Status</th><th>Activity</th></tr></thead><tbody>{crew_rows}</tbody></table></div></section>'))
+        + group_card("g-tools", "Tools and security", "What Theta can reach, and what QWERTY watches.", tools_card,
+                     (f'<section class="card stack" id="security" style="margin-top:14px"><div class="hero" style="gap:12px">{avatar_img("qwerty", 40)}<div><h2>Security and health</h2>'
         '<p class="muted small">QWERTY checks this every round and tells you in #dev-and-security when it changes.</p></div></div>'
-        f'<ul class="list">{security_rows()}</ul></section>'
-        + harness_card() +
+        f'<ul class="list">{security_rows()}</ul></section>'))
+        + '</div>'
         f'<script>{_DIAG_JS}</script>')
     return page(headers, "Diagnostics", "/diagnostics", body)
 
